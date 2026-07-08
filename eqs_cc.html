@@ -1,0 +1,3060 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EQS CC — Equity Sales · Credicorp Capital</title>
+<style>
+:root{
+    --bg-0:#0a0d12;
+    --bg-1:#10141c;
+    --bg-2:#161b26;
+    --bg-3:#1d2330;
+    --border-soft:#232938;
+    --border-strong:#323a4d;
+    --text-0:#e9ecf1;
+    --text-1:#9aa3b5;
+    --text-2:#5e6678;
+    --buy:#2bbf8a;
+    --buy-dim:#173b30;
+    --sell:#e0654a;
+    --sell-dim:#3a241e;
+    --amber:#e0a23a;
+    --amber-dim:#3a2f15;
+    --blue:#4f8ef0;
+    --mono: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg-0);
+    color:var(--text-0);
+    font-family:var(--sans);
+    font-size:13px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .app{max-width:1280px;margin:0 auto;padding:0 0 48px;}
+
+  /* ---------- HEADER ---------- */
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:16px 24px;border-bottom:1px solid var(--border-soft);
+    background:var(--bg-1);
+  }
+  .brand{display:flex;align-items:center;gap:12px;}
+  .brand-mark{
+    width:30px;height:30px;border-radius:6px;
+    background:linear-gradient(135deg,var(--blue),#2a5cc4);
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--mono);font-weight:700;font-size:12px;color:#fff;
+  }
+  .brand-name{font-weight:600;font-size:14px;letter-spacing:.2px;}
+  .brand-sub{font-size:11px;color:var(--text-1);font-family:var(--mono);}
+  .header-right{display:flex;align-items:center;gap:20px;}
+  .market-pill{
+    display:flex;align-items:center;gap:6px;
+    font-family:var(--mono);font-size:11px;color:var(--buy);
+    background:var(--buy-dim);border:1px solid #1f5c46;border-radius:20px;
+    padding:5px 12px;
+  }
+  .market-pill .dot{width:6px;height:6px;border-radius:50%;background:var(--buy);box-shadow:0 0 0 3px rgba(43,191,138,.15);}
+  .clock{font-family:var(--mono);font-size:12px;color:var(--text-1);}
+  .user-chip{
+    font-family:var(--mono);font-size:11px;color:var(--text-0);
+    background:var(--bg-3);border:1px solid var(--border-strong);
+    padding:5px 10px;border-radius:6px;
+  }
+
+  /* ---------- NAV TABS (modulos) ---------- */
+  .modnav{display:flex;gap:4px;padding:10px 24px 0;border-bottom:1px solid var(--border-soft);background:var(--bg-1);}
+  .modnav button{
+    background:none;border:none;color:var(--text-1);font-family:var(--sans);
+    font-size:12.5px;font-weight:500;padding:10px 14px;cursor:pointer;
+    border-bottom:2px solid transparent;
+  }
+  .modnav button.active{color:var(--text-0);border-bottom-color:var(--blue);}
+  .modnav button.disabled{color:var(--text-2);cursor:not-allowed;}
+
+  /* ---------- LAYOUT ---------- */
+  .grid{display:grid;grid-template-columns:1fr 380px;gap:0;}
+  .col-main{padding:20px 24px;border-right:1px solid var(--border-soft);}
+  .col-side{padding:20px 20px;}
+
+  .section-label{
+    font-size:11px;font-weight:600;color:var(--text-1);
+    text-transform:uppercase;letter-spacing:.6px;margin:0 0 10px;
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .section-label .hint{font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-2);}
+
+  /* ---------- BLOTTER ---------- */
+  .blotter-wrap{
+    border:1px solid var(--border-soft);border-radius:8px;overflow:hidden;background:var(--bg-1);
+    margin-bottom:24px;
+  }
+  .blotter-toolbar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 14px;border-bottom:1px solid var(--border-soft);background:var(--bg-2);
+  }
+  .blotter-toolbar .title{font-size:12px;font-weight:600;color:var(--text-0);}
+  .blotter-toolbar .meta{font-size:11px;color:var(--text-2);font-family:var(--mono);}
+  .btn{
+    font-family:var(--sans);font-size:12px;font-weight:500;
+    background:var(--bg-3);color:var(--text-0);border:1px solid var(--border-strong);
+    border-radius:6px;padding:7px 13px;cursor:pointer;
+  }
+  .btn:hover{background:#242b3b;}
+  .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff;}
+  .btn.primary:hover{background:#3f7adf;}
+  .btn.primary:disabled{background:var(--bg-3);border-color:var(--border-strong);color:var(--text-2);cursor:not-allowed;}
+  .btn.ghost{background:none;}
+  .btn.small{padding:5px 10px;font-size:11px;}
+
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);}
+  thead th{
+    text-align:left;font-size:10.5px;font-weight:600;color:var(--text-2);
+    text-transform:uppercase;letter-spacing:.4px;padding:9px 12px;
+    border-bottom:1px solid var(--border-soft);background:var(--bg-2);
+    white-space:nowrap;
+  }
+  tbody td{padding:9px 12px;border-bottom:1px solid var(--border-soft);font-size:12px;white-space:nowrap;}
+  tbody tr.row-selectable:hover{background:#161c28;cursor:pointer;}
+  tbody tr.row-selected{background:#142235;}
+  tbody tr.row-selected:hover{background:#16273d;}
+  .sel-summary{
+    display:none;align-items:center;gap:8px;padding:10px 14px;
+    background:var(--bg-2);border-top:1px solid var(--border-soft);
+    font-size:12px;color:var(--text-1);font-family:var(--sans);
+  }
+  .sel-summary b{color:var(--text-0);font-family:var(--mono);}
+  .sel-summary-error{background:var(--sell-dim);border-top:1px solid #5c2e22;}
+  .sel-summary-error span{color:var(--sell);font-weight:500;}
+  .sel-summary-error b{color:var(--sell);}
+  .error-icon{font-style:normal;}
+
+  .field input:disabled, .field select:disabled{
+    opacity:.4;background:var(--bg-2);cursor:not-allowed;
+  }
+  td.num{text-align:right;}
+  .chk{width:16px;height:16px;accent-color:var(--blue);cursor:pointer;}
+  .side-badge{
+    display:inline-flex;align-items:center;gap:5px;font-family:var(--sans);
+    font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:4px;
+  }
+  .side-badge.buy{background:var(--buy-dim);color:var(--buy);}
+  .side-badge.sell{background:var(--sell-dim);color:var(--sell);}
+  .mono-id{color:var(--text-1);font-size:11px;}
+  .client-name{font-family:var(--sans);font-weight:500;color:var(--text-0);}
+
+  /* ---------- CALC PANEL ---------- */
+  .panel{
+    border:1px solid var(--border-soft);border-radius:8px;background:var(--bg-1);
+    padding:16px;margin-bottom:18px;
+  }
+  .field-row{display:flex;gap:10px;margin-bottom:12px;}
+  .field{flex:1;display:flex;flex-direction:column;gap:5px;}
+  .field label{
+    font-size:10.5px;color:var(--text-1);font-weight:500;
+    min-height:14px;line-height:1.4;display:flex;align-items:flex-start;
+  }
+  .field input, .field select{
+    background:var(--bg-3);border:1px solid var(--border-strong);border-radius:6px;
+    color:var(--text-0);font-family:var(--mono);font-size:12.5px;padding:8px 9px;
+    width:100%;
+  }
+  .field input:focus, .field select:focus{outline:none;border-color:var(--blue);}
+  .field input[readonly]{color:var(--text-1);background:#171d29;}
+  .field input[type="date"]{color-scheme:dark;}
+  .field-note{font-size:10px;color:var(--text-2);margin-top:2px;}
+
+  .divider{height:1px;background:var(--border-soft);margin:14px 0;}
+
+  .live-summary{display:flex;gap:10px;margin-bottom:14px;}
+  .live-card{
+    flex:1;background:var(--bg-3);border:1px solid var(--border-strong);
+    border-radius:6px;padding:10px 12px;
+  }
+  .live-label{font-size:10px;color:var(--text-1);font-weight:500;margin-bottom:4px;}
+  .live-value{font-family:var(--mono);font-size:16px;font-weight:600;color:var(--amber);}
+
+  .rate-summary-row{display:flex;gap:10px;margin-bottom:10px;}
+  .rate-mini{
+    flex:1;background:var(--bg-2);border:1px solid var(--border-soft);
+    border-radius:6px;padding:8px 10px;
+  }
+  .rate-mini-label{font-size:9.5px;color:var(--text-2);font-weight:500;margin-bottom:3px;}
+  .rate-mini-value{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--text-1);}
+
+  .result-row{display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;}
+  .result-row .label{font-size:11.5px;color:var(--text-1);}
+  .result-row .value{font-family:var(--mono);font-size:13.5px;font-weight:600;color:var(--text-0);}
+  .result-row.total .value{font-size:16px;color:var(--amber);}
+  .result-row.total .label{color:var(--text-0);font-weight:500;}
+
+  .split-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;margin:10px 0 8px;background:var(--bg-3);}
+  .split-eqs{background:var(--blue);}
+  .split-mesa{background:var(--text-2);}
+  .split-legend{display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-1);}
+  .split-legend span.eqs::before{content:'';display:inline-block;width:7px;height:7px;background:var(--blue);border-radius:2px;margin-right:5px;}
+  .split-legend span.mesa::before{content:'';display:inline-block;width:7px;height:7px;background:var(--text-2);border-radius:2px;margin-right:5px;}
+
+  .empty-state{
+    text-align:center;padding:40px 20px;color:var(--text-2);font-size:12px;
+  }
+
+  .toast{
+    position:fixed;bottom:24px;right:24px;background:var(--buy-dim);
+    border:1px solid #1f5c46;color:var(--buy);padding:11px 18px;border-radius:8px;
+    font-size:12.5px;font-weight:500;display:none;align-items:center;gap:8px;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);
+  }
+  .toast.show{display:flex;animation:slideIn .25s ease;}
+  @keyframes slideIn{from{transform:translateY(10px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+
+  .footer-note{
+    margin-top:10px;font-size:11px;color:var(--text-2);line-height:1.6;
+  }
+  .footer-note b{color:var(--text-1);font-weight:500;}
+
+  .icon-btn{
+    background:none;border:1px solid var(--border-strong);border-radius:5px;
+    color:var(--text-1);width:26px;height:26px;display:inline-flex;
+    align-items:center;justify-content:center;cursor:pointer;font-size:13px;
+  }
+  .icon-btn:hover{background:var(--bg-3);color:var(--text-0);border-color:var(--blue);}
+
+  .edit-overlay{
+    position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;
+    align-items:center;justify-content:center;z-index:50;
+  }
+  .edit-overlay.show{display:flex;}
+  .edit-modal{
+    background:var(--bg-1);border:1px solid var(--border-strong);border-radius:10px;
+    padding:20px;width:360px;
+  }
+  .edit-modal h3{margin:0 0 14px;font-size:13px;font-weight:600;color:var(--text-0);}
+  .edit-modal .field-row{margin-bottom:10px;}
+  .edit-actions{display:flex;gap:8px;margin-top:14px;}
+  .edit-actions .btn{flex:1;}
+
+  ::-webkit-scrollbar{height:8px;width:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:4px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+
+/* ===== RVL additions ===== */
+:root{
+    --bg-0:#0a0d12;
+    --bg-1:#10141c;
+    --bg-2:#161b26;
+    --bg-3:#1d2330;
+    --border-soft:#232938;
+    --border-strong:#323a4d;
+    --text-0:#e9ecf1;
+    --text-1:#9aa3b5;
+    --text-2:#5e6678;
+    --buy:#2bbf8a;
+    --buy-dim:#173b30;
+    --sell:#e0654a;
+    --sell-dim:#3a241e;
+    --amber:#e0a23a;
+    --amber-dim:#3a2f15;
+    --blue:#4f8ef0;
+    --purple:#9b7fe0;
+    --purple-dim:#2a2440;
+    --mono: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg-0);
+    color:var(--text-0);
+    font-family:var(--sans);
+    font-size:13px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .app{max-width:1360px;margin:0 auto;padding:0 0 48px;}
+
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:16px 24px;border-bottom:1px solid var(--border-soft);
+    background:var(--bg-1);
+  }
+  .brand{display:flex;align-items:center;gap:12px;}
+  .brand-mark{
+    width:30px;height:30px;border-radius:6px;
+    background:linear-gradient(135deg,var(--blue),#2a5cc4);
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--mono);font-weight:700;font-size:12px;color:#fff;
+  }
+  .brand-name{font-weight:600;font-size:14px;letter-spacing:.2px;}
+  .brand-sub{font-size:11px;color:var(--text-1);font-family:var(--mono);}
+  .header-right{display:flex;align-items:center;gap:20px;}
+  .market-pill{
+    display:flex;align-items:center;gap:6px;
+    font-family:var(--mono);font-size:11px;color:var(--buy);
+    background:var(--buy-dim);border:1px solid #1f5c46;border-radius:20px;
+    padding:5px 12px;
+  }
+  .market-pill .dot{width:6px;height:6px;border-radius:50%;background:var(--buy);box-shadow:0 0 0 3px rgba(43,191,138,.15);}
+  .clock{font-family:var(--mono);font-size:12px;color:var(--text-1);}
+  .user-chip{
+    font-family:var(--mono);font-size:11px;color:var(--text-0);
+    background:var(--bg-3);border:1px solid var(--border-strong);
+    padding:5px 10px;border-radius:6px;
+  }
+
+  .modnav{display:flex;gap:4px;padding:10px 24px 0;border-bottom:1px solid var(--border-soft);background:var(--bg-1);}
+  .modnav button{
+    background:none;border:none;color:var(--text-1);font-family:var(--sans);
+    font-size:12.5px;font-weight:500;padding:10px 14px;cursor:pointer;
+    border-bottom:2px solid transparent;
+  }
+  .modnav button.active{color:var(--text-0);border-bottom-color:var(--blue);}
+  .modnav button.disabled{color:var(--text-2);cursor:not-allowed;}
+
+  .toolbar{
+    display:flex;align-items:center;gap:10px;padding:14px 24px;
+    border-bottom:1px solid var(--border-soft);background:var(--bg-1);flex-wrap:wrap;
+  }
+  .tb-field{display:flex;flex-direction:column;gap:4px;}
+  .tb-field label{font-size:10px;color:var(--text-1);font-weight:500;}
+  .tb-field select, .tb-field input{
+    background:var(--bg-3);border:1px solid var(--border-strong);border-radius:6px;
+    color:var(--text-0);font-family:var(--mono);font-size:12px;padding:7px 9px;min-width:150px;
+  }
+  .tb-field select:focus, .tb-field input:focus{outline:none;border-color:var(--blue);}
+
+  .btn{
+    font-family:var(--sans);font-size:12px;font-weight:500;
+    background:var(--bg-3);color:var(--text-0);border:1px solid var(--border-strong);
+    border-radius:6px;padding:8px 14px;cursor:pointer;
+  }
+  .btn:hover{background:#242b3b;}
+  .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff;}
+  .btn.primary:hover{background:#3f7adf;}
+  .btn.primary:disabled{background:var(--bg-3);border-color:var(--border-strong);color:var(--text-2);cursor:not-allowed;}
+  .btn.ghost{background:none;}
+  .btn.small{padding:5px 10px;font-size:11px;}
+  .btn.purple{background:var(--purple);border-color:var(--purple);color:#fff;}
+  .btn.purple:hover{background:#a98ff0;}
+
+  .grid{display:grid;grid-template-columns:1fr 400px;gap:0;}
+  .col-main{padding:20px 24px;border-right:1px solid var(--border-soft);}
+  .col-side{padding:20px 20px;}
+
+  .section-label{
+    font-size:11px;font-weight:600;color:var(--text-1);
+    text-transform:uppercase;letter-spacing:.6px;margin:0 0 10px;
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .section-label .hint{font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-2);}
+
+  .blotter-wrap{
+    border:1px solid var(--border-soft);border-radius:8px;overflow:hidden;background:var(--bg-1);
+    margin-bottom:24px;
+  }
+  .blotter-toolbar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 14px;border-bottom:1px solid var(--border-soft);background:var(--bg-2);
+  }
+  .blotter-toolbar .title{font-size:12px;font-weight:600;color:var(--text-0);}
+  .blotter-toolbar .meta{font-size:11px;color:var(--text-2);font-family:var(--mono);}
+
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);}
+  thead th{
+    text-align:left;font-size:10.5px;font-weight:600;color:var(--text-2);
+    text-transform:uppercase;letter-spacing:.4px;padding:9px 10px;
+    border-bottom:1px solid var(--border-soft);background:var(--bg-2);
+    white-space:nowrap;position:sticky;top:0;
+  }
+  thead th.sortable{cursor:pointer;user-select:none;}
+  thead th.sortable:hover{color:var(--text-0);}
+  .sort-arrow{display:inline-block;margin-left:4px;font-size:9px;color:var(--purple);}
+  tbody td{padding:8px 10px;border-bottom:1px solid var(--border-soft);font-size:12px;white-space:nowrap;}
+  tbody tr.row-selectable:hover{background:#161c28;cursor:pointer;}
+  tbody tr.row-selected{background:#142235;}
+  tbody tr.row-selected:hover{background:#16273d;}
+  td.num{text-align:right;}
+  .chk{width:16px;height:16px;accent-color:var(--blue);cursor:pointer;}
+  .side-badge{
+    display:inline-flex;align-items:center;gap:5px;font-family:var(--sans);
+    font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:4px;
+  }
+  .side-badge.buy{background:var(--buy-dim);color:var(--buy);}
+  .side-badge.sell{background:var(--sell-dim);color:var(--sell);}
+  .mono-id{color:var(--text-1);font-size:11px;}
+
+  .tag-btn{
+    font-family:var(--sans);font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:5px;
+    border:1px solid var(--border-strong);background:var(--bg-3);color:var(--text-1);cursor:pointer;
+  }
+  .tag-btn.active-bloque{background:var(--purple);border-color:var(--purple);color:#fff;font-weight:700;}
+  .tag-btn.active-pantalla{background:var(--bg-2);border-color:var(--border-soft);color:var(--text-2);}
+
+  .panel{
+    border:1px solid var(--border-soft);border-radius:8px;background:var(--bg-1);
+    padding:16px;margin-bottom:18px;
+  }
+  .field-row{display:flex;gap:10px;margin-bottom:12px;}
+  .field{flex:1;display:flex;flex-direction:column;gap:5px;}
+  .field label{font-size:10.5px;color:var(--text-1);font-weight:500;}
+  .field input, .field select{
+    background:var(--bg-3);border:1px solid var(--border-strong);border-radius:6px;
+    color:var(--text-0);font-family:var(--mono);font-size:12.5px;padding:8px 9px;
+    width:100%;
+  }
+  .field input:focus, .field select:focus{outline:none;border-color:var(--blue);}
+  .field input[readonly]{color:var(--text-1);background:#171d29;}
+  .field-note{font-size:10px;color:var(--text-2);margin-top:2px;}
+
+  .divider{height:1px;background:var(--border-soft);margin:14px 0;}
+
+  .summary-bar{
+    display:flex;gap:10px;padding:10px 14px;background:var(--bg-2);
+    border-top:1px solid var(--border-soft);font-size:12px;color:var(--text-1);
+  }
+  .summary-bar b{color:var(--text-0);font-family:var(--mono);}
+
+  .alloc-row{
+    padding:10px;border:1px solid var(--border-soft);
+    border-radius:6px;margin-bottom:8px;background:var(--bg-2);
+  }
+  .alloc-row-top{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+  .alloc-row-top select{
+    flex:1;background:var(--bg-3);border:1px solid var(--border-strong);border-radius:6px;
+    color:var(--text-0);font-family:var(--sans);font-size:11.5px;padding:6px 8px;
+  }
+  .alloc-row-bottom{display:flex;align-items:center;gap:8px;}
+  .alloc-row-bottom label{font-size:10px;color:var(--text-1);font-weight:500;white-space:nowrap;}
+  .alloc-row-bottom input{
+    flex:1;background:var(--bg-3);border:1px solid var(--border-strong);border-radius:6px;
+    color:var(--text-0);font-family:var(--mono);font-size:13px;padding:7px 9px;
+  }
+  .alloc-row .iva-badge{
+    font-size:9.5px;font-weight:600;padding:2px 7px;border-radius:4px;
+    background:var(--amber-dim);color:var(--amber);white-space:nowrap;
+  }
+  .alloc-row .remove-btn{
+    background:none;border:none;color:var(--text-2);cursor:pointer;font-size:14px;width:22px;flex-shrink:0;
+  }
+  .alloc-row .remove-btn:hover{color:var(--sell);}
+
+  .alloc-item{
+    display:flex;align-items:center;gap:8px;padding:9px 10px;border:1px solid var(--border-soft);
+    border-radius:6px;margin-bottom:6px;background:var(--bg-2);
+  }
+  .alloc-item .alloc-name{flex:1;font-size:12px;color:var(--text-0);}
+  .alloc-item .alloc-qty{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--text-0);}
+  .alloc-item .iva-badge{
+    font-size:9px;font-weight:600;padding:2px 6px;border-radius:4px;
+    background:var(--amber-dim);color:var(--amber);
+  }
+  .alloc-item .remove-btn{
+    background:none;border:none;color:var(--text-2);cursor:pointer;font-size:14px;width:20px;flex-shrink:0;
+  }
+  .alloc-item .remove-btn:hover{color:var(--sell);}
+
+  .result-row{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0;}
+  .result-row .label{font-size:11.5px;color:var(--text-1);}
+  .result-row .value{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--text-0);}
+  .result-row.total .value{font-size:15px;color:var(--amber);}
+  .result-row.total .label{color:var(--text-0);font-weight:500;}
+
+  .empty-state{text-align:center;padding:40px 20px;color:var(--text-2);font-size:12px;}
+
+  .toast{
+    position:fixed;bottom:24px;right:24px;background:var(--buy-dim);
+    border:1px solid #1f5c46;color:var(--buy);padding:11px 18px;border-radius:8px;
+    font-size:12.5px;font-weight:500;display:none;align-items:center;gap:8px;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);
+  }
+  .toast.show{display:flex;animation:slideIn .25s ease;}
+  @keyframes slideIn{from{transform:translateY(10px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+
+  .footer-note{margin-top:10px;font-size:11px;color:var(--text-2);line-height:1.6;}
+  .footer-note b{color:var(--text-1);font-weight:500;}
+
+  .icon-btn{
+    background:none;border:1px solid var(--border-strong);border-radius:5px;
+    color:var(--text-1);width:26px;height:26px;display:inline-flex;
+    align-items:center;justify-content:center;cursor:pointer;font-size:13px;
+  }
+  .icon-btn:hover{background:var(--bg-3);color:var(--text-0);border-color:var(--blue);}
+
+  .edit-overlay{
+    position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;
+    align-items:center;justify-content:center;z-index:50;
+  }
+  .edit-overlay.show{display:flex;}
+  .edit-modal{
+    background:var(--bg-1);border:1px solid var(--border-strong);border-radius:10px;
+    padding:20px;width:380px;
+  }
+  .edit-modal h3{margin:0 0 14px;font-size:13px;font-weight:600;color:var(--text-0);}
+  .edit-modal .field-row{margin-bottom:10px;}
+  .edit-actions{display:flex;gap:8px;margin-top:14px;}
+  .edit-actions .btn{flex:1;}
+
+  .stat-cards{display:flex;gap:10px;margin-bottom:18px;}
+  .stat-card{flex:1;background:var(--bg-1);border:1px solid var(--border-soft);border-radius:8px;padding:12px 14px;}
+  .stat-card .stat-label{font-size:10px;color:var(--text-1);font-weight:500;margin-bottom:4px;}
+  .stat-card .stat-value{font-family:var(--mono);font-size:18px;font-weight:600;color:var(--text-0);}
+  .stat-card .stat-value.purple{color:var(--purple);}
+  .stat-card .stat-value.amber{color:var(--amber);}
+
+  ::-webkit-scrollbar{height:8px;width:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:4px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+
+  .folios-scroll{max-height:420px;overflow-y:auto;}
+
+/* ===== RVI additions ===== */
+:root{
+    --bg-0:#0a0d12;--bg-1:#10141c;--bg-2:#161b26;--bg-3:#1d2330;
+    --border-soft:#232938;--border-strong:#323a4d;
+    --text-0:#e9ecf1;--text-1:#9aa3b5;--text-2:#5e6678;
+    --buy:#2bbf8a;--buy-dim:#173b30;--sell:#e0654a;--sell-dim:#3a241e;
+    --amber:#e0a23a;--amber-dim:#3a2f15;--blue:#4f8ef0;
+    --purple:#9b7fe0;--purple-dim:#2a2440;--teal:#2bb8bf;--teal-dim:#153d40;
+    --mono:'IBM Plex Mono','JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:'Inter',-apple-system,'Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg-0);color:var(--text-0);font-family:var(--sans);font-size:13px;-webkit-font-smoothing:antialiased;}
+  .app{max-width:1360px;margin:0 auto;padding:0 0 48px;}
+
+  header{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid var(--border-soft);background:var(--bg-1);}
+  .brand{display:flex;align-items:center;gap:12px;}
+  .brand-mark{width:30px;height:30px;border-radius:6px;background:linear-gradient(135deg,var(--blue),#2a5cc4);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;font-size:12px;color:#fff;}
+  .brand-name{font-weight:600;font-size:14px;}
+  .brand-sub{font-size:11px;color:var(--text-1);font-family:var(--mono);}
+  .header-right{display:flex;align-items:center;gap:20px;}
+  .market-pill{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--buy);background:var(--buy-dim);border:1px solid #1f5c46;border-radius:20px;padding:5px 12px;}
+  .market-pill .dot{width:6px;height:6px;border-radius:50%;background:var(--buy);box-shadow:0 0 0 3px rgba(43,191,138,.15);}
+  .clock{font-family:var(--mono);font-size:12px;color:var(--text-1);}
+  .user-chip{font-family:var(--mono);font-size:11px;color:var(--text-0);background:var(--bg-3);border:1px solid var(--border-strong);padding:5px 10px;border-radius:6px;}
+
+  .modnav{display:flex;gap:4px;padding:10px 24px 0;border-bottom:1px solid var(--border-soft);background:var(--bg-1);}
+  .modnav button{background:none;border:none;color:var(--text-1);font-family:var(--sans);font-size:12.5px;font-weight:500;padding:10px 14px;cursor:pointer;border-bottom:2px solid transparent;}
+  .modnav button.active{color:var(--text-0);border-bottom-color:var(--blue);}
+  .modnav button.disabled{color:var(--text-2);cursor:not-allowed;}
+
+  /* TOOLBAR */
+  .toolbar{display:flex;align-items:flex-end;gap:10px;padding:14px 24px;border-bottom:1px solid var(--border-soft);background:var(--bg-1);flex-wrap:wrap;}
+  .tb-field{display:flex;flex-direction:column;gap:4px;}
+  .tb-field label{font-size:10px;color:var(--text-1);font-weight:500;}
+  .tb-field select,.tb-field input{background:var(--bg-3);border:1px solid var(--border-strong);border-radius:6px;color:var(--text-0);font-family:var(--mono);font-size:12px;padding:7px 9px;min-width:140px;}
+
+  .btn{font-family:var(--sans);font-size:12px;font-weight:500;background:var(--bg-3);color:var(--text-0);border:1px solid var(--border-strong);border-radius:6px;padding:8px 14px;cursor:pointer;}
+  .btn:hover{background:#242b3b;}
+  .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff;}
+  .btn.primary:hover{background:#3f7adf;}
+  .btn.primary:disabled{background:var(--bg-3);border-color:var(--border-strong);color:var(--text-2);cursor:not-allowed;}
+  .btn.ghost{background:none;}
+  .btn.small{padding:5px 10px;font-size:11px;}
+  .btn.teal{background:var(--teal);border-color:var(--teal);color:#fff;}
+  .btn.teal:hover{background:#26aab0;}
+
+  /* GRID */
+  .grid{display:grid;grid-template-columns:1fr 420px;gap:0;}
+  .col-main{padding:20px 24px;border-right:1px solid var(--border-soft);}
+  .col-side{padding:20px 20px;}
+
+  .section-label{font-size:11px;font-weight:600;color:var(--text-1);text-transform:uppercase;letter-spacing:.6px;margin:0 0 10px;display:flex;align-items:center;justify-content:space-between;}
+  .section-label .hint{font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-2);}
+
+  .blotter-wrap{border:1px solid var(--border-soft);border-radius:8px;overflow:hidden;background:var(--bg-1);margin-bottom:20px;}
+  .blotter-toolbar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border-soft);background:var(--bg-2);}
+  .blotter-toolbar .title{font-size:12px;font-weight:600;color:var(--text-0);}
+
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);}
+  thead th{text-align:left;font-size:10.5px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px;padding:9px 10px;border-bottom:1px solid var(--border-soft);background:var(--bg-2);white-space:nowrap;}
+  tbody td{padding:8px 10px;border-bottom:1px solid var(--border-soft);font-size:12px;white-space:nowrap;}
+  tbody tr.clickable:hover{background:#161c28;cursor:pointer;}
+  tbody tr.row-active{background:#142235;}
+  td.num{text-align:right;}
+  .mono-id{color:var(--text-1);font-size:11px;}
+
+  .side-badge{display:inline-flex;align-items:center;font-family:var(--sans);font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:4px;}
+  .side-badge.buy{background:var(--buy-dim);color:var(--buy);}
+  .side-badge.sell{background:var(--sell-dim);color:var(--sell);}
+  .tipo-badge{display:inline-flex;font-family:var(--sans);font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--teal-dim);color:var(--teal);}
+  .status-badge{display:inline-flex;font-family:var(--sans);font-size:10px;font-weight:500;padding:2px 7px;border-radius:4px;}
+  .status-badge.filled{background:var(--buy-dim);color:var(--buy);}
+  .status-badge.pending{background:var(--amber-dim);color:var(--amber);}
+
+  /* PANEL */
+  .panel{border:1px solid var(--border-soft);border-radius:8px;background:var(--bg-1);padding:16px;margin-bottom:16px;}
+  .field-row{display:flex;gap:10px;margin-bottom:12px;}
+  .field{flex:1;display:flex;flex-direction:column;gap:5px;}
+  .field label{font-size:10.5px;color:var(--text-1);font-weight:500;min-height:14px;}
+  .field input,.field select{background:var(--bg-3);border:1px solid var(--border-strong);border-radius:6px;color:var(--text-0);font-family:var(--mono);font-size:12.5px;padding:8px 9px;width:100%;}
+  .field input:focus,.field select:focus{outline:none;border-color:var(--blue);}
+  .field input[readonly]{color:var(--text-1);background:#171d29;}
+  .field-note{font-size:10px;color:var(--text-2);margin-top:2px;}
+  .divider{height:1px;background:var(--border-soft);margin:14px 0;}
+
+  .result-row{display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;}
+  .result-row .label{font-size:11.5px;color:var(--text-1);}
+  .result-row .value{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--text-0);}
+  .result-row.total .label{font-weight:500;color:var(--text-0);}
+  .result-row.total .value{font-size:15px;color:var(--amber);}
+
+  /* TARJETAS DE TASAS */
+  .rate-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;}
+  .rate-card{background:var(--bg-3);border:1px solid var(--border-strong);border-radius:6px;padding:10px 12px;}
+  .rate-card .rc-label{font-size:9.5px;color:var(--text-2);font-weight:500;margin-bottom:4px;}
+  .rate-card .rc-value{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--text-0);}
+  .rate-card.highlight .rc-value{color:var(--amber);}
+  .rate-card.teal .rc-value{color:var(--teal);}
+
+  /* DISTRIBUCIÓN */
+  .dist-row{display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid var(--border-soft);border-radius:6px;margin-bottom:8px;background:var(--bg-2);}
+  .dist-row-top{display:flex;align-items:center;gap:8px;}
+  .dist-row-top select{flex:1;background:var(--bg-3);border:1px solid var(--border-strong);border-radius:6px;color:var(--text-0);font-family:var(--sans);font-size:11.5px;padding:6px 8px;}
+  .dist-row-top .remove-btn{background:none;border:none;color:var(--text-2);cursor:pointer;font-size:14px;width:22px;flex-shrink:0;}
+  .dist-row-top .remove-btn:hover{color:var(--sell);}
+  .dist-row-bottom{display:flex;gap:8px;align-items:center;}
+  .dist-row-bottom label{font-size:10px;color:var(--text-1);white-space:nowrap;}
+  .dist-row-bottom input{flex:1;background:var(--bg-3);border:1px solid var(--border-strong);border-radius:6px;color:var(--text-0);font-family:var(--mono);font-size:12.5px;padding:7px 9px;}
+
+  .diff-ok{color:var(--buy);}
+  .diff-err{color:var(--sell);}
+
+  .section-tabs{display:flex;gap:4px;margin-bottom:12px;}
+  .section-tab{font-size:11.5px;font-weight:500;padding:6px 14px;border-radius:6px;border:1px solid var(--border-strong);background:var(--bg-2);color:var(--text-1);cursor:pointer;}
+  .section-tab.active{background:var(--blue);border-color:var(--blue);color:#fff;}
+
+  .empty-state{text-align:center;padding:36px 20px;color:var(--text-2);font-size:12px;}
+
+  .icon-btn{background:none;border:1px solid var(--border-strong);border-radius:5px;color:var(--text-1);width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;}
+  .icon-btn:hover{background:var(--bg-3);color:var(--text-0);border-color:var(--blue);}
+
+  .edit-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50;}
+  .edit-overlay.show{display:flex;}
+  .edit-modal{background:var(--bg-1);border:1px solid var(--border-strong);border-radius:10px;padding:20px;width:400px;}
+  .edit-modal h3{margin:0 0 14px;font-size:13px;font-weight:600;color:var(--text-0);}
+  .edit-actions{display:flex;gap:8px;margin-top:14px;}
+  .edit-actions .btn{flex:1;}
+
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--buy-dim);border:1px solid #1f5c46;color:var(--buy);padding:11px 18px;border-radius:8px;font-size:12.5px;font-weight:500;display:none;align-items:center;gap:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);}
+  .toast.show{display:flex;animation:slideIn .25s ease;}
+  @keyframes slideIn{from{transform:translateY(10px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+
+  .footer-note{font-size:11px;color:var(--text-2);line-height:1.6;margin-top:10px;}
+  .footer-note b{color:var(--text-1);}
+
+  ::-webkit-scrollbar{height:8px;width:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:4px;}
+
+/* ===== SHARED MODULE SWITCHER ===== */
+.mod-section { display:none; }
+.mod-section.active { display:block; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ===== HEADER (shared) ===== -->
+  <header>
+    <div class="brand">
+      <div class="brand-mark">CC</div>
+      <div>
+        <div class="brand-name">EQS&nbsp;CC</div>
+        <div class="brand-sub">Equity Sales · Credicorp Capital</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="market-pill" id="market-pill"><span class="dot"></span><span id="market-label">USDCOP spot abierto</span></div>
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="user-chip">SAR · Sergio Arango</div>
+    </div>
+  </header>
+
+  <!-- ===== NAV (shared) ===== -->
+  <div class="modnav">
+    <button data-mod="FX"      onclick="switchModule('FX')"      class="active">FX</button>
+    <button data-mod="RVL"     onclick="switchModule('RVL')"     class="">RVL</button>
+    <button data-mod="RVI"     onclick="switchModule('RVI')"     class="">RVI</button>
+    <button data-mod="RFI"     onclick="switchModule('RFI')"     class="disabled" disabled>RFI</button>
+    <button data-mod="Reportes" onclick="switchModule('Reportes')" class="disabled" disabled>Reportes</button>
+  </div>
+
+  <!-- ===== FX MODULE ===== -->
+  <div id="mod-FX" class="mod-section active">
+<div class="grid">
+
+    <div class="col-main">
+
+      <div class="section-label">
+        <span>Confirmaciones FX — Andes Investment Group <span class="hint">(FX_Verifications · hoy)</span></span>
+        <span class="hint" id="selCountLabel">0 seleccionadas</span>
+      </div>
+
+      <div class="blotter-wrap">
+        <div class="blotter-toolbar">
+          <div class="title">Bandeja de correo — buzón FX_Verifications</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span class="meta" id="lastUpdate">última actualización 11:02:14</span>
+            <button class="btn small" onclick="refreshInbox()">↻ Actualizar</button>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th>Hora</th>
+              <th>Lado</th>
+              <th class="num">Monto USD</th>
+              <th class="num">Rate</th>
+              <th class="num">Equiv. COP</th>
+            </tr>
+          </thead>
+          <tbody id="inboxBody"></tbody>
+        </table>
+        <div class="sel-summary" id="selSummary"></div>
+      </div>
+
+      <div class="section-label">Histórico registrado hoy</div>
+      <div class="blotter-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Hora</th>
+              <th>Cliente</th>
+              <th>Tipo</th>
+              <th>F. operación</th>
+              <th>F. cumplimiento</th>
+              <th>Lado</th>
+              <th class="num">Monto USD</th>
+              <th class="num">Tasa cliente</th>
+              <th class="num">Tasa nuestra</th>
+              <th class="num">Com. EQS</th>
+              <th class="num">Com. Mesa</th>
+              <th>Receptor</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="historyBody">
+            <tr><td colspan="13" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <div class="col-side">
+
+      <div class="section-label">Puntos swap del día <span class="hint">Mesa Divisas Medellín</span></div>
+      <div class="panel">
+        <div class="field-row">
+          <div class="field">
+            <label>Puntos venta (nos reconocen)</label>
+            <input type="text" inputmode="decimal" id="ptsVenta" value="0.70" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+          </div>
+          <div class="field">
+            <label>Puntos compra (nos cobran)</label>
+            <input type="text" inputmode="decimal" id="ptsCompra" value="0.80" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Spread a cliente — venta</label>
+            <input type="text" inputmode="decimal" id="spreadVenta" value="0.15" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+          </div>
+          <div class="field">
+            <label>Spread a cliente — compra</label>
+            <input type="text" inputmode="decimal" id="spreadCompra" value="0.15" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+          </div>
+        </div>
+        <div class="footer-note">Puntos finales a Andes: venta <b id="ptsVentaFinal">0.55</b> · compra <b id="ptsCompraFinal">0.95</b></div>
+      </div>
+
+      <div class="section-label">Calculadora de operación</div>
+      <div class="panel">
+        <div class="field-row">
+          <div class="field" style="flex:1 1 100%;">
+            <label>Cliente</label>
+            <select id="cliente" onchange="cambiarCliente()">
+              <option value="ANDES" data-modelo="ANDES">Andes Investment Group Inc</option>
+              <option value="BNP" data-modelo="UNICA">BNP Paribas</option>
+              <option value="CCAM" data-modelo="UNICA">Credicorp Capital Asset Mgmt Fund</option>
+              <option value="CCBOLSA" data-modelo="UNICA">Credicorp Capital Bolsa</option>
+              <option value="HSBC" data-modelo="UNICA">HSBC Bank PLC</option>
+              <option value="SANTANDER" data-modelo="UNICA">Fondo Santander Securities Inc</option>
+              <option value="MLI" data-modelo="UNICA">Merrill Lynch International</option>
+              <option value="IMPERA" data-modelo="UNICA">Impera Global Frontier Master Fund</option>
+              <option value="CITI" data-modelo="UNICA">Citigroup Global Markets Ltd</option>
+              <option value="IMTRUST" data-modelo="UNICA">IM Trust</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Fecha operación <span class="field-note" id="fechaOpHint" style="display:inline">(editable)</span></label>
+            <input type="date" id="tradeDate" onchange="onTradeDateChange()">
+          </div>
+          <div class="field">
+            <label>Fecha cumplimiento <span class="field-note" style="display:inline">(editable)</span></label>
+            <input type="date" id="settleDate" onchange="calcular()">
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Tipo de operación</label>
+            <select id="tipoOperacion" onchange="cambiarTipoOperacion()">
+              <option value="SPOT">SPOT</option>
+              <option value="NEXT_DAY">NEXT DAY</option>
+              <option value="WMCO">WMCO</option>
+            </select>
+          </div>
+          <div class="field">
+            <label id="labelSide">Lado (desde Andes)</label>
+            <select id="side" onchange="calcular()">
+              <option value="BUY">Compra USD</option>
+              <option value="SELL">Vende USD</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Monto USD</label>
+            <input type="text" inputmode="decimal" id="amount" value="250,000" oninput="calcular()" onblur="formatInputAsNumber(this,0);calcular()">
+          </div>
+          <div class="field" id="campoRateAndes">
+            <label>Tasa cliente</label>
+            <input type="text" inputmode="decimal" id="rate" value="3,468.75" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+          </div>
+          <div class="field" id="campoRateMercadoUnica" style="display:none;">
+            <label>Tasa mercado</label>
+            <input type="text" inputmode="decimal" id="spotReal" value="3,455.00" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+          </div>
+        </div>
+
+        <div id="bloqueUnica" style="display:none;">
+          <div class="field-row">
+            <div class="field" style="flex:1 1 100%;">
+              <label>Tasa final cliente <span class="field-note" style="display:inline">(todo incluido, a fecha cumplimiento)</span></label>
+              <input type="text" inputmode="decimal" id="rateUnica" value="3,465.00" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+            </div>
+          </div>
+        </div>
+
+        <div class="field-note" id="nochesNote">— noches de fondeo</div>
+
+        <div class="divider"></div>
+
+        <div class="rate-summary-row">
+          <div class="rate-mini">
+            <div class="rate-mini-label">Tasa mercado</div>
+            <div class="rate-mini-value" id="resTasaMercado">—</div>
+          </div>
+          <div class="rate-mini">
+            <div class="rate-mini-label" id="labelTasaT0">Tasa cliente a T+0</div>
+            <div class="rate-mini-value" id="resTasaT0">—</div>
+          </div>
+        </div>
+        <div class="live-summary">
+          <div class="live-card" style="flex:1 1 100%;">
+            <div class="live-label">Tasa final cliente <span class="field-note" style="display:inline">(la que se reporta)</span></div>
+            <div class="live-value" id="resTasaFinal">—</div>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Trader receptor</label>
+            <select id="trader">
+              <option value="JAJ" selected>JAJ — Juan Antonio Jiménez</option>
+              <option value="SAR">SAR — Sergio Arango</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="result-row"><span class="label">Margen spot</span><span class="value" id="resSpot">—</span></div>
+        <div class="result-row"><span class="label">Margen swap</span><span class="value" id="resSwap">—</span></div>
+        <div class="result-row total"><span class="label">Utilidad total</span><span class="value" id="resTotal">—</span></div>
+
+        <div class="split-bar"><div class="split-eqs" id="splitEqsBar" style="width:80%"></div><div class="split-mesa" style="width:20%"></div></div>
+        <div class="split-legend">
+          <span class="eqs">EQS 80% — <span id="resEqs">—</span></span>
+          <span class="mesa">Mesa Divisas 20% — <span id="resMesa">—</span></span>
+        </div>
+
+        <div style="margin-top:16px;">
+          <button class="btn primary" style="width:100%;" onclick="registrar()" id="btnRegistrar">Registrar operación</button>
+        </div>
+        <div class="footer-note">El cumplimiento nunca puede caer en festivo CO o US. Por defecto T+2 días hábiles considerando ambos calendarios.</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="edit-overlay" id="editOverlay">
+  <div class="edit-modal">
+    <h3>Corregir operación</h3>
+    <div class="field-row">
+      <div class="field">
+        <label>Puntos venta mesa</label>
+        <input type="text" inputmode="decimal" id="editPtsVenta" onblur="formatInputAsNumber(this,2)">
+      </div>
+      <div class="field">
+        <label>Puntos compra mesa</label>
+        <input type="text" inputmode="decimal" id="editPtsCompra" onblur="formatInputAsNumber(this,2)">
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Tasa cliente</label>
+        <input type="text" inputmode="decimal" id="editRate" onblur="formatInputAsNumber(this,2)">
+      </div>
+      <div class="field">
+        <label>Trader receptor</label>
+        <select id="editTrader">
+          <option value="JAJ">JAJ — Juan Antonio Jiménez</option>
+          <option value="SAR">SAR — Sergio Arango</option>
+        </select>
+      </div>
+    </div>
+    <div class="field-note">Corregir aquí recalcula automáticamente el margen, la comisión y el split 80/20.</div>
+    <div class="edit-actions">
+      <button class="btn ghost" onclick="cerrarEdicion()">Cancelar</button>
+      <button class="btn primary" onclick="guardarEdicion()">Guardar corrección</button>
+    </div>
+  </div>
+</div>
+<div class="edit-overlay" id="editOverlay">
+  <div class="edit-modal">
+    <h3>Corregir operación</h3>
+    <div class="field-row">
+      <div class="field">
+        <label>Puntos venta mesa</label>
+        <input type="text" inputmode="decimal" id="editPtsVenta" onblur="formatInputAsNumber(this,2)">
+      </div>
+      <div class="field">
+        <label>Puntos compra mesa</label>
+        <input type="text" inputmode="decimal" id="editPtsCompra" onblur="formatInputAsNumber(this,2)">
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Tasa cliente</label>
+        <input type="text" inputmode="decimal" id="editRate" onblur="formatInputAsNumber(this,2)">
+      </div>
+      <div class="field">
+        <label>Trader receptor</label>
+        <select id="editTrader">
+          <option value="JAJ">JAJ — Juan Antonio Jiménez</option>
+          <option value="SAR">SAR — Sergio Arango</option>
+        </select>
+      </div>
+    </div>
+    <div class="field-note">Corregir aquí recalcula automáticamente el margen, la comisión y el split 80/20.</div>
+    <div class="edit-actions">
+      <button class="btn ghost" onclick="cerrarEdicion()">Cancelar</button>
+      <button class="btn primary" onclick="guardarEdicion()">Guardar corrección</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast">✓ Operación registrada correctamente</div>
+  </div>
+
+  <!-- ===== RVL MODULE ===== -->
+  <div id="mod-RVL" class="mod-section">
+<div class="toolbar">
+    <div class="tb-field">
+      <label>Cliente</label>
+      <select id="filtroCliente" onchange="aplicarFiltros()">
+        <option value="">Todos</option>
+      </select>
+    </div>
+    <div class="tb-field">
+      <label>Especie</label>
+      <select id="filtroEspecie" onchange="aplicarFiltros()">
+        <option value="">Todas</option>
+      </select>
+    </div>
+    <div class="tb-field">
+      <label>Lado</label>
+      <select id="filtroLado" onchange="aplicarFiltros()">
+        <option value="">Todos</option>
+        <option value="Compra">Compra</option>
+        <option value="Venta">Venta</option>
+      </select>
+    </div>
+    <div class="tb-field">
+      <label>&nbsp;</label>
+      <div style="display:flex;gap:8px;">
+        <button class="btn small" onclick="cargarFidessa()">↻ Cargar folios Fidessa</button>
+        <button class="btn small ghost" onclick="borrarFiltros()">✕ Borrar filtros</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stat-cards" style="padding:16px 24px 0;">
+    <div class="stat-card">
+      <div class="stat-label">Folios filtrados</div>
+      <div class="stat-value" id="statFolios">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Cantidad total</div>
+      <div class="stat-value" id="statCantidad">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Precio promedio ponderado</div>
+      <div class="stat-value amber" id="statPrecio">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Folios marcados bloque/cruce</div>
+      <div class="stat-value purple" id="statBloque">0</div>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <div class="col-main">
+
+      <div class="section-label">
+        <span>Folio <span class="hint" id="folioContextLabel">— selecciona cliente</span></span>
+        <span class="hint" id="selCountLabel">0 seleccionados</span>
+      </div>
+
+      <div class="blotter-wrap">
+        <div class="blotter-toolbar">
+          <div class="title">Detalle folio a folio</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="btn small purple" onclick="marcarSeleccionComo('bloque')">Bloque</button>
+            <button class="btn small ghost" onclick="marcarSeleccionComo('pantalla')">Volver a Pantalla</button>
+          </div>
+        </div>
+        <div class="folios-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th><input type="checkbox" class="chk" id="chkSelectAll" onclick="toggleSeleccionarTodos(this.checked)" title="Seleccionar todos"></th>
+              <th class="sortable" onclick="ordenarPor('hora')">Hora<span class="sort-arrow" id="arrow-hora"></span></th>
+              <th class="sortable" onclick="ordenarPor('id')">Folio<span class="sort-arrow" id="arrow-id"></span></th>
+              <th class="sortable" onclick="ordenarPor('especie')">Especie<span class="sort-arrow" id="arrow-especie"></span></th>
+              <th class="sortable" onclick="ordenarPor('lado')">Lado<span class="sort-arrow" id="arrow-lado"></span></th>
+              <th class="num sortable" onclick="ordenarPor('cantidad')">Cantidad<span class="sort-arrow" id="arrow-cantidad"></span></th>
+              <th class="num sortable" onclick="ordenarPor('precio')">Precio<span class="sort-arrow" id="arrow-precio"></span></th>
+              <th class="num sortable" onclick="ordenarPor('bruto')">Valor bruto<span class="sort-arrow" id="arrow-bruto"></span></th>
+              <th>Comisión</th>
+            </tr>
+          </thead>
+          <tbody id="foliosBody"></tbody>
+        </table>
+        </div>
+        <div class="summary-bar" id="folioSummaryBar"></div>
+      </div>
+
+    </div>
+
+    <div class="col-side">
+
+      <div class="section-label">Asignación a portafolios</div>
+      <div class="panel">
+        <div class="field-note" style="margin-bottom:10px;">Reparte la cantidad seleccionada entre los portafolios indicados por el cliente. Todos quedan al mismo precio promedio ponderado.</div>
+
+        <div class="result-row"><span class="label">Cantidad seleccionada</span><span class="value" id="resSeleccionado">0</span></div>
+        <div class="result-row"><span class="label">Precio promedio ponderado</span><span class="value" id="resPPP">—</span></div>
+        <div class="result-row"><span class="label">Disponible por asignar</span><span class="value" id="resDisponible">0</span></div>
+
+        <div class="divider"></div>
+
+        <div class="field-row">
+          <div class="field" style="flex:1 1 100%;">
+            <label>Portafolio</label>
+            <select id="nuevoPortSelect"></select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Cantidad</label>
+            <input type="text" inputmode="decimal" id="nuevoPortCantidad" placeholder="0">
+          </div>
+        </div>
+        <button class="btn small purple" style="width:100%;" onclick="agregarPortafolio()">+ Agregar a la asignación</button>
+        <div class="field-note" id="errorCantidad" style="color:var(--sell);min-height:14px;margin-top:4px;"></div>
+
+        <div class="divider"></div>
+
+        <div id="allocList"></div>
+
+        <div class="divider"></div>
+
+        <div class="result-row total"><span class="label">Diferencia</span><span class="value" id="resDiferencia">0</span></div>
+
+        <div class="divider"></div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Fecha registro</label>
+            <input type="date" id="fechaRegistro" onchange="recalcularTodo()">
+          </div>
+          <div class="field">
+            <label>Fecha cumplimiento</label>
+            <input type="date" id="fechaCumplimiento" onchange="recalcularTodo()">
+          </div>
+        </div>
+
+        <button class="btn primary" style="width:100%;margin-top:8px;" id="btnGenerar" onclick="generarReporte()">Generar reporte</button>
+        <div class="footer-note">Genera <b>Operaciones_CLIENTE</b> (resumen por portafolio) y agrega al <b>Detalle_operaciones_CLIENTE</b> (folio a folio, acumulado del día).</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div style="padding:0 24px;">
+    <div class="section-label">Histórico generado hoy <span class="hint" id="historicoHint"></span></div>
+    <div class="blotter-wrap">
+      <div class="blotter-toolbar">
+        <div class="title">Operaciones_CLIENTE (resumen por portafolio)</div>
+        <button class="btn small purple" onclick="exportarDetalle()">Exportar Detalle_operaciones (folio a folio)</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Hora</th>
+            <th>Cliente</th>
+            <th>Portafolio</th>
+            <th>Especie</th>
+            <th>Lado</th>
+            <th class="num">Cantidad</th>
+            <th class="num">Precio</th>
+            <th class="num">Com%</th>
+            <th class="num">Com$</th>
+            <th class="num">IVA</th>
+            <th class="num">Monto Neto</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="historyBody">
+          <tr><td colspan="12" class="empty-state">Aún no hay reportes generados en esta sesión.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<div class="edit-overlay" id="editOverlay">
+  <div class="edit-modal">
+    <h3>Corregir operación</h3>
+    <div class="field-row">
+      <div class="field">
+        <label>Cantidad</label>
+        <input type="text" inputmode="decimal" id="editCantidad">
+      </div>
+      <div class="field">
+        <label>Precio</label>
+        <input type="text" inputmode="decimal" id="editPrecio">
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Comisión %</label>
+        <input type="text" inputmode="decimal" id="editComPct">
+      </div>
+    </div>
+    <div class="field-note">Corregir aquí recalcula automáticamente comisión, IVA y monto neto.</div>
+    <div class="edit-actions">
+      <button class="btn ghost" onclick="cerrarEdicion()">Cancelar</button>
+      <button class="btn primary" onclick="guardarEdicion()">Guardar corrección</button>
+    </div>
+  </div>
+</div>
+<div class="edit-overlay" id="editOverlay">
+  <div class="edit-modal">
+    <h3>Corregir operación</h3>
+    <div class="field-row">
+      <div class="field">
+        <label>Cantidad</label>
+        <input type="text" inputmode="decimal" id="editCantidad">
+      </div>
+      <div class="field">
+        <label>Precio</label>
+        <input type="text" inputmode="decimal" id="editPrecio">
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Comisión %</label>
+        <input type="text" inputmode="decimal" id="editComPct">
+      </div>
+    </div>
+    <div class="field-note">Corregir aquí recalcula automáticamente comisión, IVA y monto neto.</div>
+    <div class="edit-actions">
+      <button class="btn ghost" onclick="cerrarEdicion()">Cancelar</button>
+      <button class="btn primary" onclick="guardarEdicion()">Guardar corrección</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast">✓ Reporte generado correctamente</div>
+  </div>
+
+  <!-- ===== RVI MODULE ===== -->
+  <div id="mod-RVI" class="mod-section">
+<!-- TOOLBAR -->
+  <div class="toolbar">
+    <div class="tb-field">
+      <label>Cliente</label>
+      <select id="filtroCliente" onchange="filtrar()">
+        <option value="">Todos</option>
+      </select>
+    </div>
+    <div class="tb-field">
+      <label>Especie</label>
+      <select id="filtroEspecie" onchange="filtrar()">
+        <option value="">Todas</option>
+      </select>
+    </div>
+    <div class="tb-field">
+      <label>Lado</label>
+      <select id="filtroLado" onchange="filtrar()">
+        <option value="">Todos</option>
+        <option value="Sell">Sell (vendemos al cliente)</option>
+        <option value="Buy">Buy (compramos del cliente)</option>
+      </select>
+    </div>
+    <div class="tb-field">
+      <label>&nbsp;</label>
+      <div style="display:flex;gap:8px;">
+        <button class="btn small" onclick="cargarEmsx()">↻ Cargar EMSX</button>
+        <button class="btn small ghost" onclick="borrarFiltros()">✕ Borrar filtros</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="col-main">
+
+      <!-- BLOTTER EMSX -->
+      <div class="section-label">
+        <span>Blotter EMSX — RVI <span class="hint" id="contextLabel">— selecciona una línea para procesar</span></span>
+      </div>
+      <div class="blotter-wrap">
+        <div class="blotter-toolbar">
+          <div class="title">Líneas de Bloomberg (Exch ≠ CB)</div>
+          <span class="hint" id="emsx-count" style="font-size:11px;"></span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Hora</th>
+              <th>Originating Firm</th>
+              <th>Especie</th>
+              <th>Tipo</th>
+              <th>Lado</th>
+              <th class="num">Qty</th>
+              <th class="num">AvgPr</th>
+              <th class="num">Gross USD</th>
+              <th>Broker</th>
+              <th>Account</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="emsx-body"></tbody>
+        </table>
+      </div>
+
+      <!-- HISTÓRICO -->
+      <div style="margin-top:4px;">
+        <div class="section-label">
+          Histórico generado hoy
+          <span class="hint" id="histHint"></span>
+        </div>
+        <div class="blotter-wrap">
+          <div class="blotter-toolbar">
+            <div class="title">Trade Confirmations enviadas</div>
+            <button class="btn small teal" onclick="exportarPDF()">Exportar PDF / Excel</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Hora</th>
+                <th>Cliente</th>
+                <th>Account</th>
+                <th>Side</th>
+                <th>Symbol</th>
+                <th>ISIN</th>
+                <th class="num">Qty</th>
+                <th class="num">Price</th>
+                <th class="num">Gross</th>
+                <th class="num">Cost</th>
+                <th class="num">Sec Fee</th>
+                <th class="num">Net</th>
+                <th class="num">Com CCSI</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="hist-body">
+              <tr><td colspan="14" class="empty-state">Aún no hay confirmaciones generadas.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- PANEL DERECHO -->
+    <div class="col-side">
+      <div class="section-label">Trade Confirmation</div>
+
+      <!-- IDENTIFICACIÓN -->
+      <div class="panel">
+        <div class="field-row">
+          <div class="field" style="flex:1 1 100%;">
+            <label>Cliente</label>
+            <select id="tc-cliente" onchange="onCambioCliente()">
+              <option value="">Selecciona cliente</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Trade date</label>
+            <input type="date" id="tc-trade-date" onchange="calcular()">
+          </div>
+          <div class="field">
+            <label>Settlement date</label>
+            <input type="date" id="tc-settle-date" onchange="calcular()">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Symbol</label>
+            <input type="text" id="tc-symbol" placeholder="XLC" oninput="calcular()">
+          </div>
+          <div class="field">
+            <label>ISIN</label>
+            <input type="text" id="tc-isin" placeholder="US02079K3059" oninput="calcular()">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Tipo instrumento</label>
+            <select id="tc-tipo" onchange="calcular()">
+              <option value="ETF">ETF</option>
+              <option value="UCIT">UCIT</option>
+              <option value="ADR">ADR</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Side</label>
+            <select id="tc-side" onchange="calcular()">
+              <option value="Sell">Sell</option>
+              <option value="Buy">Buy</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Price</label>
+            <input type="text" inputmode="decimal" id="tc-price" oninput="calcular()" onblur="fmtInput(this,4);calcular()">
+          </div>
+          <div class="field">
+            <label>Sec Fee (auto)</label>
+            <input type="text" id="tc-secfee" readonly>
+          </div>
+        </div>
+      </div>
+
+      <!-- DISTRIBUCIÓN POR ACCOUNT -->
+      <div class="panel">
+        <div class="section-label" style="margin-bottom:8px;">
+          Distribución por account
+          <span class="hint" id="dist-diff-label"></span>
+        </div>
+
+        <div class="result-row" style="margin-bottom:8px;">
+          <span class="label">Qty total (de EMSX)</span>
+          <span class="value" id="res-qty-total">0</span>
+        </div>
+        <div class="result-row" style="margin-bottom:10px;">
+          <span class="label">Disponible por asignar</span>
+          <span class="value" id="res-disponible">0</span>
+        </div>
+
+        <div class="field-row">
+          <div class="field" style="flex:1 1 100%;">
+            <label>Account / Portafolio</label>
+            <select id="nuevo-account"></select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Cantidad</label>
+            <input type="text" inputmode="decimal" id="nueva-cantidad" placeholder="0">
+          </div>
+        </div>
+        <button class="btn small primary" style="width:100%;" onclick="agregarAccount()">+ Agregar a la distribución</button>
+        <div class="field-note" id="error-dist" style="color:var(--sell);min-height:14px;margin-top:4px;"></div>
+        <div class="divider"></div>
+        <div id="dist-list"></div>
+        <div class="result-row total"><span class="label">Diferencia</span><span class="value" id="res-diferencia">0</span></div>
+      </div>
+
+      <!-- COMISIONES -->
+      <div class="panel">
+        <div class="section-label" style="margin-bottom:10px;">Comisiones calculadas</div>
+
+        <div class="rate-cards">
+          <div class="rate-card highlight">
+            <div class="rc-label">Cost al cliente</div>
+            <div class="rc-value" id="rc-cost">—</div>
+          </div>
+          <div class="rate-card teal">
+            <div class="rc-label">Comisión CCSI</div>
+            <div class="rc-value" id="rc-ccsi">—</div>
+          </div>
+        </div>
+
+        <div class="rate-cards">
+          <div class="rate-card">
+            <div class="rc-label">Gross Amount</div>
+            <div class="rc-value" id="rc-gross">—</div>
+          </div>
+          <div class="rate-card">
+            <div class="rc-label">Net Amount (cliente)</div>
+            <div class="rc-value" id="rc-net">—</div>
+          </div>
+        </div>
+
+        <div class="result-row"><span class="label">Tarifa cliente (tabla)</span><span class="value" id="rc-tarifa-cliente">—</span></div>
+        <div class="result-row"><span class="label">Tarifa CCSI</span><span class="value" id="rc-tarifa-ccsi">—</span></div>
+        <div class="result-row total"><span class="label">Utilidad bruta (Cost − CCSI)</span><span class="value" id="rc-utilidad">—</span></div>
+      </div>
+
+      <button class="btn primary" style="width:100%;" id="btn-generar" onclick="generarTC()" disabled>Generar Trade Confirmation</button>
+      <div class="footer-note">Genera la <b>Trade Confirmation</b> en el formato estándar (mismo para todos los clientes excepto PORVENIR). Para PORVENIR activa el modo extendido.</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- EDIT MODAL -->
+<div class="edit-overlay" id="editOverlay">
+  <div class="edit-modal">
+    <h3>Corregir Trade Confirmation</h3>
+    <div class="field-row">
+      <div class="field">
+        <label>Price</label>
+        <input type="text" inputmode="decimal" id="edit-price">
+      </div>
+      <div class="field">
+        <label>Tipo instrumento</label>
+        <select id="edit-tipo">
+          <option value="ETF">ETF</option>
+          <option value="UCIT">UCIT</option>
+          <option value="ADR">ADR</option>
+        </select>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Cost cliente (override, vacío = auto)</label>
+        <input type="text" inputmode="decimal" id="edit-cost" placeholder="automático">
+      </div>
+    </div>
+    <div class="field-note">Si dejas Cost vacío, se recalcula automáticamente de la tabla de comisiones.</div>
+    <div class="edit-actions">
+      <button class="btn ghost" onclick="cerrarEdicion()">Cancelar</button>
+      <button class="btn primary" onclick="guardarEdicion()">Guardar</button>
+    </div>
+  </div>
+</div>
+<div class="edit-overlay" id="editOverlay">
+  <div class="edit-modal">
+    <h3>Corregir Trade Confirmation</h3>
+    <div class="field-row">
+      <div class="field">
+        <label>Price</label>
+        <input type="text" inputmode="decimal" id="edit-price">
+      </div>
+      <div class="field">
+        <label>Tipo instrumento</label>
+        <select id="edit-tipo">
+          <option value="ETF">ETF</option>
+          <option value="UCIT">UCIT</option>
+          <option value="ADR">ADR</option>
+        </select>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Cost cliente (override, vacío = auto)</label>
+        <input type="text" inputmode="decimal" id="edit-cost" placeholder="automático">
+      </div>
+    </div>
+    <div class="field-note">Si dejas Cost vacío, se recalcula automáticamente de la tabla de comisiones.</div>
+    <div class="edit-actions">
+      <button class="btn ghost" onclick="cerrarEdicion()">Cancelar</button>
+      <button class="btn primary" onclick="guardarEdicion()">Guardar</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast">✓ Trade Confirmation generada</div>
+  </div>
+
+  <!-- ===== RFI placeholder ===== -->
+  <div id="mod-RFI" class="mod-section">
+    <div style="text-align:center;padding:80px 20px;color:var(--text-2);font-size:13px;">
+      Módulo RFI (Renta Fija Internacional) — próximamente
+    </div>
+  </div>
+
+  <!-- ===== Reportes placeholder ===== -->
+  <div id="mod-Reportes" class="mod-section">
+    <div style="text-align:center;padding:80px 20px;color:var(--text-2);font-size:13px;">
+      Módulo de Reportes consolidados — próximamente
+    </div>
+  </div>
+
+</div>
+
+<script>
+// =====================================================================
+
+// =====================================================================
+// SUPABASE CONFIG
+// =====================================================================
+const SUPA_URL = 'https://oggsoubpyrissuozxqmb.supabase.co';
+const SUPA_KEY = 'sb_publishable___YiLN_KPsvNiAyEU_qV6g_kQVmeJFe';
+
+async function supaFetch(table, params='') {
+  const res = await fetch(`${SUPA_URL}/rest/v1/${table}?${params}`, {
+    headers: {
+      'apikey': SUPA_KEY,
+      'Authorization': `Bearer ${SUPA_KEY}`,
+      'Content-Type': 'application/json',
+    }
+  });
+  if (!res.ok) throw new Error(`Supabase error: ${res.status}`);
+  return res.json();
+}
+
+// SHARED — module switcher
+// =====================================================================
+const MARKET_LABELS = {
+  FX:  { label:'USDCOP spot abierto', color:'var(--buy)' },
+  RVL: { label:'BVC abierto',         color:'var(--buy)' },
+  RVI: { label:'Mercado NY abierto',  color:'var(--buy)' },
+  RFI: { label:'Mercado NY abierto',  color:'var(--buy)' },
+  Reportes: { label:'',              color:'var(--text-1)' },
+};
+
+function switchModule(mod) {
+  document.querySelectorAll('.mod-section').forEach(el => {
+    el.classList.toggle('active', el.id === 'mod-' + mod);
+  });
+  document.querySelectorAll('.modnav button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mod === mod);
+  });
+  const ml = MARKET_LABELS[mod];
+  if(ml) {
+    document.getElementById('market-label').textContent = ml.label;
+    document.getElementById('market-pill').style.display = ml.label ? '' : 'none';
+  }
+}
+
+function tickClock() {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString('es-CO');
+}
+
+// =====================================================================
+// FX MODULE
+// =====================================================================
+// ---------------- Datos de ejemplo (correos de hoy) ----------------
+let inboxData = []; // Se carga desde Supabase
+
+async function cargarInboxDesdeSupabase() {
+  try {
+    // trade_date viene como "Jul 08,2026" desde el correo
+    // Construimos el texto de hoy en ese mismo formato para filtrar
+    const hoyDate = new Date();
+    const mesCorto = hoyDate.toLocaleString('en-US', {month:'short'});
+    const dia = String(hoyDate.getDate()).padStart(2,'0');
+    const anio = hoyDate.getFullYear();
+    const tradeDateHoy = `${mesCorto} ${dia},${anio}`; // "Jul 08,2026"
+
+    const params = `estado=eq.pendiente&trade_date=eq.${encodeURIComponent(tradeDateHoy)}&order=capturado_en.desc&limit=200`;
+    const data = await supaFetch('fx_andes_inbox', params);
+    inboxData = data.map(r => ({
+      supaId:   r.id,
+      tradeId:  r.trade_id,
+      time:     r.exec_time ? r.exec_time.slice(11, 19) : r.capturado_en.slice(11, 19),
+      side:     r.side,
+      amount:   r.monto_usd,
+      rate:     r.rate,
+      copAmount: r.monto_cop,
+    }));
+    renderInbox();
+    const now = new Date();
+    document.getElementById('lastUpdate').textContent =
+      'última actualización ' + now.toLocaleTimeString('es-CO');
+    console.log(`✓ ${inboxData.length} trades de hoy (${tradeDateHoy}) cargados desde Supabase`);
+  } catch(e) {
+    console.error('Error cargando inbox desde Supabase:', e);
+    document.getElementById('lastUpdate').textContent = 'Error conectando con Supabase';
+  }
+}
+
+// Festivos CO + US (subset relevante para la demo)
+const festivosCO = ['2026-06-15','2026-07-20','2026-08-07'];
+const festivosUS = ['2026-06-19','2026-07-04','2026-09-07'];
+const festivos = new Set([...festivosCO, ...festivosUS]);
+
+function esHabil(d){
+  const day = d.getDay();
+  if(day===0||day===6) return false;
+  const iso = d.toISOString().slice(0,10);
+  return !festivos.has(iso);
+}
+
+function sumarDiasHabiles(fecha, dias){
+  let d = new Date(fecha);
+  let added = 0;
+  while(added < dias){
+    d.setDate(d.getDate()+1);
+    if(esHabil(d)) added++;
+  }
+  return d;
+}
+
+function fmtUSD(n){ return '$' + Number(n).toLocaleString('en-US',{maximumFractionDigits:0}); }
+function fmtCOP(n){ return '$' + Number(n).toLocaleString('en-US',{maximumFractionDigits:0}); }
+function fmtRate(n){ return Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtMoney(n){
+  const sign = n<0?'-':'';
+  return sign + '$' + Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+function fmtPts(n){ return Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtFechaCorta(isoDate){
+  const [y,m,d] = isoDate.split('-');
+  return `${d}/${m}/${y}`;
+}
+function parseLocaleNumber(str){
+  if(str===null || str===undefined) return 0;
+  const cleaned = String(str).replace(/[^0-9.\-]/g,'');
+  const v = parseFloat(cleaned);
+  return isNaN(v) ? 0 : v;
+}
+function formatInputAsNumber(el, decimals){
+  let v = parseLocaleNumber(el.value);
+  el.value = decimals>0 ? v.toLocaleString('en-US',{minimumFractionDigits:decimals,maximumFractionDigits:decimals}) : v.toLocaleString('en-US',{maximumFractionDigits:0});
+}
+
+let selectedRows = new Set();
+
+function renderInbox(){
+  const tbody = document.getElementById('inboxBody');
+  tbody.innerHTML = inboxData.map((row,i)=>{
+    const cop = row.amount * row.rate;
+    const selected = selectedRows.has(i);
+    return `<tr class="row-selectable ${selected?'row-selected':''}" onclick="toggleRow(${i})">
+      <td><input type="checkbox" class="chk" ${selected?'checked':''} onclick="event.stopPropagation();toggleRow(${i})"></td>
+      <td class="mono-id">${row.time}</td>
+      <td><span class="side-badge ${row.side==='BUY'?'buy':'sell'}">${row.side==='BUY'?'Compra':'Venta'}</span></td>
+      <td class="num">${fmtUSD(row.amount)}</td>
+      <td class="num">${fmtRate(row.rate)}</td>
+      <td class="num">${fmtCOP(cop)}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('selCountLabel').textContent = selectedRows.size + ' seleccionadas';
+  renderSelSummary();
+}
+
+function renderSelSummary(){
+  const wrap = document.getElementById('selSummary');
+  if(selectedRows.size < 2){ wrap.style.display='none'; return; }
+  const rows = [...selectedRows].map(i=>inboxData[i]);
+  const sides = new Set(rows.map(r=>r.side));
+  if(sides.size>1){
+    wrap.style.display='flex';
+    wrap.className = 'sel-summary sel-summary-error';
+    wrap.innerHTML = `<i class="error-icon">⛔</i><span><b>No se puede consolidar:</b> hay compras y ventas mezcladas en la selección. Deselecciona uno de los dos lados para continuar.</span>`;
+    return;
+  }
+  wrap.className = 'sel-summary';
+  const totalAmt = rows.reduce((s,r)=>s+r.amount,0);
+  const weightedRate = rows.reduce((s,r)=>s+r.amount*r.rate,0)/totalAmt;
+  wrap.style.display='flex';
+  wrap.innerHTML = `<span><b>${rows.length} correos</b> → 1 operación consolidada: ${fmtUSD(totalAmt)} @ rate promedio ponderado <b>${fmtRate(weightedRate)}</b></span>`;
+}
+
+function toggleRow(i){
+  if(selectedRows.has(i)) selectedRows.delete(i);
+  else selectedRows.add(i);
+  renderInbox();
+  consolidarSeleccion();
+}
+
+function consolidarSeleccion(){
+  if(selectedRows.size===0) return;
+  const rows = [...selectedRows].map(i=>inboxData[i]);
+  const sides = new Set(rows.map(r=>r.side));
+  if(sides.size>1){
+    bloquearPorMezcla(true);
+    return;
+  }
+  bloquearPorMezcla(false);
+  const side = rows[0].side;
+  const totalAmt = rows.reduce((s,r)=>s+r.amount,0);
+  const weightedRate = rows.reduce((s,r)=>s+r.amount*r.rate,0)/totalAmt;
+  document.getElementById('side').value = side;
+  document.getElementById('amount').value = totalAmt.toLocaleString('en-US',{maximumFractionDigits:0});
+  document.getElementById('rate').value = weightedRate.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  calcular();
+}
+
+function bloquearPorMezcla(activo){
+  const fields = ['side','amount','rate','tradeDate','settleDate','trader'];
+  fields.forEach(id=>{ document.getElementById(id).disabled = activo; });
+  document.getElementById('btnRegistrar').disabled = activo;
+  if(activo){
+    document.getElementById('resSpot').textContent='—';
+    document.getElementById('resSwap').textContent='—';
+    document.getElementById('resTotal').textContent='—';
+    document.getElementById('resEqs').textContent='—';
+    document.getElementById('resMesa').textContent='—';
+    window._lastCalc = null;
+  }
+}
+
+function refreshInbox(){
+  cargarInboxDesdeSupabase();
+}
+
+function getModeloEfectivo(){
+  const sel = document.getElementById('cliente');
+  const opt = sel.options[sel.selectedIndex];
+  const modeloBase = opt.getAttribute('data-modelo');
+  const tipo = document.getElementById('tipoOperacion').value;
+  // Excepción: Andes con WMCO se trata como cualquier extranjero (tasa única, 100% EQS, sin reparto).
+  if(modeloBase === 'ANDES' && tipo === 'WMCO') return 'UNICA_WMCO';
+  if(tipo === 'WMCO') return 'UNICA_WMCO';
+  return modeloBase;
+}
+
+function siguienteDiaHabil(fecha){
+  let d = new Date(fecha);
+  do{ d.setDate(d.getDate()+1); } while(!esHabil(d));
+  return d;
+}
+
+function validarFechaOperacion(){
+  // Validación visual removida por pedido del usuario: el label de Fecha operación
+  // siempre muestra "(editable)" de forma simétrica con Fecha cumplimiento, sin avisos
+  // que rompan el alineamiento de las dos columnas.
+}
+
+function cambiarTipoOperacion(){
+  const tipo = document.getElementById('tipoOperacion').value;
+  const tradeDateInput = document.getElementById('tradeDate');
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+
+  // Solo sugerimos un valor por defecto si el campo está vacío; si el usuario ya tiene
+  // algo puesto, no lo pisamos — solo validamos y avisamos si no coincide con la norma.
+  if(!tradeDateInput.value){
+    if(tipo === 'NEXT_DAY'){
+      tradeDateInput.value = siguienteDiaHabil(hoy).toISOString().slice(0,10);
+    } else {
+      tradeDateInput.value = hoy.toISOString().slice(0,10);
+    }
+    if(!document.getElementById('settleDate').value){
+      const settle = sumarDiasHabiles(new Date(tradeDateInput.value), 2);
+      document.getElementById('settleDate').value = settle.toISOString().slice(0,10);
+    }
+  }
+
+  validarFechaOperacion();
+  cambiarCliente();
+}
+
+function onTradeDateChange(){
+  // El usuario puede mover la fecha de operación libremente; solo avisamos si no coincide
+  // con la norma del tipo de operación elegido (no la forzamos).
+  validarFechaOperacion();
+  calcular();
+}
+
+function cambiarCliente(){
+  const modelo = getModeloEfectivo();
+  const esAndes = modelo === 'ANDES';
+  document.getElementById('campoRateAndes').style.display = esAndes ? '' : 'none';
+  document.getElementById('campoRateMercadoUnica').style.display = esAndes ? 'none' : '';
+  document.getElementById('bloqueUnica').style.display = esAndes ? 'none' : '';
+  document.getElementById('labelSide').textContent = esAndes ? 'Lado (desde Andes)' : 'Lado (desde cliente)';
+  document.getElementById('labelTasaT0').textContent = 'Tasa cliente a T+0';
+  calcular();
+}
+
+function calcular(){
+  const modelo = getModeloEfectivo();
+  const side = document.getElementById('side').value;
+  const amount = parseLocaleNumber(document.getElementById('amount').value);
+
+  const tdVal = document.getElementById('tradeDate').value;
+  const sdVal = document.getElementById('settleDate').value;
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  let noches = 0, nochesT0 = 0;
+  if(tdVal && sdVal){
+    const td = new Date(tdVal);
+    const sd = new Date(sdVal);
+    noches = Math.round((sd - td)/(1000*60*60*24));
+    nochesT0 = Math.round((sd - hoy)/(1000*60*60*24));
+  }
+  document.getElementById('nochesNote').textContent = (noches>=0?noches:0) + ' noches de fondeo (' + (tdVal?fmtFechaCorta(tdVal):'—') + ' → ' + (sdVal?fmtFechaCorta(sdVal):'—') + ')' + (modelo!=='ANDES' ? ' · ' + Math.max(nochesT0,0) + ' noches desde hoy para descuento a T+0' : '');
+
+  let params, rateCheck;
+
+  if(modelo === 'ANDES'){
+    const rate = parseLocaleNumber(document.getElementById('rate').value);
+    const ptsVenta = parseLocaleNumber(document.getElementById('ptsVenta').value);
+    const ptsCompra = parseLocaleNumber(document.getElementById('ptsCompra').value);
+    const spreadVenta = parseLocaleNumber(document.getElementById('spreadVenta').value);
+    const spreadCompra = parseLocaleNumber(document.getElementById('spreadCompra').value);
+    const ptsVentaFinal = ptsVenta - spreadVenta;
+    const ptsCompraFinal = ptsCompra + spreadCompra;
+    document.getElementById('ptsVentaFinal').textContent = fmtPts(ptsVentaFinal);
+    document.getElementById('ptsCompraFinal').textContent = fmtPts(ptsCompraFinal);
+    params = {rate, ptsVenta, ptsCompra, spreadVenta, spreadCompra, noches};
+    rateCheck = rate;
+  } else {
+    const rateUnica = parseLocaleNumber(document.getElementById('rateUnica').value);
+    const spotReal = parseLocaleNumber(document.getElementById('spotReal').value);
+    const ptsVenta = parseLocaleNumber(document.getElementById('ptsVenta').value);
+    const ptsCompra = parseLocaleNumber(document.getElementById('ptsCompra').value);
+    params = {rateUnica, spotReal, ptsVenta, ptsCompra, nochesT0: Math.max(nochesT0,0)};
+    rateCheck = rateUnica;
+  }
+
+  if(!amount || !rateCheck){
+    const fields = ['resTasaMercado','resTasaT0','resTasaFinal','resSpot','resSwap','resTotal','resEqs','resMesa'];
+    fields.forEach(id=>{
+      const el = document.getElementById(id);
+      if(!el) return;
+      el.value !== undefined && el.tagName==='INPUT' ? el.value = '—' : el.textContent = '—';
+    });
+    document.getElementById('btnRegistrar').disabled = true;
+    return;
+  }
+
+  const r = calcularDesdeValores(modelo, side, amount, params);
+
+  document.getElementById('resTasaMercado').textContent = fmtRate(r.fxMkt);
+  document.getElementById('resTasaT0').textContent = fmtRate(r.tasaClienteT0);
+  document.getElementById('resTasaFinal').textContent = fmtRate(r.tasaFinalCliente);
+  document.getElementById('resSpot').textContent = fmtMoney(r.margenSpot) + ' COP';
+  document.getElementById('resSwap').textContent = fmtMoney(r.margenSwap) + ' COP';
+  document.getElementById('resTotal').textContent = fmtMoney(r.utilidadTotal) + ' COP';
+  document.getElementById('resEqs').textContent = fmtMoney(r.comEqs);
+  document.getElementById('resMesa').textContent = fmtMoney(r.comMesa);
+  const splitEqs = (r.utilidadTotal>0 && modelo!=='UNICA_WMCO') ? 80 : 100;
+  document.getElementById('splitEqsBar').style.width = splitEqs + '%';
+  document.getElementById('btnRegistrar').disabled = false;
+
+  window._lastCalc = {modelo, side, amount, noches, params, ...r};
+}
+
+let operaciones = [];
+let editingId = null;
+
+function calcularDesdeValores(modelo, side, amount, params){
+  if(modelo === 'ANDES'){
+    const {rate, ptsVenta, ptsCompra, spreadVenta, spreadCompra, noches} = params;
+    const fxMkt = side==='BUY' ? rate - 0.05 : rate + 0.05;
+    const ptsVentaFinal = ptsVenta - spreadVenta;
+    const ptsCompraFinal = ptsCompra + spreadCompra;
+
+    let tasaFinalAndes, tasaFinalNuestra, utilidadTotal;
+    if(side==='BUY'){
+      tasaFinalAndes = rate + noches*ptsCompraFinal;
+      tasaFinalNuestra = fxMkt + noches*ptsCompra;
+      utilidadTotal = (tasaFinalAndes - tasaFinalNuestra) * amount;
+    } else {
+      tasaFinalAndes = rate + noches*ptsVentaFinal;
+      tasaFinalNuestra = fxMkt + noches*ptsVenta;
+      utilidadTotal = (tasaFinalNuestra - tasaFinalAndes) * amount;
+    }
+    const margenSpot = side==='BUY' ? (rate - fxMkt) * amount : (fxMkt - rate) * amount;
+    const margenSwap = utilidadTotal - margenSpot;
+
+    let comEqs, comMesa;
+    if(utilidadTotal < 0){ comEqs = utilidadTotal; comMesa = 0; }
+    else { comEqs = utilidadTotal*0.8; comMesa = utilidadTotal*0.2; }
+    return {fxMkt, tasaClienteT0:rate, tasaFinalCliente:tasaFinalAndes, tasaFinalNuestra, margenSpot, margenSwap, utilidadTotal, comEqs, comMesa};
+  }
+
+  // Modelo UNICA: el cliente recibe una sola tasa todo-incluido (rateUnica), valida a la fecha
+  // de cumplimiento. Para compararla contra el mercado de hoy, la "traemos" a valor de hoy (T+0)
+  // descontando los puntos swap reales de la mesa (sin spread propio, porque ya esta all-in)
+  // por las noches que van de HOY a la fecha de cumplimiento.
+  const {rateUnica, spotReal, ptsVenta, ptsCompra, nochesT0} = params;
+  const puntosAplicables = side==='BUY' ? ptsCompra : ptsVenta;
+  const tasaClienteT0 = rateUnica - puntosAplicables*nochesT0;
+
+  const utilidadTotal = side==='BUY'
+    ? (tasaClienteT0 - spotReal) * amount
+    : (spotReal - tasaClienteT0) * amount;
+
+  const margenSpot = 0; // no aplica desglose spot/swap en este modelo, es una sola utilidad all-in
+  const margenSwap = utilidadTotal;
+
+  let comEqs, comMesa;
+  if(modelo === 'UNICA_WMCO' || utilidadTotal < 0){
+    // WMCO: siempre 100% EQS, sin reparto con Mesa Divisas (Bloomberg fixing, sin spread propio).
+    comEqs = utilidadTotal; comMesa = 0;
+  } else {
+    comEqs = utilidadTotal*0.8; comMesa = utilidadTotal*0.2;
+  }
+  return {fxMkt:spotReal, tasaClienteT0, tasaFinalCliente:rateUnica, tasaFinalNuestra:tasaClienteT0, margenSpot, margenSwap, utilidadTotal, comEqs, comMesa};
+}
+
+function registrar(){
+  const c = window._lastCalc;
+  if(!c) return;
+  const trader = document.getElementById('trader').value;
+  const cliente = document.getElementById('cliente').value;
+  const tipoOperacion = document.getElementById('tipoOperacion').value;
+  const op = {
+    id: Date.now(),
+    horaRegistro: new Date().toLocaleTimeString('es-CO'),
+    tradeDate: document.getElementById('tradeDate').value,
+    settleDate: document.getElementById('settleDate').value,
+    modelo: c.modelo,
+    cliente: cliente,
+    tipoOperacion: tipoOperacion,
+    side: c.side,
+    amount: c.amount,
+    noches: c.noches,
+    params: {...c.params},
+    trader: trader,
+  };
+  operaciones.unshift(op);
+  renderHistory();
+
+  // Quitar de la bandeja los correos que se acaban de registrar (solo aplica a Andes)
+  if(c.modelo === 'ANDES'){
+    const usadas = [...selectedRows].sort((a,b)=>b-a);
+    // Marcar como 'registrado' en Supabase
+    usadas.forEach(i => {
+      const item = inboxData[i];
+      if(item && item.supaId) {
+        fetch(`${SUPA_URL}/rest/v1/fx_andes_inbox?id=eq.${item.supaId}`, {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPA_KEY,
+            'Authorization': `Bearer ${SUPA_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify({ estado: 'registrado' })
+        });
+      }
+    });
+    usadas.forEach(i=> inboxData.splice(i,1));
+    selectedRows.clear();
+    renderInbox();
+    bloquearPorMezcla(false);
+    document.getElementById('rate').value = '';
+  } else {
+    document.getElementById('rateUnica').value = '';
+  }
+  document.getElementById('amount').value = '';
+  calcular();
+
+  const toast = document.getElementById('toast');
+  toast.classList.add('show');
+  setTimeout(()=>toast.classList.remove('show'), 2400);
+}
+
+const clienteNombres = {
+  ANDES:'Andes Investment Group', BNP:'BNP Paribas', CCAM:'Credicorp Capital AM Fund',
+  CCBOLSA:'Credicorp Capital Bolsa', HSBC:'HSBC Bank PLC', SANTANDER:'Fondo Santander Securities',
+  MLI:'Merrill Lynch Intl', IMPERA:'Impera Global Frontier', CITI:'Citigroup Global Markets', IMTRUST:'IM Trust'
+};
+
+function renderHistory(){
+  const tbody = document.getElementById('historyBody');
+  if(operaciones.length===0){
+    tbody.innerHTML = '<tr><td colspan="13" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = operaciones.map(op=>{
+    const r = calcularDesdeValores(op.modelo, op.side, op.amount, op.params);
+    const rateMostrar = op.modelo==='ANDES' ? op.params.rate : op.params.rateUnica;
+    return `<tr>
+      <td class="mono-id">${op.horaRegistro}</td>
+      <td class="client-name">${clienteNombres[op.cliente]||op.cliente}</td>
+      <td class="mono-id">${op.tipoOperacion}</td>
+      <td class="mono-id">${op.tradeDate?fmtFechaCorta(op.tradeDate):'—'}</td>
+      <td class="mono-id">${op.settleDate?fmtFechaCorta(op.settleDate):'—'}</td>
+      <td><span class="side-badge ${op.side==='BUY'?'buy':'sell'}">${op.side==='BUY'?'Compra':'Venta'}</span></td>
+      <td class="num">${fmtUSD(op.amount)}</td>
+      <td class="num">${fmtRate(rateMostrar)}</td>
+      <td class="num">${fmtRate(r.tasaFinalNuestra)}</td>
+      <td class="num">${fmtMoney(r.comEqs)}</td>
+      <td class="num">${fmtMoney(r.comMesa)}</td>
+      <td class="mono-id">${op.trader}</td>
+      <td><button class="icon-btn" title="Corregir operación" onclick="abrirEdicion(${op.id})">✎</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function abrirEdicion(id){
+  const op = operaciones.find(o=>o.id===id);
+  if(!op) return;
+  editingId = id;
+  document.getElementById('editPtsVenta').value = fmtPts(op.params.ptsVenta);
+  document.getElementById('editPtsCompra').value = fmtPts(op.params.ptsCompra);
+  const rateActual = op.modelo==='ANDES' ? op.params.rate : op.params.rateUnica;
+  document.getElementById('editRate').value = fmtRate(rateActual);
+  document.getElementById('editTrader').value = op.trader;
+  document.getElementById('editOverlay').classList.add('show');
+}
+
+function cerrarEdicion(){
+  editingId = null;
+  document.getElementById('editOverlay').classList.remove('show');
+}
+
+function guardarEdicion(){
+  const op = operaciones.find(o=>o.id===editingId);
+  if(!op) return;
+  op.params.ptsVenta = parseLocaleNumber(document.getElementById('editPtsVenta').value);
+  op.params.ptsCompra = parseLocaleNumber(document.getElementById('editPtsCompra').value);
+  const nuevaRate = parseLocaleNumber(document.getElementById('editRate').value);
+  if(op.modelo==='ANDES'){ op.params.rate = nuevaRate; }
+  else { op.params.rateUnica = nuevaRate; }
+  op.trader = document.getElementById('editTrader').value;
+  renderHistory();
+  cerrarEdicion();
+  const toast = document.getElementById('toast');
+  toast.textContent = '✓ Corrección guardada';
+  toast.classList.add('show');
+  setTimeout(()=>{toast.classList.remove('show'); toast.textContent='✓ Operación registrada correctamente';}, 2400);
+}
+
+function tickClock(){
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString('es-CO');
+}
+
+function initDates(){
+  const today = new Date();
+  document.getElementById('tradeDate').value = today.toISOString().slice(0,10);
+  const settle = sumarDiasHabiles(today, 2);
+  document.getElementById('settleDate').value = settle.toISOString().slice(0,10);
+}
+
+// =====================================================================
+// RVL MODULE
+// =====================================================================
+// ======================================================================
+// Datos de ejemplo: folios reales de hoy (COLFONDOS / ECOPETROL)
+// más algunos folios de PROTECCION para probar el filtro por cliente.
+// ======================================================================
+
+const clientesDB = {
+  COLFONDOS: {
+    nombre: 'COLFONDOS SA',
+    portafolios: [
+      {id:'CESLP', nombre:'COLFONDOS FONDO DE CESANTÍAS LARGO PLAZO', nit:'800.198.644-5', iva:true},
+      {id:'CONS', nombre:'COLFONDOS - FPO CONSERVADOR', nit:'900.391.896-3', iva:false},
+      {id:'RETPROG', nombre:'COLFONDOS - FPO RETIRO PROGRAMADO', nit:'900.391.901-2', iva:false},
+      {id:'MODER', nombre:'COLFONDOS - FPO MODERADO', nit:'800.227.940-6', iva:false},
+      {id:'MAYORR', nombre:'COLFONDOS - FPO MAYOR RIESGO', nit:'900.391.900-5', iva:false},
+    ],
+    comisionBloque: 0.0015,
+    comisionPantalla: 0.0008,
+  },
+  PROTECCION: {
+    nombre: 'AFP PROTECCION SA',
+    portafolios: [
+      {id:'PICELSIA', nombre:'PROTECCION FPV PI-CELSIA', nit:'800.198.281', iva:false},
+      {id:'VOLGSURA', nombre:'VOLUNTARIAS PROTECCION PORTAFOLIO SURAMERICANA', nit:'800.198.281', iva:false},
+      {id:'OBLMODER', nombre:'OBLIGATORIAS PROTECCION MODERADO', nit:'800.198.281', iva:false},
+    ],
+    comisionCruce: 0.0015,
+    comisionPantalla: 0.0008,
+  },
+};
+
+// Folios crudos de Fidessa (simulando lo que vimos hoy en COR para ECOPETROL/COLFONDOS,
+// más unos folios de PROTECCION/CELSIA para validar el filtro)
+let foliosFidessa = [
+  // COLFONDOS - ECOPETROL Compra (muestra representativa de los 518 folios reales)
+  {id:757,  cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'08:34:12', cantidad:33605, precio:2670, marca:'pantalla'},
+  {id:856,  cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'08:34:38', cantidad:676599, precio:2680, marca:'bloque'},
+  {id:1328, cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'08:41:02', cantidad:15371, precio:2730, marca:'pantalla'},
+  {id:1329, cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'08:41:09', cantidad:27324, precio:2730, marca:'pantalla'},
+  {id:1407, cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'08:42:15', cantidad:609, precio:2730, marca:'pantalla'},
+  {id:1409, cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'08:42:20', cantidad:13273, precio:2730, marca:'pantalla'},
+  {id:602873,cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'09:33:04', cantidad:412000, precio:2778, marca:'bloque'},
+  {id:602874,cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'09:33:09', cantidad:298500, precio:2778, marca:'pantalla'},
+  {id:603108,cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'09:35:40', cantidad:185000, precio:2780, marca:'pantalla'},
+  {id:607386,cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'10:48:22', cantidad:520000, precio:2846, marca:'bloque'},
+
+  // PROTECCION - CELSIA (para probar filtro de cliente distinto)
+  {id:3633, cliente:'PROTECCION', especie:'CELSIA', lado:'Compra', hora:'08:49:01', cantidad:1267, precio:5230, marca:'pantalla'},
+  {id:4209, cliente:'PROTECCION', especie:'CELSIA', lado:'Compra', hora:'08:49:05', cantidad:155, precio:5230, marca:'pantalla'},
+  {id:4586, cliente:'PROTECCION', especie:'CELSIA', lado:'Compra', hora:'08:49:12', cantidad:11808, precio:5230, marca:'bloque'},
+];
+
+let selectedFolios = new Set();
+let sortCol = null;
+let sortDir = 1;
+let allocations = [];
+let operacionesHistorico = [];
+let detalleHistorico = [];
+
+// ----------------------------------------------------------------------
+// Formato de números
+// ----------------------------------------------------------------------
+function fmtInt(n){ return Number(n).toLocaleString('en-US',{maximumFractionDigits:0}); }
+function fmtRate(n){ return Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtMoney(n){
+  const sign = n<0?'-':'';
+  return sign + '$' + Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+function fmtPct(n){ return (n*100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '%'; }
+function parseLocaleNumber(str){
+  if(str===null || str===undefined) return 0;
+  const cleaned = String(str).replace(/[^0-9.\-]/g,'');
+  const v = parseFloat(cleaned);
+  return isNaN(v) ? 0 : v;
+}
+
+// ----------------------------------------------------------------------
+// Filtros
+// ----------------------------------------------------------------------
+function poblarFiltros(){
+  const selCliente = document.getElementById('filtroCliente');
+  selCliente.innerHTML = '<option value="">Todos</option>' +
+    Object.keys(clientesDB).map(k=>`<option value="${k}">${clientesDB[k].nombre}</option>`).join('');
+
+  const especies = [...new Set(foliosFidessa.map(f=>f.especie))];
+  const selEspecie = document.getElementById('filtroEspecie');
+  selEspecie.innerHTML = '<option value="">Todas</option>' +
+    especies.map(e=>`<option value="${e}">${e}</option>`).join('');
+}
+
+function getFiltrados(){
+  const cliente = document.getElementById('filtroCliente').value;
+  const especie = document.getElementById('filtroEspecie').value;
+  const lado = document.getElementById('filtroLado').value;
+  let res = foliosFidessa.filter(f=>
+    (!cliente || f.cliente===cliente) &&
+    (!especie || f.especie===especie) &&
+    (!lado || f.lado===lado)
+  );
+  if(sortCol){
+    res = [...res].sort((a,b)=>{
+      const va = sortCol==='bruto' ? a.cantidad*a.precio : a[sortCol];
+      const vb = sortCol==='bruto' ? b.cantidad*b.precio : b[sortCol];
+      if(typeof va === 'string') return va.localeCompare(vb) * sortDir;
+      return (va - vb) * sortDir;
+    });
+  }
+  return res;
+}
+
+function ordenarPor(col){
+  if(sortCol===col){ sortDir = -sortDir; } else { sortCol = col; sortDir = 1; }
+  document.querySelectorAll('.sort-arrow').forEach(el=>el.textContent='');
+  const arrowEl = document.getElementById('arrow-'+col);
+  if(arrowEl) arrowEl.textContent = sortDir===1 ? '▲' : '▼';
+  renderFolios();
+}
+
+function borrarFiltros(){
+  document.getElementById('filtroCliente').value = '';
+  document.getElementById('filtroEspecie').value = '';
+  document.getElementById('filtroLado').value = '';
+  aplicarFiltros();
+}
+
+function aplicarFiltros(){
+  selectedFolios.clear();
+  const cliente = document.getElementById('filtroCliente').value;
+  document.getElementById('folioContextLabel').textContent = cliente ? '— ' + clientesDB[cliente].nombre : '— selecciona cliente';
+  document.getElementById('errorCantidad').textContent = '';
+  renderFolios();
+  inicializarAllocationsDesdeCliente();
+}
+
+function cargarFidessa(){
+  const btn = event.target;
+  const original = btn.textContent;
+  btn.textContent = 'Cargando...';
+  setTimeout(()=>{ btn.textContent = original; aplicarFiltros(); }, 400);
+}
+
+// ----------------------------------------------------------------------
+// Render de folios
+// ----------------------------------------------------------------------
+function renderFolios(){
+  const filtrados = getFiltrados();
+  const tbody = document.getElementById('foliosBody');
+
+  if(filtrados.length===0){
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">Selecciona un cliente para ver sus folios del día.</td></tr>';
+  } else {
+    tbody.innerHTML = filtrados.map(f=>{
+      const selected = selectedFolios.has(f.id);
+      const bruto = f.cantidad * f.precio;
+      return `<tr class="row-selectable ${selected?'row-selected':''}" onclick="toggleFolio(${f.id})">
+        <td><input type="checkbox" class="chk" ${selected?'checked':''} onclick="event.stopPropagation();toggleFolio(${f.id})"></td>
+        <td class="mono-id">${f.hora}</td>
+        <td class="mono-id">${f.id}</td>
+        <td class="mono-id">${f.especie}</td>
+        <td><span class="side-badge ${f.lado==='Compra'?'buy':'sell'}">${f.lado}</span></td>
+        <td class="num">${fmtInt(f.cantidad)}</td>
+        <td class="num">${fmtRate(f.precio)}</td>
+        <td class="num">${fmtMoney(bruto)}</td>
+        <td><button class="tag-btn ${f.marca==='bloque'?'active-bloque':'active-pantalla'}" onclick="event.stopPropagation();toggleMarca(${f.id})">${f.marca==='bloque'?'Bloque':'Pantalla'}</button></td>
+      </tr>`;
+    }).join('');
+  }
+
+  document.getElementById('selCountLabel').textContent = selectedFolios.size + ' seleccionados';
+  actualizarChkSelectAll(filtrados);
+  renderStats(filtrados);
+  renderFolioSummary();
+  recalcularTodo();
+}
+
+function toggleSeleccionarTodos(checked){
+  const filtrados = getFiltrados();
+  if(checked){ filtrados.forEach(f=>selectedFolios.add(f.id)); }
+  else { filtrados.forEach(f=>selectedFolios.delete(f.id)); }
+  renderFolios();
+}
+
+function actualizarChkSelectAll(filtrados){
+  const chk = document.getElementById('chkSelectAll');
+  if(!chk) return;
+  const totalSel = filtrados.filter(f=>selectedFolios.has(f.id)).length;
+  if(filtrados.length===0){ chk.checked=false; chk.indeterminate=false; }
+  else if(totalSel===filtrados.length){ chk.checked=true; chk.indeterminate=false; }
+  else if(totalSel===0){ chk.checked=false; chk.indeterminate=false; }
+  else { chk.checked=false; chk.indeterminate=true; }
+}
+
+function toggleFolio(id){
+  if(selectedFolios.has(id)) selectedFolios.delete(id);
+  else selectedFolios.add(id);
+  renderFolios();
+}
+
+function toggleMarca(id){
+  const f = foliosFidessa.find(x=>x.id===id);
+  if(!f) return;
+  f.marca = f.marca==='bloque' ? 'pantalla' : 'bloque';
+  renderFolios();
+}
+
+function marcarSeleccionComo(tipo){
+  selectedFolios.forEach(id=>{
+    const f = foliosFidessa.find(x=>x.id===id);
+    if(f) f.marca = tipo;
+  });
+  renderFolios();
+}
+
+function renderStats(filtrados){
+  document.getElementById('statFolios').textContent = filtrados.length;
+  const totalQty = filtrados.reduce((s,f)=>s+f.cantidad,0);
+  document.getElementById('statCantidad').textContent = fmtInt(totalQty);
+  const ppp = totalQty>0 ? filtrados.reduce((s,f)=>s+f.cantidad*f.precio,0)/totalQty : 0;
+  document.getElementById('statPrecio').textContent = totalQty>0 ? fmtRate(ppp) : '—';
+  document.getElementById('statBloque').textContent = filtrados.filter(f=>f.marca==='bloque').length;
+}
+
+function renderFolioSummary(){
+  const filtrados = getFiltrados();
+  const sel = filtrados.filter(f=>selectedFolios.has(f.id));
+  const bar = document.getElementById('folioSummaryBar');
+  if(sel.length===0){ bar.innerHTML=''; return; }
+  const totalQty = sel.reduce((s,f)=>s+f.cantidad,0);
+  const ppp = totalQty>0 ? sel.reduce((s,f)=>s+f.cantidad*f.precio,0)/totalQty : 0;
+  const bloqueQty = sel.filter(f=>f.marca==='bloque').reduce((s,f)=>s+f.cantidad,0);
+  bar.innerHTML = `<span><b>${sel.length}</b> folios seleccionados · <b>${fmtInt(totalQty)}</b> acciones · precio promedio ponderado <b>${fmtRate(ppp)}</b> · <b>${fmtInt(bloqueQty)}</b> en bloque/cruce (${totalQty>0?((bloqueQty/totalQty)*100).toFixed(1):0}%)</span>`;
+}
+
+// ----------------------------------------------------------------------
+// Asignación a portafolios
+// ----------------------------------------------------------------------
+function getTotalSeleccionado(){
+  const filtrados = getFiltrados();
+  return filtrados.filter(f=>selectedFolios.has(f.id)).reduce((s,f)=>s+f.cantidad,0);
+}
+
+function getTotalAsignado(){
+  return allocations.reduce((s,a)=>s+a.cantidad,0);
+}
+
+function getDisponible(){
+  return getTotalSeleccionado() - getTotalAsignado();
+}
+
+function inicializarAllocationsDesdeCliente(){
+  allocations = [];
+  poblarSelectorNuevoPortafolio();
+  renderAllocations();
+}
+
+function poblarSelectorNuevoPortafolio(){
+  const cliente = document.getElementById('filtroCliente').value;
+  const sel = document.getElementById('nuevoPortSelect');
+  if(!cliente){
+    sel.innerHTML = '<option value="">Selecciona un cliente</option>';
+    sel.disabled = true;
+    return;
+  }
+  const ports = clientesDB[cliente].portafolios;
+  sel.disabled = false;
+  sel.innerHTML = ports.map(p=>`<option value="${p.id}">${p.nombre}</option>`).join('');
+}
+
+function agregarPortafolio(){
+  const cliente = document.getElementById('filtroCliente').value;
+  const errorEl = document.getElementById('errorCantidad');
+  errorEl.textContent = '';
+  if(!cliente){ errorEl.textContent = 'Selecciona un cliente primero.'; return; }
+
+  const portId = document.getElementById('nuevoPortSelect').value;
+  const cantidadInput = document.getElementById('nuevoPortCantidad');
+  const cantidad = parseLocaleNumber(cantidadInput.value);
+
+  if(!portId){ errorEl.textContent = 'Selecciona un portafolio.'; return; }
+  if(cantidad<=0){ errorEl.textContent = 'Ingresa una cantidad mayor a cero.'; return; }
+
+  const disponible = getDisponible();
+  if(cantidad > disponible){
+    errorEl.textContent = `No puedes asignar más de lo disponible (${fmtInt(disponible)} acciones).`;
+    return;
+  }
+
+  const existente = allocations.find(a=>a.portId===portId);
+  if(existente){ existente.cantidad += cantidad; }
+  else { allocations.push({portId, cantidad}); }
+
+  cantidadInput.value = '';
+  renderAllocations();
+}
+
+function quitarPortafolio(idx){
+  allocations.splice(idx,1);
+  renderAllocations();
+}
+
+function renderAllocations(){
+  const cliente = document.getElementById('filtroCliente').value;
+  const wrap = document.getElementById('allocList');
+  if(!cliente || allocations.length===0){
+    wrap.innerHTML = '<div class="field-note">Aún no se ha asignado ningún portafolio.</div>';
+    recalcularTodo();
+    return;
+  }
+  const ports = clientesDB[cliente].portafolios;
+  wrap.innerHTML = allocations.map((a,idx)=>{
+    const port = ports.find(p=>p.id===a.portId);
+    return `<div class="alloc-item">
+      <span class="alloc-name">${port ? port.nombre : a.portId}</span>
+      ${port && port.iva ? '<span class="iva-badge">IVA</span>' : ''}
+      <span class="alloc-qty">${fmtInt(a.cantidad)}</span>
+      <button class="remove-btn" onclick="quitarPortafolio(${idx})">✕</button>
+    </div>`;
+  }).join('');
+  recalcularTodo();
+}
+
+// ----------------------------------------------------------------------
+// Cálculo central: precio promedio ponderado + comisión efectiva por portafolio
+// ----------------------------------------------------------------------
+function calcularComisionEfectiva(cliente, folios){
+  // Mezcla ponderada de comisión según folios bloque/pantalla seleccionados,
+  // tal como en la macro original (cada folio aporta su tarifa segun su marca).
+  const totalQty = folios.reduce((s,f)=>s+f.cantidad,0);
+  if(totalQty===0) return 0;
+  const db = clientesDB[cliente];
+  const tarifaBloque = db.comisionBloque !== undefined ? db.comisionBloque : db.comisionCruce;
+  const tarifaPantalla = db.comisionPantalla;
+  const sumaComision = folios.reduce((s,f)=>{
+    const tarifa = f.marca==='bloque' ? tarifaBloque : tarifaPantalla;
+    return s + f.cantidad*tarifa;
+  }, 0);
+  return sumaComision/totalQty; // tarifa efectiva ponderada
+}
+
+function recalcularTodo(){
+  const cliente = document.getElementById('filtroCliente').value;
+  const filtrados = getFiltrados();
+  const seleccionados = filtrados.filter(f=>selectedFolios.has(f.id));
+  const totalSeleccionado = seleccionados.reduce((s,f)=>s+f.cantidad,0);
+  const totalAsignado = allocations.reduce((s,a)=>s+a.cantidad,0);
+  const disponible = totalSeleccionado - totalAsignado;
+
+  document.getElementById('resSeleccionado').textContent = fmtInt(totalSeleccionado);
+  const ppp = totalSeleccionado>0 ? seleccionados.reduce((s,f)=>s+f.cantidad*f.precio,0)/totalSeleccionado : 0;
+  document.getElementById('resPPP').textContent = totalSeleccionado>0 ? fmtRate(ppp) : '—';
+  document.getElementById('resDisponible').textContent = fmtInt(disponible);
+  const dif = disponible;
+  const difEl = document.getElementById('resDiferencia');
+  difEl.textContent = fmtInt(dif);
+  difEl.style.color = dif===0 ? 'var(--buy)' : 'var(--sell)';
+
+  const btn = document.getElementById('btnGenerar');
+  btn.disabled = !(cliente && seleccionados.length>0 && totalAsignado>0 && dif===0);
+}
+
+// ----------------------------------------------------------------------
+// Generación de reportes
+// ----------------------------------------------------------------------
+function generarReporte(){
+  const cliente = document.getElementById('filtroCliente').value;
+  const especie = document.getElementById('filtroEspecie').value || getFiltrados()[0]?.especie;
+  const lado = document.getElementById('filtroLado').value || getFiltrados()[0]?.lado;
+  const filtrados = getFiltrados();
+  const seleccionados = filtrados.filter(f=>selectedFolios.has(f.id));
+  if(seleccionados.length===0) return;
+
+  const totalQty = seleccionados.reduce((s,f)=>s+f.cantidad,0);
+  const ppp = seleccionados.reduce((s,f)=>s+f.cantidad*f.precio,0)/totalQty;
+  const comisionEfectiva = calcularComisionEfectiva(cliente, seleccionados);
+  const ports = clientesDB[cliente].portafolios;
+  const fechaReg = document.getElementById('fechaRegistro').value;
+  const fechaCum = document.getElementById('fechaCumplimiento').value;
+  const hora = new Date().toLocaleTimeString('es-CO');
+  const loteId = Date.now();
+
+  allocations.forEach(a=>{
+    if(a.cantidad<=0) return;
+    const port = ports.find(p=>p.id===a.portId);
+    const montoBruto = a.cantidad * ppp;
+    const comisionMonto = montoBruto * comisionEfectiva;
+    const ivaMonto = port.iva ? comisionMonto*0.19 : 0;
+    const montoNeto = lado==='Compra' ? montoBruto + comisionMonto + ivaMonto : montoBruto - comisionMonto - ivaMonto;
+
+    operacionesHistorico.unshift({
+      id: Date.now() + Math.random(),
+      loteId,
+      hora, cliente: clientesDB[cliente].nombre, portafolio: port.nombre, especie, lado,
+      cantidad: a.cantidad, precio: ppp, comPct: comisionEfectiva, comMonto: comisionMonto,
+      ivaMonto, montoNeto, fechaReg, fechaCum,
+    });
+  });
+
+  seleccionados.forEach(f=>{
+    detalleHistorico.push({
+      folio: f.id, cliente: clientesDB[cliente].nombre, especie, lado,
+      cantidad: f.cantidad, precio: f.precio, marca: f.marca, fechaReg, fechaCum,
+    });
+  });
+
+  // Quitar de la bandeja de folios pendientes los que ya quedaron reportados,
+  // igual que en FX: un folio ya asignado no puede volver a seleccionarse
+  // ni reportarse por accidente.
+  const idsUsados = new Set(seleccionados.map(f=>f.id));
+  foliosFidessa = foliosFidessa.filter(f=>!idsUsados.has(f.id));
+
+  renderHistory();
+
+  // Limpiar selección y allocations tras registrar, igual que en FX
+  selectedFolios.clear();
+  allocations = [];
+  renderFolios();
+  inicializarAllocationsDesdeCliente();
+
+  const toast = document.getElementById('toast');
+  toast.classList.add('show');
+  setTimeout(()=>toast.classList.remove('show'), 2400);
+}
+
+function renderHistory(){
+  const tbody = document.getElementById('historyBody');
+  if(operacionesHistorico.length===0){
+    tbody.innerHTML = '<tr><td colspan="12" class="empty-state">Aún no hay reportes generados en esta sesión.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = operacionesHistorico.map(op=>`<tr>
+    <td class="mono-id">${op.hora}</td>
+    <td>${op.cliente}</td>
+    <td>${op.portafolio}</td>
+    <td class="mono-id">${op.especie}</td>
+    <td><span class="side-badge ${op.lado==='Compra'?'buy':'sell'}">${op.lado}</span></td>
+    <td class="num">${fmtInt(op.cantidad)}</td>
+    <td class="num">${fmtRate(op.precio)}</td>
+    <td class="num">${fmtPct(op.comPct)}</td>
+    <td class="num">${fmtMoney(op.comMonto)}</td>
+    <td class="num">${fmtMoney(op.ivaMonto)}</td>
+    <td class="num">${fmtMoney(op.montoNeto)}</td>
+    <td><button class="icon-btn" title="Corregir operación" onclick="abrirEdicion(${op.id})">✎</button></td>
+  </tr>`).join('');
+  document.getElementById('historicoHint').textContent = `(${operacionesHistorico.length} líneas)`;
+}
+
+editingId = null;
+
+function abrirEdicion(id){
+  const op = operacionesHistorico.find(o=>o.id===id);
+  if(!op) return;
+  editingId = id;
+  document.getElementById('editCantidad').value = fmtInt(op.cantidad);
+  document.getElementById('editPrecio').value = fmtRate(op.precio);
+  document.getElementById('editComPct').value = (op.comPct*100).toFixed(4);
+  document.getElementById('editOverlay').classList.add('show');
+}
+
+function cerrarEdicion(){
+  editingId = null;
+  document.getElementById('editOverlay').classList.remove('show');
+}
+
+function guardarEdicion(){
+  const op = operacionesHistorico.find(o=>o.id===editingId);
+  if(!op) return;
+  const teniaIva = op.ivaMonto > 0;
+  const nuevaCantidad = parseLocaleNumber(document.getElementById('editCantidad').value);
+  const nuevoPrecio = parseLocaleNumber(document.getElementById('editPrecio').value);
+  const nuevaComPct = parseLocaleNumber(document.getElementById('editComPct').value) / 100;
+
+  op.cantidad = nuevaCantidad;
+  op.precio = nuevoPrecio;
+  op.comPct = nuevaComPct;
+
+  const montoBruto = op.cantidad * op.precio;
+  op.comMonto = montoBruto * op.comPct;
+  op.ivaMonto = teniaIva ? op.comMonto*0.19 : 0;
+  op.montoNeto = op.lado==='Compra' ? montoBruto + op.comMonto + op.ivaMonto : montoBruto - op.comMonto - op.ivaMonto;
+
+  renderHistory();
+  cerrarEdicion();
+  const toast = document.getElementById('toast');
+  toast.textContent = '✓ Corrección guardada';
+  toast.classList.add('show');
+  setTimeout(()=>{toast.classList.remove('show'); toast.textContent='✓ Reporte generado correctamente';}, 2400);
+}
+
+function exportarDetalle(){
+  if(detalleHistorico.length===0){ alert('No hay folios en el detalle todavía.'); return; }
+  alert('Detalle_operaciones — ' + detalleHistorico.length + ' folios acumulados hoy.\n\nEn la versión conectada a Supabase esto generará el archivo Excel real para Back Office.');
+}
+
+function tickClock(){
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString('es-CO');
+}
+
+function initDates(){
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('fechaRegistro').value = today;
+  const d = new Date();
+  d.setDate(d.getDate()+4); // aprox T+2 habil para el ejemplo visual
+  document.getElementById('fechaCumplimiento').value = d.toISOString().slice(0,10);
+}
+
+// =====================================================================
+// RVI MODULE
+// =====================================================================
+// =====================================================================
+// CATÁLOGO DE CLIENTES RVI
+// Tabla BBG GROUP → comisión (USD/acción para ETF/ADR, % para UCIT)
+// Misma tabla que vimos validada con datos reales de hoy
+// =====================================================================
+const clientesRVI = {
+  COLFONDOS: {
+    nombre:'COLFONDOS SA',
+    taxId:'860.068.182',
+    comETF:0.004, comUCIT:0.04/100, comADR:0.004,
+    portafolios:['FPO MODERADO','FPO MAYOR RIESGO','FPO CONSERVADOR','FPO RETIRO PROGRAMADO','CESANTIAS LP'],
+  },
+  PROTECCION: {
+    nombre:'AFP PROTECCION SA',
+    taxId:'800.198.281',
+    comETF:0.004, comUCIT:0.04/100, comADR:0.004,
+    portafolios:['OBLIGATORIO MODERADO','OBLIGATORIO MAYOR RIESGO','OBLIGATORIO CONSERVADOR','VOLUNTARIO'],
+  },
+  PORVENIR: {
+    nombre:'SOCIEDAD ADMINISTRADORA PORVENIR SA',
+    taxId:'830.114.379',
+    comETF:0.004, comUCIT:0.04/100, comADR:0.004,
+    portafolios:['PORVENIR MODERADO','PORVENIR MAYOR RIESGO','PORVENIR RETIRO'],
+    esPorvenir:true,
+  },
+  ALLIANZ: {
+    nombre:'ALLIANZ SEGUROS SA',
+    taxId:'890.300.758',
+    comETF:0.008, comUCIT:0.08/100, comADR:0.008,
+    portafolios:['ALLIANZ DIVERSIFICADO','ALLIANZ EFICIENTE'],
+  },
+  SURAMERICANA: {
+    nombre:'SEGUROS DE VIDA SURAMERICANA SA',
+    taxId:'800.131.884',
+    comETF:0.01, comUCIT:0.10/100, comADR:0.01,
+    portafolios:['SURAMERICANA VIDA'],
+  },
+  BBVA: {
+    nombre:'BBVA ASSET MANAGEMENT SA SF',
+    taxId:'800.228.535',
+    comETF:0.008, comUCIT:0.08/100, comADR:0.008,
+    portafolios:['BBVA PORTAFOLIO'],
+  },
+};
+
+// CCSI: comisión que nos cobran a nosotros
+const CCSI = {
+  comETF:0.003,   // USD/acción
+  comUCIT:0.03/100, // % gross
+  comADR:0.005,   // USD/acción
+  minUSD:20,      // mínimo siempre
+};
+
+// Sec Fee actual NYSE: 0.0000278 × gross (solo para ventas)
+const SEC_FEE_RATE = 0.0000278;
+
+// =====================================================================
+// DATOS DE EJEMPLO EMSX — datos reales de hoy
+// =====================================================================
+let emsxData = [
+  {id:1, hora:'09:41', firm:'COLFONDOS SA', cliente:'COLFONDOS', especie:'XLC', isin:'US02079K3059', tipo:'ETF', lado:'Sell', qty:159000, avgPr:106.7237, broker:'CCSI', account:'', status:'Filled', procesado:false},
+  {id:2, hora:'10:09', firm:'CREDICORP CAPITAL COLOMBIA SA', cliente:'', especie:'ACWI', isin:'US46432F8390', tipo:'ETF', lado:'Buy', qty:4780, avgPr:157.62, broker:'TFSR', account:'', status:'Filled', procesado:false},
+];
+
+let distribuciones = [];
+let historial = [];
+let lineaActiva = null;
+editingId = null;
+
+// =====================================================================
+// FORMATO
+// =====================================================================
+function fmtInt(n){ return Number(n).toLocaleString('en-US',{maximumFractionDigits:0}); }
+function fmtRate(n,d=4){ return Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function fmtMoney(n,d=2){ const s=n<0?'-':''; return s+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function parseNum(str){ return parseFloat(String(str).replace(/[^0-9.\-]/g,''))||0; }
+function fmtInput(el,d){ el.value=fmtRate(parseNum(el.value),d); }
+
+// =====================================================================
+// FILTROS
+// =====================================================================
+function poblarFiltros(){
+  const clientes = [...new Set(emsxData.map(r=>r.firm))];
+  const especies = [...new Set(emsxData.map(r=>r.especie))];
+  document.getElementById('filtroCliente').innerHTML = '<option value="">Todos</option>'+clientes.map(c=>`<option value="${c}">${c}</option>`).join('');
+  document.getElementById('filtroEspecie').innerHTML = '<option value="">Todas</option>'+especies.map(e=>`<option value="${e}">${e}</option>`).join('');
+  poblarClienteSelector();
+}
+
+function getFiltradas(){
+  const firm = document.getElementById('filtroCliente').value;
+  const esp = document.getElementById('filtroEspecie').value;
+  const lado = document.getElementById('filtroLado').value;
+  return emsxData.filter(r=>
+    (!firm || r.firm===firm) &&
+    (!esp  || r.especie===esp) &&
+    (!lado || r.lado===lado)
+  );
+}
+
+function filtrar(){ renderEmsx(); }
+function borrarFiltros(){
+  document.getElementById('filtroCliente').value='';
+  document.getElementById('filtroEspecie').value='';
+  document.getElementById('filtroLado').value='';
+  renderEmsx();
+}
+function cargarEmsx(){ renderEmsx(); }
+
+// =====================================================================
+// RENDER BLOTTER EMSX
+// =====================================================================
+function renderEmsx(){
+  const data = getFiltradas();
+  const tbody = document.getElementById('emsx-body');
+  document.getElementById('emsx-count').textContent = data.length+' líneas';
+  if(!data.length){
+    tbody.innerHTML='<tr><td colspan="11" class="empty-state">Sin líneas que coincidan con los filtros.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.map(r=>`
+    <tr class="clickable ${lineaActiva===r.id?'row-active':''} ${r.procesado?'':'opacity-pending'}" onclick="seleccionarLinea(${r.id})">
+      <td class="mono-id">${r.hora}</td>
+      <td>${r.firm}</td>
+      <td class="mono-id"><b>${r.especie}</b></td>
+      <td><span class="tipo-badge">${r.tipo}</span></td>
+      <td><span class="side-badge ${r.lado==='Buy'?'buy':'sell'}">${r.lado}</span></td>
+      <td class="num">${fmtInt(r.qty)}</td>
+      <td class="num">${fmtRate(r.avgPr,4)}</td>
+      <td class="num">${fmtMoney(r.qty*r.avgPr,0)}</td>
+      <td class="mono-id">${r.broker}</td>
+      <td class="mono-id">${r.account||'—'}</td>
+      <td><span class="status-badge ${r.procesado?'filled':'pending'}">${r.procesado?'Procesado':'Pendiente'}</span></td>
+    </tr>`).join('');
+}
+
+// =====================================================================
+// SELECCIONAR LÍNEA
+// =====================================================================
+function seleccionarLinea(id){
+  const linea = emsxData.find(r=>r.id===id);
+  if(!linea) return;
+  lineaActiva = id;
+
+  // Poblar panel derecho con datos de la línea
+  if(linea.cliente && clientesRVI[linea.cliente]){
+    document.getElementById('tc-cliente').value = linea.cliente;
+  }
+  document.getElementById('tc-symbol').value = linea.especie;
+  document.getElementById('tc-isin').value = linea.isin;
+  document.getElementById('tc-tipo').value = linea.tipo;
+  document.getElementById('tc-side').value = linea.lado;
+  document.getElementById('tc-price').value = fmtRate(linea.avgPr,4);
+
+  // Distribucion: si la linea ya tiene account definido, pre-asignar todo
+  distribuciones = [];
+  if(linea.account){
+    distribuciones.push({account:linea.account, qty:linea.qty});
+  }
+
+  document.getElementById('res-qty-total').textContent = fmtInt(linea.qty);
+  document.getElementById('error-dist').textContent = '';
+  onCambioCliente();
+  renderDistribuciones();
+  calcular();
+  renderEmsx();
+}
+
+// =====================================================================
+// CLIENTE / SELECTOR DE ACCOUNTS
+// =====================================================================
+function poblarClienteSelector(){
+  const sel = document.getElementById('tc-cliente');
+  sel.innerHTML = '<option value="">Selecciona cliente</option>'+
+    Object.entries(clientesRVI).map(([k,v])=>`<option value="${k}">${v.nombre}</option>`).join('');
+
+  const acc = document.getElementById('nuevo-account');
+  acc.innerHTML = '<option value="">— portafolio / account —</option>';
+}
+
+function onCambioCliente(){
+  const key = document.getElementById('tc-cliente').value;
+  const acc = document.getElementById('nuevo-account');
+  if(!key || !clientesRVI[key]){
+    acc.innerHTML='<option value="">Selecciona cliente primero</option>';
+    calcular(); return;
+  }
+  const ports = clientesRVI[key].portafolios;
+  acc.innerHTML = ports.map(p=>`<option value="${p}">${p}</option>`).join('');
+  calcular();
+}
+
+// =====================================================================
+// DISTRIBUCIÓN
+// =====================================================================
+function getTotalDistribuido(){ return distribuciones.reduce((s,d)=>s+d.qty,0); }
+
+function getQtyTotal(){
+  const linea = emsxData.find(r=>r.id===lineaActiva);
+  return linea ? linea.qty : 0;
+}
+
+function agregarAccount(){
+  const account = document.getElementById('nuevo-account').value;
+  const qtyStr = document.getElementById('nueva-cantidad').value;
+  const qty = parseNum(qtyStr);
+  const errEl = document.getElementById('error-dist');
+  errEl.textContent='';
+
+  if(!account){ errEl.textContent='Selecciona un account primero.'; return; }
+  if(qty<=0){ errEl.textContent='Ingresa una cantidad mayor a cero.'; return; }
+
+  const disponible = getQtyTotal() - getTotalDistribuido();
+  if(qty>disponible){
+    errEl.textContent=`No puedes asignar más de lo disponible (${fmtInt(disponible)}).`;
+    return;
+  }
+  const existente = distribuciones.find(d=>d.account===account);
+  if(existente){ existente.qty+=qty; }
+  else{ distribuciones.push({account, qty}); }
+
+  document.getElementById('nueva-cantidad').value='';
+  renderDistribuciones();
+  calcular();
+}
+
+function quitarAccount(idx){
+  distribuciones.splice(idx,1);
+  renderDistribuciones();
+  calcular();
+}
+
+function renderDistribuciones(){
+  const wrap = document.getElementById('dist-list');
+  const qtyTotal = getQtyTotal();
+  const asignado = getTotalDistribuido();
+  const disponible = qtyTotal - asignado;
+
+  document.getElementById('res-disponible').textContent = fmtInt(disponible);
+  const difEl = document.getElementById('res-diferencia');
+  difEl.textContent = fmtInt(disponible);
+  difEl.className = 'value '+(disponible===0?'diff-ok':'diff-err');
+
+  if(!distribuciones.length){
+    wrap.innerHTML='<div class="field-note" style="margin-bottom:8px;">Aún no se han asignado accounts.</div>';
+    return;
+  }
+  wrap.innerHTML = distribuciones.map((d,i)=>`
+    <div class="dist-row">
+      <div class="dist-row-top">
+        <span style="flex:1;font-size:12px;color:var(--text-0);">${d.account}</span>
+        <span style="font-family:var(--mono);font-weight:600;font-size:13px;">${fmtInt(d.qty)}</span>
+        <button class="remove-btn" onclick="quitarAccount(${i})">✕</button>
+      </div>
+    </div>`).join('');
+}
+
+// =====================================================================
+// CÁLCULO DE COMISIONES
+// =====================================================================
+function calcularComisiones(clienteKey, tipo, qty, price){
+  const db = clientesRVI[clienteKey];
+  if(!db) return null;
+  const gross = qty * price;
+
+  let costCliente, costCCSI;
+  if(tipo==='ETF'){
+    costCliente = Math.max(qty * db.comETF, 0);
+    costCCSI    = Math.max(qty * CCSI.comETF, CCSI.minUSD);
+  } else if(tipo==='ADR'){
+    costCliente = Math.max(qty * db.comADR, 0);
+    costCCSI    = Math.max(qty * CCSI.comADR, CCSI.minUSD);
+  } else { // UCIT
+    costCliente = Math.max(gross * db.comUCIT, 0);
+    costCCSI    = Math.max(gross * CCSI.comUCIT, CCSI.minUSD);
+  }
+  return {gross, costCliente, costCCSI, utilidad: costCliente - costCCSI};
+}
+
+function calcularSecFee(lado, gross){
+  return lado==='Sell' ? gross * SEC_FEE_RATE : 0;
+}
+
+function calcular(){
+  const clienteKey = document.getElementById('tc-cliente').value;
+  const tipo = document.getElementById('tc-tipo').value;
+  const lado = document.getElementById('tc-side').value;
+  const price = parseNum(document.getElementById('tc-price').value);
+  const qty = getQtyTotal();
+
+  if(!clienteKey || !price || !qty){
+    ['rc-cost','rc-ccsi','rc-gross','rc-net','rc-tarifa-cliente','rc-tarifa-ccsi','rc-utilidad','tc-secfee']
+      .forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—';if(el&&el.tagName==='INPUT')el.value='—';});
+    document.getElementById('btn-generar').disabled=true;
+    return;
+  }
+
+  const c = calcularComisiones(clienteKey, tipo, qty, price);
+  if(!c) return;
+  const secFee = calcularSecFee(lado, c.gross);
+  const netCliente = lado==='Sell' ? c.gross - c.costCliente - secFee : c.gross + c.costCliente;
+
+  document.getElementById('rc-gross').textContent = fmtMoney(c.gross,0);
+  document.getElementById('rc-cost').textContent = fmtMoney(c.costCliente,2);
+  document.getElementById('rc-ccsi').textContent = fmtMoney(c.costCCSI,2);
+  document.getElementById('rc-net').textContent = fmtMoney(netCliente,2);
+  document.getElementById('rc-utilidad').textContent = fmtMoney(c.utilidad,2);
+  document.getElementById('tc-secfee').value = secFee>0 ? fmtRate(secFee,4) : '0.0000';
+
+  const db = clientesRVI[clienteKey];
+  const tarifaLabel = tipo==='UCIT' ? (db.comUCIT*100).toFixed(2)+'%' : '$'+db.comETF+'/acc';
+  const ccsiLabel   = tipo==='UCIT' ? (CCSI.comUCIT*100).toFixed(2)+'% (mín $'+CCSI.minUSD+')' : '$'+CCSI.comETF+'/acc (mín $'+CCSI.minUSD+')';
+  document.getElementById('rc-tarifa-cliente').textContent = tarifaLabel;
+  document.getElementById('rc-tarifa-ccsi').textContent   = ccsiLabel;
+
+  const diferencia = getQtyTotal() - getTotalDistribuido();
+  const listo = clienteKey && price>0 && qty>0 && diferencia===0;
+  document.getElementById('btn-generar').disabled = !listo;
+}
+
+// =====================================================================
+// GENERAR TRADE CONFIRMATION
+// =====================================================================
+function generarTC(){
+  const clienteKey = document.getElementById('tc-cliente').value;
+  const tipo       = document.getElementById('tc-tipo').value;
+  const lado       = document.getElementById('tc-side').value;
+  const price      = parseNum(document.getElementById('tc-price').value);
+  const symbol     = document.getElementById('tc-symbol').value;
+  const isin       = document.getElementById('tc-isin').value;
+  const tradeDate  = document.getElementById('tc-trade-date').value;
+  const settleDate = document.getElementById('tc-settle-date').value;
+  const qty        = getQtyTotal();
+  const db         = clientesRVI[clienteKey];
+  const c          = calcularComisiones(clienteKey, tipo, qty, price);
+  const secFee     = calcularSecFee(lado, c.gross);
+  const netCliente = lado==='Sell' ? c.gross - c.costCliente - secFee : c.gross + c.costCliente;
+  const hora       = new Date().toLocaleTimeString('es-CO');
+  const tcId       = Date.now();
+
+  // Una TC por account distribuido
+  distribuciones.forEach(d=>{
+    const grossAcc  = d.qty * price;
+    const costAcc   = tipo==='UCIT' ? grossAcc*db.comUCIT : d.qty*db.comETF;
+    const secFeeAcc = lado==='Sell' ? grossAcc*SEC_FEE_RATE : 0;
+    const netAcc    = lado==='Sell' ? grossAcc-costAcc-secFeeAcc : grossAcc+costAcc;
+    const ccsiAcc   = Math.max(tipo==='UCIT' ? grossAcc*CCSI.comUCIT : d.qty*CCSI.comETF, CCSI.minUSD);
+
+    historial.unshift({
+      id: tcId+Math.random(),
+      hora, cliente:db.nombre, account:d.account, side:lado, symbol, isin,
+      qty:d.qty, price, gross:grossAcc, cost:costAcc, secFee:secFeeAcc, net:netAcc,
+      ccsi:ccsiAcc, tradeDate, settleDate, tipo,
+    });
+  });
+
+  // Marcar línea como procesada
+  const linea = emsxData.find(r=>r.id===lineaActiva);
+  if(linea){ linea.procesado=true; linea.account=distribuciones.map(d=>d.account).join(' / '); }
+
+  renderHistorial();
+  renderEmsx();
+
+  // Reset
+  distribuciones=[];
+  lineaActiva=null;
+  renderDistribuciones();
+  document.getElementById('btn-generar').disabled=true;
+
+  const t=document.getElementById('toast');
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2400);
+}
+
+function renderHistorial(){
+  const tbody=document.getElementById('hist-body');
+  if(!historial.length){
+    tbody.innerHTML='<tr><td colspan="14" class="empty-state">Aún no hay confirmaciones generadas.</td></tr>';
+    return;
+  }
+  tbody.innerHTML=historial.map(h=>`<tr>
+    <td class="mono-id">${h.hora}</td>
+    <td>${h.cliente}</td>
+    <td>${h.account}</td>
+    <td><span class="side-badge ${h.side==='Buy'?'buy':'sell'}">${h.side}</span></td>
+    <td class="mono-id"><b>${h.symbol}</b></td>
+    <td class="mono-id">${h.isin}</td>
+    <td class="num">${fmtInt(h.qty)}</td>
+    <td class="num">${fmtRate(h.price,4)}</td>
+    <td class="num">${fmtMoney(h.gross,0)}</td>
+    <td class="num">${fmtMoney(h.cost,2)}</td>
+    <td class="num">${fmtRate(h.secFee,4)}</td>
+    <td class="num">${fmtMoney(h.net,2)}</td>
+    <td class="num">${fmtMoney(h.ccsi,2)}</td>
+    <td><button class="icon-btn" title="Corregir" onclick="abrirEdicion(${h.id})">✎</button></td>
+  </tr>`).join('');
+  document.getElementById('histHint').textContent=`(${historial.length} líneas)`;
+}
+
+function exportarPDF(){
+  alert('En la versión conectada a Supabase esto generará el PDF/Excel en el formato estándar de Trade Confirmation y el de PORVENIR extendido si aplica.');
+}
+
+// =====================================================================
+// EDICIÓN
+// =====================================================================
+function abrirEdicion(id){
+  const h=historial.find(x=>x.id===id);
+  if(!h) return;
+  editingId=id;
+  document.getElementById('edit-price').value=fmtRate(h.price,4);
+  document.getElementById('edit-tipo').value=h.tipo;
+  document.getElementById('edit-cost').value='';
+  document.getElementById('editOverlay').classList.add('show');
+}
+
+function cerrarEdicion(){
+  editingId=null;
+  document.getElementById('editOverlay').classList.remove('show');
+}
+
+function guardarEdicion(){
+  const h=historial.find(x=>x.id===editingId);
+  if(!h) return;
+  const nuevoPrice=parseNum(document.getElementById('edit-price').value)||h.price;
+  const nuevoTipo=document.getElementById('edit-tipo').value;
+  const costOverride=document.getElementById('edit-cost').value;
+  const db=clientesRVI[Object.keys(clientesRVI).find(k=>clientesRVI[k].nombre===h.cliente)];
+
+  h.price=nuevoPrice;
+  h.tipo=nuevoTipo;
+  h.gross=h.qty*nuevoPrice;
+  h.secFee=h.side==='Sell'?h.gross*SEC_FEE_RATE:0;
+
+  if(costOverride&&parseNum(costOverride)>0){
+    h.cost=parseNum(costOverride);
+  } else {
+    h.cost=nuevoTipo==='UCIT'?h.gross*(db?.comUCIT||0.004):h.qty*(db?.comETF||0.004);
+  }
+  h.net=h.side==='Sell'?h.gross-h.cost-h.secFee:h.gross+h.cost;
+  h.ccsi=Math.max(nuevoTipo==='UCIT'?h.gross*CCSI.comUCIT:h.qty*CCSI.comETF,CCSI.minUSD);
+
+  renderHistorial();
+  cerrarEdicion();
+  const t=document.getElementById('toast');
+  t.textContent='✓ Corrección guardada';
+  t.classList.add('show');
+  setTimeout(()=>{t.classList.remove('show');t.textContent='✓ Trade Confirmation generada';},2400);
+}
+
+// =====================================================================
+// INIT
+// =====================================================================
+function initDates(){
+  const hoy=new Date().toISOString().slice(0,10);
+  document.getElementById('tc-trade-date').value=hoy;
+  const settle=new Date();
+  settle.setDate(settle.getDate()+2);
+  document.getElementById('tc-settle-date').value=settle.toISOString().slice(0,10);
+}
+
+function tickClock(){ document.getElementById('clock').textContent=new Date().toLocaleTimeString('es-CO'); }
+
+
+// =====================================================================
+// GLOBAL INIT
+// =====================================================================
+// FX
+cargarInboxDesdeSupabase();
+initDates();
+cambiarTipoOperacion();
+calcular();
+// RVL
+poblarFiltros();
+renderFolios();
+initDates();
+// RVI
+poblarFiltros();
+renderEmsx();
+renderDistribuciones();
+initDates();
+
+// Clock
+tickClock();
+setInterval(tickClock, 1000);
+
+// Start on FX
+switchModule('FX');
+</script>
+</body>
+</html>
