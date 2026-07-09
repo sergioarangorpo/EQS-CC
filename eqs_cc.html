@@ -1734,7 +1734,10 @@ function cambiarTipoOperacion(){
   } else {
     tradeDateInput.value = hoy.toISOString().slice(0,10);
   }
-  const settle = sumarDiasHabiles(parseFechaLocal(tradeDateInput.value), 2);
+  // La fecha de cumplimiento por defecto siempre es T+2 hábil desde HOY,
+  // no desde la fecha de operación — NEXT_DAY solo corre la fecha de
+  // operación un día, no debe arrastrar también el cumplimiento.
+  const settle = sumarDiasHabiles(hoy, 2);
   document.getElementById('settleDate').value = settle.toISOString().slice(0,10);
 
   validarFechaOperacion();
@@ -1780,9 +1783,12 @@ function calcular(){
     const td = new Date(tdVal);
     const sd = new Date(sdVal);
     noches = Math.round((sd - td)/(1000*60*60*24));
-    nochesT0 = Math.round((sd - hoy)/(1000*60*60*24));
+    // El descuento a T+0 también parte de la fecha de operación, no del
+    // calendario real de hoy — si NEXT_DAY corrió la fecha de operación,
+    // el T+0 debe reflejar noches desde esa fecha, no desde hoy.
+    nochesT0 = noches;
   }
-  document.getElementById('nochesNote').textContent = (noches>=0?noches:0) + ' noches de fondeo (' + (tdVal?fmtFechaCorta(tdVal):'—') + ' → ' + (sdVal?fmtFechaCorta(sdVal):'—') + ')' + (modelo!=='ANDES' ? ' · ' + Math.max(nochesT0,0) + ' noches desde hoy para descuento a T+0' : '');
+  document.getElementById('nochesNote').textContent = (noches>=0?noches:0) + ' noches de fondeo (' + (tdVal?fmtFechaCorta(tdVal):'—') + ' → ' + (sdVal?fmtFechaCorta(sdVal):'—') + ')' + (modelo!=='ANDES' ? ' · ' + Math.max(nochesT0,0) + ' noches para descuento a T+0' : '');
 
   let params, rateCheck;
 
