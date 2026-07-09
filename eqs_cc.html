@@ -1804,6 +1804,14 @@ function calcular(){
   const side = document.getElementById('side').value;
   const amount = parseLocaleNumber(document.getElementById('amount').value);
 
+  // Actualizar puntos finales a Andes siempre, sin importar modelo ni tasa
+  const ptsV = parseLocaleNumber(document.getElementById('ptsVenta').value);
+  const ptsC = parseLocaleNumber(document.getElementById('ptsCompra').value);
+  const sprV = parseLocaleNumber(document.getElementById('spreadVenta').value);
+  const sprC = parseLocaleNumber(document.getElementById('spreadCompra').value);
+  document.getElementById('ptsVentaFinal').textContent = fmtPts(ptsV - sprV);
+  document.getElementById('ptsCompraFinal').textContent = fmtPts(ptsC + sprC);
+
   const tdVal = document.getElementById('tradeDate').value;
   const sdVal = document.getElementById('settleDate').value;
   const hoy = new Date(); hoy.setHours(0,0,0,0);
