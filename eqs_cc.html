@@ -1711,9 +1711,14 @@ function consolidarSeleccion(){
   const side = rows[0].side;
   const totalAmt = rows.reduce((s,r)=>s+r.amount,0);
   const weightedRate = rows.reduce((s,r)=>s+r.amount*r.rate,0)/totalAmt;
-  document.getElementById('side').value = side;
+  document.getElementById('side').value = side==='BUY'?'BUY':'SELL';
   document.getElementById('amount').value = totalAmt.toLocaleString('en-US',{maximumFractionDigits:0});
-  document.getElementById('rate').value = weightedRate.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  document.getElementById('rate').value = weightedRate.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4});
+  // Asegurar fechas correctas: operación hoy, cumplimiento T+2 hábil
+  const hoy = new Date();
+  document.getElementById('tradeDate').value = hoy.toISOString().slice(0,10);
+  const settle = sumarDiasHabiles(hoy, 2);
+  document.getElementById('settleDate').value = settle.toISOString().slice(0,10);
   calcular();
 }
 
