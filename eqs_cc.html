@@ -1723,19 +1723,19 @@ function cambiarTipoOperacion(){
   const tradeDateInput = document.getElementById('tradeDate');
   const hoy = new Date(); hoy.setHours(0,0,0,0);
 
-  // Solo sugerimos un valor por defecto si el campo está vacío; si el usuario ya tiene
-  // algo puesto, no lo pisamos — solo validamos y avisamos si no coincide con la norma.
-  if(!tradeDateInput.value){
-    if(tipo === 'NEXT_DAY'){
-      tradeDateInput.value = siguienteDiaHabil(hoy).toISOString().slice(0,10);
-    } else {
-      tradeDateInput.value = hoy.toISOString().slice(0,10);
-    }
-    if(!document.getElementById('settleDate').value){
-      const settle = sumarDiasHabiles(parseFechaLocal(tradeDateInput.value), 2);
-      document.getElementById('settleDate').value = settle.toISOString().slice(0,10);
-    }
+  // Regla estricta: el tipo de operación manda sobre la fecha de operación
+  // por defecto. NEXT_DAY siempre parte del siguiente día hábil; cualquier
+  // otro tipo (SPOT, WMCO, etc.) parte de hoy. Se recalcula cada vez que
+  // cambia el tipo, no solo la primera vez — así no queda pegada la fecha
+  // de un tipo anterior. Si el trader quiere una fecha distinta para una
+  // operación puntual, el campo sigue siendo editable después de esto.
+  if(tipo === 'NEXT_DAY'){
+    tradeDateInput.value = siguienteDiaHabil(hoy).toISOString().slice(0,10);
+  } else {
+    tradeDateInput.value = hoy.toISOString().slice(0,10);
   }
+  const settle = sumarDiasHabiles(parseFechaLocal(tradeDateInput.value), 2);
+  document.getElementById('settleDate').value = settle.toISOString().slice(0,10);
 
   validarFechaOperacion();
   cambiarCliente();
