@@ -1008,7 +1008,7 @@
 
       <div class="section-label">
         <span>Folio <span class="hint" id="folioContextLabel">— selecciona cliente</span></span>
-        <span class="hint" id="selCountLabel">0 seleccionados</span>
+        <span class="hint" id="selCountLabelRVL">0 seleccionados</span>
       </div>
 
       <div class="blotter-wrap">
@@ -1130,59 +1130,33 @@
 
 </div>
 
-<div class="edit-overlay" id="editOverlay">
+<div class="edit-overlay" id="editOverlayRVL">
   <div class="edit-modal">
     <h3>Corregir operación</h3>
     <div class="field-row">
       <div class="field">
         <label>Cantidad</label>
-        <input type="text" inputmode="decimal" id="editCantidad">
+        <input type="text" inputmode="decimal" id="editCantidadRVL">
       </div>
       <div class="field">
         <label>Precio</label>
-        <input type="text" inputmode="decimal" id="editPrecio">
+        <input type="text" inputmode="decimal" id="editPrecioRVL">
       </div>
     </div>
     <div class="field-row">
       <div class="field">
         <label>Comisión %</label>
-        <input type="text" inputmode="decimal" id="editComPct">
+        <input type="text" inputmode="decimal" id="editComPctRVL">
       </div>
     </div>
     <div class="field-note">Corregir aquí recalcula automáticamente comisión, IVA y monto neto.</div>
     <div class="edit-actions">
-      <button class="btn ghost" onclick="cerrarEdicion()">Cancelar</button>
-      <button class="btn primary" onclick="guardarEdicion()">Guardar corrección</button>
+      <button class="btn ghost" onclick="cerrarEdicionRVL()">Cancelar</button>
+      <button class="btn primary" onclick="guardarEdicionRVL()">Guardar corrección</button>
     </div>
   </div>
 </div>
-<div class="edit-overlay" id="editOverlay">
-  <div class="edit-modal">
-    <h3>Corregir operación</h3>
-    <div class="field-row">
-      <div class="field">
-        <label>Cantidad</label>
-        <input type="text" inputmode="decimal" id="editCantidad">
-      </div>
-      <div class="field">
-        <label>Precio</label>
-        <input type="text" inputmode="decimal" id="editPrecio">
-      </div>
-    </div>
-    <div class="field-row">
-      <div class="field">
-        <label>Comisión %</label>
-        <input type="text" inputmode="decimal" id="editComPct">
-      </div>
-    </div>
-    <div class="field-note">Corregir aquí recalcula automáticamente comisión, IVA y monto neto.</div>
-    <div class="edit-actions">
-      <button class="btn ghost" onclick="cerrarEdicion()">Cancelar</button>
-      <button class="btn primary" onclick="guardarEdicion()">Guardar corrección</button>
-    </div>
-  </div>
-</div>
-<div class="toast" id="toast">✓ Reporte generado correctamente</div>
+<div class="toast" id="toastRVL">✓ Reporte generado correctamente</div>
   </div>
 
   <!-- ===== RVI MODULE ===== -->
@@ -1191,19 +1165,19 @@
   <div class="toolbar">
     <div class="tb-field">
       <label>Cliente</label>
-      <select id="filtroCliente" onchange="filtrar()">
+      <select id="filtroClienteRVI" onchange="filtrar()">
         <option value="">Todos</option>
       </select>
     </div>
     <div class="tb-field">
       <label>Especie</label>
-      <select id="filtroEspecie" onchange="filtrar()">
+      <select id="filtroEspecieRVI" onchange="filtrar()">
         <option value="">Todas</option>
       </select>
     </div>
     <div class="tb-field">
       <label>Lado</label>
-      <select id="filtroLado" onchange="filtrar()">
+      <select id="filtroLadoRVI" onchange="filtrar()">
         <option value="">Todos</option>
         <option value="Sell">Sell (vendemos al cliente)</option>
         <option value="Buy">Buy (compramos del cliente)</option>
@@ -1213,7 +1187,7 @@
       <label>&nbsp;</label>
       <div style="display:flex;gap:8px;">
         <button class="btn small" onclick="cargarEmsx()">↻ Cargar EMSX</button>
-        <button class="btn small ghost" onclick="borrarFiltros()">✕ Borrar filtros</button>
+        <button class="btn small ghost" onclick="borrarFiltrosRVI()">✕ Borrar filtros</button>
       </div>
     </div>
   </div>
@@ -1426,17 +1400,17 @@
 </div>
 
 <!-- EDIT MODAL -->
-<div class="edit-overlay" id="editOverlay">
+<div class="edit-overlay" id="editOverlayRVI">
   <div class="edit-modal">
     <h3>Corregir Trade Confirmation</h3>
     <div class="field-row">
       <div class="field">
         <label>Price</label>
-        <input type="text" inputmode="decimal" id="edit-price">
+        <input type="text" inputmode="decimal" id="edit-price-rvi">
       </div>
       <div class="field">
         <label>Tipo instrumento</label>
-        <select id="edit-tipo">
+        <select id="edit-tipo-rvi">
           <option value="ETF">ETF</option>
           <option value="UCIT">UCIT</option>
           <option value="ADR">ADR</option>
@@ -1446,47 +1420,17 @@
     <div class="field-row">
       <div class="field">
         <label>Cost cliente (override, vacío = auto)</label>
-        <input type="text" inputmode="decimal" id="edit-cost" placeholder="automático">
+        <input type="text" inputmode="decimal" id="edit-cost-rvi" placeholder="automático">
       </div>
     </div>
     <div class="field-note">Si dejas Cost vacío, se recalcula automáticamente de la tabla de comisiones.</div>
     <div class="edit-actions">
-      <button class="btn ghost" onclick="cerrarEdicion()">Cancelar</button>
-      <button class="btn primary" onclick="guardarEdicion()">Guardar</button>
+      <button class="btn ghost" onclick="cerrarEdicionRVI()">Cancelar</button>
+      <button class="btn primary" onclick="guardarEdicionRVI()">Guardar</button>
     </div>
   </div>
 </div>
-<div class="edit-overlay" id="editOverlay">
-  <div class="edit-modal">
-    <h3>Corregir Trade Confirmation</h3>
-    <div class="field-row">
-      <div class="field">
-        <label>Price</label>
-        <input type="text" inputmode="decimal" id="edit-price">
-      </div>
-      <div class="field">
-        <label>Tipo instrumento</label>
-        <select id="edit-tipo">
-          <option value="ETF">ETF</option>
-          <option value="UCIT">UCIT</option>
-          <option value="ADR">ADR</option>
-        </select>
-      </div>
-    </div>
-    <div class="field-row">
-      <div class="field">
-        <label>Cost cliente (override, vacío = auto)</label>
-        <input type="text" inputmode="decimal" id="edit-cost" placeholder="automático">
-      </div>
-    </div>
-    <div class="field-note">Si dejas Cost vacío, se recalcula automáticamente de la tabla de comisiones.</div>
-    <div class="edit-actions">
-      <button class="btn ghost" onclick="cerrarEdicion()">Cancelar</button>
-      <button class="btn primary" onclick="guardarEdicion()">Guardar</button>
-    </div>
-  </div>
-</div>
-<div class="toast" id="toast">✓ Trade Confirmation generada</div>
+<div class="toast" id="toastRVI">✓ Trade Confirmation generada</div>
   </div>
 
   <!-- ===== RFI placeholder ===== -->
@@ -2473,7 +2417,7 @@ function renderFolios(){
     }).join('');
   }
 
-  document.getElementById('selCountLabel').textContent = selectedFolios.size + ' seleccionados';
+  document.getElementById('selCountLabelRVL').textContent = selectedFolios.size + ' seleccionados';
   actualizarChkSelectAll(filtrados);
   renderStats(filtrados);
   renderFolioSummary();
@@ -2746,35 +2690,35 @@ function renderHistoryRVL(){
     <td class="num">${fmtMoney(op.comMonto)}</td>
     <td class="num">${fmtMoney(op.ivaMonto)}</td>
     <td class="num">${fmtMoney(op.montoNeto)}</td>
-    <td><button class="icon-btn" title="Corregir operación" onclick="abrirEdicion(${op.id})">✎</button></td>
+    <td><button class="icon-btn" title="Corregir operación" onclick="abrirEdicionRVL(${op.id})">✎</button></td>
   </tr>`).join('');
   document.getElementById('historicoHint').textContent = `(${operacionesHistorico.length} líneas)`;
 }
 
 editingId = null;
 
-function abrirEdicion(id){
+function abrirEdicionRVL(id){
   const op = operacionesHistorico.find(o=>o.id===id);
   if(!op) return;
   editingId = id;
-  document.getElementById('editCantidad').value = fmtInt(op.cantidad);
-  document.getElementById('editPrecio').value = fmtRate(op.precio);
-  document.getElementById('editComPct').value = (op.comPct*100).toFixed(4);
-  document.getElementById('editOverlay').classList.add('show');
+  document.getElementById('editCantidadRVL').value = fmtInt(op.cantidad);
+  document.getElementById('editPrecioRVL').value = fmtRate(op.precio);
+  document.getElementById('editComPctRVL').value = (op.comPct*100).toFixed(4);
+  document.getElementById('editOverlayRVL').classList.add('show');
 }
 
-function cerrarEdicion(){
+function cerrarEdicionRVL(){
   editingId = null;
-  document.getElementById('editOverlay').classList.remove('show');
+  document.getElementById('editOverlayRVL').classList.remove('show');
 }
 
-function guardarEdicion(){
+function guardarEdicionRVL(){
   const op = operacionesHistorico.find(o=>o.id===editingId);
   if(!op) return;
   const teniaIva = op.ivaMonto > 0;
-  const nuevaCantidad = parseLocaleNumber(document.getElementById('editCantidad').value);
-  const nuevoPrecio = parseLocaleNumber(document.getElementById('editPrecio').value);
-  const nuevaComPct = parseLocaleNumber(document.getElementById('editComPct').value) / 100;
+  const nuevaCantidad = parseLocaleNumber(document.getElementById('editCantidadRVL').value);
+  const nuevoPrecio = parseLocaleNumber(document.getElementById('editPrecioRVL').value);
+  const nuevaComPct = parseLocaleNumber(document.getElementById('editComPctRVL').value) / 100;
 
   op.cantidad = nuevaCantidad;
   op.precio = nuevoPrecio;
@@ -2786,8 +2730,8 @@ function guardarEdicion(){
   op.montoNeto = op.lado==='Compra' ? montoBruto + op.comMonto + op.ivaMonto : montoBruto - op.comMonto - op.ivaMonto;
 
   renderHistoryRVL();
-  cerrarEdicion();
-  const toast = document.getElementById('toast');
+  cerrarEdicionRVL();
+  const toast = document.getElementById('toastRVL');
   toast.textContent = '✓ Corrección guardada';
   toast.classList.add('show');
   setTimeout(()=>{toast.classList.remove('show'); toast.textContent='✓ Reporte generado correctamente';}, 2400);
@@ -2894,18 +2838,18 @@ function fmtInput(el,d){ el.value=fmtRateRVI(parseNum(el.value),d); }
 // =====================================================================
 // FILTROS
 // =====================================================================
-function poblarFiltros(){
+function poblarFiltrosRVI(){
   const clientes = [...new Set(emsxData.map(r=>r.firm))];
   const especies = [...new Set(emsxData.map(r=>r.especie))];
-  document.getElementById('filtroCliente').innerHTML = '<option value="">Todos</option>'+clientes.map(c=>`<option value="${c}">${c}</option>`).join('');
-  document.getElementById('filtroEspecie').innerHTML = '<option value="">Todas</option>'+especies.map(e=>`<option value="${e}">${e}</option>`).join('');
+  document.getElementById('filtroClienteRVI').innerHTML = '<option value="">Todos</option>'+clientes.map(c=>`<option value="${c}">${c}</option>`).join('');
+  document.getElementById('filtroEspecieRVI').innerHTML = '<option value="">Todas</option>'+especies.map(e=>`<option value="${e}">${e}</option>`).join('');
   poblarClienteSelector();
 }
 
 function getFiltradas(){
-  const firm = document.getElementById('filtroCliente').value;
-  const esp = document.getElementById('filtroEspecie').value;
-  const lado = document.getElementById('filtroLado').value;
+  const firm = document.getElementById('filtroClienteRVI').value;
+  const esp = document.getElementById('filtroEspecieRVI').value;
+  const lado = document.getElementById('filtroLadoRVI').value;
   return emsxData.filter(r=>
     (!firm || r.firm===firm) &&
     (!esp  || r.especie===esp) &&
@@ -2914,10 +2858,10 @@ function getFiltradas(){
 }
 
 function filtrar(){ renderEmsx(); }
-function borrarFiltros(){
-  document.getElementById('filtroCliente').value='';
-  document.getElementById('filtroEspecie').value='';
-  document.getElementById('filtroLado').value='';
+function borrarFiltrosRVI(){
+  document.getElementById('filtroClienteRVI').value='';
+  document.getElementById('filtroEspecieRVI').value='';
+  document.getElementById('filtroLadoRVI').value='';
   renderEmsx();
 }
 function cargarEmsx(){ renderEmsx(); }
@@ -3207,7 +3151,7 @@ function renderHistorial(){
     <td class="num">${fmtRateRVI(h.secFee,4)}</td>
     <td class="num">${fmtMoneyRVI(h.net,2)}</td>
     <td class="num">${fmtMoneyRVI(h.ccsi,2)}</td>
-    <td><button class="icon-btn" title="Corregir" onclick="abrirEdicion(${h.id})">✎</button></td>
+    <td><button class="icon-btn" title="Corregir" onclick="abrirEdicionRVI(${h.id})">✎</button></td>
   </tr>`).join('');
   document.getElementById('histHint').textContent=`(${historial.length} líneas)`;
 }
@@ -3219,27 +3163,27 @@ function exportarPDF(){
 // =====================================================================
 // EDICIÓN
 // =====================================================================
-function abrirEdicion(id){
+function abrirEdicionRVI(id){
   const h=historial.find(x=>x.id===id);
   if(!h) return;
   editingId=id;
-  document.getElementById('edit-price').value=fmtRateRVI(h.price,4);
-  document.getElementById('edit-tipo').value=h.tipo;
-  document.getElementById('edit-cost').value='';
-  document.getElementById('editOverlay').classList.add('show');
+  document.getElementById('edit-price-rvi').value=fmtRateRVI(h.price,4);
+  document.getElementById('edit-tipo-rvi').value=h.tipo;
+  document.getElementById('edit-cost-rvi').value='';
+  document.getElementById('editOverlayRVI').classList.add('show');
 }
 
-function cerrarEdicion(){
+function cerrarEdicionRVI(){
   editingId=null;
-  document.getElementById('editOverlay').classList.remove('show');
+  document.getElementById('editOverlayRVI').classList.remove('show');
 }
 
-function guardarEdicion(){
+function guardarEdicionRVI(){
   const h=historial.find(x=>x.id===editingId);
   if(!h) return;
-  const nuevoPrice=parseNum(document.getElementById('edit-price').value)||h.price;
-  const nuevoTipo=document.getElementById('edit-tipo').value;
-  const costOverride=document.getElementById('edit-cost').value;
+  const nuevoPrice=parseNum(document.getElementById('edit-price-rvi').value)||h.price;
+  const nuevoTipo=document.getElementById('edit-tipo-rvi').value;
+  const costOverride=document.getElementById('edit-cost-rvi').value;
   const db=clientesRVI[Object.keys(clientesRVI).find(k=>clientesRVI[k].nombre===h.cliente)];
 
   h.price=nuevoPrice;
@@ -3256,8 +3200,8 @@ function guardarEdicion(){
   h.ccsi=Math.max(nuevoTipo==='UCIT'?h.gross*CCSI.comUCIT:h.qty*CCSI.comETF,CCSI.minUSD);
 
   renderHistorial();
-  cerrarEdicion();
-  const t=document.getElementById('toast');
+  cerrarEdicionRVI();
+  const t=document.getElementById('toastRVI');
   t.textContent='✓ Corrección guardada';
   t.classList.add('show');
   setTimeout(()=>{t.classList.remove('show');t.textContent='✓ Trade Confirmation generada';},2400);
@@ -3294,7 +3238,7 @@ poblarFiltros();
 renderFolios();
 initDatesRVL();
 // RVI
-poblarFiltros();
+poblarFiltrosRVI();
 renderEmsx();
 renderDistribuciones();
 initDatesRVI();
