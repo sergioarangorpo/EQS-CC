@@ -238,6 +238,8 @@
   .edit-modal h3{margin:0 0 14px;font-size:13px;font-weight:600;color:var(--text-0);}
   .edit-modal .field-row{margin-bottom:10px;}
   .edit-actions{display:flex;gap:8px;margin-top:14px;}
+  .btn-link-danger{background:none;border:none;color:#e5484d;font-family:var(--sans);font-size:11.5px;cursor:pointer;padding:4px 8px;text-decoration:underline;opacity:0.8;}
+  .btn-link-danger:hover{opacity:1;}
   .edit-actions .btn{flex:1;}
 
   ::-webkit-scrollbar{height:8px;width:8px;}
@@ -934,6 +936,9 @@
     <div class="edit-actions">
       <button class="btn ghost" onclick="cerrarEdicionFX()">Cancelar</button>
       <button class="btn primary" onclick="guardarEdicionFX()">Guardar corrección</button>
+    </div>
+    <div style="text-align:center;margin-top:10px;">
+      <button class="btn-link-danger" onclick="eliminarOperacionFX()">🗑 Eliminar esta operación</button>
     </div>
   </div>
 </div>
@@ -2170,6 +2175,25 @@ function guardarEdicionFX(){
   actualizarOperacionSupabase(op.id, { amount: op.amount, params: op.params, trader: op.trader });
   const toast = document.getElementById('toast');
   toast.textContent = '✓ Corrección guardada';
+  toast.classList.add('show');
+  setTimeout(()=>{toast.classList.remove('show'); toast.textContent='✓ Operación registrada correctamente';}, 2400);
+}
+
+// Elimina por completo una operación de origen manual (WMCO, BNP, etc.)
+// Solo aplica a operaciones manuales: las de correo (Andes) usan "Deshacer"
+// en vez de esto, porque ahí lo correcto es devolver el correo a la bandeja.
+function eliminarOperacionFX(){
+  const op = operaciones.find(o=>o.id===editingId);
+  if(!op) return;
+  const ok = confirm(`¿Eliminar por completo esta operación de ${clienteNombres[op.cliente]||op.cliente} por ${fmtUSD(op.amount)}? Esta acción no se puede deshacer.`);
+  if(!ok) return;
+  const idx = operaciones.findIndex(o=>o.id===op.id);
+  operaciones.splice(idx,1);
+  borrarOperacionSupabase(op.id);
+  renderHistory();
+  cerrarEdicionFX();
+  const toast = document.getElementById('toast');
+  toast.textContent = '✓ Operación eliminada';
   toast.classList.add('show');
   setTimeout(()=>{toast.classList.remove('show'); toast.textContent='✓ Operación registrada correctamente';}, 2400);
 }
