@@ -1559,6 +1559,10 @@ function tickClock() {
 // =====================================================================
 // ---------------- Datos de ejemplo (correos de hoy) ----------------
 let inboxData = []; // Se carga desde Supabase
+// Red de seguridad local: supaIds ya registrados en esta sesión del navegador.
+// "Actualizar" nunca debe volver a mostrarlos, incluso si el PATCH que marca
+// estado='registrado' en Supabase falla (p.ej. por permisos/RLS) — ver registrar().
+let idsRegistradosSesion = new Set();
 
 async function cargarInboxDesdeSupabase() {
   try {
@@ -1572,7 +1576,9 @@ async function cargarInboxDesdeSupabase() {
 
     const params = `estado=eq.pendiente&trade_date=eq.${encodeURIComponent(tradeDateHoy)}&order=capturado_en.desc&limit=200`;
     const data = await supaFetch('fx_andes_inbox', params);
-    inboxData = data.map(r => ({
+    const nuevos = data.filter(r => !idsRegistradosSesion.has(r.id));
+    const ocultosPorSeguridad = data.length - nuevos.length;
+    inboxData = nuevos.map(r => ({
       supaId:   r.id,
       tradeId:  r.trade_id,
       time:     r.exec_time ? r.exec_time.slice(11, 19) : r.capturado_en.slice(11, 19),
@@ -1586,6 +1592,9 @@ async function cargarInboxDesdeSupabase() {
     document.getElementById('lastUpdate').textContent =
       'última actualización ' + now.toLocaleTimeString('es-CO');
     console.log(`✓ ${inboxData.length} trades de hoy (${tradeDateHoy}) cargados desde Supabase`);
+    if(ocultosPorSeguridad > 0){
+      console.warn(`⚠ ${ocultosPorSeguridad} correo(s) ya registrados en esta sesión seguían viniendo como 'pendiente' desde Supabase — se ocultaron localmente. El PATCH que marca estado='registrado' probablemente está fallando (revisar permisos/RLS de fx_andes_inbox).`);
+    }
   } catch(e) {
     console.error('Error cargando inbox desde Supabase:', e);
     document.getElementById('lastUpdate').textContent = 'Error conectando con Supabase';
@@ -1883,6 +1892,124 @@ function calcular(){
 let operaciones = [];
 let editingId = null;
 
+// =====================================================================
+// PERSISTENCIA DE OPERACIONES REGISTRADAS (fx_operaciones_registradas)
+// Mismo patrón que el inbox: cargar al abrir, y sincronizar en cada
+// registrar/corregir/verificar/deshacer para que el histórico sobreviva
+// a un refresh de página o a que otro trader (JAJ) abra la app.
+// =====================================================================
+function opToRow(op){
+  return {
+    id: op.id,
+    hora_registro: op.horaRegistro,
+    trade_date: op.tradeDate || null,
+    settle_date: op.settleDate || null,
+    modelo: op.modelo,
+    cliente: op.cliente,
+    tipo_operacion: op.tipoOperacion,
+    side: op.side,
+    amount: op.amount,
+    noches: op.noches,
+    params: op.params,
+    trader: op.trader,
+    origen: op.origen,
+    emails_origen: op.emailsOrigen,
+    verificado: op.verificado,
+  };
+}
+
+function rowToOp(r){
+  return {
+    id: r.id,
+    horaRegistro: r.hora_registro,
+    tradeDate: r.trade_date,
+    settleDate: r.settle_date,
+    modelo: r.modelo,
+    cliente: r.cliente,
+    tipoOperacion: r.tipo_operacion,
+    side: r.side,
+    amount: Number(r.amount),
+    noches: r.noches,
+    params: r.params,
+    trader: r.trader,
+    origen: r.origen,
+    emailsOrigen: r.emails_origen,
+    verificado: !!r.verificado,
+  };
+}
+
+async function cargarOperacionesDesdeSupabase(){
+  try{
+    const hoyDate = new Date();
+    const y = hoyDate.getFullYear();
+    const m = String(hoyDate.getMonth()+1).padStart(2,'0');
+    const d = String(hoyDate.getDate()).padStart(2,'0');
+    const hoyIso = `${y}-${m}-${d}`;
+    const data = await supaFetch('fx_operaciones_registradas', `trade_date=eq.${hoyIso}&order=id.desc&limit=200`);
+    operaciones = data.map(rowToOp);
+    // Proteger también los correos de operaciones cargadas de una sesión
+    // anterior, para que el inbox no los "resucite" al actualizar.
+    operaciones.forEach(op => {
+      (op.emailsOrigen||[]).forEach(row => { if(row.supaId) idsRegistradosSesion.add(row.supaId); });
+    });
+    renderHistory();
+    console.log(`✓ ${operaciones.length} operaciones de hoy cargadas desde Supabase`);
+  }catch(e){
+    console.error('Error cargando operaciones registradas desde Supabase:', e);
+  }
+}
+
+async function guardarOperacionSupabase(op){
+  try{
+    const res = await fetch(`${SUPA_URL}/rest/v1/fx_operaciones_registradas`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPA_KEY,
+        'Authorization': `Bearer ${SUPA_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal',
+      },
+      body: JSON.stringify(opToRow(op))
+    });
+    if(!res.ok) console.error(`⚠ No se pudo guardar la operación ${op.id} en Supabase (HTTP ${res.status}). Revisar permisos/RLS de fx_operaciones_registradas.`);
+  }catch(e){
+    console.error(`⚠ Error de red guardando la operación ${op.id}:`, e);
+  }
+}
+
+async function actualizarOperacionSupabase(id, patch){
+  try{
+    const res = await fetch(`${SUPA_URL}/rest/v1/fx_operaciones_registradas?id=eq.${id}`, {
+      method: 'PATCH',
+      headers: {
+        'apikey': SUPA_KEY,
+        'Authorization': `Bearer ${SUPA_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal',
+      },
+      body: JSON.stringify(patch)
+    });
+    if(!res.ok) console.error(`⚠ No se pudo actualizar la operación ${id} en Supabase (HTTP ${res.status}).`);
+  }catch(e){
+    console.error(`⚠ Error de red actualizando la operación ${id}:`, e);
+  }
+}
+
+async function borrarOperacionSupabase(id){
+  try{
+    const res = await fetch(`${SUPA_URL}/rest/v1/fx_operaciones_registradas?id=eq.${id}`, {
+      method: 'DELETE',
+      headers: {
+        'apikey': SUPA_KEY,
+        'Authorization': `Bearer ${SUPA_KEY}`,
+      }
+    });
+    if(!res.ok) console.error(`⚠ No se pudo borrar la operación ${id} en Supabase (HTTP ${res.status}).`);
+  }catch(e){
+    console.error(`⚠ Error de red borrando la operación ${id}:`, e);
+  }
+}
+
 function calcularDesdeValores(modelo, side, amount, params){
   if(modelo === 'ANDES'){
     const {rate, ptsVenta, ptsCompra, spreadVenta, spreadCompra, noches} = params;
@@ -1964,15 +2091,19 @@ function registrar(){
     verificado: false,
   };
   operaciones.unshift(op);
+  guardarOperacionSupabase(op);
   renderHistory();
 
   // Quitar de la bandeja los correos que se acaban de registrar (solo aplica a Andes)
   if(c.modelo === 'ANDES'){
     const usadas = [...selectedRows].sort((a,b)=>b-a);
-    // Marcar como 'registrado' en Supabase
+    // Marcar como 'registrado' en Supabase — y llevar un registro local de
+    // supaIds ya usados esta sesión, para que "Actualizar" nunca los vuelva
+    // a traer aunque el PATCH a Supabase falle silenciosamente (permisos/RLS).
     usadas.forEach(i => {
       const item = inboxData[i];
       if(item && item.supaId) {
+        idsRegistradosSesion.add(item.supaId);
         fetch(`${SUPA_URL}/rest/v1/fx_andes_inbox?id=eq.${item.supaId}`, {
           method: 'PATCH',
           headers: {
@@ -1982,7 +2113,9 @@ function registrar(){
             'Prefer': 'return=minimal',
           },
           body: JSON.stringify({ estado: 'registrado' })
-        });
+        }).then(res => {
+          if(!res.ok) console.error(`⚠ No se pudo marcar ${item.supaId} como registrado en Supabase (HTTP ${res.status}). Revisar permisos/RLS de fx_andes_inbox.`);
+        }).catch(err => console.error(`⚠ Error de red marcando ${item.supaId} como registrado:`, err));
       }
     });
     usadas.forEach(i=> inboxData.splice(i,1));
@@ -2049,6 +2182,7 @@ function toggleVerificadoFX(id){
   if(!op) return;
   op.verificado = !op.verificado;
   renderHistory();
+  actualizarOperacionSupabase(id, { verificado: op.verificado });
 }
 
 // =====================================================================
@@ -2092,6 +2226,7 @@ function guardarEdicionFX(){
   op.trader = document.getElementById('editTrader').value;
   renderHistory();
   cerrarEdicionFX();
+  actualizarOperacionSupabase(op.id, { amount: op.amount, params: op.params, trader: op.trader });
   const toast = document.getElementById('toast');
   toast.textContent = '✓ Corrección guardada';
   toast.classList.add('show');
@@ -2128,6 +2263,7 @@ function confirmarDeshacerFX(){
   (op.emailsOrigen||[]).forEach(row => {
     inboxData.push({...row});
     if(row.supaId){
+      idsRegistradosSesion.delete(row.supaId);
       fetch(`${SUPA_URL}/rest/v1/fx_andes_inbox?id=eq.${row.supaId}`, {
         method: 'PATCH',
         headers: {
@@ -2137,12 +2273,15 @@ function confirmarDeshacerFX(){
           'Prefer': 'return=minimal',
         },
         body: JSON.stringify({ estado: 'pendiente' })
-      });
+      }).then(res => {
+        if(!res.ok) console.error(`⚠ No se pudo devolver ${row.supaId} a 'pendiente' en Supabase (HTTP ${res.status}).`);
+      }).catch(err => console.error(`⚠ Error de red devolviendo ${row.supaId} a pendiente:`, err));
     }
   });
   inboxData.sort((a,b)=> (b.time||'').localeCompare(a.time||''));
 
   operaciones.splice(idx,1);
+  borrarOperacionSupabase(op.id);
   renderHistory();
   renderInbox();
   cerrarDeshacerFX();
@@ -3142,7 +3281,11 @@ function tickClock(){ document.getElementById('clock').textContent=new Date().to
 // GLOBAL INIT
 // =====================================================================
 // FX
-cargarInboxDesdeSupabase();
+// Cargar primero las operaciones ya registradas (llena idsRegistradosSesion
+// con los correos ya usados) y solo después el inbox, para evitar que por
+// una carrera entre ambas llamadas se muestre brevemente un correo que ya
+// estaba registrado en una sesión anterior.
+cargarOperacionesDesdeSupabase().then(() => cargarInboxDesdeSupabase());
 initDatesFX();
 cambiarTipoOperacion();
 calcular();
