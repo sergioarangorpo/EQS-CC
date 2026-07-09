@@ -727,18 +727,18 @@
         <table>
           <thead>
             <tr>
-              <th>Hora</th>
-              <th>Cliente</th>
-              <th>Tipo</th>
-              <th>F. operación</th>
-              <th>F. cumplimiento</th>
-              <th>Lado</th>
-              <th class="num">Monto USD</th>
-              <th class="num">Tasa cliente</th>
-              <th class="num">Tasa nuestra</th>
-              <th class="num">Com. EQS</th>
-              <th class="num">Com. Mesa</th>
-              <th>Receptor</th>
+              <th class="sortable" onclick="ordenarPorFX('hora')">Hora<span class="sort-arrow" id="arrow-fx-hora"></span></th>
+              <th class="sortable" onclick="ordenarPorFX('cliente')">Cliente<span class="sort-arrow" id="arrow-fx-cliente"></span></th>
+              <th class="sortable" onclick="ordenarPorFX('tipo')">Tipo<span class="sort-arrow" id="arrow-fx-tipo"></span></th>
+              <th class="sortable" onclick="ordenarPorFX('fop')">F. operación<span class="sort-arrow" id="arrow-fx-fop"></span></th>
+              <th class="sortable" onclick="ordenarPorFX('fcump')">F. cumplimiento<span class="sort-arrow" id="arrow-fx-fcump"></span></th>
+              <th class="sortable" onclick="ordenarPorFX('lado')">Lado<span class="sort-arrow" id="arrow-fx-lado"></span></th>
+              <th class="num sortable" onclick="ordenarPorFX('monto')">Monto USD<span class="sort-arrow" id="arrow-fx-monto"></span></th>
+              <th class="num sortable" onclick="ordenarPorFX('tasaCliente')">Tasa cliente<span class="sort-arrow" id="arrow-fx-tasaCliente"></span></th>
+              <th class="num sortable" onclick="ordenarPorFX('tasaNuestra')">Tasa nuestra<span class="sort-arrow" id="arrow-fx-tasaNuestra"></span></th>
+              <th class="num sortable" onclick="ordenarPorFX('comEqs')">Com. EQS<span class="sort-arrow" id="arrow-fx-comEqs"></span></th>
+              <th class="num sortable" onclick="ordenarPorFX('comMesa')">Com. Mesa<span class="sort-arrow" id="arrow-fx-comMesa"></span></th>
+              <th class="sortable" onclick="ordenarPorFX('receptor')">Receptor<span class="sort-arrow" id="arrow-fx-receptor"></span></th>
               <th class="num" title="Marca cuando el monto/tasa final ya quedó confirmado para back office">Verif.</th>
               <th></th>
             </tr>
@@ -2092,15 +2092,57 @@ const clienteNombres = {
   MLI:'Merrill Lynch Intl', IMPERA:'Impera Global Frontier', CITI:'Citigroup Global Markets', IMTRUST:'IM Trust'
 };
 
+let sortColFX = null;
+let sortDirFX = 1;
+
+function ordenarPorFX(col){
+  if(sortColFX===col){ sortDirFX = -sortDirFX; } else { sortColFX = col; sortDirFX = 1; }
+  document.querySelectorAll('.sort-arrow').forEach(el=>el.textContent='');
+  const arrowEl = document.getElementById('arrow-fx-'+col);
+  if(arrowEl) arrowEl.textContent = sortDirFX===1 ? '▲' : '▼';
+  renderHistory();
+}
+
 function renderHistory(){
   const tbody = document.getElementById('historyBody');
   if(operaciones.length===0){
     tbody.innerHTML = '<tr><td colspan="14" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>';
     return;
   }
-  tbody.innerHTML = operaciones.map(op=>{
+  // Pre-calcular los valores derivados (tasa nuestra, comisiones) una vez por
+  // operación, para poder ordenar por ellos igual que por los campos crudos.
+  let filas = operaciones.map(op=>{
     const r = calcularDesdeValores(op.modelo, op.side, op.amount, op.params);
     const rateMostrar = op.modelo==='ANDES' ? op.params.rate : op.params.rateUnica;
+    return { op, r, rateMostrar };
+  });
+
+  if(sortColFX){
+    const getVal = (f, col) => {
+      switch(col){
+        case 'hora': return f.op.id; // Date.now() al registrar: orden cronológico real
+        case 'cliente': return clienteNombres[f.op.cliente]||f.op.cliente;
+        case 'tipo': return f.op.tipoOperacion;
+        case 'fop': return f.op.tradeDate || '';
+        case 'fcump': return f.op.settleDate || '';
+        case 'lado': return f.op.side;
+        case 'monto': return f.op.amount;
+        case 'tasaCliente': return f.rateMostrar;
+        case 'tasaNuestra': return f.r.tasaFinalNuestra;
+        case 'comEqs': return f.r.comEqs;
+        case 'comMesa': return f.r.comMesa;
+        case 'receptor': return f.op.trader;
+        default: return 0;
+      }
+    };
+    filas = [...filas].sort((a,b)=>{
+      const va = getVal(a, sortColFX), vb = getVal(b, sortColFX);
+      if(typeof va === 'string') return va.localeCompare(vb) * sortDirFX;
+      return (va - vb) * sortDirFX;
+    });
+  }
+
+  tbody.innerHTML = filas.map(({op, r, rateMostrar})=>{
     const accionBtn = op.origen === 'inbox'
       ? `<button class="icon-btn" title="Deshacer — devolver correos a la bandeja" onclick="abrirDeshacerFX(${op.id})">↩</button>`
       : `<button class="icon-btn" title="Corregir operación" onclick="abrirEdicionFX(${op.id})">✎</button>`;
