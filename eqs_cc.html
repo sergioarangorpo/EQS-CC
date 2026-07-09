@@ -138,6 +138,8 @@
   }
   td.num{text-align:right;}
   .chk{width:16px;height:16px;accent-color:var(--blue);cursor:pointer;}
+  tr.row-pendiente td:first-child{position:relative;padding-left:16px;}
+  tr.row-pendiente td:first-child::before{content:'';position:absolute;left:4px;top:50%;transform:translateY(-50%);width:6px;height:6px;border-radius:50%;background:#f5a623;}
   .side-badge{
     display:inline-flex;align-items:center;gap:5px;font-family:var(--sans);
     font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:4px;
@@ -735,11 +737,12 @@
               <th class="num">Com. EQS</th>
               <th class="num">Com. Mesa</th>
               <th>Receptor</th>
+              <th class="num" title="Marca cuando el monto/tasa final ya quedó confirmado para back office">Verif.</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="historyBody">
-            <tr><td colspan="13" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>
+            <tr><td colspan="14" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>
           </tbody>
         </table>
       </div>
@@ -899,25 +902,27 @@
   </div>
 </div>
 
-<div class="edit-overlay" id="editOverlay">
+<div class="edit-overlay" id="editOverlayFX">
   <div class="edit-modal">
-    <h3>Corregir operación</h3>
+    <h3 id="editModalTitle">Corregir operación</h3>
     <div class="field-row">
       <div class="field">
-        <label>Puntos venta mesa</label>
-        <input type="text" inputmode="decimal" id="editPtsVenta" onblur="formatInputAsNumber(this,2)">
+        <label>Monto USD</label>
+        <input type="text" inputmode="decimal" id="editAmount" onblur="formatInputAsNumber(this,0)">
       </div>
       <div class="field">
-        <label>Puntos compra mesa</label>
-        <input type="text" inputmode="decimal" id="editPtsCompra" onblur="formatInputAsNumber(this,2)">
+        <label id="editRateLabel">Tasa cliente</label>
+        <input type="text" inputmode="decimal" id="editRate" onblur="formatInputAsNumber(this,2)">
+      </div>
+    </div>
+    <div class="field-row" id="editSpotRealRow" style="display:none;">
+      <div class="field" style="flex:1 1 100%;">
+        <label>Tasa mercado</label>
+        <input type="text" inputmode="decimal" id="editSpotReal" onblur="formatInputAsNumber(this,2)">
       </div>
     </div>
     <div class="field-row">
-      <div class="field">
-        <label>Tasa cliente</label>
-        <input type="text" inputmode="decimal" id="editRate" onblur="formatInputAsNumber(this,2)">
-      </div>
-      <div class="field">
+      <div class="field" style="flex:1 1 100%;">
         <label>Trader receptor</label>
         <select id="editTrader">
           <option value="JAJ">JAJ — Juan Antonio Jiménez</option>
@@ -927,45 +932,23 @@
     </div>
     <div class="field-note">Corregir aquí recalcula automáticamente el margen, la comisión y el split 80/20.</div>
     <div class="edit-actions">
-      <button class="btn ghost" onclick="cerrarEdicion()">Cancelar</button>
-      <button class="btn primary" onclick="guardarEdicion()">Guardar corrección</button>
+      <button class="btn ghost" onclick="cerrarEdicionFX()">Cancelar</button>
+      <button class="btn primary" onclick="guardarEdicionFX()">Guardar corrección</button>
     </div>
   </div>
 </div>
-<div class="edit-overlay" id="editOverlay">
+<div class="edit-overlay" id="deshacerOverlayFX">
   <div class="edit-modal">
-    <h3>Corregir operación</h3>
-    <div class="field-row">
-      <div class="field">
-        <label>Puntos venta mesa</label>
-        <input type="text" inputmode="decimal" id="editPtsVenta" onblur="formatInputAsNumber(this,2)">
-      </div>
-      <div class="field">
-        <label>Puntos compra mesa</label>
-        <input type="text" inputmode="decimal" id="editPtsCompra" onblur="formatInputAsNumber(this,2)">
-      </div>
-    </div>
-    <div class="field-row">
-      <div class="field">
-        <label>Tasa cliente</label>
-        <input type="text" inputmode="decimal" id="editRate" onblur="formatInputAsNumber(this,2)">
-      </div>
-      <div class="field">
-        <label>Trader receptor</label>
-        <select id="editTrader">
-          <option value="JAJ">JAJ — Juan Antonio Jiménez</option>
-          <option value="SAR">SAR — Sergio Arango</option>
-        </select>
-      </div>
-    </div>
-    <div class="field-note">Corregir aquí recalcula automáticamente el margen, la comisión y el split 80/20.</div>
+    <h3>Devolver a la bandeja de correos</h3>
+    <div class="field-note" id="deshacerTexto" style="margin-bottom:14px;">¿Devolver los correos de esta operación a la bandeja de FX_Verifications? El registro se eliminará y los correos volverán a estado pendiente para poder agruparlos de nuevo.</div>
     <div class="edit-actions">
-      <button class="btn ghost" onclick="cerrarEdicion()">Cancelar</button>
-      <button class="btn primary" onclick="guardarEdicion()">Guardar corrección</button>
+      <button class="btn ghost" onclick="cerrarDeshacerFX()">Cancelar</button>
+      <button class="btn primary" onclick="confirmarDeshacerFX()">Sí, devolver a bandeja</button>
     </div>
   </div>
 </div>
 <div class="toast" id="toast">✓ Operación registrada correctamente</div>
+
   </div>
 
   <!-- ===== RVL MODULE ===== -->
@@ -1957,6 +1940,7 @@ function registrar(){
   const trader = document.getElementById('trader').value;
   const cliente = document.getElementById('cliente').value;
   const tipoOperacion = document.getElementById('tipoOperacion').value;
+  const esInbox = c.modelo === 'ANDES' && selectedRows.size > 0;
   const op = {
     id: Date.now(),
     horaRegistro: new Date().toLocaleTimeString('es-CO'),
@@ -1970,6 +1954,14 @@ function registrar(){
     noches: c.noches,
     params: {...c.params},
     trader: trader,
+    // Origen determina el comportamiento del botón de acción en el histórico:
+    // 'inbox'  -> viene de correos consolidados (Andes): el botón "deshace" y
+    //             devuelve los correos originales a la bandeja.
+    // 'manual' -> tasa/monto tecleados a mano (WMCO, BNP, etc.): el botón
+    //             abre un modal de corrección libre.
+    origen: esInbox ? 'inbox' : 'manual',
+    emailsOrigen: esInbox ? [...selectedRows].map(i => ({...inboxData[i]})) : null,
+    verificado: false,
   };
   operaciones.unshift(op);
   renderHistory();
@@ -2018,13 +2010,16 @@ const clienteNombres = {
 function renderHistory(){
   const tbody = document.getElementById('historyBody');
   if(operaciones.length===0){
-    tbody.innerHTML = '<tr><td colspan="13" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>';
     return;
   }
   tbody.innerHTML = operaciones.map(op=>{
     const r = calcularDesdeValores(op.modelo, op.side, op.amount, op.params);
     const rateMostrar = op.modelo==='ANDES' ? op.params.rate : op.params.rateUnica;
-    return `<tr>
+    const accionBtn = op.origen === 'inbox'
+      ? `<button class="icon-btn" title="Deshacer — devolver correos a la bandeja" onclick="abrirDeshacerFX(${op.id})">↩</button>`
+      : `<button class="icon-btn" title="Corregir operación" onclick="abrirEdicionFX(${op.id})">✎</button>`;
+    return `<tr class="${op.verificado?'':'row-pendiente'}">
       <td class="mono-id">${op.horaRegistro}</td>
       <td class="client-name">${clienteNombres[op.cliente]||op.cliente}</td>
       <td class="mono-id">${op.tipoOperacion}</td>
@@ -2037,41 +2032,123 @@ function renderHistory(){
       <td class="num">${fmtMoney(r.comEqs)}</td>
       <td class="num">${fmtMoney(r.comMesa)}</td>
       <td class="mono-id">${op.trader}</td>
-      <td><button class="icon-btn" title="Corregir operación" onclick="abrirEdicion(${op.id})">✎</button></td>
+      <td class="num"><input type="checkbox" class="chk" ${op.verificado?'checked':''} title="${op.verificado?'Verificado':'Pendiente de verificar para back office'}" onchange="toggleVerificadoFX(${op.id})"></td>
+      <td>${accionBtn}</td>
     </tr>`;
   }).join('');
 }
 
-function abrirEdicion(id){
+// =====================================================================
+// VERIFICACIÓN (back office): marca independiente de si la operación
+// se corrigió o no — sirve para confirmar al cierre que el monto/tasa
+// que quedó registrado es el definitivo (aplica igual a WMCO editados
+// a mano y a clientes como BNP que ya envían un monto exacto de entrada).
+// =====================================================================
+function toggleVerificadoFX(id){
+  const op = operaciones.find(o=>o.id===id);
+  if(!op) return;
+  op.verificado = !op.verificado;
+  renderHistory();
+}
+
+// =====================================================================
+// CORREGIR (solo operaciones de origen manual: WMCO, tasas tecleadas)
+// Recalcula todo con la misma lógica de calcularDesdeValores.
+// =====================================================================
+function abrirEdicionFX(id){
   const op = operaciones.find(o=>o.id===id);
   if(!op) return;
   editingId = id;
-  document.getElementById('editPtsVenta').value = fmtPts(op.params.ptsVenta);
-  document.getElementById('editPtsCompra').value = fmtPts(op.params.ptsCompra);
-  const rateActual = op.modelo==='ANDES' ? op.params.rate : op.params.rateUnica;
+  document.getElementById('editModalTitle').textContent = 'Corregir operación';
+  document.getElementById('editAmount').value = fmtInt(op.amount);
+  const esAndes = op.modelo === 'ANDES';
+  document.getElementById('editRateLabel').textContent = esAndes ? 'Tasa cliente' : 'Tasa final cliente';
+  const rateActual = esAndes ? op.params.rate : op.params.rateUnica;
   document.getElementById('editRate').value = fmtRate(rateActual);
+  document.getElementById('editSpotRealRow').style.display = esAndes ? 'none' : '';
+  if(!esAndes){
+    document.getElementById('editSpotReal').value = fmtRate(op.params.spotReal);
+  }
   document.getElementById('editTrader').value = op.trader;
-  document.getElementById('editOverlay').classList.add('show');
+  document.getElementById('editOverlayFX').classList.add('show');
 }
 
-function cerrarEdicion(){
+function cerrarEdicionFX(){
   editingId = null;
-  document.getElementById('editOverlay').classList.remove('show');
+  document.getElementById('editOverlayFX').classList.remove('show');
 }
 
-function guardarEdicion(){
+function guardarEdicionFX(){
   const op = operaciones.find(o=>o.id===editingId);
   if(!op) return;
-  op.params.ptsVenta = parseLocaleNumber(document.getElementById('editPtsVenta').value);
-  op.params.ptsCompra = parseLocaleNumber(document.getElementById('editPtsCompra').value);
+  op.amount = parseLocaleNumber(document.getElementById('editAmount').value);
   const nuevaRate = parseLocaleNumber(document.getElementById('editRate').value);
-  if(op.modelo==='ANDES'){ op.params.rate = nuevaRate; }
-  else { op.params.rateUnica = nuevaRate; }
+  if(op.modelo==='ANDES'){
+    op.params.rate = nuevaRate;
+  } else {
+    op.params.rateUnica = nuevaRate;
+    op.params.spotReal = parseLocaleNumber(document.getElementById('editSpotReal').value);
+  }
   op.trader = document.getElementById('editTrader').value;
   renderHistory();
-  cerrarEdicion();
+  cerrarEdicionFX();
   const toast = document.getElementById('toast');
   toast.textContent = '✓ Corrección guardada';
+  toast.classList.add('show');
+  setTimeout(()=>{toast.classList.remove('show'); toast.textContent='✓ Operación registrada correctamente';}, 2400);
+}
+
+// =====================================================================
+// DESHACER (solo operaciones de origen correo/inbox: Andes consolidado)
+// No se edita el número — se devuelven los correos originales a la
+// bandeja tal cual llegaron, para poder volver a agruparlos bien.
+// =====================================================================
+let deshaciendoId = null;
+
+function abrirDeshacerFX(id){
+  const op = operaciones.find(o=>o.id===id);
+  if(!op) return;
+  deshaciendoId = id;
+  const n = op.emailsOrigen ? op.emailsOrigen.length : 0;
+  document.getElementById('deshacerTexto').textContent =
+    `¿Devolver ${n} correo${n===1?'':'s'} de esta operación (${fmtUSD(op.amount)} @ ${fmtRate(op.params.rate)}) a la bandeja de FX_Verifications? El registro se eliminará y los correos volverán a estado pendiente.`;
+  document.getElementById('deshacerOverlayFX').classList.add('show');
+}
+
+function cerrarDeshacerFX(){
+  deshaciendoId = null;
+  document.getElementById('deshacerOverlayFX').classList.remove('show');
+}
+
+function confirmarDeshacerFX(){
+  const idx = operaciones.findIndex(o=>o.id===deshaciendoId);
+  if(idx===-1) return;
+  const op = operaciones[idx];
+
+  (op.emailsOrigen||[]).forEach(row => {
+    inboxData.push({...row});
+    if(row.supaId){
+      fetch(`${SUPA_URL}/rest/v1/fx_andes_inbox?id=eq.${row.supaId}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': SUPA_KEY,
+          'Authorization': `Bearer ${SUPA_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify({ estado: 'pendiente' })
+      });
+    }
+  });
+  inboxData.sort((a,b)=> (b.time||'').localeCompare(a.time||''));
+
+  operaciones.splice(idx,1);
+  renderHistory();
+  renderInbox();
+  cerrarDeshacerFX();
+
+  const toast = document.getElementById('toast');
+  toast.textContent = '✓ Correos devueltos a la bandeja';
   toast.classList.add('show');
   setTimeout(()=>{toast.classList.remove('show'); toast.textContent='✓ Operación registrada correctamente';}, 2400);
 }
@@ -2670,10 +2747,10 @@ editingId = null;
 // FORMATO
 // =====================================================================
 function fmtInt(n){ return Number(n).toLocaleString('en-US',{maximumFractionDigits:0}); }
-function fmtRate(n,d=4){ return Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}); }
-function fmtMoney(n,d=2){ const s=n<0?'-':''; return s+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function fmtRateRVI(n,d=4){ return Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function fmtMoneyRVI(n,d=2){ const s=n<0?'-':''; return s+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}); }
 function parseNum(str){ return parseFloat(String(str).replace(/[^0-9.\-]/g,''))||0; }
-function fmtInput(el,d){ el.value=fmtRate(parseNum(el.value),d); }
+function fmtInput(el,d){ el.value=fmtRateRVI(parseNum(el.value),d); }
 
 // =====================================================================
 // FILTROS
@@ -2725,8 +2802,8 @@ function renderEmsx(){
       <td><span class="tipo-badge">${r.tipo}</span></td>
       <td><span class="side-badge ${r.lado==='Buy'?'buy':'sell'}">${r.lado}</span></td>
       <td class="num">${fmtInt(r.qty)}</td>
-      <td class="num">${fmtRate(r.avgPr,4)}</td>
-      <td class="num">${fmtMoney(r.qty*r.avgPr,0)}</td>
+      <td class="num">${fmtRateRVI(r.avgPr,4)}</td>
+      <td class="num">${fmtMoneyRVI(r.qty*r.avgPr,0)}</td>
       <td class="mono-id">${r.broker}</td>
       <td class="mono-id">${r.account||'—'}</td>
       <td><span class="status-badge ${r.procesado?'filled':'pending'}">${r.procesado?'Procesado':'Pendiente'}</span></td>
@@ -2749,7 +2826,7 @@ function seleccionarLinea(id){
   document.getElementById('tc-isin').value = linea.isin;
   document.getElementById('tc-tipo').value = linea.tipo;
   document.getElementById('tc-side').value = linea.lado;
-  document.getElementById('tc-price').value = fmtRate(linea.avgPr,4);
+  document.getElementById('tc-price').value = fmtRateRVI(linea.avgPr,4);
 
   // Distribucion: si la linea ya tiene account definido, pre-asignar todo
   distribuciones = [];
@@ -2899,12 +2976,12 @@ function calcularRVI(){
   const secFee = calcularSecFee(lado, c.gross);
   const netCliente = lado==='Sell' ? c.gross - c.costCliente - secFee : c.gross + c.costCliente;
 
-  document.getElementById('rc-gross').textContent = fmtMoney(c.gross,0);
-  document.getElementById('rc-cost').textContent = fmtMoney(c.costCliente,2);
-  document.getElementById('rc-ccsi').textContent = fmtMoney(c.costCCSI,2);
-  document.getElementById('rc-net').textContent = fmtMoney(netCliente,2);
-  document.getElementById('rc-utilidad').textContent = fmtMoney(c.utilidad,2);
-  document.getElementById('tc-secfee').value = secFee>0 ? fmtRate(secFee,4) : '0.0000';
+  document.getElementById('rc-gross').textContent = fmtMoneyRVI(c.gross,0);
+  document.getElementById('rc-cost').textContent = fmtMoneyRVI(c.costCliente,2);
+  document.getElementById('rc-ccsi').textContent = fmtMoneyRVI(c.costCCSI,2);
+  document.getElementById('rc-net').textContent = fmtMoneyRVI(netCliente,2);
+  document.getElementById('rc-utilidad').textContent = fmtMoneyRVI(c.utilidad,2);
+  document.getElementById('tc-secfee').value = secFee>0 ? fmtRateRVI(secFee,4) : '0.0000';
 
   const db = clientesRVI[clienteKey];
   const tarifaLabel = tipo==='UCIT' ? (db.comUCIT*100).toFixed(2)+'%' : '$'+db.comETF+'/acc';
@@ -2985,12 +3062,12 @@ function renderHistorial(){
     <td class="mono-id"><b>${h.symbol}</b></td>
     <td class="mono-id">${h.isin}</td>
     <td class="num">${fmtInt(h.qty)}</td>
-    <td class="num">${fmtRate(h.price,4)}</td>
-    <td class="num">${fmtMoney(h.gross,0)}</td>
-    <td class="num">${fmtMoney(h.cost,2)}</td>
-    <td class="num">${fmtRate(h.secFee,4)}</td>
-    <td class="num">${fmtMoney(h.net,2)}</td>
-    <td class="num">${fmtMoney(h.ccsi,2)}</td>
+    <td class="num">${fmtRateRVI(h.price,4)}</td>
+    <td class="num">${fmtMoneyRVI(h.gross,0)}</td>
+    <td class="num">${fmtMoneyRVI(h.cost,2)}</td>
+    <td class="num">${fmtRateRVI(h.secFee,4)}</td>
+    <td class="num">${fmtMoneyRVI(h.net,2)}</td>
+    <td class="num">${fmtMoneyRVI(h.ccsi,2)}</td>
     <td><button class="icon-btn" title="Corregir" onclick="abrirEdicion(${h.id})">✎</button></td>
   </tr>`).join('');
   document.getElementById('histHint').textContent=`(${historial.length} líneas)`;
@@ -3007,7 +3084,7 @@ function abrirEdicion(id){
   const h=historial.find(x=>x.id===id);
   if(!h) return;
   editingId=id;
-  document.getElementById('edit-price').value=fmtRate(h.price,4);
+  document.getElementById('edit-price').value=fmtRateRVI(h.price,4);
   document.getElementById('edit-tipo').value=h.tipo;
   document.getElementById('edit-cost').value='';
   document.getElementById('editOverlay').classList.add('show');
