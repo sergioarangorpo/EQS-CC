@@ -1138,7 +1138,7 @@
             <th></th>
           </tr>
         </thead>
-        <tbody id="historyBody">
+        <tbody id="historyBodyRVL">
           <tr><td colspan="12" class="empty-state">Aún no hay reportes generados en esta sesión.</td></tr>
         </tbody>
       </table>
@@ -1610,7 +1610,7 @@ async function cargarInboxDesdeSupabase() {
 }
 
 // Festivos CO + US (subset relevante para la demo)
-const festivosCO = ['2026-06-15','2026-07-20','2026-08-07'];
+const festivosCO = ['2026-06-15','2026-07-13','2026-07-20','2026-08-07'];
 const festivosUS = ['2026-06-19','2026-07-04','2026-09-07'];
 const festivos = new Set([...festivosCO, ...festivosUS]);
 
@@ -2499,7 +2499,7 @@ function generarReporte(){
   const idsUsados = new Set(seleccionados.map(f=>f.id));
   foliosFidessa = foliosFidessa.filter(f=>!idsUsados.has(f.id));
 
-  renderHistory();
+  renderHistoryRVL();
 
   // Limpiar selección y allocations tras registrar, igual que en FX
   selectedFolios.clear();
@@ -2512,8 +2512,8 @@ function generarReporte(){
   setTimeout(()=>toast.classList.remove('show'), 2400);
 }
 
-function renderHistory(){
-  const tbody = document.getElementById('historyBody');
+function renderHistoryRVL(){
+  const tbody = document.getElementById('historyBodyRVL');
   if(operacionesHistorico.length===0){
     tbody.innerHTML = '<tr><td colspan="12" class="empty-state">Aún no hay reportes generados en esta sesión.</td></tr>';
     return;
@@ -2569,7 +2569,7 @@ function guardarEdicion(){
   op.ivaMonto = teniaIva ? op.comMonto*0.19 : 0;
   op.montoNeto = op.lado==='Compra' ? montoBruto + op.comMonto + op.ivaMonto : montoBruto - op.comMonto - op.ivaMonto;
 
-  renderHistory();
+  renderHistoryRVL();
   cerrarEdicion();
   const toast = document.getElementById('toast');
   toast.textContent = '✓ Corrección guardada';
