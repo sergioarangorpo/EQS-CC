@@ -825,15 +825,15 @@
         <div class="field-row">
           <div class="field">
             <label>Monto USD</label>
-            <input type="text" inputmode="decimal" id="amount" value="250,000" oninput="calcular()" onblur="formatInputAsNumber(this,0);calcular()">
+            <input type="text" inputmode="decimal" id="amount" value="" oninput="calcular()" onblur="formatInputAsNumber(this,0);calcular()">
           </div>
           <div class="field" id="campoRateAndes">
             <label>Tasa cliente</label>
-            <input type="text" inputmode="decimal" id="rate" value="3,468.75" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+            <input type="text" inputmode="decimal" id="rate" value="" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
           </div>
           <div class="field" id="campoRateMercadoUnica" style="display:none;">
             <label>Tasa mercado</label>
-            <input type="text" inputmode="decimal" id="spotReal" value="3,455.00" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+            <input type="text" inputmode="decimal" id="spotReal" value="" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
           </div>
         </div>
 
@@ -841,7 +841,7 @@
           <div class="field-row">
             <div class="field" style="flex:1 1 100%;">
               <label>Tasa final cliente <span class="field-note" style="display:inline">(todo incluido, a fecha cumplimiento)</span></label>
-              <input type="text" inputmode="decimal" id="rateUnica" value="3,465.00" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+              <input type="text" inputmode="decimal" id="rateUnica" value="" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
             </div>
           </div>
         </div>
@@ -1710,7 +1710,14 @@ function toggleRow(i){
 }
 
 function consolidarSeleccion(){
-  if(selectedRows.size===0) return;
+  if(selectedRows.size===0){
+    // Sin correos seleccionados: la calculadora no debe mostrar ni permitir
+    // registrar una operación con datos de una selección anterior.
+    document.getElementById('amount').value = '';
+    document.getElementById('rate').value = '';
+    calcular();
+    return;
+  }
   const rows = [...selectedRows].map(i=>inboxData[i]);
   const sides = new Set(rows.map(r=>r.side));
   if(sides.size>1){
