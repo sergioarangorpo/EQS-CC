@@ -1323,27 +1323,27 @@
         <div class="field-row">
           <div class="field">
             <label>Trade date</label>
-            <input type="date" id="tc-trade-date" onchange="calcular()">
+            <input type="date" id="tc-trade-date" onchange="calcularRVI()">
           </div>
           <div class="field">
             <label>Settlement date</label>
-            <input type="date" id="tc-settle-date" onchange="calcular()">
+            <input type="date" id="tc-settle-date" onchange="calcularRVI()">
           </div>
         </div>
         <div class="field-row">
           <div class="field">
             <label>Symbol</label>
-            <input type="text" id="tc-symbol" placeholder="XLC" oninput="calcular()">
+            <input type="text" id="tc-symbol" placeholder="XLC" oninput="calcularRVI()">
           </div>
           <div class="field">
             <label>ISIN</label>
-            <input type="text" id="tc-isin" placeholder="US02079K3059" oninput="calcular()">
+            <input type="text" id="tc-isin" placeholder="US02079K3059" oninput="calcularRVI()">
           </div>
         </div>
         <div class="field-row">
           <div class="field">
             <label>Tipo instrumento</label>
-            <select id="tc-tipo" onchange="calcular()">
+            <select id="tc-tipo" onchange="calcularRVI()">
               <option value="ETF">ETF</option>
               <option value="UCIT">UCIT</option>
               <option value="ADR">ADR</option>
@@ -1351,7 +1351,7 @@
           </div>
           <div class="field">
             <label>Side</label>
-            <select id="tc-side" onchange="calcular()">
+            <select id="tc-side" onchange="calcularRVI()">
               <option value="Sell">Sell</option>
               <option value="Buy">Buy</option>
             </select>
@@ -1360,7 +1360,7 @@
         <div class="field-row">
           <div class="field">
             <label>Price</label>
-            <input type="text" inputmode="decimal" id="tc-price" oninput="calcular()" onblur="fmtInput(this,4);calcular()">
+            <input type="text" inputmode="decimal" id="tc-price" oninput="calcularRVI()" onblur="fmtInput(this,4);calcularRVI()">
           </div>
           <div class="field">
             <label>Sec Fee (auto)</label>
@@ -1621,6 +1621,16 @@ function esHabil(d){
   return !festivos.has(iso);
 }
 
+function parseFechaLocal(str){
+  // Parsea un string "YYYY-MM-DD" (el value de un <input type="date">) como
+  // medianoche en hora LOCAL. Evita el bug de `new Date("YYYY-MM-DD")`, que
+  // JS interpreta como medianoche UTC y que en Colombia (UTC-5) corresponde
+  // a las 7pm del día anterior — al mezclarlo luego con getDate()/setDate()
+  // (que operan en hora local), el día calculado queda corrido.
+  const [y, m, d] = str.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
 function sumarDiasHabiles(fecha, dias){
   let d = new Date(fecha);
   let added = 0;
@@ -1777,7 +1787,7 @@ function cambiarTipoOperacion(){
       tradeDateInput.value = hoy.toISOString().slice(0,10);
     }
     if(!document.getElementById('settleDate').value){
-      const settle = sumarDiasHabiles(new Date(tradeDateInput.value), 2);
+      const settle = sumarDiasHabiles(parseFechaLocal(tradeDateInput.value), 2);
       document.getElementById('settleDate').value = settle.toISOString().slice(0,10);
     }
   }
@@ -2063,7 +2073,7 @@ function tickClock(){
   document.getElementById('clock').textContent = new Date().toLocaleTimeString('es-CO');
 }
 
-function initDates(){
+function initDatesFX(){
   const today = new Date();
   document.getElementById('tradeDate').value = today.toISOString().slice(0,10);
   const settle = sumarDiasHabiles(today, 2);
@@ -2569,7 +2579,7 @@ function tickClock(){
   document.getElementById('clock').textContent = new Date().toLocaleTimeString('es-CO');
 }
 
-function initDates(){
+function initDatesRVL(){
   const today = new Date().toISOString().slice(0,10);
   document.getElementById('fechaRegistro').value = today;
   const d = new Date();
@@ -2744,7 +2754,7 @@ function seleccionarLinea(id){
   document.getElementById('error-dist').textContent = '';
   onCambioCliente();
   renderDistribuciones();
-  calcular();
+  calcularRVI();
   renderEmsx();
 }
 
@@ -2765,11 +2775,11 @@ function onCambioCliente(){
   const acc = document.getElementById('nuevo-account');
   if(!key || !clientesRVI[key]){
     acc.innerHTML='<option value="">Selecciona cliente primero</option>';
-    calcular(); return;
+    calcularRVI(); return;
   }
   const ports = clientesRVI[key].portafolios;
   acc.innerHTML = ports.map(p=>`<option value="${p}">${p}</option>`).join('');
-  calcular();
+  calcularRVI();
 }
 
 // =====================================================================
@@ -2803,13 +2813,13 @@ function agregarAccount(){
 
   document.getElementById('nueva-cantidad').value='';
   renderDistribuciones();
-  calcular();
+  calcularRVI();
 }
 
 function quitarAccount(idx){
   distribuciones.splice(idx,1);
   renderDistribuciones();
-  calcular();
+  calcularRVI();
 }
 
 function renderDistribuciones(){
@@ -2863,7 +2873,7 @@ function calcularSecFee(lado, gross){
   return lado==='Sell' ? gross * SEC_FEE_RATE : 0;
 }
 
-function calcular(){
+function calcularRVI(){
   const clienteKey = document.getElementById('tc-cliente').value;
   const tipo = document.getElementById('tc-tipo').value;
   const lado = document.getElementById('tc-side').value;
@@ -3033,7 +3043,7 @@ function guardarEdicion(){
 // =====================================================================
 // INIT
 // =====================================================================
-function initDates(){
+function initDatesRVI(){
   const hoy=new Date().toISOString().slice(0,10);
   document.getElementById('tc-trade-date').value=hoy;
   const settle=new Date();
@@ -3049,18 +3059,18 @@ function tickClock(){ document.getElementById('clock').textContent=new Date().to
 // =====================================================================
 // FX
 cargarInboxDesdeSupabase();
-initDates();
+initDatesFX();
 cambiarTipoOperacion();
 calcular();
 // RVL
 poblarFiltros();
 renderFolios();
-initDates();
+initDatesRVL();
 // RVI
 poblarFiltros();
 renderEmsx();
 renderDistribuciones();
-initDates();
+initDatesRVI();
 
 // Clock
 tickClock();
