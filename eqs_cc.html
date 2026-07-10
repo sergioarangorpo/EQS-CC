@@ -100,6 +100,12 @@
     background:var(--bg-2);border:1px solid var(--border-soft);border-radius:6px;
     color:var(--text-0);font-family:var(--mono);font-size:12.5px;padding:7px 8px;
   }
+  .hist-filtros-divider{width:1px;align-self:stretch;background:var(--border-soft);margin:0 2px;}
+  .reporte-btn{
+    background:linear-gradient(135deg,#0d1b3d,#152a5c);
+    border:1px solid #d4a94e;color:#f0c869;font-weight:600;
+  }
+  .reporte-btn:hover{background:linear-gradient(135deg,#152a5c,#1c3670);color:#ffd980;}
   .neto-panel{
     display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px;
   }
@@ -251,6 +257,7 @@
     margin-top:10px;font-size:11px;color:var(--text-2);line-height:1.6;
   }
   .footer-note b{color:var(--text-1);font-weight:500;}
+  .text-muted{color:var(--text-2);}
 
   .icon-btn{
     background:none;border:1px solid var(--border-strong);border-radius:5px;
@@ -690,6 +697,7 @@
 .mod-section { display:none; }
 .mod-section.active { display:block; }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 </head>
 <body>
 
@@ -782,6 +790,12 @@
           </select>
         </div>
         <button class="btn small ghost" onclick="borrarFiltrosHistorialFX()">✕ Borrar filtros</button>
+        <div class="hist-filtros-divider"></div>
+        <div class="tb-field">
+          <label>Reporte para cliente</label>
+          <select id="reporteCliente"></select>
+        </div>
+        <button class="btn small reporte-btn" onclick="generarReporteExcel()">📄 Generar reporte</button>
       </div>
 
       <div class="neto-panel" id="netoPanel">
@@ -813,14 +827,13 @@
               <th class="num sortable" onclick="ordenarPorFX('tasaCliente')">Tasa cliente<span class="sort-arrow" id="arrow-fx-tasaCliente"></span></th>
               <th class="num sortable" onclick="ordenarPorFX('tasaNuestra')">Tasa nuestra<span class="sort-arrow" id="arrow-fx-tasaNuestra"></span></th>
               <th class="num sortable" onclick="ordenarPorFX('comEqs')">Com. EQS<span class="sort-arrow" id="arrow-fx-comEqs"></span></th>
-              <th class="num sortable" onclick="ordenarPorFX('comMesa')">Com. Mesa<span class="sort-arrow" id="arrow-fx-comMesa"></span></th>
               <th class="sortable" onclick="ordenarPorFX('receptor')">Receptor<span class="sort-arrow" id="arrow-fx-receptor"></span></th>
               <th class="num" title="Marca cuando el monto/tasa final ya quedó confirmado para back office">Verif.</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="historyBody">
-            <tr><td colspan="14" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>
+            <tr><td colspan="13" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>
           </tbody>
         </table>
       </div>
@@ -861,6 +874,7 @@
             <label>Cliente</label>
             <select id="cliente" onchange="cambiarCliente()">
               <option value="ANDES" data-modelo="ANDES">Andes Investment Group Inc</option>
+              <option value="ANDES_MANUAL" data-modelo="ANDES_MANUAL">Andes Investment Group Inc (manual — sin DMA)</option>
               <option value="BNP" data-modelo="UNICA">BNP Paribas</option>
               <option value="CCAM" data-modelo="UNICA">Credicorp Capital Asset Mgmt Fund</option>
               <option value="CCBOLSA" data-modelo="UNICA">Credicorp Capital Bolsa</option>
@@ -1801,7 +1815,7 @@ function getModeloEfectivo(){
   const modeloBase = opt.getAttribute('data-modelo');
   const tipo = document.getElementById('tipoOperacion').value;
   // Excepción: Andes con WMCO se trata como cualquier extranjero (tasa única, 100% EQS, sin reparto).
-  if(modeloBase === 'ANDES' && tipo === 'WMCO') return 'UNICA_WMCO';
+  if((modeloBase === 'ANDES' || modeloBase === 'ANDES_MANUAL') && tipo === 'WMCO') return 'UNICA_WMCO';
   if(tipo === 'WMCO') return 'UNICA_WMCO';
   return modeloBase;
 }
@@ -1845,6 +1859,23 @@ function cambiarTipoOperacion(){
 }
 
 function onTradeDateChange(){
+  // Sincronización en el otro sentido: si el usuario mueve la fecha de
+  // operación a mano (sin tocar el dropdown de Tipo), el tipo debe seguir
+  // a la fecha igual que la fecha sigue al tipo. Solo tocamos el <select>
+  // directamente (sin pasar por cambiarTipoOperacion, que recalcularía la
+  // fecha y pisaría lo que el usuario acaba de escribir).
+  const tradeDateInput = document.getElementById('tradeDate');
+  const tipoSel = document.getElementById('tipoOperacion');
+  if(tradeDateInput.value){
+    const hoy = new Date(); hoy.setHours(0,0,0,0);
+    const hoyStr = hoy.toISOString().slice(0,10);
+    const siguienteStr = siguienteDiaHabil(hoy).toISOString().slice(0,10);
+    if(tradeDateInput.value === siguienteStr && tipoSel.value !== 'WMCO'){
+      tipoSel.value = 'NEXT_DAY';
+    } else if(tradeDateInput.value === hoyStr && tipoSel.value === 'NEXT_DAY'){
+      tipoSel.value = 'SPOT';
+    }
+  }
   // El usuario puede mover la fecha de operación libremente; solo avisamos si no coincide
   // con la norma del tipo de operación elegido (no la forzamos).
   validarFechaOperacion();
@@ -1854,10 +1885,18 @@ function onTradeDateChange(){
 function cambiarCliente(){
   const modelo = getModeloEfectivo();
   const esAndes = modelo === 'ANDES';
-  document.getElementById('campoRateAndes').style.display = esAndes ? '' : 'none';
+  const esAndesManual = modelo === 'ANDES_MANUAL';
+  const esUnicaConTasaFinal = modelo === 'UNICA' || modelo === 'UNICA_WMCO';
+  // Tasa cliente (id="rate"): Andes por correo Y Andes manual la usan igual.
+  document.getElementById('campoRateAndes').style.display = (esAndes || esAndesManual) ? '' : 'none';
+  // Tasa mercado (id="spotReal"): oculta en Andes por correo (se asume ±0.05
+  // automático); visible y EDITABLE en Andes manual (Juan escribe la tasa
+  // real de ejecución en mercado) y en los modelos UNICA de siempre.
   document.getElementById('campoRateMercadoUnica').style.display = esAndes ? 'none' : '';
-  document.getElementById('bloqueUnica').style.display = esAndes ? 'none' : '';
-  document.getElementById('labelSide').textContent = esAndes ? 'Lado (desde Andes)' : 'Lado (desde cliente)';
+  // "Tasa final cliente (todo incluido)" solo aplica a UNICA/WMCO — en Andes
+  // (correo o manual) la tasa final se calcula sola (tasa + noches×puntos).
+  document.getElementById('bloqueUnica').style.display = esUnicaConTasaFinal ? '' : 'none';
+  document.getElementById('labelSide').textContent = (esAndes || esAndesManual) ? 'Lado (desde Andes)' : 'Lado (desde cliente)';
   document.getElementById('labelTasaT0').textContent = 'Tasa cliente a T+0';
   calcular();
 }
@@ -1888,11 +1927,11 @@ function calcular(){
     // el T+0 debe reflejar noches desde esa fecha, no desde hoy.
     nochesT0 = noches;
   }
-  document.getElementById('nochesNote').textContent = (noches>=0?noches:0) + ' noches de fondeo (' + (tdVal?fmtFechaCorta(tdVal):'—') + ' → ' + (sdVal?fmtFechaCorta(sdVal):'—') + ')' + (modelo!=='ANDES' ? ' · ' + Math.max(nochesT0,0) + ' noches para descuento a T+0' : '');
+  document.getElementById('nochesNote').textContent = (noches>=0?noches:0) + ' noches de fondeo (' + (tdVal?fmtFechaCorta(tdVal):'—') + ' → ' + (sdVal?fmtFechaCorta(sdVal):'—') + ')' + (modelo!=='ANDES' && modelo!=='ANDES_MANUAL' ? ' · ' + Math.max(nochesT0,0) + ' noches para descuento a T+0' : '');
 
   let params, rateCheck;
 
-  if(modelo === 'ANDES'){
+  if(modelo === 'ANDES' || modelo === 'ANDES_MANUAL'){
     const rate = parseLocaleNumber(document.getElementById('rate').value);
     const ptsVenta = parseLocaleNumber(document.getElementById('ptsVenta').value);
     const ptsCompra = parseLocaleNumber(document.getElementById('ptsCompra').value);
@@ -1904,6 +1943,14 @@ function calcular(){
     document.getElementById('ptsCompraFinal').textContent = fmtPts(ptsCompraFinal);
     params = {rate, ptsVenta, ptsCompra, spreadVenta, spreadCompra, noches};
     rateCheck = rate;
+    if(modelo === 'ANDES_MANUAL'){
+      // Sin DMA: Juan escribe la tasa real a la que ejecutó en mercado — no
+      // se asume ningún spread fijo (nada de ±0.05), es lo que de verdad
+      // logró comprar/vender.
+      const fxMktManual = parseLocaleNumber(document.getElementById('spotReal').value);
+      params.fxMktManual = fxMktManual;
+      rateCheck = rate && fxMktManual; // ambas tasas son obligatorias acá
+    }
   } else {
     const rateUnica = parseLocaleNumber(document.getElementById('rateUnica').value);
     const spotReal = parseLocaleNumber(document.getElementById('spotReal').value);
@@ -2070,9 +2117,15 @@ async function borrarOperacionSupabase(id){
 }
 
 function calcularDesdeValores(modelo, side, amount, params){
-  if(modelo === 'ANDES'){
-    const {rate, ptsVenta, ptsCompra, spreadVenta, spreadCompra, noches} = params;
-    const fxMkt = side==='BUY' ? rate - 0.05 : rate + 0.05;
+  if(modelo === 'ANDES' || modelo === 'ANDES_MANUAL'){
+    const {rate, ptsVenta, ptsCompra, spreadVenta, spreadCompra, noches, fxMktManual} = params;
+    // Andes por correo (DMA): asumimos un spread nominal de mercado de ±0.05.
+    // Andes manual (sin DMA, ej. cierre por Bloomberg chat en la tarde): la
+    // tasa de mercado es la que realmente se ejecutó — la escribe el trader,
+    // sin ningún tope de margen asumido.
+    const fxMkt = modelo === 'ANDES_MANUAL'
+      ? fxMktManual
+      : (side==='BUY' ? rate - 0.05 : rate + 0.05);
     const ptsVentaFinal = ptsVenta - spreadVenta;
     const ptsCompraFinal = ptsCompra + spreadCompra;
 
@@ -2153,7 +2206,7 @@ function registrar(){
   guardarOperacionSupabase(op);
   renderHistory();
 
-  // Quitar de la bandeja los correos que se acaban de registrar (solo aplica a Andes)
+  // Quitar de la bandeja los correos que se acaban de registrar (solo aplica a Andes por correo)
   if(c.modelo === 'ANDES'){
     const usadas = [...selectedRows].sort((a,b)=>b-a);
     // Marcar como 'registrado' en Supabase — y llevar un registro local de
@@ -2182,8 +2235,14 @@ function registrar(){
     renderInbox();
     bloquearPorMezcla(false);
     document.getElementById('rate').value = '';
+  } else if(c.modelo === 'ANDES_MANUAL'){
+    // Sin DMA: limpiar tanto la tasa cliente como la tasa de mercado tecleada,
+    // para no arrastrar la ejecución del trade anterior al siguiente.
+    document.getElementById('rate').value = '';
+    document.getElementById('spotReal').value = '';
   } else {
     document.getElementById('rateUnica').value = '';
+    document.getElementById('spotReal').value = '';
   }
   document.getElementById('amount').value = '';
   calcular();
@@ -2194,7 +2253,7 @@ function registrar(){
 }
 
 const clienteNombres = {
-  ANDES:'Andes Investment Group', BNP:'BNP Paribas', CCAM:'Credicorp Capital AM Fund',
+  ANDES:'Andes Investment Group', ANDES_MANUAL:'Andes Investment Group (manual)', BNP:'BNP Paribas', CCAM:'Credicorp Capital AM Fund',
   CCBOLSA:'Credicorp Capital Bolsa', HSBC:'HSBC Bank PLC', SANTANDER:'Fondo Santander Securities',
   MLI:'Merrill Lynch Intl', IMPERA:'Impera Global Frontier', CITI:'Citigroup Global Markets', IMTRUST:'IM Trust'
 };
@@ -2213,20 +2272,38 @@ function ordenarPorFX(col){
 // Calcula, sobre el set de filas ACTUALMENTE filtrado (por cliente/tipo/lado),
 // cuánto USD toca comprar o vender neto en mercado para cerrar el riesgo —
 // el mismo cálculo que JAJ hace a mano en Excel cuando llegan varios WMCO/SPOT.
-function actualizarNetoPanelFX(filas){
+// El panel de Neto solo tiene sentido para operaciones que TODAVÍA necesitan
+// cubrirse en mercado. Las de Andes que llegan por correo (origen='inbox')
+// ya las operó Andes directamente vía DMA — nunca deben sumar acá, sin
+// importar el filtro. Además, por defecto (sin ningún filtro activo) el
+// panel se queda vacío: mezclar todo sin filtrar no dice nada útil, hay
+// que elegir intencionalmente qué se está neteando (ej. Tipo=WMCO).
+function actualizarNetoPanelFX(filas, hayFiltroActivo){
+  const resultadoEl = document.getElementById('netoResultado');
+  const compraEl = document.getElementById('netoCompra');
+  const ventaEl = document.getElementById('netoVenta');
+
+  if(!hayFiltroActivo){
+    compraEl.textContent = '—';
+    ventaEl.textContent = '—';
+    resultadoEl.textContent = 'Elige un filtro para calcular';
+    resultadoEl.className = 'neto-value';
+    return;
+  }
+
+  const filasCubribles = filas.filter(({op}) => op.origen !== 'inbox');
   let totalCompra = 0, totalVenta = 0;
-  filas.forEach(({op})=>{
+  filasCubribles.forEach(({op})=>{
     if(op.side==='BUY') totalCompra += op.amount;
     else totalVenta += op.amount;
   });
   const neto = totalCompra - totalVenta;
 
-  document.getElementById('netoCompra').textContent = fmtUSD(totalCompra);
-  document.getElementById('netoVenta').textContent = fmtUSD(totalVenta);
+  compraEl.textContent = fmtUSD(totalCompra);
+  ventaEl.textContent = fmtUSD(totalVenta);
 
-  const resultadoEl = document.getElementById('netoResultado');
-  if(filas.length===0){
-    resultadoEl.textContent = '—';
+  if(filasCubribles.length===0){
+    resultadoEl.textContent = 'Nada por cubrir (solo Andes DMA)';
     resultadoEl.className = 'neto-value';
   } else if(Math.abs(neto) < 0.005){
     resultadoEl.textContent = 'Neto en cero';
@@ -2258,20 +2335,49 @@ function poblarFiltroClienteHistFX(){
   if(clientesHoy.includes(actual)) sel.value = actual;
 }
 
+// Nombre de fondo tal como debe salir en el reporte (formato mayúsculas,
+// igual a como ya lo reciben los clientes). Andes correo y Andes manual son
+// el mismo fondo real — se agrupan bajo el mismo nombre en el reporte.
+const fondoReporte = {
+  ANDES: 'ANDES INVESTMENT GROUP INC',
+  ANDES_MANUAL: 'ANDES INVESTMENT GROUP INC',
+  BNP: 'BNP PARIBAS',
+  CCAM: 'CREDICORP CAPITAL ASSET MGMT FUND',
+  CCBOLSA: 'CREDICORP CAPITAL BOLSA',
+  HSBC: 'HSBC BANK PLC',
+  SANTANDER: 'FONDO SANTANDER SECURITIES INC',
+  MLI: 'MERRILL LYNCH INTERNATIONAL',
+  IMPERA: 'IMPERA GLOBAL FRONTIER MASTER FUND',
+  CITI: 'CITIGROUP GLOBAL MARKETS LTD',
+  IMTRUST: 'IM TRUST',
+};
+
+function poblarSelectorReporteFX(){
+  const sel = document.getElementById('reporteCliente');
+  if(!sel) return;
+  const actual = sel.value;
+  const fondosHoy = [...new Set(operaciones.map(o=>fondoReporte[o.cliente]||o.cliente))];
+  sel.innerHTML = fondosHoy.length
+    ? fondosHoy.map(f=>`<option value="${f}">${f}</option>`).join('')
+    : '<option value="">Sin operaciones hoy</option>';
+  if(fondosHoy.includes(actual)) sel.value = actual;
+}
+
 function renderHistory(){
   const tbody = document.getElementById('historyBody');
   poblarFiltroClienteHistFX();
+  poblarSelectorReporteFX();
 
   if(operaciones.length===0){
-    tbody.innerHTML = '<tr><td colspan="14" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>';
-    actualizarNetoPanelFX([]);
+    tbody.innerHTML = '<tr><td colspan="13" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>';
+    actualizarNetoPanelFX([], false);
     return;
   }
   // Pre-calcular los valores derivados (tasa nuestra, comisiones) una vez por
   // operación, para poder ordenar por ellos igual que por los campos crudos.
   let filas = operaciones.map(op=>{
     const r = calcularDesdeValores(op.modelo, op.side, op.amount, op.params);
-    const rateMostrar = op.modelo==='ANDES' ? op.params.rate : op.params.rateUnica;
+    const rateMostrar = (op.modelo==='ANDES'||op.modelo==='ANDES_MANUAL') ? op.params.rate : op.params.rateUnica;
     return { op, r, rateMostrar };
   });
 
@@ -2281,14 +2387,15 @@ function renderHistory(){
   const fCliente = document.getElementById('histFiltroCliente').value;
   const fTipo = document.getElementById('histFiltroTipo').value;
   const fLado = document.getElementById('histFiltroLado').value;
+  const hayFiltroActivo = !!(fCliente || fTipo || fLado);
   if(fCliente) filas = filas.filter(f=>f.op.cliente===fCliente);
   if(fTipo) filas = filas.filter(f=>f.op.tipoOperacion===fTipo);
   if(fLado) filas = filas.filter(f=>f.op.side===fLado);
 
-  actualizarNetoPanelFX(filas);
+  actualizarNetoPanelFX(filas, hayFiltroActivo);
 
   if(filas.length===0){
-    tbody.innerHTML = '<tr><td colspan="14" class="empty-state">Ninguna operación coincide con estos filtros.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="empty-state">Ninguna operación coincide con estos filtros.</td></tr>';
     return;
   }
 
@@ -2305,7 +2412,6 @@ function renderHistory(){
         case 'tasaCliente': return f.rateMostrar;
         case 'tasaNuestra': return f.r.tasaFinalNuestra;
         case 'comEqs': return f.r.comEqs;
-        case 'comMesa': return f.r.comMesa;
         case 'receptor': return f.op.trader;
         default: return 0;
       }
@@ -2321,7 +2427,13 @@ function renderHistory(){
     const accionBtn = op.origen === 'inbox'
       ? `<button class="icon-btn" title="Deshacer — devolver correos a la bandeja" onclick="abrirDeshacerFX(${op.id})">↩</button>`
       : `<button class="icon-btn" title="Corregir operación" onclick="abrirEdicionFX(${op.id})">✎</button>`;
-    return `<tr class="${op.verificado?'':'row-pendiente'}">
+    // Andes por correo ya viene operado en mercado vía DMA — no aplica marcar
+    // "verificado" (no hay nada que confirmar) ni el punto ámbar de pendiente.
+    const verifCell = op.origen === 'inbox'
+      ? `<span class="text-muted" title="Andes por correo ya está operado vía DMA — no requiere verificación">—</span>`
+      : `<input type="checkbox" class="chk" ${op.verificado?'checked':''} title="${op.verificado?'Verificado':'Pendiente de verificar para back office'}" onchange="toggleVerificadoFX(${op.id})">`;
+    const rowClass = (op.origen !== 'inbox' && !op.verificado) ? 'row-pendiente' : '';
+    return `<tr class="${rowClass}">
       <td class="mono-id">${op.horaRegistro}</td>
       <td class="client-name">${clienteNombres[op.cliente]||op.cliente}</td>
       <td class="mono-id">${op.tipoOperacion}</td>
@@ -2332,9 +2444,8 @@ function renderHistory(){
       <td class="num">${fmtRate(rateMostrar)}</td>
       <td class="num">${fmtRate(r.tasaFinalNuestra)}</td>
       <td class="num">${fmtMoney(r.comEqs)}</td>
-      <td class="num">${fmtMoney(r.comMesa)}</td>
       <td class="mono-id">${op.trader}</td>
-      <td class="num"><input type="checkbox" class="chk" ${op.verificado?'checked':''} title="${op.verificado?'Verificado':'Pendiente de verificar para back office'}" onchange="toggleVerificadoFX(${op.id})"></td>
+      <td class="num">${verifCell}</td>
       <td>${accionBtn}</td>
     </tr>`;
   }).join('');
@@ -2364,12 +2475,15 @@ function abrirEdicionFX(id){
   editingId = id;
   document.getElementById('editModalTitle').textContent = 'Corregir operación';
   document.getElementById('editAmount').value = Number(op.amount).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const esAndes = op.modelo === 'ANDES';
-  document.getElementById('editRateLabel').textContent = esAndes ? 'Tasa cliente' : 'Tasa final cliente';
-  const rateActual = esAndes ? op.params.rate : op.params.rateUnica;
+  const esAndesPuro = op.modelo === 'ANDES';
+  const esAndesManual = op.modelo === 'ANDES_MANUAL';
+  document.getElementById('editRateLabel').textContent = (esAndesPuro || esAndesManual) ? 'Tasa cliente' : 'Tasa final cliente';
+  const rateActual = (esAndesPuro || esAndesManual) ? op.params.rate : op.params.rateUnica;
   document.getElementById('editRate').value = fmtRate(rateActual);
-  document.getElementById('editSpotRealRow').style.display = esAndes ? 'none' : '';
-  if(!esAndes){
+  document.getElementById('editSpotRealRow').style.display = esAndesPuro ? 'none' : '';
+  if(esAndesManual){
+    document.getElementById('editSpotReal').value = fmtRate(op.params.fxMktManual);
+  } else if(!esAndesPuro){
     document.getElementById('editSpotReal').value = fmtRate(op.params.spotReal);
   }
   document.getElementById('editTrader').value = op.trader;
@@ -2388,6 +2502,9 @@ function guardarEdicionFX(){
   const nuevaRate = parseLocaleNumber(document.getElementById('editRate').value);
   if(op.modelo==='ANDES'){
     op.params.rate = nuevaRate;
+  } else if(op.modelo==='ANDES_MANUAL'){
+    op.params.rate = nuevaRate;
+    op.params.fxMktManual = parseLocaleNumber(document.getElementById('editSpotReal').value);
   } else {
     op.params.rateUnica = nuevaRate;
     op.params.spotReal = parseLocaleNumber(document.getElementById('editSpotReal').value);
@@ -2478,6 +2595,208 @@ function confirmarDeshacerFX(){
   toast.textContent = '✓ Correos devueltos a la bandeja';
   toast.classList.add('show');
   setTimeout(()=>{toast.classList.remove('show'); toast.textContent='✓ Operación registrada correctamente';}, 2400);
+}
+
+
+// =====================================================================
+// REPORTE DE OPERACIONES (Excel con marca Credicorp Capital)
+// Genera un .xlsx real en el navegador (ExcelJS) con las mismas secciones
+// que ya se le envían al fondo (TOTALES + DETALLE), rediseñado con la
+// paleta de marca — navy profundo + dorado como acento.
+// =====================================================================
+const REPORTE_COLOR = {
+  navy: 'FF0D1B3D',
+  navy2: 'FF152A5C',
+  gold: 'FFD4A94E',
+  goldLight: 'FFF3E6C8',
+  white: 'FFFFFFFF',
+  grayLight: 'FFF4F6F9',
+  textDark: 'FF1A2233',
+  border: 'FFD8DEE8',
+};
+
+function bordeCeldaReporte(){
+  const c = REPORTE_COLOR.border;
+  return {
+    top: {style:'thin', color:{argb:c}}, bottom: {style:'thin', color:{argb:c}},
+    left: {style:'thin', color:{argb:c}}, right: {style:'thin', color:{argb:c}},
+  };
+}
+
+async function generarReporteExcel(){
+  const sel = document.getElementById('reporteCliente');
+  const fondoNombre = sel.value;
+  if(!fondoNombre){ alert('No hay operaciones registradas hoy para generar un reporte.'); return; }
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar la librería de Excel (ExcelJS). Revisa tu conexión e intenta de nuevo.'); return; }
+
+  const filas = operaciones
+    .filter(op => (fondoReporte[op.cliente]||op.cliente) === fondoNombre)
+    .map(op => ({
+      tradeDate: op.tradeDate ? fmtFechaCorta(op.tradeDate) : '—',
+      settleDate: op.settleDate ? fmtFechaCorta(op.settleDate) : '—',
+      side: op.side,
+      amount: op.amount,
+      rate: (op.modelo==='ANDES'||op.modelo==='ANDES_MANUAL') ? op.params.rate : op.params.rateUnica,
+    }));
+
+  if(filas.length===0){ alert(`No hay operaciones de ${fondoNombre} registradas hoy.`); return; }
+
+  const hoyDate = new Date();
+  const fechaHoyTxt = hoyDate.toLocaleDateString('es-CO', {day:'2-digit', month:'2-digit', year:'numeric'});
+  const C = REPORTE_COLOR;
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'EQS CC — Credicorp Capital';
+  wb.created = hoyDate;
+
+  const ws = wb.addWorksheet('Reporte FX', { pageSetup: { orientation: 'landscape', fitToPage: true } });
+  ws.columns = [
+    { width: 3 }, { width: 14 }, { width: 14 }, { width: 32 },
+    { width: 10 }, { width: 10 }, { width: 15 }, { width: 12 }, { width: 20 },
+  ];
+
+  let r = 2;
+  const cols = ['B','C','D','E','F','G','H','I'];
+
+  ws.mergeCells(`B${r}:I${r}`);
+  ws.getCell(`B${r}`).value = 'CREDICORP CAPITAL';
+  ws.getCell(`B${r}`).font = { name:'Calibri', size:18, bold:true, color:{argb:C.white} };
+  ws.getCell(`B${r}`).alignment = { horizontal:'left', vertical:'middle' };
+  ws.getRow(r).height = 30;
+  cols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}});
+  r++;
+
+  ws.mergeCells(`B${r}:I${r}`);
+  ws.getCell(`B${r}`).value = 'Equity Sales  ·  Confirmación de Operaciones FX';
+  ws.getCell(`B${r}`).font = { name:'Calibri', size:11, italic:true, color:{argb:C.gold} };
+  ws.getRow(r).height = 20;
+  cols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy2}});
+  r += 2;
+
+  ws.getCell(`B${r}`).value = 'Fondo:';
+  ws.getCell(`B${r}`).font = { name:'Calibri', size:10, color:{argb:'FF5A6478'} };
+  ws.mergeCells(`C${r}:F${r}`);
+  ws.getCell(`C${r}`).value = fondoNombre;
+  ws.getCell(`C${r}`).font = { name:'Calibri', size:12, bold:true, color:{argb:C.textDark} };
+  ws.getCell(`G${r}`).value = 'Fecha:';
+  ws.getCell(`G${r}`).font = { name:'Calibri', size:10, color:{argb:'FF5A6478'} };
+  ws.getCell(`H${r}`).value = fechaHoyTxt;
+  ws.getCell(`H${r}`).font = { name:'Calibri', size:11, bold:true, color:{argb:C.textDark} };
+  r += 2;
+
+  // ---------- TOTALES ----------
+  ws.mergeCells(`B${r}:I${r}`);
+  ws.getCell(`B${r}`).value = 'TOTALES';
+  ws.getCell(`B${r}`).font = { name:'Calibri', size:11, bold:true, color:{argb:C.navy} };
+  ws.getCell(`B${r}`).fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.goldLight} };
+  ws.getRow(r).height = 18;
+  r++;
+
+  const headerTotales = ['Fondo','Tipo','Nemo','Cantidad','Tasa','Valor'];
+  const colsTotales = ['D','E','F','G','H','I'];
+  colsTotales.forEach((col,i)=>{
+    const c = ws.getCell(`${col}${r}`);
+    c.value = headerTotales[i];
+    c.font = { name:'Calibri', size:10, bold:true, color:{argb:C.white} };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
+    c.alignment = { horizontal: i>=3 ? 'right' : 'left' };
+  });
+  r++;
+
+  const compraFilas = filas.filter(f=>f.side==='BUY');
+  const ventaFilas = filas.filter(f=>f.side==='SELL');
+  const filaTotalesInicio = r;
+  [['Compra', compraFilas], ['Venta', ventaFilas]].forEach(([tipo, fs])=>{
+    const cantidad = fs.reduce((s,f)=>s+f.amount,0);
+    const valor = fs.reduce((s,f)=>s+f.amount*f.rate,0);
+    const tasaProm = cantidad>0 ? valor/cantidad : 0;
+    ws.getCell(`D${r}`).value = fondoNombre;
+    ws.getCell(`E${r}`).value = tipo;
+    ws.getCell(`F${r}`).value = 'USDCOP';
+    ws.getCell(`G${r}`).value = cantidad;
+    ws.getCell(`H${r}`).value = tasaProm;
+    ws.getCell(`I${r}`).value = valor;
+    r++;
+  });
+  const filaTotalesFin = r-1;
+  for(let rr=filaTotalesInicio; rr<=filaTotalesFin; rr++){
+    colsTotales.forEach(col=>{
+      const c = ws.getCell(`${col}${rr}`);
+      c.font = { name:'Calibri', size:10, color:{argb:C.textDark} };
+      c.border = bordeCeldaReporte();
+      if(['G','H','I'].includes(col)) c.alignment = {horizontal:'right'};
+    });
+    ws.getCell(`G${rr}`).numFmt = '#,##0';
+    ws.getCell(`H${rr}`).numFmt = '#,##0.0000';
+    ws.getCell(`I${rr}`).numFmt = '"$"#,##0';
+    if((rr-filaTotalesInicio)%2===1){
+      colsTotales.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}});
+    }
+  }
+  r += 2;
+
+  // ---------- DETALLE ----------
+  ws.mergeCells(`B${r}:I${r}`);
+  ws.getCell(`B${r}`).value = 'DETALLE';
+  ws.getCell(`B${r}`).font = { name:'Calibri', size:11, bold:true, color:{argb:C.navy} };
+  ws.getCell(`B${r}`).fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.goldLight} };
+  ws.getRow(r).height = 18;
+  r++;
+
+  const headerDetalle = ['Liquidación','Cumplimiento','Fondo','Tipo','Nemo','Cantidad','Tasa','Valor'];
+  cols.forEach((col,i)=>{
+    const c = ws.getCell(`${col}${r}`);
+    c.value = headerDetalle[i];
+    c.font = { name:'Calibri', size:10, bold:true, color:{argb:C.white} };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
+    c.alignment = { horizontal: i>=5 ? 'right' : (i<=1?'center':'left') };
+  });
+  r++;
+
+  const filaDetalleInicio = r;
+  filas.forEach(f=>{
+    ws.getCell(`B${r}`).value = f.tradeDate;
+    ws.getCell(`C${r}`).value = f.settleDate;
+    ws.getCell(`D${r}`).value = fondoNombre;
+    ws.getCell(`E${r}`).value = f.side==='BUY' ? 'Compra' : 'Venta';
+    ws.getCell(`F${r}`).value = 'USDCOP';
+    ws.getCell(`G${r}`).value = f.amount;
+    ws.getCell(`H${r}`).value = f.rate;
+    ws.getCell(`I${r}`).value = f.amount*f.rate;
+    r++;
+  });
+  const filaDetalleFin = r-1;
+  for(let rr=filaDetalleInicio; rr<=filaDetalleFin; rr++){
+    ['B','C'].forEach(col=> ws.getCell(`${col}${rr}`).alignment = {horizontal:'center'});
+    ws.getCell(`G${rr}`).numFmt = '#,##0';
+    ws.getCell(`H${rr}`).numFmt = '#,##0.0000';
+    ws.getCell(`I${rr}`).numFmt = '"$"#,##0';
+    cols.forEach(col=>{
+      ws.getCell(`${col}${rr}`).font = { name:'Calibri', size:10, color:{argb:C.textDark} };
+      ws.getCell(`${col}${rr}`).border = bordeCeldaReporte();
+    });
+    if((rr-filaDetalleInicio)%2===1){
+      cols.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}});
+    }
+  }
+  r += 2;
+
+  ws.mergeCells(`B${r}:I${r}`);
+  ws.getCell(`B${r}`).value = `Generado desde EQS CC — Credicorp Capital · ${filas.length} operación(es)`;
+  ws.getCell(`B${r}`).font = { name:'Calibri', size:8, italic:true, color:{argb:'FF9AA3B5'} };
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const slug = fondoNombre.replace(/[^A-Z0-9]+/gi, '_').toUpperCase();
+  const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
+  a.href = url;
+  a.download = `FX_${slug}_${fechaSlug}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function tickClock(){
