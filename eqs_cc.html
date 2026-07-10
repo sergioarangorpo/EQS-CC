@@ -1592,6 +1592,24 @@ let inboxData = []; // Se carga desde Supabase
 // estado='registrado' en Supabase falla (p.ej. por permisos/RLS) — ver registrar().
 let idsRegistradosSesion = new Set();
 
+// Los correos de Andes traen la hora en GMT (ej. "Jul 09,2026 16:21:06 GMT").
+// Colombia es GMT-5 todo el año (sin horario de verano), así que convertimos
+// explícitamente en vez de solo recortar el string — evita mostrar la hora
+// del correo cruda y de paso corrige un bug previo donde el slice() se comía
+// el último dígito de los segundos.
+function fmtHoraColombia(raw){
+  if(!raw) return '—';
+  // capturado_en llega como ISO con microsegundos ("...118498+00"), que el
+  // parser nativo de Date no acepta tal cual — lo normalizamos primero.
+  let str = raw;
+  if(/^\d{4}-\d{2}-\d{2}T/.test(str)){
+    str = str.replace(/(\.\d{3})\d*/, '$1').replace(/([+-]\d{2})$/, '$1:00');
+  }
+  const d = new Date(str);
+  if(isNaN(d.getTime())) return raw.slice(11,19) || '—'; // fallback si algo viene en formato inesperado
+  return d.toLocaleTimeString('es-CO', {timeZone:'America/Bogota', hour12:false});
+}
+
 async function cargarInboxDesdeSupabase() {
   try {
     // trade_date viene como "Jul 08,2026" desde el correo
@@ -1609,7 +1627,7 @@ async function cargarInboxDesdeSupabase() {
     inboxData = nuevos.map(r => ({
       supaId:   r.id,
       tradeId:  r.trade_id,
-      time:     r.exec_time ? r.exec_time.slice(11, 19) : r.capturado_en.slice(11, 19),
+      time:     fmtHoraColombia(r.exec_time || r.capturado_en),
       side:     r.side,
       amount:   r.monto_usd,
       rate:     r.rate,
