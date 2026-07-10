@@ -89,6 +89,31 @@
   .section-label .hint{font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-2);}
 
   /* ---------- BLOTTER ---------- */
+  .hist-filtros{
+    display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;
+    padding:12px 16px;margin-bottom:10px;
+    background:var(--bg-1);border:1px solid var(--border-soft);border-radius:8px;
+  }
+  .hist-filtros .tb-field{display:flex;flex-direction:column;gap:4px;min-width:160px;}
+  .hist-filtros label{font-family:var(--sans);font-size:10.5px;color:var(--text-1);text-transform:uppercase;letter-spacing:.03em;}
+  .hist-filtros select{
+    background:var(--bg-2);border:1px solid var(--border-soft);border-radius:6px;
+    color:var(--text-0);font-family:var(--mono);font-size:12.5px;padding:7px 8px;
+  }
+  .neto-panel{
+    display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px;
+  }
+  .neto-item{
+    flex:1;min-width:200px;padding:12px 16px;border-radius:8px;
+    background:var(--bg-1);border:1px solid var(--border-soft);
+    display:flex;flex-direction:column;gap:4px;
+  }
+  .neto-item .neto-label{font-family:var(--sans);font-size:10.5px;color:var(--text-1);text-transform:uppercase;letter-spacing:.03em;}
+  .neto-item .neto-value{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--text-0);}
+  .neto-item .neto-value.buy{color:var(--buy);}
+  .neto-item .neto-value.sell{color:var(--sell);}
+  .neto-item.neto-resultado{background:var(--bg-2);border-color:var(--blue);}
+  .neto-item.neto-resultado .neto-value{font-size:20px;}
   .blotter-wrap{
     border:1px solid var(--border-soft);border-radius:8px;overflow:hidden;background:var(--bg-1);
     margin-bottom:24px;
@@ -198,6 +223,14 @@
   .split-eqs{background:var(--blue);}
   .split-mesa{background:var(--text-2);}
   .split-legend{display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-1);}
+  .comm-cards{display:flex;flex-direction:column;gap:8px;margin-top:2px;}
+  .comm-card{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;border-radius:8px;}
+  .comm-card .comm-label{font-family:var(--sans);font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;}
+  .comm-card .comm-value{font-family:var(--mono);font-size:19px;font-weight:700;}
+  .comm-eqs{background:rgba(79,142,240,0.12);border:1px solid rgba(79,142,240,0.35);}
+  .comm-eqs .comm-label,.comm-eqs .comm-value{color:var(--blue);}
+  .comm-mesa{background:rgba(155,127,224,0.12);border:1px solid rgba(155,127,224,0.35);}
+  .comm-mesa .comm-label,.comm-mesa .comm-value{color:var(--purple);}
   .split-legend span.eqs::before{content:'';display:inline-block;width:7px;height:7px;background:var(--blue);border-radius:2px;margin-right:5px;}
   .split-legend span.mesa::before{content:'';display:inline-block;width:7px;height:7px;background:var(--text-2);border-radius:2px;margin-right:5px;}
 
@@ -723,6 +756,49 @@
       </div>
 
       <div class="section-label">Histórico registrado hoy</div>
+
+      <div class="hist-filtros">
+        <div class="tb-field">
+          <label>Cliente</label>
+          <select id="histFiltroCliente" onchange="filtrarHistorialFX()">
+            <option value="">Todos</option>
+          </select>
+        </div>
+        <div class="tb-field">
+          <label>Tipo de operación</label>
+          <select id="histFiltroTipo" onchange="filtrarHistorialFX()">
+            <option value="">Todos</option>
+            <option value="SPOT">SPOT</option>
+            <option value="NEXT_DAY">NEXT_DAY</option>
+            <option value="WMCO">WMCO</option>
+          </select>
+        </div>
+        <div class="tb-field">
+          <label>Lado</label>
+          <select id="histFiltroLado" onchange="filtrarHistorialFX()">
+            <option value="">Todos</option>
+            <option value="BUY">Compra</option>
+            <option value="SELL">Venta</option>
+          </select>
+        </div>
+        <button class="btn small ghost" onclick="borrarFiltrosHistorialFX()">✕ Borrar filtros</button>
+      </div>
+
+      <div class="neto-panel" id="netoPanel">
+        <div class="neto-item">
+          <span class="neto-label">Total compra (filtrado)</span>
+          <span class="neto-value buy" id="netoCompra">$0.00</span>
+        </div>
+        <div class="neto-item">
+          <span class="neto-label">Total venta (filtrado)</span>
+          <span class="neto-value sell" id="netoVenta">$0.00</span>
+        </div>
+        <div class="neto-item neto-resultado">
+          <span class="neto-label">Neto a negociar en mercado</span>
+          <span class="neto-value" id="netoResultado">—</span>
+        </div>
+      </div>
+
       <div class="blotter-wrap">
         <table>
           <thead>
@@ -889,9 +965,15 @@
         <div class="result-row total"><span class="label">Utilidad total</span><span class="value" id="resTotal">—</span></div>
 
         <div class="split-bar"><div class="split-eqs" id="splitEqsBar" style="width:80%"></div><div class="split-mesa" style="width:20%"></div></div>
-        <div class="split-legend">
-          <span class="eqs">EQS 80% — <span id="resEqs">—</span></span>
-          <span class="mesa">Mesa Divisas 20% — <span id="resMesa">—</span></span>
+        <div class="comm-cards">
+          <div class="comm-card comm-eqs">
+            <span class="comm-label">EQS <span id="splitEqsPct">80%</span></span>
+            <span class="comm-value" id="resEqs">—</span>
+          </div>
+          <div class="comm-card comm-mesa">
+            <span class="comm-label">Mesa Divisas <span id="splitMesaPct">20%</span></span>
+            <span class="comm-value" id="resMesa">—</span>
+          </div>
         </div>
 
         <div style="margin-top:16px;">
@@ -1836,6 +1918,8 @@ function calcular(){
   document.getElementById('resMesa').textContent = fmtMoney(r.comMesa);
   const splitEqs = (r.utilidadTotal>0 && modelo!=='UNICA_WMCO') ? 80 : 100;
   document.getElementById('splitEqsBar').style.width = splitEqs + '%';
+  document.getElementById('splitEqsPct').textContent = splitEqs + '%';
+  document.getElementById('splitMesaPct').textContent = (100-splitEqs) + '%';
   document.getElementById('btnRegistrar').disabled = false;
 
   window._lastCalc = {modelo, side, amount, noches, params, ...r};
@@ -1892,12 +1976,17 @@ function rowToOp(r){
 
 async function cargarOperacionesDesdeSupabase(){
   try{
+    // OJO: filtramos por el momento real en que se REGISTRÓ la operación
+    // (el id, que es un timestamp Date.now()), no por trade_date. Si
+    // filtráramos por trade_date, una operación NEXT_DAY registrada ayer
+    // (con trade_date = hoy) reaparecería hoy como si fuera nueva — el
+    // histórico debe resetearse cada día calendario real, sin importar
+    // qué fecha de operación tenga el trade.
     const hoyDate = new Date();
-    const y = hoyDate.getFullYear();
-    const m = String(hoyDate.getMonth()+1).padStart(2,'0');
-    const d = String(hoyDate.getDate()).padStart(2,'0');
-    const hoyIso = `${y}-${m}-${d}`;
-    const data = await supaFetch('fx_operaciones_registradas', `trade_date=eq.${hoyIso}&order=id.desc&limit=200`);
+    hoyDate.setHours(0,0,0,0);
+    const inicioHoyMs = hoyDate.getTime();
+    const inicioMananaMs = inicioHoyMs + 24*60*60*1000;
+    const data = await supaFetch('fx_operaciones_registradas', `id=gte.${inicioHoyMs}&id=lt.${inicioMananaMs}&order=id.desc&limit=200`);
     operaciones = data.map(rowToOp);
     // Proteger también los correos de operaciones cargadas de una sesión
     // anterior, para que el inbox no los "resucite" al actualizar.
@@ -2103,10 +2192,61 @@ function ordenarPorFX(col){
   renderHistory();
 }
 
+// Calcula, sobre el set de filas ACTUALMENTE filtrado (por cliente/tipo/lado),
+// cuánto USD toca comprar o vender neto en mercado para cerrar el riesgo —
+// el mismo cálculo que JAJ hace a mano en Excel cuando llegan varios WMCO/SPOT.
+function actualizarNetoPanelFX(filas){
+  let totalCompra = 0, totalVenta = 0;
+  filas.forEach(({op})=>{
+    if(op.side==='BUY') totalCompra += op.amount;
+    else totalVenta += op.amount;
+  });
+  const neto = totalCompra - totalVenta;
+
+  document.getElementById('netoCompra').textContent = fmtUSD(totalCompra);
+  document.getElementById('netoVenta').textContent = fmtUSD(totalVenta);
+
+  const resultadoEl = document.getElementById('netoResultado');
+  if(filas.length===0){
+    resultadoEl.textContent = '—';
+    resultadoEl.className = 'neto-value';
+  } else if(Math.abs(neto) < 0.005){
+    resultadoEl.textContent = 'Neto en cero';
+    resultadoEl.className = 'neto-value';
+  } else if(neto > 0){
+    resultadoEl.textContent = 'Comprar ' + fmtUSD(neto) + ' en mercado';
+    resultadoEl.className = 'neto-value buy';
+  } else {
+    resultadoEl.textContent = 'Vender ' + fmtUSD(Math.abs(neto)) + ' en mercado';
+    resultadoEl.className = 'neto-value sell';
+  }
+}
+
+function filtrarHistorialFX(){ renderHistory(); }
+
+function borrarFiltrosHistorialFX(){
+  document.getElementById('histFiltroCliente').value = '';
+  document.getElementById('histFiltroTipo').value = '';
+  document.getElementById('histFiltroLado').value = '';
+  renderHistory();
+}
+
+function poblarFiltroClienteHistFX(){
+  const sel = document.getElementById('histFiltroCliente');
+  const actual = sel.value;
+  const clientesHoy = [...new Set(operaciones.map(o=>o.cliente))];
+  sel.innerHTML = '<option value="">Todos</option>' +
+    clientesHoy.map(c=>`<option value="${c}">${clienteNombres[c]||c}</option>`).join('');
+  if(clientesHoy.includes(actual)) sel.value = actual;
+}
+
 function renderHistory(){
   const tbody = document.getElementById('historyBody');
+  poblarFiltroClienteHistFX();
+
   if(operaciones.length===0){
     tbody.innerHTML = '<tr><td colspan="14" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>';
+    actualizarNetoPanelFX([]);
     return;
   }
   // Pre-calcular los valores derivados (tasa nuestra, comisiones) una vez por
@@ -2116,6 +2256,23 @@ function renderHistory(){
     const rateMostrar = op.modelo==='ANDES' ? op.params.rate : op.params.rateUnica;
     return { op, r, rateMostrar };
   });
+
+  // Filtros — pensados para netear volumen por tipo de operación (SPOT,
+  // NEXT_DAY, WMCO) antes de negociar en mercado, sin tener que sacarlo
+  // aparte en Excel.
+  const fCliente = document.getElementById('histFiltroCliente').value;
+  const fTipo = document.getElementById('histFiltroTipo').value;
+  const fLado = document.getElementById('histFiltroLado').value;
+  if(fCliente) filas = filas.filter(f=>f.op.cliente===fCliente);
+  if(fTipo) filas = filas.filter(f=>f.op.tipoOperacion===fTipo);
+  if(fLado) filas = filas.filter(f=>f.op.side===fLado);
+
+  actualizarNetoPanelFX(filas);
+
+  if(filas.length===0){
+    tbody.innerHTML = '<tr><td colspan="14" class="empty-state">Ninguna operación coincide con estos filtros.</td></tr>';
+    return;
+  }
 
   if(sortColFX){
     const getVal = (f, col) => {
