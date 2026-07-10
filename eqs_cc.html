@@ -2604,24 +2604,31 @@ function confirmarDeshacerFX(){
 // que ya se le envían al fondo (TOTALES + DETALLE), rediseñado con la
 // paleta de marca — navy profundo + dorado como acento.
 // =====================================================================
+// =====================================================================
+// REPORTE DE OPERACIONES (Excel con marca Credicorp Capital)
+// Genera un .xlsx real en el navegador (ExcelJS) con las mismas secciones
+// que ya se le envían al fondo (TOTALES + DETALLE), con la identidad
+// visual real de Credicorp Capital: navy #15192C + naranja #D44028,
+// logo incrustado, y un layout tipo "ficha" en vez de una hoja de cálculo
+// plana.
+// =====================================================================
 const REPORTE_COLOR = {
   navy: 'FF15192C',
-  navy2: 'FF262C47',
+  navyLight: 'FF2A3050',
   orange: 'FFD44028',
-  orangeLight: 'FFF8E2DE',
+  orangeSoft: 'FFF3D9D3',
   white: 'FFFFFFFF',
-  grayLight: 'FFF4F6F9',
+  paper: 'FFFAFAFB',
+  grayLight: 'FFF4F5F7',
   textDark: 'FF15192C',
-  border: 'FFD8DEE8',
+  textMuted: 'FF6B7280',
+  cardBorder: 'FFE4E6EB',
 };
 
-function bordeCeldaReporte(){
-  const c = REPORTE_COLOR.border;
-  return {
-    top: {style:'thin', color:{argb:c}}, bottom: {style:'thin', color:{argb:c}},
-    left: {style:'thin', color:{argb:c}}, right: {style:'thin', color:{argb:c}},
-  };
-}
+// Logo mark de Credicorp Capital (dos triángulos), calcado a pixel de la
+// marca real, incrustado como PNG para que el reporte no dependa de nada
+// externo.
+const LOGO_CREDICORP_B64 = 'iVBORw0KGgoAAAANSUhEUgAAASwAAACgCAYAAAC2eFFiAAAFJklEQVR4nO3X25HkRBRFUQU+8IEF8IER4zlOYA4R8NF0TD/qoapSKvPcu5YDnUqNdp3ZNgAAAAAAAAAAAAj1629//jv7DJDkl9kH6Oo9VqIF+wkWEEOwJvi6qqws2EewgBiCdbJra8rKgvsEC4ghWCe6t6KsLLhNsIAYgnWSvevJyoLrBAuIIVgneHQ1WVlwmWABMQRrsGfXkpUF3wkWEEOwBnp1JVlZ8JlgATEEa5Cj1pGVBT8J1gBHR0a04I1gATEE62Cj1pCVBYIFBBGsA41eQVYW3QkWEEOwDnLW+rGy6EywgBiCdYCzV4+VRVeCBcQQrBfNWjtWFh0JFhBDsF4we+XM/vtwNsECYgjWk1ZZN6ucA84gWEAMwXrCaqtmtfPAKIIFxBCsB626ZlY9FxxJsB6wehRWPx+8SrCAGIK1U8p6STknPEOwgBiCtUPaakk7L+wlWEAMwbojda2knhtuESwghmDdkL5S0s8PXwkWEEOwrqiyTqo8B2ybYAFBBOuCaquk2vPQl2ABMQTri6prpOpz0YtgATEE64PqK6T681GfYP2vy8fc5TmpSbCAGIK19Vsd3Z6XOgQLiNE+WF3XRtfnJlv7YAE5Wger+8ro/vzkaR0sIEvbYFkXb9wDSdoGC8jTMlhWxWfugxQtgwVkahcsa+Iy90KCdsECcrUKlhVxm/thda2CBWRrEyzrYR/39N3fP/5wJ4toEyx4xnusRGsNLYJlNTzGfbGq8sHy8T3HvX1fVVbWfOWDBc+4FifRmqt0sKyE13S9v3tREq15SgcLqKVssLqug6N1u8e968nKmqNssOBRj0ZItM5XMljdVsFoHe7z2fiI1rlKBguoqVywOqyBGSrf66sryco6T7lgwSOOio1onaNUsCqvgBVUu9+jIyNa45UKFlBbmWBV+/VfVZV7HrWGrKyxygQL9hodFdEap0Swqvzqp0i+77NiIlpjlAgW0EN8sJJ/7ZMl3vvZq8fKOl50sBI/mkqS7n9WPETrWNHBAnqJDVbSr3tlCe9h9sqZ/fcriQ0W7LFKLFY5R7rIYCX8qney6vtYLRKrnSdRZLCAnuKCteqveXervZdV18yq50oRFyy4Z/UorH6+lUUFa7VfcT5b4f2kxCDlnKuJChbQW0ywVvj15r6Z7ylttaSddwUxwYJbUj/+1HPPEhEs6yrL2e8r/aNPP/+ZIoIFsG0BwbKuMp313qqskyrPMdrywYJrqn3k1Z5nhKWDZV1l8/442rLB8o+9hlHvseoaqfpcR1k2WHBN9Y+6+vO9YslgWVe1HPk+u3zMXZ7zUUsGC+CS5YJlXdV0xHvttjq6Pe8eywULLun68XZ97muWCpZ1Vduz77f7R9v9+T9aKlgAtywTLOuqh0ffs3Xxxj28WSZY8JWP9DP3sUiwrKte9rxvH+dl3e9liWAB7DE9WNZVT7fee/cVcU/n+5keLPio88f4iK73NDVY1lVvX99/14/wWR3vy8ICYkwLlnXFtv38d9BxLRyh271ZWEzX7aM7Wqf7mxIs6wp4xunBEis++uv3f2YfoYQuK8t/CZlGrI7VIVqnBsu64p1YjVE9WhYWEOO0YFlXvLOuxqq8siwsTiVW56garVOCZV2xbWJ1torRsrCAGMODZV2xbdbVLNVWloXFcGI1V6VoDQ2WdYVYraFKtCwsIMawYFlXWFdrqbCyLCyGEKs1pUdrSLCsq97Eam3J0bKwgBiHB8u66s26ypC8sgAAAAAAAAAAAABo4D84E6lV60PEWgAAAABJRU5ErkJggg==';
 
 async function generarReporteExcel(){
   const sel = document.getElementById('reporteCliente');
@@ -2637,6 +2644,7 @@ async function generarReporteExcel(){
       side: op.side,
       amount: op.amount,
       rate: (op.modelo==='ANDES'||op.modelo==='ANDES_MANUAL') ? op.params.rate : op.params.rateUnica,
+      trader: op.trader,
     }));
 
   if(filas.length===0){ alert(`No hay operaciones de ${fondoNombre} registradas hoy.`); return; }
@@ -2654,56 +2662,110 @@ async function generarReporteExcel(){
     views: [{ showGridLines: false }],
   });
   ws.columns = [
-    { width: 3 }, { width: 14 }, { width: 14 }, { width: 32 },
-    { width: 10 }, { width: 10 }, { width: 15 }, { width: 12 }, { width: 20 },
+    { width: 2.5 },  // A margen izq
+    { width: 15 },   // B
+    { width: 15 },   // C
+    { width: 30 },   // D
+    { width: 11 },   // E
+    { width: 10 },   // F
+    { width: 15 },   // G
+    { width: 13 },   // H
+    { width: 20 },   // I
+    { width: 2.5 },  // J margen der
   ];
-
-  let r = 2;
   const cols = ['B','C','D','E','F','G','H','I'];
+  const allCols = ['A','B','C','D','E','F','G','H','I','J'];
 
-  ws.mergeCells(`B${r}:I${r}`);
-  ws.getCell(`B${r}`).value = 'CREDICORP CAPITAL COLOMBIA';
-  ws.getCell(`B${r}`).font = { name:'Calibri', size:18, bold:true, color:{argb:C.white} };
-  ws.getCell(`B${r}`).alignment = { horizontal:'left', vertical:'middle' };
-  ws.getRow(r).height = 30;
-  cols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}});
-  r++;
+  // Fondo general tipo "papel" muy sutil para toda la hoja usada
+  for(let rr=1; rr<=60; rr++){
+    allCols.forEach(col => { ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.paper}}; });
+  }
 
-  ws.mergeCells(`B${r}:I${r}`);
-  ws.getCell(`B${r}`).value = 'Equity Sales  ·  Confirmación de Operaciones FX';
-  ws.getCell(`B${r}`).font = { name:'Calibri', size:11, italic:true, color:{argb:C.orange} };
-  ws.getRow(r).height = 20;
-  cols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy2}});
+  let r = 1;
+
+  // ---------- HEADER DE MARCA ----------
+  const headerFilaIni = r;
+  const headerFilaFin = r + 3;
+  for(let rr=headerFilaIni; rr<=headerFilaFin; rr++){
+    allCols.forEach(col => ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}});
+  }
+  ws.getRow(headerFilaIni).height = 8;
+  ws.getRow(headerFilaIni+1).height = 30;
+  ws.getRow(headerFilaIni+2).height = 20;
+  ws.getRow(headerFilaIni+3).height = 10;
+
+  // Logo incrustado (arriba-derecha del header, como en las piezas de marca)
+  const imgId = wb.addImage({ base64: LOGO_CREDICORP_B64, extension: 'png' });
+  ws.addImage(imgId, { tl: { col: 7, row: headerFilaIni }, ext: { width: 90, height: 48 } });
+
+  ws.mergeCells(`B${headerFilaIni+1}:F${headerFilaIni+1}`);
+  const tituloCell = ws.getCell(`B${headerFilaIni+1}`);
+  tituloCell.value = 'CREDICORP CAPITAL COLOMBIA';
+  tituloCell.font = { name:'Calibri', size:20, bold:true, color:{argb:C.white} };
+  tituloCell.alignment = { horizontal:'left', vertical:'middle' };
+
+  ws.mergeCells(`B${headerFilaIni+2}:F${headerFilaIni+2}`);
+  const subtituloCell = ws.getCell(`B${headerFilaIni+2}`);
+  subtituloCell.value = 'EQUITY SALES  ·  CONFIRMACIÓN DE OPERACIONES FX';
+  subtituloCell.font = { name:'Calibri', size:10.5, bold:true, color:{argb:C.white} };
+  subtituloCell.alignment = { horizontal:'left', vertical:'middle' };
+
+  // Barra de acento naranja justo debajo del header (el detalle de marca,
+  // no texto naranja sobre navy — así no hay ambigüedad de color)
+  r = headerFilaFin + 1;
+  allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+  ws.getRow(r).height = 4;
   r += 2;
 
-  ws.getCell(`B${r}`).value = 'Fondo:';
-  ws.getCell(`B${r}`).font = { name:'Calibri', size:10, color:{argb:'FF5A6478'} };
-  ws.mergeCells(`C${r}:F${r}`);
-  ws.getCell(`C${r}`).value = fondoNombre;
-  ws.getCell(`C${r}`).font = { name:'Calibri', size:12, bold:true, color:{argb:C.textDark} };
-  ws.getCell(`G${r}`).value = 'Fecha:';
-  ws.getCell(`G${r}`).font = { name:'Calibri', size:10, color:{argb:'FF5A6478'} };
-  ws.getCell(`H${r}`).value = fechaHoyTxt;
-  ws.getCell(`H${r}`).font = { name:'Calibri', size:11, bold:true, color:{argb:C.textDark} };
-  r += 2;
+  // ---------- FICHA DEL FONDO (tarjetas tipo la app) ----------
+  const fichaCols = [
+    { label: 'FONDO', value: fondoNombre, span: 4 },
+    { label: 'FECHA', value: fechaHoyTxt, span: 2 },
+    { label: 'OPERACIONES', value: String(filas.length), span: 2 },
+  ];
+  let colCursor = 1; // índice dentro de "cols" (B=0)
+  const fichaFilaIni = r;
+  fichaCols.forEach(({label, value, span})=>{
+    const startCol = cols[colCursor-1] || cols[0];
+    const endColIdx = colCursor - 1 + span - 1;
+    const endCol = cols[Math.min(endColIdx, cols.length-1)];
+    ws.mergeCells(`${startCol}${r}:${endCol}${r}`);
+    const c = ws.getCell(`${startCol}${r}`);
+    c.value = label;
+    c.font = { name:'Calibri', size:9, bold:true, color:{argb:C.textMuted} };
+    ws.mergeCells(`${startCol}${r+1}:${endCol}${r+1}`);
+    const v = ws.getCell(`${startCol}${r+1}`);
+    v.value = value;
+    v.font = { name:'Calibri', size:14, bold:true, color:{argb:C.navy} };
+    colCursor += span;
+  });
+  r += 3;
 
-  // ---------- TOTALES ----------
-  ws.mergeCells(`B${r}:I${r}`);
-  ws.getCell(`B${r}`).value = 'TOTALES';
-  ws.getCell(`B${r}`).font = { name:'Calibri', size:11, bold:true, color:{argb:C.navy} };
-  ws.getCell(`B${r}`).fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.orangeLight} };
-  ws.getRow(r).height = 18;
-  r++;
+  // ---------- helper: título de sección con línea de acento ----------
+  function tituloSeccion(texto){
+    ws.mergeCells(`B${r}:I${r}`);
+    const c = ws.getCell(`B${r}`);
+    c.value = texto;
+    c.font = { name:'Calibri', size:12, bold:true, color:{argb:C.navy} };
+    r++;
+    allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+    ws.getRow(r).height = 2.5;
+    r += 2;
+  }
+
+  // ---------- RESUMEN DEL DÍA ----------
+  tituloSeccion('RESUMEN DEL DÍA');
 
   const headerTotales = ['Fondo','Tipo','Nemo','Cantidad','Tasa','Valor'];
   const colsTotales = ['D','E','F','G','H','I'];
   colsTotales.forEach((col,i)=>{
     const c = ws.getCell(`${col}${r}`);
     c.value = headerTotales[i];
-    c.font = { name:'Calibri', size:10, bold:true, color:{argb:C.white} };
+    c.font = { name:'Calibri', size:9.5, bold:true, color:{argb:C.white} };
     c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
-    c.alignment = { horizontal: i>=3 ? 'right' : 'left' };
+    c.alignment = { horizontal: i>=3 ? 'right' : 'left', vertical:'middle' };
   });
+  ws.getRow(r).height = 20;
   r++;
 
   const compraFilas = filas.filter(f=>f.side==='BUY');
@@ -2726,34 +2788,28 @@ async function generarReporteExcel(){
     colsTotales.forEach(col=>{
       const c = ws.getCell(`${col}${rr}`);
       c.font = { name:'Calibri', size:10, color:{argb:C.textDark} };
-      c.border = bordeCeldaReporte();
+      c.border = { bottom: {style:'hair', color:{argb:C.cardBorder}} };
       if(['G','H','I'].includes(col)) c.alignment = {horizontal:'right'};
     });
     ws.getCell(`G${rr}`).numFmt = '#,##0';
     ws.getCell(`H${rr}`).numFmt = '#,##0.0000';
     ws.getCell(`I${rr}`).numFmt = '"$"#,##0';
-    if((rr-filaTotalesInicio)%2===1){
-      colsTotales.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}});
-    }
+    ws.getRow(rr).height = 19;
   }
   r += 2;
 
-  // ---------- DETALLE ----------
-  ws.mergeCells(`B${r}:I${r}`);
-  ws.getCell(`B${r}`).value = 'DETALLE';
-  ws.getCell(`B${r}`).font = { name:'Calibri', size:11, bold:true, color:{argb:C.navy} };
-  ws.getCell(`B${r}`).fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.orangeLight} };
-  ws.getRow(r).height = 18;
-  r++;
+  // ---------- DETALLE DE OPERACIONES ----------
+  tituloSeccion('DETALLE DE OPERACIONES');
 
   const headerDetalle = ['Liquidación','Cumplimiento','Fondo','Tipo','Nemo','Cantidad','Tasa','Valor'];
   cols.forEach((col,i)=>{
     const c = ws.getCell(`${col}${r}`);
     c.value = headerDetalle[i];
-    c.font = { name:'Calibri', size:10, bold:true, color:{argb:C.white} };
+    c.font = { name:'Calibri', size:9.5, bold:true, color:{argb:C.white} };
     c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
-    c.alignment = { horizontal: i>=5 ? 'right' : (i<=1?'center':'left') };
+    c.alignment = { horizontal: i>=5 ? 'right' : (i<=1?'center':'left'), vertical:'middle' };
   });
+  ws.getRow(r).height = 20;
   r++;
 
   const filaDetalleInicio = r;
@@ -2775,17 +2831,26 @@ async function generarReporteExcel(){
     ws.getCell(`H${rr}`).numFmt = '#,##0.0000';
     ws.getCell(`I${rr}`).numFmt = '"$"#,##0';
     cols.forEach(col=>{
-      ws.getCell(`${col}${rr}`).font = { name:'Calibri', size:10, color:{argb:C.textDark} };
+      ws.getCell(`${col}${rr}`).font = { name:'Calibri', size:9.5, color:{argb:C.textDark} };
+      ws.getCell(`${col}${rr}`).border = { bottom: {style:'hair', color:{argb:C.cardBorder}} };
     });
+    ws.getRow(rr).height = 18;
     if((rr-filaDetalleInicio)%2===1){
       cols.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}});
     }
   }
   r += 2;
 
+  // ---------- FOOTER DE MARCA (simétrico con el header) ----------
+  const footerFila = r;
+  allCols.forEach(col => ws.getCell(`${col}${footerFila}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+  ws.getRow(footerFila).height = 4;
+  r++;
   ws.mergeCells(`B${r}:I${r}`);
-  ws.getCell(`B${r}`).value = `Generado desde EQS CC — Credicorp Capital · ${filas.length} operación(es)`;
-  ws.getCell(`B${r}`).font = { name:'Calibri', size:8, italic:true, color:{argb:'FF9AA3B5'} };
+  const footerCell = ws.getCell(`B${r}`);
+  footerCell.value = `Generado desde EQS CC · Credicorp Capital Colombia · ${filas.length} operación(es) · ${fechaHoyTxt}`;
+  footerCell.font = { name:'Calibri', size:8.5, italic:true, color:{argb:C.textMuted} };
+  ws.getRow(r).height = 18;
 
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -2800,6 +2865,7 @@ async function generarReporteExcel(){
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
 
 function tickClock(){
   document.getElementById('clock').textContent = new Date().toLocaleTimeString('es-CO');
