@@ -200,6 +200,7 @@
   .field input[readonly]{color:var(--text-1);background:#171d29;}
   .field input[type="date"]{color-scheme:dark;}
   .field-note{font-size:10px;color:var(--text-2);margin-top:2px;}
+  #avisoAndesManual{background:rgba(224,162,58,0.12);border:1px solid var(--amber);border-radius:6px;padding:8px 10px;font-size:11px;color:var(--amber);font-weight:600;margin-bottom:10px;}
 
   .divider{height:1px;background:var(--border-soft);margin:14px 0;}
 
@@ -873,8 +874,8 @@
           <div class="field" style="flex:1 1 100%;">
             <label>Cliente</label>
             <select id="cliente" onchange="cambiarCliente()">
-              <option value="ANDES" data-modelo="ANDES">Andes Investment Group Inc</option>
-              <option value="ANDES_MANUAL" data-modelo="ANDES_MANUAL">Andes Investment Group Inc (manual — sin DMA)</option>
+              <option value="ANDES" data-modelo="ANDES">Andes Investment Group Inc — DMA (correo)</option>
+              <option value="ANDES_MANUAL" data-modelo="ANDES_MANUAL">⚠ Andes Investment Group Inc — MANUAL (sin DMA)</option>
               <option value="BNP" data-modelo="UNICA">BNP Paribas</option>
               <option value="CCAM" data-modelo="UNICA">Credicorp Capital Asset Mgmt Fund</option>
               <option value="CCBOLSA" data-modelo="UNICA">Credicorp Capital Bolsa</option>
@@ -917,6 +918,9 @@
           </div>
         </div>
 
+        <div class="field-note" id="avisoAndesManual" style="display:none;">
+          ⚠ Modo manual (sin DMA) — escribe abajo la tasa REAL a la que se ejecutó en mercado. No hay ningún spread asumido.
+        </div>
         <div class="field-row">
           <div class="field">
             <label>Monto USD</label>
@@ -927,7 +931,7 @@
             <input type="text" inputmode="decimal" id="rate" value="" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
           </div>
           <div class="field" id="campoRateMercadoUnica" style="display:none;">
-            <label>Tasa mercado</label>
+            <label id="labelRateMercado">Tasa mercado</label>
             <input type="text" inputmode="decimal" id="spotReal" value="" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
           </div>
         </div>
@@ -1896,6 +1900,8 @@ function cambiarCliente(){
   // "Tasa final cliente (todo incluido)" solo aplica a UNICA/WMCO — en Andes
   // (correo o manual) la tasa final se calcula sola (tasa + noches×puntos).
   document.getElementById('bloqueUnica').style.display = esUnicaConTasaFinal ? '' : 'none';
+  document.getElementById('avisoAndesManual').style.display = esAndesManual ? '' : 'none';
+  document.getElementById('labelRateMercado').textContent = esAndesManual ? 'Tasa mercado (tu ejecución real)' : 'Tasa mercado';
   document.getElementById('labelSide').textContent = (esAndes || esAndesManual) ? 'Lado (desde Andes)' : 'Lado (desde cliente)';
   document.getElementById('labelTasaT0').textContent = 'Tasa cliente a T+0';
   calcular();
