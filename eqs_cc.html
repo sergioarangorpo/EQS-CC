@@ -2739,9 +2739,8 @@ async function generarReporteExcel(){
 
   // ---------- FICHA DEL FONDO (tarjetas tipo la app) ----------
   const fichaCols = [
-    { label: 'FONDO', value: fondoNombre, span: 4 },
-    { label: 'FECHA', value: fechaHoyTxt, span: 2 },
-    { label: 'OPERACIONES', value: String(filas.length), span: 2 },
+    { label: 'FONDO', value: fondoNombre, span: 5 },
+    { label: 'FECHA', value: fechaHoyTxt, span: 3 },
   ];
   let colCursor = 1; // índice dentro de "cols" (B=0)
   const fichaFilaIni = r;
@@ -2938,6 +2937,13 @@ const PRESUPUESTO_DB = [{"grupo":"ALLIANZ","trader":"SAR","categoria":"INSTITUCI
 // y asignación de trader por grupo (hoja PRESUPUESTO). Con esto extendemos
 // clientesDB automáticamente para cualquier grupo que no esté ya definido a
 // mano arriba (COLFONDOS/PROTECCION quedan con su config manual tal cual).
+// Alias de códigos de grupo que Fidessa usa distinto a como aparecen en
+// CATEGORIAS. LV_CO es el código que se le creó en Bloomberg para enrutar a
+// Andes Investment (vehículo regional de Larrain Vial para su prop position) —
+// mapea al mismo grupo real "LARRAIN VIAL PP".
+const ALIAS_GRUPO = { LV_CO: 'LARRAIN VIAL PP' };
+function normalizarGrupo(g){ return ALIAS_GRUPO[g] || g; }
+
 function construirClientesDBDesdeCategorias(){
   const porGrupo = {};
   CATEGORIAS_DB.forEach(c=>{
@@ -3108,7 +3114,7 @@ async function cargarArchivoFidessa(input, tipo){
         const folioOrden = row.getCell(headers['Folio Registro Orden']).value;
         if(!folioOrden) return;
         mapa[String(folioOrden)] = {
-          grupo: row.getCell(headers['CLIENT']).value,
+          grupo: normalizarGrupo(row.getCell(headers['CLIENT']).value),
           lado: row.getCell(headers['B/S']).value === 'B' ? 'Compra' : 'Venta',
           security: row.getCell(headers['SECURITY']).value,
           qtyDone: Number(row.getCell(headers['QTY DONE']).value) || 0,
@@ -3162,7 +3168,7 @@ function procesarFidessa(){
 
   _fidessaFoliosRaw.forEach(f=>{
     const padre = f.parentOrderId ? _fidessaTradesRaw[String(f.parentOrderId)] : null;
-    const grupo = padre ? padre.grupo : (f.clientBook || 'SIN_IDENTIFICAR');
+    const grupo = padre ? padre.grupo : normalizarGrupo(f.clientBook || 'SIN_IDENTIFICAR');
     if(!padre) sinPadre++;
     nuevosFolios.push({
       id: nextId++,
