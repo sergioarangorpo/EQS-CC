@@ -763,7 +763,7 @@
         <div class="sel-summary" id="selSummary"></div>
       </div>
 
-      <div class="section-label">Histórico registrado hoy</div>
+      <div class="section-label">Registros</div>
 
       <div class="hist-filtros">
         <div class="tb-field">
@@ -824,7 +824,6 @@
               <th class="sortable" onclick="ordenarPorFX('fcump')">F. cumplimiento<span class="sort-arrow" id="arrow-fx-fcump"></span></th>
               <th class="sortable" onclick="ordenarPorFX('lado')">Lado<span class="sort-arrow" id="arrow-fx-lado"></span></th>
               <th class="num sortable" onclick="ordenarPorFX('monto')">Monto USD<span class="sort-arrow" id="arrow-fx-monto"></span></th>
-              <th class="num sortable" onclick="ordenarPorFX('tasaCliente')">Tasa cliente<span class="sort-arrow" id="arrow-fx-tasaCliente"></span></th>
               <th class="num sortable" onclick="ordenarPorFX('tasaNuestra')">Tasa final cliente<span class="sort-arrow" id="arrow-fx-tasaNuestra"></span></th>
               <th class="num sortable" onclick="ordenarPorFX('comEqs')">Com. EQS<span class="sort-arrow" id="arrow-fx-comEqs"></span></th>
               <th class="sortable" onclick="ordenarPorFX('receptor')">Receptor<span class="sort-arrow" id="arrow-fx-receptor"></span></th>
@@ -833,7 +832,7 @@
             </tr>
           </thead>
           <tbody id="historyBody">
-            <tr><td colspan="13" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>
+            <tr><td colspan="12" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>
           </tbody>
         </table>
       </div>
@@ -1101,9 +1100,13 @@
     </div>
   </div>
 
-  <div id="fidessaReconciliacion" style="display:none;"></div>
-
   <div id="emsxCBPanel" style="display:none;"></div>
+
+  <div id="fidessaTradesPanel" style="display:none;"></div>
+
+  <div id="fidessaFoliosPanelRaw" style="display:none;"></div>
+
+  <div id="fidessaReconciliacion" style="display:none;"></div>
 
   <div class="stat-cards" style="padding:16px 24px 0;">
     <div class="stat-card">
@@ -2308,7 +2311,7 @@ function actualizarNetoPanelFX(filas, hayFiltroActivo){
   if(!hayFiltroActivo){
     compraEl.textContent = '—';
     ventaEl.textContent = '—';
-    resultadoEl.textContent = 'Elige un filtro para calcular';
+    resultadoEl.textContent = '—';
     resultadoEl.className = 'neto-value';
     return;
   }
@@ -2391,7 +2394,7 @@ function renderHistory(){
   poblarSelectorReporteFX();
 
   if(operaciones.length===0){
-    tbody.innerHTML = '<tr><td colspan="13" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>';
     actualizarNetoPanelFX([], false);
     return;
   }
@@ -2417,7 +2420,7 @@ function renderHistory(){
   actualizarNetoPanelFX(filas, hayFiltroActivo);
 
   if(filas.length===0){
-    tbody.innerHTML = '<tr><td colspan="13" class="empty-state">Ninguna operación coincide con estos filtros.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="empty-state">Ninguna operación coincide con estos filtros.</td></tr>';
     return;
   }
 
@@ -2463,7 +2466,6 @@ function renderHistory(){
       <td class="mono-id">${op.settleDate?fmtFechaCorta(op.settleDate):'—'}</td>
       <td><span class="side-badge ${op.side==='BUY'?'buy':'sell'}">${op.side==='BUY'?'Compra':'Venta'}</span></td>
       <td class="num">${fmtUSD(op.amount)}</td>
-      <td class="num">${fmtRate(rateMostrar)}</td>
       <td class="num">${fmtRate(r.tasaFinalCliente)}</td>
       <td class="num">${fmtMoney(r.comEqs)}</td>
       <td class="mono-id">${op.trader}</td>
@@ -2978,24 +2980,7 @@ function getClienteDB(key){
 
 // Folios crudos de Fidessa (simulando lo que vimos hoy en COR para ECOPETROL/COLFONDOS,
 // más unos folios de PROTECCION/CELSIA para validar el filtro)
-let foliosFidessa = [
-  // COLFONDOS - ECOPETROL Compra (muestra representativa de los 518 folios reales)
-  {id:757,  cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'08:34:12', cantidad:33605, precio:2670, marca:'pantalla'},
-  {id:856,  cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'08:34:38', cantidad:676599, precio:2680, marca:'bloque'},
-  {id:1328, cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'08:41:02', cantidad:15371, precio:2730, marca:'pantalla'},
-  {id:1329, cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'08:41:09', cantidad:27324, precio:2730, marca:'pantalla'},
-  {id:1407, cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'08:42:15', cantidad:609, precio:2730, marca:'pantalla'},
-  {id:1409, cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'08:42:20', cantidad:13273, precio:2730, marca:'pantalla'},
-  {id:602873,cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'09:33:04', cantidad:412000, precio:2778, marca:'bloque'},
-  {id:602874,cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'09:33:09', cantidad:298500, precio:2778, marca:'pantalla'},
-  {id:603108,cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'09:35:40', cantidad:185000, precio:2780, marca:'pantalla'},
-  {id:607386,cliente:'COLFONDOS', especie:'ECOPETROL', lado:'Compra', hora:'10:48:22', cantidad:520000, precio:2846, marca:'bloque'},
-
-  // PROTECCION - CELSIA (para probar filtro de cliente distinto)
-  {id:3633, cliente:'PROTECCION', especie:'CELSIA', lado:'Compra', hora:'08:49:01', cantidad:1267, precio:5230, marca:'pantalla'},
-  {id:4209, cliente:'PROTECCION', especie:'CELSIA', lado:'Compra', hora:'08:49:05', cantidad:155, precio:5230, marca:'pantalla'},
-  {id:4586, cliente:'PROTECCION', especie:'CELSIA', lado:'Compra', hora:'08:49:12', cantidad:11808, precio:5230, marca:'bloque'},
-];
+let foliosFidessa = []; // Se llena al "Conciliar y cargar folios" con datos reales de Fidessa Trades+Folios — antes tenía filas de ejemplo hardcodeadas.
 
 let selectedFolios = new Set();
 let sortCol = null;
@@ -3126,6 +3111,7 @@ async function cargarArchivoFidessa(input, tipo){
       });
       _fidessaTradesRaw = mapa;
       document.getElementById('fidessaStatus').textContent = `Trades: ${n} órdenes leídas. `+ (_fidessaFoliosRaw ? `Folios: ${_fidessaFoliosRaw.length} filas leídas.` : 'Falta cargar Folios.');
+      renderFidessaTradesPanel();
     } else {
       const filas = [];
       ws.eachRow((row, rowNumber)=>{
@@ -3144,6 +3130,7 @@ async function cargarArchivoFidessa(input, tipo){
       });
       _fidessaFoliosRaw = filas;
       document.getElementById('fidessaStatus').textContent = (_fidessaTradesRaw ? `Trades: ${Object.keys(_fidessaTradesRaw).length} órdenes leídas. ` : 'Falta cargar Trades. ') + `Folios: ${filas.length} filas leídas.`;
+      renderFidessaFoliosPanelRaw();
     }
 
     document.getElementById('btnProcesarFidessa').disabled = !(_fidessaTradesRaw && _fidessaFoliosRaw);
@@ -3151,6 +3138,57 @@ async function cargarArchivoFidessa(input, tipo){
     console.error('Error leyendo archivo Fidessa:', e);
     alert(`No se pudo leer el archivo (${tipo}). Revisa que sea el formato exportado de Fidessa. Detalle: ${e.message}`);
   }
+}
+
+// Panel 2 de 3: Fidessa Trades tal como viene del archivo, sin procesar —
+// para poder comparar a ojo contra EMSX y Folios antes de conciliar nada.
+function renderFidessaTradesPanel(){
+  const panel = document.getElementById('fidessaTradesPanel');
+  if(!_fidessaTradesRaw || Object.keys(_fidessaTradesRaw).length===0){ panel.style.display='none'; return; }
+  panel.style.display = '';
+  const filas = Object.entries(_fidessaTradesRaw).map(([folioOrden, t]) => ({folioOrden, ...t}));
+  panel.innerHTML = `
+    <div class="section-label" style="margin-top:16px;">Fidessa Trades (crudo, ${filas.length} órdenes)</div>
+    <div class="blotter-wrap" style="overflow-x:auto;">
+      <table><thead><tr>
+        <th>Folio Orden</th><th>Grupo</th><th>Lado</th><th>Security</th>
+        <th class="num">Qty Done</th><th class="num">Avg Px</th>
+      </tr></thead>
+      <tbody>${filas.map(f=>`<tr>
+        <td class="mono-id">${f.folioOrden}</td>
+        <td>${f.grupo||'—'}</td>
+        <td>${f.lado}</td>
+        <td class="mono-id">${f.security||''}</td>
+        <td class="num">${fmtInt(f.qtyDone)}</td>
+        <td class="num">${fmtRate(f.avgPx)}</td>
+      </tr>`).join('')}</tbody></table>
+    </div>
+  `;
+}
+
+// Panel 3 de 3: Fidessa Folios tal como viene del archivo, sin procesar.
+function renderFidessaFoliosPanelRaw(){
+  const panel = document.getElementById('fidessaFoliosPanelRaw');
+  if(!_fidessaFoliosRaw || _fidessaFoliosRaw.length===0){ panel.style.display='none'; return; }
+  panel.style.display = '';
+  panel.innerHTML = `
+    <div class="section-label" style="margin-top:16px;">Fidessa Folios (crudo, ${_fidessaFoliosRaw.length} filas)</div>
+    <div class="blotter-wrap" style="overflow-x:auto;">
+      <table><thead><tr>
+        <th>Hora</th><th>Lado</th><th>Instrument</th><th class="num">Cantidad</th>
+        <th class="num">Precio</th><th>Client/Book</th><th>Parent Order ID</th>
+      </tr></thead>
+      <tbody>${_fidessaFoliosRaw.map(f=>`<tr>
+        <td class="mono-id">${horaDeTimestampFidessa(f.traded)}</td>
+        <td>${f.tcn==='B'?'Compra':'Venta'}</td>
+        <td class="mono-id">${f.instrument||''}</td>
+        <td class="num">${fmtInt(f.cantidad)}</td>
+        <td class="num">${fmtRate(f.precio)}</td>
+        <td class="mono-id">${f.clientBook||'—'}</td>
+        <td class="mono-id">${f.parentOrderId||'—'}</td>
+      </tr>`).join('')}</tbody></table>
+    </div>
+  `;
 }
 
 // Extrae solo la hora (HH:MM:SS) del timestamp de Fidessa
@@ -3260,7 +3298,7 @@ async function cargarEmsxCBDesdeSupabase(){
         </tr></thead>
         <tbody>${data.map(row=>`<tr>
           <td class="mono-id">${row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
-          <td>${row.originate_trader_firm||'—'}</td>
+          <td>${row.originate_trader_firm||'CREDICORP CAPITAL COLOMBIA SA'}</td>
           <td class="mono-id">${row.account||'—'}</td>
           <td>${(row.side||'').toUpperCase().startsWith('B')?'Compra':'Venta'}</td>
           <td class="num">${fmtInt(Number(row.filled)||0)}</td>
@@ -3792,7 +3830,7 @@ async function cargarEmsxDesdeSupabase(){
         emsxData.push({
           id: row.id,
           hora: row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}) : '—',
-          firm: row.originate_trader_firm || row.account || '',
+          firm: row.originate_trader_firm || 'CREDICORP CAPITAL COLOMBIA SA',
           cliente: '', // se resuelve a mano igual que hoy, hasta tener el cruce de cuentas de RVI
           especie: row.ticker || '',
           isin: '',
