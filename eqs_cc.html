@@ -825,7 +825,7 @@
               <th class="sortable" onclick="ordenarPorFX('lado')">Lado<span class="sort-arrow" id="arrow-fx-lado"></span></th>
               <th class="num sortable" onclick="ordenarPorFX('monto')">Monto USD<span class="sort-arrow" id="arrow-fx-monto"></span></th>
               <th class="num sortable" onclick="ordenarPorFX('tasaCliente')">Tasa cliente<span class="sort-arrow" id="arrow-fx-tasaCliente"></span></th>
-              <th class="num sortable" onclick="ordenarPorFX('tasaNuestra')">Tasa nuestra<span class="sort-arrow" id="arrow-fx-tasaNuestra"></span></th>
+              <th class="num sortable" onclick="ordenarPorFX('tasaNuestra')">Tasa final cliente<span class="sort-arrow" id="arrow-fx-tasaNuestra"></span></th>
               <th class="num sortable" onclick="ordenarPorFX('comEqs')">Com. EQS<span class="sort-arrow" id="arrow-fx-comEqs"></span></th>
               <th class="sortable" onclick="ordenarPorFX('receptor')">Receptor<span class="sort-arrow" id="arrow-fx-receptor"></span></th>
               <th class="num" title="Marca cuando el monto/tasa final ya quedó confirmado para back office">Verif.</th>
@@ -2432,7 +2432,7 @@ function renderHistory(){
         case 'lado': return f.op.side;
         case 'monto': return f.op.amount;
         case 'tasaCliente': return f.rateMostrar;
-        case 'tasaNuestra': return f.r.tasaFinalNuestra;
+        case 'tasaNuestra': return f.r.tasaFinalCliente;
         case 'comEqs': return f.r.comEqs;
         case 'receptor': return f.op.trader;
         default: return 0;
@@ -2464,7 +2464,7 @@ function renderHistory(){
       <td><span class="side-badge ${op.side==='BUY'?'buy':'sell'}">${op.side==='BUY'?'Compra':'Venta'}</span></td>
       <td class="num">${fmtUSD(op.amount)}</td>
       <td class="num">${fmtRate(rateMostrar)}</td>
-      <td class="num">${fmtRate(r.tasaFinalNuestra)}</td>
+      <td class="num">${fmtRate(r.tasaFinalCliente)}</td>
       <td class="num">${fmtMoney(r.comEqs)}</td>
       <td class="mono-id">${op.trader}</td>
       <td class="num">${verifCell}</td>
@@ -3236,7 +3236,7 @@ async function cargarEmsxCBDesdeSupabase(){
     const y = hoyDate.getFullYear();
     const m = String(hoyDate.getMonth()+1).padStart(2,'0');
     const d = String(hoyDate.getDate()).padStart(2,'0');
-    const inicioHoy = `${y}-${m}-${d}T00:00:00`;
+    const inicioHoy = new Date(hoyDate.getFullYear(), hoyDate.getMonth(), hoyDate.getDate(), 0, 0, 0).toISOString(); // medianoche LOCAL convertida correctamente a UTC, sin ambigüedad de zona horaria
     const data = await supaFetch('emsx_orders', `exchange=eq.CB&order_time=gte.${inicioHoy}&order=order_time.desc&limit=500`);
 
     const panel = document.getElementById('emsxCBPanel');
@@ -3247,17 +3247,26 @@ async function cargarEmsxCBDesdeSupabase(){
       <div class="field-note" style="margin-bottom:10px;">
         Todavía sin cruce automático contra Fidessa (los tickers vienen en formatos distintos entre Bloomberg y Fidessa) — de momento, compara a ojo.
       </div>
-      <div class="blotter-wrap">
-        <table><thead><tr><th>Hora</th><th>Ticker</th><th>Lado</th><th class="num">Cantidad</th><th class="num">Precio prom.</th><th>Cuenta</th><th>Bróker</th><th>Estado</th></tr></thead>
+      <div class="blotter-wrap" style="overflow-x:auto;">
+        <table style="min-width:900px;"><thead><tr>
+          <th>Hora</th>
+          <th>Originating Firm</th>
+          <th>Account</th>
+          <th>Lado</th>
+          <th class="num">Cantidad (Filled)</th>
+          <th class="num">Precio prom.</th>
+          <th>Estado</th>
+          <th>Instructions</th>
+        </tr></thead>
         <tbody>${data.map(row=>`<tr>
           <td class="mono-id">${row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
-          <td class="mono-id">${row.ticker||''}</td>
-          <td>${(row.side||'').toUpperCase().startsWith('B')?'Compra':'Venta'}</td>
-          <td class="num">${fmtInt(Number(row.amount)||0)}</td>
-          <td class="num">${fmtRate(Number(row.avg_price)||0)}</td>
+          <td>${row.originate_trader_firm||'—'}</td>
           <td class="mono-id">${row.account||'—'}</td>
-          <td class="mono-id">${row.broker||''}</td>
+          <td>${(row.side||'').toUpperCase().startsWith('B')?'Compra':'Venta'}</td>
+          <td class="num">${fmtInt(Number(row.filled)||0)}</td>
+          <td class="num">${fmtRate(Number(row.avg_price)||0)}</td>
           <td>${row.status||''}</td>
+          <td class="mono-id">${row.instructions||'—'}</td>
         </tr>`).join('')}</tbody></table>
       </div>
     `;
@@ -3692,10 +3701,7 @@ const SEC_FEE_RATE = 0.0000278;
 // =====================================================================
 // DATOS DE EJEMPLO EMSX — datos reales de hoy
 // =====================================================================
-let emsxData = [
-  {id:1, hora:'09:41', firm:'COLFONDOS SA', cliente:'COLFONDOS', especie:'XLC', isin:'US02079K3059', tipo:'ETF', lado:'Sell', qty:159000, avgPr:106.7237, broker:'CCSI', account:'', status:'Filled', procesado:false},
-  {id:2, hora:'10:09', firm:'CREDICORP CAPITAL COLOMBIA SA', cliente:'', especie:'ACWI', isin:'US46432F8390', tipo:'ETF', lado:'Buy', qty:4780, avgPr:157.62, broker:'TFSR', account:'', status:'Filled', procesado:false},
-];
+let emsxData = []; // Se carga desde Supabase (cargarEmsxDesdeSupabase) — antes tenía 2 filas de ejemplo hardcodeadas que se confundían con datos reales de Bloomberg.
 
 let distribuciones = [];
 let historial = [];
@@ -3767,7 +3773,7 @@ async function cargarEmsxDesdeSupabase(){
     const y = hoyDate.getFullYear();
     const m = String(hoyDate.getMonth()+1).padStart(2,'0');
     const d = String(hoyDate.getDate()).padStart(2,'0');
-    const inicioHoy = `${y}-${m}-${d}T00:00:00`;
+    const inicioHoy = new Date(hoyDate.getFullYear(), hoyDate.getMonth(), hoyDate.getDate(), 0, 0, 0).toISOString(); // medianoche LOCAL convertida correctamente a UTC, sin ambigüedad de zona horaria
     const data = await supaFetch('emsx_orders', `order_time=gte.${inicioHoy}&order=order_time.desc&limit=500`);
 
     // RVI solo se queda con lo que NO es bolsa de Colombia — eso es de RVL.
