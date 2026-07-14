@@ -1103,6 +1103,8 @@
 
   <div id="fidessaReconciliacion" style="display:none;"></div>
 
+  <div id="emsxCBPanel" style="display:none;"></div>
+
   <div class="stat-cards" style="padding:16px 24px 0;">
     <div class="stat-card">
       <div class="stat-label">Folios filtrados</div>
@@ -3221,6 +3223,49 @@ function procesarFidessa(){
   `;
 }
 
+// =====================================================================
+// BLOOMBERG (EMSX, exchange=CB) — mismo bridge que alimenta a RVI, pero
+// filtrado a lo que se operó en la Bolsa de Colombia. Por ahora se muestra
+// aparte para comparar a ojo contra Fidessa Trades/Folios — el cruce
+// automático necesita antes resolver el mapeo de tickers (EMSX trae
+// "ECOPETROL CB Equity", Fidessa trae "SDHACO.BGa" — formatos distintos).
+// =====================================================================
+async function cargarEmsxCBDesdeSupabase(){
+  try{
+    const hoyDate = new Date();
+    const y = hoyDate.getFullYear();
+    const m = String(hoyDate.getMonth()+1).padStart(2,'0');
+    const d = String(hoyDate.getDate()).padStart(2,'0');
+    const inicioHoy = `${y}-${m}-${d}T00:00:00`;
+    const data = await supaFetch('emsx_orders', `exchange=eq.CB&order_time=gte.${inicioHoy}&order=order_time.desc&limit=500`);
+
+    const panel = document.getElementById('emsxCBPanel');
+    if(data.length===0){ panel.style.display='none'; return; }
+    panel.style.display = '';
+    panel.innerHTML = `
+      <div class="section-label" style="margin-top:16px;">Bloomberg EMSX — Bolsa de Colombia (exchange CB)</div>
+      <div class="field-note" style="margin-bottom:10px;">
+        Todavía sin cruce automático contra Fidessa (los tickers vienen en formatos distintos entre Bloomberg y Fidessa) — de momento, compara a ojo.
+      </div>
+      <div class="blotter-wrap">
+        <table><thead><tr><th>Hora</th><th>Ticker</th><th>Lado</th><th class="num">Cantidad</th><th class="num">Precio prom.</th><th>Cuenta</th><th>Bróker</th><th>Estado</th></tr></thead>
+        <tbody>${data.map(row=>`<tr>
+          <td class="mono-id">${row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
+          <td class="mono-id">${row.ticker||''}</td>
+          <td>${row.side==='B'?'Compra':'Venta'}</td>
+          <td class="num">${fmtInt(Number(row.amount)||0)}</td>
+          <td class="num">${fmtRate(Number(row.avg_price)||0)}</td>
+          <td class="mono-id">${row.account||'—'}</td>
+          <td class="mono-id">${row.broker||''}</td>
+          <td>${row.status||''}</td>
+        </tr>`).join('')}</tbody></table>
+      </div>
+    `;
+  }catch(e){
+    console.error('Error cargando Bloomberg CB desde Supabase:', e);
+  }
+}
+
 // ----------------------------------------------------------------------
 // Render de folios
 // ----------------------------------------------------------------------
@@ -3695,7 +3740,77 @@ function borrarFiltrosRVI(){
   document.getElementById('filtroLadoRVI').value='';
   renderEmsx();
 }
-function cargarEmsx(){ renderEmsx(); }
+// Carga real desde Supabase (emsx_orders), alimentada por emsx_bridge.py
+// corriendo en una máquina con el Terminal de Bloomberg abierto.
+// Se MEZCLA con lo que ya hay en memoria en vez de reemplazar todo, para no
+// perder el estado de "procesado"/"account" que el trader ya asignó a mano
+// (eso todavía vive solo en el navegador, no se ha llevado a Supabase).
+//
+// Regla de ruteo por EMSX_EXCHANGE (según Sergio):
+//   CB              -> Bolsa de Colombia, va a RVL (se arquea contra Fidessa)
+//   LN              -> UCIT, siempre
+//   US / UN         -> ETF o ADR — EMSX no distingue, el trader lo elige
+//                      a mano en el panel de asignación (campo ya existe: tc-tipo)
+//   cualquier otro   -> rarísimo que se opere (todo en EUR); se marca como
+//                      revisar porque históricamente ahí ha habido errores
+function clasificarTipoPorExchange(exchange){
+  const ex = (exchange||'').toUpperCase();
+  if(ex === 'LN') return { tipo:'UCIT', revisar:false };
+  if(ex === 'US' || ex === 'UN') return { tipo:'ETF', revisar:false }; // sugerido; el trader confirma ETF vs ADR al asignar
+  if(ex === 'CB') return { tipo:'', revisar:false }; // no aplica, esta va a RVL
+  return { tipo:'', revisar:true }; // exchange inusual — avisar antes de procesar
+}
+
+async function cargarEmsxDesdeSupabase(){
+  try{
+    const hoyDate = new Date();
+    const y = hoyDate.getFullYear();
+    const m = String(hoyDate.getMonth()+1).padStart(2,'0');
+    const d = String(hoyDate.getDate()).padStart(2,'0');
+    const inicioHoy = `${y}-${m}-${d}T00:00:00`;
+    const data = await supaFetch('emsx_orders', `order_time=gte.${inicioHoy}&order=order_time.desc&limit=500`);
+
+    // RVI solo se queda con lo que NO es bolsa de Colombia — eso es de RVL.
+    const paraRVI = data.filter(row => (row.exchange||'').toUpperCase() !== 'CB');
+
+    paraRVI.forEach(row=>{
+      const existente = emsxData.find(e=>e.id===row.id);
+      if(existente){
+        // Refrescar solo los campos "vivos" de mercado; conservar lo que el trader ya asignó.
+        existente.qty = Number(row.amount)||0;
+        existente.avgPr = Number(row.avg_price)||0;
+        existente.status = row.status || existente.status;
+        existente.broker = row.broker || existente.broker;
+      } else {
+        const clasif = clasificarTipoPorExchange(row.exchange);
+        emsxData.push({
+          id: row.id,
+          hora: row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}) : '—',
+          firm: row.originate_trader_firm || row.account || '',
+          cliente: '', // se resuelve a mano igual que hoy, hasta tener el cruce de cuentas de RVI
+          especie: row.ticker || '',
+          isin: '',
+          exchange: row.exchange || '',
+          tipo: clasif.tipo,
+          revisarExchange: clasif.revisar, // exchange raro, nunca deberíamos operar esto — avisar
+          lado: row.side === 'B' ? 'Buy' : 'Sell',
+          qty: Number(row.amount)||0,
+          avgPr: Number(row.avg_price)||0,
+          broker: row.broker || '',
+          account: row.account || '',
+          status: row.status || '',
+          procesado: false,
+        });
+      }
+    });
+    renderEmsx();
+    console.log(`✓ EMSX: ${paraRVI.length} órdenes de hoy sincronizadas para RVI (de ${data.length} totales, el resto es CB -> RVL)`);
+  }catch(e){
+    console.error('Error cargando EMSX desde Supabase:', e);
+  }
+}
+
+function cargarEmsx(){ cargarEmsxDesdeSupabase(); }
 
 // =====================================================================
 // RENDER BLOTTER EMSX
@@ -3712,8 +3827,8 @@ function renderEmsx(){
     <tr class="clickable ${lineaActiva===r.id?'row-active':''} ${r.procesado?'':'opacity-pending'}" onclick="seleccionarLinea(${r.id})">
       <td class="mono-id">${r.hora}</td>
       <td>${r.firm}</td>
-      <td class="mono-id"><b>${r.especie}</b></td>
-      <td><span class="tipo-badge">${r.tipo}</span></td>
+      <td class="mono-id"><b>${r.especie}</b>${r.revisarExchange?` <span class="status-badge pending" title="Exchange inusual (${r.exchange||'?'}) — normalmente no operamos esto, casi siempre está en EUR. Revisar antes de procesar.">⚠ ${r.exchange||'?'}</span>`:''}</td>
+      <td><span class="tipo-badge">${r.tipo || '— elegir —'}</span></td>
       <td><span class="side-badge ${r.lado==='Buy'?'buy':'sell'}">${r.lado}</span></td>
       <td class="num">${fmtInt(r.qty)}</td>
       <td class="num">${fmtRateRVI(r.avgPr,4)}</td>
@@ -4086,11 +4201,18 @@ setInterval(() => {
 poblarFiltros();
 renderFolios();
 initDatesRVL();
+cargarEmsxCBDesdeSupabase();
 // RVI
 poblarFiltrosRVI();
+cargarEmsxDesdeSupabase();
 renderEmsx();
 renderDistribuciones();
 initDatesRVI();
+
+// Refresco automático de EMSX cada 20s — mismo espíritu que FX, para que las
+// órdenes que Bloomberg va empujando via emsx_bridge.py aparezcan solas.
+setInterval(cargarEmsxDesdeSupabase, 20000);
+setInterval(cargarEmsxCBDesdeSupabase, 20000);
 
 // Clock
 tickClock();
