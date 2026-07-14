@@ -3252,7 +3252,7 @@ async function cargarEmsxCBDesdeSupabase(){
         <tbody>${data.map(row=>`<tr>
           <td class="mono-id">${row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
           <td class="mono-id">${row.ticker||''}</td>
-          <td>${row.side==='B'?'Compra':'Venta'}</td>
+          <td>${(row.side||'').toUpperCase().startsWith('B')?'Compra':'Venta'}</td>
           <td class="num">${fmtInt(Number(row.amount)||0)}</td>
           <td class="num">${fmtRate(Number(row.avg_price)||0)}</td>
           <td class="mono-id">${row.account||'—'}</td>
@@ -3793,7 +3793,7 @@ async function cargarEmsxDesdeSupabase(){
           exchange: row.exchange || '',
           tipo: clasif.tipo,
           revisarExchange: clasif.revisar, // exchange raro, nunca deberíamos operar esto — avisar
-          lado: row.side === 'B' ? 'Buy' : 'Sell',
+          lado: (row.side||'').toUpperCase().startsWith('B') ? 'Buy' : 'Sell',
           qty: Number(row.amount)||0,
           avgPr: Number(row.avg_price)||0,
           broker: row.broker || '',
