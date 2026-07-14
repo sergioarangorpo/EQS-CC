@@ -4064,6 +4064,24 @@ cargarOperacionesDesdeSupabase().then(() => cargarInboxDesdeSupabase());
 initDatesFX();
 cambiarTipoOperacion();
 calcular();
+
+// Sincronización entre traders: varias personas (Sergio, JAJ, Miguel...)
+// pueden tener la página abierta a la vez, cada uno con su propia sesión de
+// navegador. Sin esto, cada pestaña se queda con la foto de cuando cargó y
+// nunca se entera de lo que registran los demás hasta un F5 manual.
+// Se salta el refresco si hay un modal de edición/deshacer abierto, para no
+// jalarle la data por debajo a alguien que está corrigiendo algo en ese momento.
+setInterval(() => {
+  const hayModalAbierto = document.getElementById('editOverlayFX').classList.contains('show')
+    || document.getElementById('deshacerOverlayFX').classList.contains('show');
+  if(hayModalAbierto) return;
+  cargarOperacionesDesdeSupabase();
+  // El inbox no se refresca si hay correos marcados para consolidar en ese
+  // momento — reconstruir el array por debajo dañaría esa selección (se
+  // guarda por índice, no por id).
+  if(selectedRows.size === 0) cargarInboxDesdeSupabase();
+}, 20000);
+
 // RVL
 poblarFiltros();
 renderFolios();
