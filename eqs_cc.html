@@ -3259,6 +3259,7 @@ async function cargarArchivoFidessa(input, tipo){
         const cantidad = Number(row.getCell(headers['Quantity']).value) || 0;
         if(!cantidad) return;
         filas.push({
+          side: row.getCell(1).value,  // columna A, sin encabezado en el archivo — es el lado real (S/B). TCN es el número de folio, no el lado (bug corregido).
           tcn: row.getCell(headers['TCN']).value,
           instrument: row.getCell(headers['Instrument']).value,
           cantidad,
@@ -3291,8 +3292,8 @@ function renderFidessaTradesPanel(){
     <div class="section-label" style="margin-top:16px;">Fidessa Trades (crudo, ${filas.length} órdenes)</div>
     <div class="blotter-wrap" style="overflow-x:auto;">
       <table style="min-width:750px;"><thead><tr>
-        ${thOrdenable('fidessaTrades','folioOrden','Folio Orden')}
-        ${thOrdenable('fidessaTrades','grupo','Grupo')}
+        ${thOrdenable('fidessaTrades','folioOrden','Parent Order ID')}
+        ${thOrdenable('fidessaTrades','grupo','Client/Book')}
         ${thOrdenable('fidessaTrades','lado','Lado')}
         ${thOrdenable('fidessaTrades','security','Security')}
         ${thOrdenable('fidessaTrades','qtyDone','Qty Done','num')}
@@ -3319,22 +3320,24 @@ function renderFidessaFoliosPanelRaw(){
   const filas = ordenarArrayGenerico(_fidessaFoliosRaw.map(f=>({
     ...f,
     horaTxt: horaDeTimestampFidessa(f.traded),
-    ladoTxt: f.tcn==='B'?'Compra':'Venta',
+    ladoTxt: f.side==='B'?'Compra':'Venta',
   })), 'fidessaFolios');
   panel.innerHTML = `
     <div class="section-label" style="margin-top:16px;">Fidessa Folios (crudo, ${filas.length} filas)</div>
     <div class="blotter-wrap" style="overflow-x:auto;">
-      <table style="min-width:850px;"><thead><tr>
+      <table style="min-width:900px;"><thead><tr>
         ${thOrdenable('fidessaFolios','horaTxt','Hora')}
+        ${thOrdenable('fidessaFolios','tcn','Folio (TCN)')}
         ${thOrdenable('fidessaFolios','ladoTxt','Lado')}
-        ${thOrdenable('fidessaFolios','instrument','Instrument')}
-        ${thOrdenable('fidessaFolios','cantidad','Cantidad','num')}
+        ${thOrdenable('fidessaFolios','instrument','Security')}
+        ${thOrdenable('fidessaFolios','cantidad','Qty Done','num')}
         ${thOrdenable('fidessaFolios','precio','Precio','num')}
         ${thOrdenable('fidessaFolios','clientBook','Client/Book')}
         ${thOrdenable('fidessaFolios','parentOrderId','Parent Order ID')}
       </tr></thead>
       <tbody>${filas.map(f=>`<tr>
         <td class="mono-id">${f.horaTxt}</td>
+        <td class="mono-id">${f.tcn||'—'}</td>
         <td>${f.ladoTxt}</td>
         <td class="mono-id">${nemoCanonico(f.instrument, 'fidessa')}</td>
         <td class="num">${fmtInt(f.cantidad)}</td>
@@ -3463,11 +3466,11 @@ function renderEmsxCBTable(){
     <div class="blotter-wrap" style="overflow-x:auto;">
       <table style="min-width:1050px;"><thead><tr>
         ${thOrdenable('emsxCB','hora','Hora')}
-        ${thOrdenable('emsxCB','firm','Originating Firm')}
+        ${thOrdenable('emsxCB','firm','Client/Book')}
         ${thOrdenable('emsxCB','account','Account')}
         ${thOrdenable('emsxCB','lado','Lado')}
         ${thOrdenable('emsxCB','ticker','Security')}
-        ${thOrdenable('emsxCB','filled','Cantidad (Filled)','num')}
+        ${thOrdenable('emsxCB','filled','Qty Done','num')}
         ${thOrdenable('emsxCB','avgPrice','Precio prom.','num')}
         ${thOrdenable('emsxCB','status','Estado')}
         ${thOrdenable('emsxCB','instructions','Instructions')}
@@ -3584,7 +3587,7 @@ function verFoliosVinculadosRVL(emsxId){
       </tr></thead>
       <tbody>${folios.map(f=>`<tr>
         <td class="mono-id">${horaDeTimestampFidessa(f.traded)}</td>
-        <td>${f.tcn==='B'?'Compra':'Venta'}</td>
+        <td>${f.side==='B'?'Compra':'Venta'}</td>
         <td class="mono-id">${nemoCanonico(f.instrument, 'fidessa')}</td>
         <td class="num">${fmtInt(f.cantidad)}</td>
         <td class="num">${fmtRate(f.precio)}</td>
