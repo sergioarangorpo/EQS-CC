@@ -1102,6 +1102,17 @@
 
   <div id="emsxCBPanel" style="display:none;"></div>
 
+  <div class="edit-overlay" id="matchOverlayRVL">
+    <div class="edit-modal" style="max-width:720px;">
+      <h3>Vincular con Fidessa Trades</h3>
+      <div class="field-note" style="margin-bottom:12px;">Candidatos ordenados por qué tan parecidos son en lado, precio y cantidad — tú confirmas cuál es el correcto.</div>
+      <div id="matchCandidatosRVL"></div>
+      <div class="edit-actions">
+        <button class="btn ghost" onclick="cerrarMatchModalRVL()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
   <div id="fidessaTradesPanel" style="display:none;"></div>
 
   <div id="fidessaFoliosPanelRaw" style="display:none;"></div>
@@ -1331,17 +1342,17 @@
         <table>
           <thead>
             <tr>
-              <th>Hora</th>
-              <th>Originating Firm</th>
-              <th>Especie</th>
-              <th>Tipo</th>
-              <th>Lado</th>
-              <th class="num">Qty</th>
-              <th class="num">AvgPr</th>
-              <th class="num">Gross USD</th>
-              <th>Broker</th>
-              <th>Account</th>
-              <th>Estado</th>
+              <th class="sortable" onclick="aplicarOrdenGenerico('rvi','hora')">Hora<span class="sort-arrow" id="arrow-rvi-hora"></span></th>
+              <th class="sortable" onclick="aplicarOrdenGenerico('rvi','firm')">Originating Firm<span class="sort-arrow" id="arrow-rvi-firm"></span></th>
+              <th class="sortable" onclick="aplicarOrdenGenerico('rvi','especie')">Especie<span class="sort-arrow" id="arrow-rvi-especie"></span></th>
+              <th class="sortable" onclick="aplicarOrdenGenerico('rvi','tipo')">Tipo<span class="sort-arrow" id="arrow-rvi-tipo"></span></th>
+              <th class="sortable" onclick="aplicarOrdenGenerico('rvi','lado')">Lado<span class="sort-arrow" id="arrow-rvi-lado"></span></th>
+              <th class="num sortable" onclick="aplicarOrdenGenerico('rvi','qty')">Qty<span class="sort-arrow" id="arrow-rvi-qty"></span></th>
+              <th class="num sortable" onclick="aplicarOrdenGenerico('rvi','avgPr')">AvgPr<span class="sort-arrow" id="arrow-rvi-avgPr"></span></th>
+              <th class="num sortable" onclick="aplicarOrdenGenerico('rvi','gross')">Gross USD<span class="sort-arrow" id="arrow-rvi-gross"></span></th>
+              <th class="sortable" onclick="aplicarOrdenGenerico('rvi','broker')">Broker<span class="sort-arrow" id="arrow-rvi-broker"></span></th>
+              <th class="sortable" onclick="aplicarOrdenGenerico('rvi','account')">Account<span class="sort-arrow" id="arrow-rvi-account"></span></th>
+              <th class="sortable" onclick="aplicarOrdenGenerico('rvi','procesado')">Estado<span class="sort-arrow" id="arrow-rvi-procesado"></span></th>
             </tr>
           </thead>
           <tbody id="emsx-body"></tbody>
@@ -2948,6 +2959,42 @@ const PRESUPUESTO_DB = [{"grupo":"ALLIANZ","trader":"SAR","categoria":"INSTITUCI
 const ALIAS_GRUPO = { LV_CO: 'LARRAIN VIAL PP' };
 function normalizarGrupo(g){ return ALIAS_GRUPO[g] || g; }
 
+// =====================================================================
+// ORDENAMIENTO GENÉRICO — para no repetir la misma lógica de flechas en
+// cada tabla nueva (Bloomberg CB, Fidessa Trades/Folios crudos, RVI).
+// Cada tabla se registra una vez con su función de render; al hacer click
+// en un header se re-ordena el array y se vuelve a pintar.
+// =====================================================================
+const _sortState = {};
+const _renderRegistry = {};
+
+function registrarTablaOrdenable(tablaId, renderFn){
+  _renderRegistry[tablaId] = renderFn;
+}
+
+function thOrdenable(tablaId, campo, label, claseExtra){
+  return `<th class="sortable ${claseExtra||''}" onclick="aplicarOrdenGenerico('${tablaId}','${campo}')">${label}<span class="sort-arrow" id="arrow-${tablaId}-${campo}"></span></th>`;
+}
+
+function aplicarOrdenGenerico(tablaId, campo){
+  const st = _sortState[tablaId] || (_sortState[tablaId] = {campo:null, dir:1});
+  if(st.campo === campo){ st.dir = -st.dir; } else { st.campo = campo; st.dir = 1; }
+  document.querySelectorAll(`[id^="arrow-${tablaId}-"]`).forEach(el=>el.textContent='');
+  const arrowEl = document.getElementById(`arrow-${tablaId}-${campo}`);
+  if(arrowEl) arrowEl.textContent = st.dir===1 ? '▲' : '▼';
+  if(_renderRegistry[tablaId]) _renderRegistry[tablaId]();
+}
+
+function ordenarArrayGenerico(arr, tablaId){
+  const st = _sortState[tablaId];
+  if(!st || !st.campo) return arr;
+  return [...arr].sort((a,b)=>{
+    const va = a[st.campo], vb = b[st.campo];
+    if(typeof va === 'string' || typeof vb === 'string') return String(va||'').localeCompare(String(vb||'')) * st.dir;
+    return ((va||0) - (vb||0)) * st.dir;
+  });
+}
+
 function construirClientesDBDesdeCategorias(){
   const porGrupo = {};
   CATEGORIAS_DB.forEach(c=>{
@@ -3146,13 +3193,17 @@ function renderFidessaTradesPanel(){
   const panel = document.getElementById('fidessaTradesPanel');
   if(!_fidessaTradesRaw || Object.keys(_fidessaTradesRaw).length===0){ panel.style.display='none'; return; }
   panel.style.display = '';
-  const filas = Object.entries(_fidessaTradesRaw).map(([folioOrden, t]) => ({folioOrden, ...t}));
+  const filas = ordenarArrayGenerico(Object.entries(_fidessaTradesRaw).map(([folioOrden, t]) => ({folioOrden, ...t})), 'fidessaTrades');
   panel.innerHTML = `
     <div class="section-label" style="margin-top:16px;">Fidessa Trades (crudo, ${filas.length} órdenes)</div>
     <div class="blotter-wrap" style="overflow-x:auto;">
-      <table><thead><tr>
-        <th>Folio Orden</th><th>Grupo</th><th>Lado</th><th>Security</th>
-        <th class="num">Qty Done</th><th class="num">Avg Px</th>
+      <table style="min-width:750px;"><thead><tr>
+        ${thOrdenable('fidessaTrades','folioOrden','Folio Orden')}
+        ${thOrdenable('fidessaTrades','grupo','Grupo')}
+        ${thOrdenable('fidessaTrades','lado','Lado')}
+        ${thOrdenable('fidessaTrades','security','Security')}
+        ${thOrdenable('fidessaTrades','qtyDone','Qty Done','num')}
+        ${thOrdenable('fidessaTrades','avgPx','Avg Px','num')}
       </tr></thead>
       <tbody>${filas.map(f=>`<tr>
         <td class="mono-id">${f.folioOrden}</td>
@@ -3165,22 +3216,33 @@ function renderFidessaTradesPanel(){
     </div>
   `;
 }
+registrarTablaOrdenable('fidessaTrades', renderFidessaTradesPanel);
 
 // Panel 3 de 3: Fidessa Folios tal como viene del archivo, sin procesar.
 function renderFidessaFoliosPanelRaw(){
   const panel = document.getElementById('fidessaFoliosPanelRaw');
   if(!_fidessaFoliosRaw || _fidessaFoliosRaw.length===0){ panel.style.display='none'; return; }
   panel.style.display = '';
+  const filas = ordenarArrayGenerico(_fidessaFoliosRaw.map(f=>({
+    ...f,
+    horaTxt: horaDeTimestampFidessa(f.traded),
+    ladoTxt: f.tcn==='B'?'Compra':'Venta',
+  })), 'fidessaFolios');
   panel.innerHTML = `
-    <div class="section-label" style="margin-top:16px;">Fidessa Folios (crudo, ${_fidessaFoliosRaw.length} filas)</div>
+    <div class="section-label" style="margin-top:16px;">Fidessa Folios (crudo, ${filas.length} filas)</div>
     <div class="blotter-wrap" style="overflow-x:auto;">
-      <table><thead><tr>
-        <th>Hora</th><th>Lado</th><th>Instrument</th><th class="num">Cantidad</th>
-        <th class="num">Precio</th><th>Client/Book</th><th>Parent Order ID</th>
+      <table style="min-width:850px;"><thead><tr>
+        ${thOrdenable('fidessaFolios','horaTxt','Hora')}
+        ${thOrdenable('fidessaFolios','ladoTxt','Lado')}
+        ${thOrdenable('fidessaFolios','instrument','Instrument')}
+        ${thOrdenable('fidessaFolios','cantidad','Cantidad','num')}
+        ${thOrdenable('fidessaFolios','precio','Precio','num')}
+        ${thOrdenable('fidessaFolios','clientBook','Client/Book')}
+        ${thOrdenable('fidessaFolios','parentOrderId','Parent Order ID')}
       </tr></thead>
-      <tbody>${_fidessaFoliosRaw.map(f=>`<tr>
-        <td class="mono-id">${horaDeTimestampFidessa(f.traded)}</td>
-        <td>${f.tcn==='B'?'Compra':'Venta'}</td>
+      <tbody>${filas.map(f=>`<tr>
+        <td class="mono-id">${f.horaTxt}</td>
+        <td>${f.ladoTxt}</td>
         <td class="mono-id">${f.instrument||''}</td>
         <td class="num">${fmtInt(f.cantidad)}</td>
         <td class="num">${fmtRate(f.precio)}</td>
@@ -3190,6 +3252,7 @@ function renderFidessaFoliosPanelRaw(){
     </div>
   `;
 }
+registrarTablaOrdenable('fidessaFolios', renderFidessaFoliosPanelRaw);
 
 // Extrae solo la hora (HH:MM:SS) del timestamp de Fidessa
 // ("20260710 10:27:03.961000 -0400 ")
@@ -3268,49 +3331,166 @@ function procesarFidessa(){
 // automático necesita antes resolver el mapeo de tickers (EMSX trae
 // "ECOPETROL CB Equity", Fidessa trae "SDHACO.BGa" — formatos distintos).
 // =====================================================================
+let _emsxCBCache = [];
+
 async function cargarEmsxCBDesdeSupabase(){
   try{
     const hoyDate = new Date();
-    const y = hoyDate.getFullYear();
-    const m = String(hoyDate.getMonth()+1).padStart(2,'0');
-    const d = String(hoyDate.getDate()).padStart(2,'0');
     const inicioHoy = new Date(hoyDate.getFullYear(), hoyDate.getMonth(), hoyDate.getDate(), 0, 0, 0).toISOString(); // medianoche LOCAL convertida correctamente a UTC, sin ambigüedad de zona horaria
     const data = await supaFetch('emsx_orders', `exchange=eq.CB&order_time=gte.${inicioHoy}&order=order_time.desc&limit=500`);
-
-    const panel = document.getElementById('emsxCBPanel');
-    if(data.length===0){ panel.style.display='none'; return; }
-    panel.style.display = '';
-    panel.innerHTML = `
-      <div class="section-label" style="margin-top:16px;">Bloomberg EMSX — Bolsa de Colombia (exchange CB)</div>
-      <div class="field-note" style="margin-bottom:10px;">
-        Todavía sin cruce automático contra Fidessa (los tickers vienen en formatos distintos entre Bloomberg y Fidessa) — de momento, compara a ojo.
-      </div>
-      <div class="blotter-wrap" style="overflow-x:auto;">
-        <table style="min-width:900px;"><thead><tr>
-          <th>Hora</th>
-          <th>Originating Firm</th>
-          <th>Account</th>
-          <th>Lado</th>
-          <th class="num">Cantidad (Filled)</th>
-          <th class="num">Precio prom.</th>
-          <th>Estado</th>
-          <th>Instructions</th>
-        </tr></thead>
-        <tbody>${data.map(row=>`<tr>
-          <td class="mono-id">${row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
-          <td>${row.originate_trader_firm||'CREDICORP CAPITAL COLOMBIA SA'}</td>
-          <td class="mono-id">${row.account||'—'}</td>
-          <td>${(row.side||'').toUpperCase().startsWith('B')?'Compra':'Venta'}</td>
-          <td class="num">${fmtInt(Number(row.filled)||0)}</td>
-          <td class="num">${fmtRate(Number(row.avg_price)||0)}</td>
-          <td>${row.status||''}</td>
-          <td class="mono-id">${row.instructions||'—'}</td>
-        </tr>`).join('')}</tbody></table>
-      </div>
-    `;
+    _emsxCBCache = data;
+    renderEmsxCBTable();
   }catch(e){
     console.error('Error cargando Bloomberg CB desde Supabase:', e);
   }
+}
+
+function renderEmsxCBTable(){
+  const panel = document.getElementById('emsxCBPanel');
+  if(_emsxCBCache.length===0){ panel.style.display='none'; return; }
+  panel.style.display = '';
+  const filas = ordenarArrayGenerico(_emsxCBCache.map(row=>({
+    id: row.id,
+    hora: row.order_time || '',
+    horaTxt: row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}) : '—',
+    firm: row.originate_trader_firm||'CREDICORP CAPITAL COLOMBIA SA',
+    account: row.account||'—',
+    ticker: row.ticker||'',
+    lado: (row.side||'').toUpperCase().startsWith('B')?'Compra':'Venta',
+    filled: Number(row.filled)||0,
+    avgPrice: Number(row.avg_price)||0,
+    status: row.status||'',
+    instructions: row.instructions||'—',
+  })), 'emsxCB');
+  panel.innerHTML = `
+    <div class="section-label" style="margin-top:16px;">Bloomberg EMSX — Bolsa de Colombia (exchange CB)</div>
+    <div class="field-note" style="margin-bottom:10px;">
+      Todavía sin cruce automático contra Fidessa (los tickers vienen en formatos distintos entre Bloomberg y Fidessa) — usa "Vincular" para asociar manualmente una orden con su Fidessa Trade y ver los folios que le corresponden.
+    </div>
+    <div class="blotter-wrap" style="overflow-x:auto;">
+      <table style="min-width:1050px;"><thead><tr>
+        ${thOrdenable('emsxCB','hora','Hora')}
+        ${thOrdenable('emsxCB','firm','Originating Firm')}
+        ${thOrdenable('emsxCB','account','Account')}
+        ${thOrdenable('emsxCB','lado','Lado')}
+        ${thOrdenable('emsxCB','ticker','Security')}
+        ${thOrdenable('emsxCB','filled','Cantidad (Filled)','num')}
+        ${thOrdenable('emsxCB','avgPrice','Precio prom.','num')}
+        ${thOrdenable('emsxCB','status','Estado')}
+        ${thOrdenable('emsxCB','instructions','Instructions')}
+        <th>Fidessa</th>
+      </tr></thead>
+      <tbody>${filas.map(row=>{
+        const vinculo = _vinculosEmsxFidessa[row.id];
+        const fidessaCell = vinculo
+          ? `<button class="btn small ghost" onclick="verFoliosVinculadosRVL(${row.id})" title="Ver folios de ${vinculo}">✓ ${vinculo}</button>`
+          : `<button class="btn small" onclick="abrirMatchModalRVL(${row.id})">🔗 Vincular</button>`;
+        return `<tr>
+        <td class="mono-id">${row.horaTxt}</td>
+        <td>${row.firm}</td>
+        <td class="mono-id">${row.account}</td>
+        <td>${row.lado}</td>
+        <td class="mono-id">${row.ticker}</td>
+        <td class="num">${fmtInt(row.filled)}</td>
+        <td class="num">${fmtRate(row.avgPrice)}</td>
+        <td>${row.status}</td>
+        <td class="mono-id">${row.instructions}</td>
+        <td>${fidessaCell}</td>
+      </tr>`;}).join('')}</tbody></table>
+    </div>
+    <div id="foliosVinculadosRVL"></div>
+  `;
+}
+registrarTablaOrdenable('emsxCB', renderEmsxCBTable);
+
+// =====================================================================
+// VINCULAR EMSX <-> FIDESSA TRADES (y de ahí, Fidessa Folios por Parent Order ID)
+// No hay un ID común entre Bloomberg y Fidessa — el match se sugiere por
+// lado + precio + cantidad parecidos, y el trader confirma cuál es.
+// =====================================================================
+let _vinculosEmsxFidessa = {}; // { emsxId: folioOrden }
+
+function buscarCandidatosFidessa(row){
+  if(!_fidessaTradesRaw) return [];
+  return Object.entries(_fidessaTradesRaw)
+    .filter(([folioOrden, t]) => t.lado === row.lado)
+    .map(([folioOrden, t]) => {
+      const diffPrecio = row.avgPrice>0 ? Math.abs(t.avgPx - row.avgPrice)/row.avgPrice : 1;
+      const diffQty = row.filled>0 ? Math.abs(t.qtyDone - row.filled)/Math.max(t.qtyDone, row.filled, 1) : 1;
+      const score = Math.max(0, 100 - (diffPrecio*100 + diffQty*100));
+      return { folioOrden, ...t, score };
+    })
+    .filter(c => c.score > 40)
+    .sort((a,b)=>b.score-a.score)
+    .slice(0,6);
+}
+
+function abrirMatchModalRVL(emsxId){
+  const row = _emsxCBCache.find(r=>r.id===emsxId);
+  if(!row) return;
+  const rowNorm = {
+    lado: (row.side||'').toUpperCase().startsWith('B')?'Compra':'Venta',
+    avgPrice: Number(row.avg_price)||0,
+    filled: Number(row.filled)||0,
+  };
+  const candidatos = buscarCandidatosFidessa(rowNorm);
+  const cont = document.getElementById('matchCandidatosRVL');
+  if(!_fidessaTradesRaw || Object.keys(_fidessaTradesRaw).length===0){
+    cont.innerHTML = '<div class="field-note">Todavía no has cargado Fidessa Trades — súbelo arriba primero.</div>';
+  } else if(candidatos.length===0){
+    cont.innerHTML = '<div class="field-note">No encontré nada parecido en Fidessa Trades (mismo lado, precio y cantidad cercanos). Puede que este folio orden no esté en el archivo cargado.</div>';
+  } else {
+    cont.innerHTML = candidatos.map(c => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border:1px solid var(--border-soft);border-radius:6px;margin-bottom:8px;">
+        <div>
+          <div style="font-weight:600;font-family:var(--mono);">${c.folioOrden} — ${c.grupo||'—'}</div>
+          <div class="field-note">${c.security||''} · ${c.lado} · Qty ${fmtInt(c.qtyDone)} @ ${fmtRate(c.avgPx)} · parecido ${c.score.toFixed(0)}%</div>
+        </div>
+        <button class="btn small" onclick="confirmarVinculoRVL(${emsxId}, '${c.folioOrden}')">Vincular</button>
+      </div>
+    `).join('');
+  }
+  document.getElementById('matchOverlayRVL').classList.add('show');
+}
+
+function cerrarMatchModalRVL(){
+  document.getElementById('matchOverlayRVL').classList.remove('show');
+}
+
+function confirmarVinculoRVL(emsxId, folioOrden){
+  _vinculosEmsxFidessa[emsxId] = folioOrden;
+  cerrarMatchModalRVL();
+  renderEmsxCBTable();
+  verFoliosVinculadosRVL(emsxId);
+}
+
+function verFoliosVinculadosRVL(emsxId){
+  const folioOrden = _vinculosEmsxFidessa[emsxId];
+  if(!folioOrden) return;
+  const folios = (_fidessaFoliosRaw||[]).filter(f => String(f.parentOrderId)===String(folioOrden));
+  const cont = document.getElementById('foliosVinculadosRVL');
+  if(!cont) return;
+  if(folios.length===0){
+    cont.innerHTML = `<div class="field-note" style="margin-top:10px;">Vinculado a ${folioOrden}, pero no encontré folios con ese Parent Order ID en Fidessa Folios todavía.</div>`;
+    return;
+  }
+  const totalCantidad = folios.reduce((s,f)=>s+f.cantidad,0);
+  cont.innerHTML = `
+    <div class="section-label" style="margin-top:16px;">Folios de ${folioOrden} (${folios.length} filas, ${fmtInt(totalCantidad)} en total)</div>
+    <div class="blotter-wrap" style="overflow-x:auto;">
+      <table style="min-width:650px;"><thead><tr>
+        <th>Hora</th><th>Lado</th><th>Instrument</th><th class="num">Cantidad</th><th class="num">Precio</th><th>Client/Book</th>
+      </tr></thead>
+      <tbody>${folios.map(f=>`<tr>
+        <td class="mono-id">${horaDeTimestampFidessa(f.traded)}</td>
+        <td>${f.tcn==='B'?'Compra':'Venta'}</td>
+        <td class="mono-id">${f.instrument||''}</td>
+        <td class="num">${fmtInt(f.cantidad)}</td>
+        <td class="num">${fmtRate(f.precio)}</td>
+        <td class="mono-id">${f.clientBook||'—'}</td>
+      </tr>`).join('')}</tbody></table>
+    </div>
+  `;
 }
 
 // ----------------------------------------------------------------------
@@ -3860,7 +4040,8 @@ function cargarEmsx(){ cargarEmsxDesdeSupabase(); }
 // RENDER BLOTTER EMSX
 // =====================================================================
 function renderEmsx(){
-  const data = getFiltradas();
+  let data = getFiltradas();
+  data = ordenarArrayGenerico(data.map(r=>({...r, gross: r.qty*r.avgPr})), 'rvi');
   const tbody = document.getElementById('emsx-body');
   document.getElementById('emsx-count').textContent = data.length+' líneas';
   if(!data.length){
@@ -3882,6 +4063,7 @@ function renderEmsx(){
       <td><span class="status-badge ${r.procesado?'filled':'pending'}">${r.procesado?'Procesado':'Pendiente'}</span></td>
     </tr>`).join('');
 }
+registrarTablaOrdenable('rvi', renderEmsx);
 
 // =====================================================================
 // SELECCIONAR LÍNEA
