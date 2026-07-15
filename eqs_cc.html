@@ -3067,6 +3067,40 @@ function esEstadoActivo(status){
 // en un header se re-ordena el array y se vuelve a pintar.
 // =====================================================================
 const _sortState = {};
+
+// =====================================================================
+// FILTRO COMPARTIDO POR CLIENTE (EMSX + Fidessa Trades + Fidessa Folios)
+// Un clic en el Client/Book de cualquiera de los 3 cuadros filtra los tres
+// a la vez — coincidencia de texto (no exacta) porque el mismo cliente
+// puede venir escrito distinto entre Bloomberg ("AFP PROTECCION SA") y
+// Fidessa/CATEGORIAS ("PROTECCION").
+// =====================================================================
+let _filtroClienteActivo = null;
+
+function coincideFiltroCliente(valor){
+  if(!_filtroClienteActivo) return true;
+  if(!valor) return false;
+  const a = String(valor).toUpperCase().trim();
+  const b = _filtroClienteActivo.toUpperCase().trim();
+  return a.includes(b) || b.includes(a);
+}
+
+function filtrarPorClienteRVL(valor){
+  _filtroClienteActivo = valor;
+  renderEmsxCBTable();
+  renderFidessaTradesPanel();
+  renderFidessaFoliosPanelRaw();
+  const el = document.getElementById('filtroClienteActivoLabel');
+  if(el && typeof el.scrollIntoView === 'function') el.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function quitarFiltroClienteRVL(){
+  _filtroClienteActivo = null;
+  renderEmsxCBTable();
+  renderFidessaTradesPanel();
+  renderFidessaFoliosPanelRaw();
+}
+
 const _renderRegistry = {};
 
 function registrarTablaOrdenable(tablaId, renderFn){
@@ -3303,7 +3337,7 @@ function renderFidessaTradesPanel(){
   const panel = document.getElementById('fidessaTradesPanel');
   if(!_fidessaTradesRaw || Object.keys(_fidessaTradesRaw).length===0){ panel.style.display='none'; return; }
   panel.style.display = '';
-  const filas = ordenarArrayGenerico(Object.entries(_fidessaTradesRaw).map(([folioOrden, t]) => ({folioOrden, ...t})), 'fidessaTrades');
+  const filas = ordenarArrayGenerico(Object.entries(_fidessaTradesRaw).map(([folioOrden, t]) => ({folioOrden, ...t})), 'fidessaTrades').filter(f => coincideFiltroCliente(f.grupo));
   panel.innerHTML = `
     <div class="section-label" style="margin-top:16px;">Fidessa Trades (crudo, ${filas.length} órdenes)</div>
     <div class="blotter-wrap" style="overflow-x:auto;">
@@ -3317,7 +3351,7 @@ function renderFidessaTradesPanel(){
       </tr></thead>
       <tbody>${filas.map(f=>`<tr>
         <td class="mono-id">${f.folioOrden}</td>
-        <td>${f.grupo||'—'}</td>
+        <td style="cursor:pointer;text-decoration:underline dotted;" onclick="filtrarPorClienteRVL('${(f.grupo||'').replace(/'/g,"\\'")}')" title="Filtrar por este cliente">${f.grupo||'—'}</td>
         <td>${f.lado}</td>
         <td class="mono-id">${nemoCanonico(f.security, 'fidessa')}</td>
         <td class="num">${fmtInt(f.qtyDone)}</td>
@@ -3348,7 +3382,7 @@ function renderFidessaFoliosPanelRaw(){
     _id: folioIdUnico(f),
     horaTxt: horaDeTimestampFidessa(f.traded),
     ladoTxt: f.side==='B'?'Compra':'Venta',
-  })), 'fidessaFolios');
+  })), 'fidessaFolios').filter(f => coincideFiltroCliente(f.clientBook));
   const bloqueCount = filas.filter(f=>_foliosMarca[f._id]==='bloque').length;
   const selCount = filas.filter(f=>_foliosSeleccionados.has(f._id)).length;
   panel.innerHTML = `
@@ -3387,7 +3421,7 @@ function renderFidessaFoliosPanelRaw(){
         <td class="mono-id">${nemoCanonico(f.instrument, 'fidessa')}</td>
         <td class="num">${fmtInt(f.cantidad)}</td>
         <td class="num">${fmtRate(f.precio)}</td>
-        <td class="mono-id">${f.clientBook||'—'}</td>
+        <td class="mono-id" style="cursor:pointer;text-decoration:underline dotted;" onclick="filtrarPorClienteRVL('${(f.clientBook||'').replace(/'/g,"\\'")}')" title="Filtrar por este cliente">${f.clientBook||'—'}</td>
         <td class="mono-id">${f.parentOrderId||'—'}</td>
         <td><button class="tag-btn ${marca==='bloque'?'active-bloque':'active-pantalla'}" onclick="toggleMarcaFolio('${f._id}')">${marca==='bloque'?'Bloque':'Pantalla'}</button></td>
       </tr>`;}).join('')}</tbody></table>
@@ -3596,12 +3630,13 @@ function renderEmsxCBTable(){
     avgPrice: Number(row.avg_price)||0,
     status: row.status||'',
     instructions: row.instructions||'—',
-  })), 'emsxCB');
+  })), 'emsxCB').filter(row => coincideFiltroCliente(row.firm));
   panel.innerHTML = `
     <div class="section-label" style="margin-top:16px;">Bloomberg EMSX — Bolsa de Colombia (exchange CB)</div>
     <div class="field-note" style="margin-bottom:10px;">
-      Todavía sin cruce automático contra Fidessa (los tickers vienen en formatos distintos entre Bloomberg y Fidessa) — usa "Vincular" para asociar manualmente una orden con su Fidessa Trade y ver los folios que le corresponden.
+      Todavía sin cruce automático contra Fidessa (los tickers vienen en formatos distintos entre Bloomberg y Fidessa) — usa "Vincular" para asociar manualmente una orden con su Fidessa Trade y ver los folios que le corresponden. Clic en un Client/Book filtra los 3 cuadros de abajo por ese cliente.
     </div>
+    ${_filtroClienteActivo ? `<div id="filtroClienteActivoLabel" class="field-note" style="margin-bottom:10px;color:var(--purple);">Filtrando por: <b>${_filtroClienteActivo}</b> — <a href="#" onclick="quitarFiltroClienteRVL();return false;" style="color:var(--purple);text-decoration:underline;">quitar filtro</a></div>` : ''}
     <div class="blotter-wrap" style="overflow-x:auto;">
       <table style="min-width:1050px;"><thead><tr>
         ${thOrdenable('emsxCB','hora','Hora')}
@@ -3622,7 +3657,7 @@ function renderEmsxCBTable(){
           : `<button class="btn small" onclick="abrirMatchModalRVL(${row.id})">🔗 Vincular</button>`;
         return `<tr>
         <td class="mono-id">${row.horaTxt}</td>
-        <td>${row.firm}</td>
+        <td class="clickable" style="cursor:pointer;text-decoration:underline dotted;" onclick="filtrarPorClienteRVL('${row.firm.replace(/'/g,"\\'")}')" title="Filtrar por este cliente">${row.firm}</td>
         <td class="mono-id">${row.account}</td>
         <td>${row.lado}</td>
         <td class="mono-id">${row.ticker}</td>
