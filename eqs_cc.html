@@ -3267,9 +3267,15 @@ async function cargarArchivoFidessa(input, tipo){
         if(rowNumber===1) return;
         const cantidad = Number(row.getCell(headers['Quantity']).value) || 0;
         if(!cantidad) return;
+        const tcn = row.getCell(headers['TCN']).value;
+        // Una fila sin TCN no es un folio real de bolsa — es una "contraparte"
+        // que arma Fidessa internamente (se ve con Source="OMAR" en vez del
+        // correo del trader, y sin Parent Order ID). Sergio lo confirmó: se
+        // debe ignorar por completo.
+        if(!tcn) return;
         filas.push({
           side: row.getCell(1).value,  // columna A, sin encabezado en el archivo — es el lado real (S/B). TCN es el número de folio, no el lado (bug corregido).
-          tcn: row.getCell(headers['TCN']).value,
+          tcn,
           instrument: row.getCell(headers['Instrument']).value,
           cantidad,
           precio: Number(row.getCell(headers['Price']).value) || 0,
@@ -3323,19 +3329,44 @@ function renderFidessaTradesPanel(){
 registrarTablaOrdenable('fidessaTrades', renderFidessaTradesPanel);
 
 // Panel 3 de 3: Fidessa Folios tal como viene del archivo, sin procesar.
+const _foliosMarca = {}; // { folioId: 'bloque'|'pantalla' } — default 'pantalla' si no se ha marcado
+const _foliosSeleccionados = new Set();
+
+// Folios con el mismo TCN se repiten en composites (fila padre + hijas de
+// la distribución), así que el TCN solo no identifica una fila única —
+// se arma el mismo id compuesto que se usa para guardar en Supabase.
+function folioIdUnico(f){
+  return `${f.tcn}_${f.parentOrderId||''}_${f.cantidad}_${f.precio}_${f.traded||''}`;
+}
+
 function renderFidessaFoliosPanelRaw(){
   const panel = document.getElementById('fidessaFoliosPanelRaw');
   if(!_fidessaFoliosRaw || _fidessaFoliosRaw.length===0){ panel.style.display='none'; return; }
   panel.style.display = '';
   const filas = ordenarArrayGenerico(_fidessaFoliosRaw.map(f=>({
     ...f,
+    _id: folioIdUnico(f),
     horaTxt: horaDeTimestampFidessa(f.traded),
     ladoTxt: f.side==='B'?'Compra':'Venta',
   })), 'fidessaFolios');
+  const bloqueCount = filas.filter(f=>_foliosMarca[f._id]==='bloque').length;
+  const selCount = filas.filter(f=>_foliosSeleccionados.has(f._id)).length;
   panel.innerHTML = `
     <div class="section-label" style="margin-top:16px;">Fidessa Folios (crudo, ${filas.length} filas)</div>
+    <div class="hist-filtros" style="margin-bottom:10px;">
+      <div class="tb-field"><label>Seleccionados</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;">${selCount}</div></div>
+      <div class="tb-field"><label>Marcados Bloque/Cruce</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--purple);">${bloqueCount}</div></div>
+      <div class="tb-field">
+        <label>&nbsp;</label>
+        <div style="display:flex;gap:8px;">
+          <button class="btn small" onclick="marcarSeleccionadosFolios('bloque')">Marcar seleccionados: Bloque/Cruce</button>
+          <button class="btn small ghost" onclick="marcarSeleccionadosFolios('pantalla')">Marcar seleccionados: Pantalla</button>
+        </div>
+      </div>
+    </div>
     <div class="blotter-wrap" style="overflow-x:auto;">
-      <table style="min-width:900px;"><thead><tr>
+      <table style="min-width:1000px;"><thead><tr>
+        <th style="width:36px;"><input type="checkbox" onchange="toggleTodosFolios(this.checked)"></th>
         ${thOrdenable('fidessaFolios','horaTxt','Hora')}
         ${thOrdenable('fidessaFolios','tcn','Folio (TCN)')}
         ${thOrdenable('fidessaFolios','ladoTxt','Lado')}
@@ -3344,8 +3375,12 @@ function renderFidessaFoliosPanelRaw(){
         ${thOrdenable('fidessaFolios','precio','Precio','num')}
         ${thOrdenable('fidessaFolios','clientBook','Client/Book')}
         ${thOrdenable('fidessaFolios','parentOrderId','Parent Order ID')}
+        <th>Comisión</th>
       </tr></thead>
-      <tbody>${filas.map(f=>`<tr>
+      <tbody>${filas.map(f=>{
+        const marca = _foliosMarca[f._id] || 'pantalla';
+        return `<tr>
+        <td><input type="checkbox" ${_foliosSeleccionados.has(f._id)?'checked':''} onchange="toggleFolioSeleccionado('${f._id}', this.checked)"></td>
         <td class="mono-id">${f.horaTxt}</td>
         <td class="mono-id">${f.tcn||'—'}</td>
         <td>${f.ladoTxt}</td>
@@ -3354,11 +3389,34 @@ function renderFidessaFoliosPanelRaw(){
         <td class="num">${fmtRate(f.precio)}</td>
         <td class="mono-id">${f.clientBook||'—'}</td>
         <td class="mono-id">${f.parentOrderId||'—'}</td>
-      </tr>`).join('')}</tbody></table>
+        <td><button class="tag-btn ${marca==='bloque'?'active-bloque':'active-pantalla'}" onclick="toggleMarcaFolio('${f._id}')">${marca==='bloque'?'Bloque':'Pantalla'}</button></td>
+      </tr>`;}).join('')}</tbody></table>
     </div>
   `;
 }
 registrarTablaOrdenable('fidessaFolios', renderFidessaFoliosPanelRaw);
+
+function toggleFolioSeleccionado(id, checked){
+  if(checked) _foliosSeleccionados.add(id); else _foliosSeleccionados.delete(id);
+  renderFidessaFoliosPanelRaw();
+}
+
+function toggleTodosFolios(checked){
+  const filas = _fidessaFoliosRaw.map(f=>folioIdUnico(f));
+  if(checked) filas.forEach(id=>_foliosSeleccionados.add(id));
+  else filas.forEach(id=>_foliosSeleccionados.delete(id));
+  renderFidessaFoliosPanelRaw();
+}
+
+function toggleMarcaFolio(id){
+  _foliosMarca[id] = _foliosMarca[id]==='bloque' ? 'pantalla' : 'bloque';
+  renderFidessaFoliosPanelRaw();
+}
+
+function marcarSeleccionadosFolios(tipo){
+  _foliosSeleccionados.forEach(id => { _foliosMarca[id] = tipo; });
+  renderFidessaFoliosPanelRaw();
+}
 
 // Extrae solo la hora (HH:MM:SS) del timestamp de Fidessa
 // ("20260710 10:27:03.961000 -0400 ")
@@ -3394,6 +3452,9 @@ async function guardarFidessaTradesSupabase(mapa){
 
 async function guardarFidessaFoliosSupabase(filas){
   const rows = filas.filter(f=>f.tcn).map(f => ({
+    // Clave compuesta: en cruces/composites el mismo TCN se repite (fila
+    // padre + hijas de la distribución), así que tcn solo no sirve de llave.
+    id: `${f.tcn}_${f.parentOrderId||''}_${f.cantidad}_${f.precio}_${f.traded||''}`,
     tcn: Number(f.tcn), side: f.side, instrument: f.instrument, cantidad: f.cantidad,
     precio: f.precio, traded: String(f.traded||''), client_book: f.clientBook, parent_order_id: f.parentOrderId,
   }));
