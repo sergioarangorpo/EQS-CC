@@ -846,21 +846,21 @@
         <div class="field-row">
           <div class="field">
             <label>Puntos venta (nos reconocen)</label>
-            <input type="text" inputmode="decimal" id="ptsVenta" value="0.70" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+            <input type="text" inputmode="decimal" id="ptsVenta" value="0.70" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular();guardarPuntosSwapDia()">
           </div>
           <div class="field">
             <label>Puntos compra (nos cobran)</label>
-            <input type="text" inputmode="decimal" id="ptsCompra" value="0.80" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+            <input type="text" inputmode="decimal" id="ptsCompra" value="0.80" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular();guardarPuntosSwapDia()">
           </div>
         </div>
         <div class="field-row">
           <div class="field">
             <label>Spread a cliente — venta</label>
-            <input type="text" inputmode="decimal" id="spreadVenta" value="0.15" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+            <input type="text" inputmode="decimal" id="spreadVenta" value="0.20" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular();guardarPuntosSwapDia()">
           </div>
           <div class="field">
             <label>Spread a cliente — compra</label>
-            <input type="text" inputmode="decimal" id="spreadCompra" value="0.15" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+            <input type="text" inputmode="decimal" id="spreadCompra" value="0.20" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular();guardarPuntosSwapDia()">
           </div>
         </div>
         <div class="footer-note">Puntos finales a Andes: venta <b id="ptsVentaFinal">0.55</b> · compra <b id="ptsCompraFinal">0.95</b></div>
@@ -1660,6 +1660,58 @@ function fmtHoraColombia(raw){
   return d.toLocaleTimeString('es-CO', {timeZone:'America/Bogota', hour12:false});
 }
 
+// =====================================================================
+// PUNTOS SWAP DEL DÍA (fx_puntos_swap_dia)
+// Antes, al recargar la página, estos 4 campos volvían siempre al valor
+// fijo del HTML (0.70/0.80/0.15/0.15), sin importar qué se hubiera usado
+// en el día real. Ahora se guardan en Supabase apenas cambian, y se cargan
+// al abrir la página — así todos ven el mismo valor vigente del día
+// (el último que alguien haya puesto, que también es "el primero" si
+// nadie más lo ha tocado todavía).
+function fechaHoyISO(){
+  const h = new Date();
+  return `${h.getFullYear()}-${String(h.getMonth()+1).padStart(2,'0')}-${String(h.getDate()).padStart(2,'0')}`;
+}
+
+async function guardarPuntosSwapDia(){
+  const payload = {
+    fecha: fechaHoyISO(),
+    pts_venta: parseLocaleNumber(document.getElementById('ptsVenta').value),
+    pts_compra: parseLocaleNumber(document.getElementById('ptsCompra').value),
+    spread_venta: parseLocaleNumber(document.getElementById('spreadVenta').value),
+    spread_compra: parseLocaleNumber(document.getElementById('spreadCompra').value),
+  };
+  try{
+    const res = await fetch(`${SUPA_URL}/rest/v1/fx_puntos_swap_dia`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPA_KEY,
+        'Authorization': `Bearer ${SUPA_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify(payload),
+    });
+    if(!res.ok) console.error(`⚠ No se pudieron guardar los puntos swap del día (HTTP ${res.status}).`);
+  }catch(e){
+    console.error('⚠ Error de red guardando puntos swap del día:', e);
+  }
+}
+
+async function cargarPuntosSwapDia(){
+  try{
+    const data = await supaFetch('fx_puntos_swap_dia', `fecha=eq.${fechaHoyISO()}`);
+    if(data.length === 0) return; // nadie ha tocado nada hoy todavía — se quedan los valores por defecto del HTML
+    const fila = data[0];
+    document.getElementById('ptsVenta').value = Number(fila.pts_venta).toFixed(2);
+    document.getElementById('ptsCompra').value = Number(fila.pts_compra).toFixed(2);
+    document.getElementById('spreadVenta').value = Number(fila.spread_venta).toFixed(2);
+    document.getElementById('spreadCompra').value = Number(fila.spread_compra).toFixed(2);
+  }catch(e){
+    console.error('Error cargando puntos swap del día:', e);
+  }
+}
+
 async function cargarInboxDesdeSupabase() {
   try {
     // trade_date viene como "Jul 08,2026" desde el correo
@@ -2216,9 +2268,17 @@ function registrar(){
   const cliente = document.getElementById('cliente').value;
   const tipoOperacion = document.getElementById('tipoOperacion').value;
   const esInbox = c.modelo === 'ANDES' && selectedRows.size > 0;
+  // Si viene de correo, la "hora" que reporta la mesa debe ser la del primer
+  // correo que llegó (o el único, si se registra sin consolidar varios) —
+  // no la hora en que efectivamente le diste click a "Registrar". Para
+  // manuales (WMCO, tasas tecleadas) sí es la hora real de registro, porque
+  // ahí no hay un correo de referencia.
+  const horaRegistro = esInbox
+    ? [...selectedRows].map(i => inboxData[i].time).sort()[0]
+    : new Date().toLocaleTimeString('es-CO');
   const op = {
     id: Date.now(),
-    horaRegistro: new Date().toLocaleTimeString('es-CO'),
+    horaRegistro,
     tradeDate: document.getElementById('tradeDate').value,
     settleDate: document.getElementById('settleDate').value,
     modelo: c.modelo,
@@ -4450,9 +4510,14 @@ function tickClock(){ document.getElementById('clock').textContent=new Date().to
 // una carrera entre ambas llamadas se muestre brevemente un correo que ya
 // estaba registrado en una sesión anterior.
 cargarOperacionesDesdeSupabase().then(() => cargarInboxDesdeSupabase());
-initDatesFX();
-cambiarTipoOperacion();
-calcular();
+// Los puntos swap del día se cargan ANTES de calcular por primera vez, para
+// no mostrar un instante los valores fijos del HTML si alguien ya los
+// cambió hoy.
+cargarPuntosSwapDia().then(() => {
+  initDatesFX();
+  cambiarTipoOperacion();
+  calcular();
+});
 
 // Sincronización entre traders: varias personas (Sergio, JAJ, Miguel...)
 // pueden tener la página abierta a la vez, cada uno con su propia sesión de
