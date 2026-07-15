@@ -2959,6 +2959,13 @@ const PRESUPUESTO_DB = [{"grupo":"ALLIANZ","trader":"SAR","categoria":"INSTITUCI
 const ALIAS_GRUPO = { LV_CO: 'LARRAIN VIAL PP' };
 function normalizarGrupo(g){ return ALIAS_GRUPO[g] || g; }
 
+// Filtro compartido RVL + RVI: una orden cancelada con saldo cero no sirve
+// de nada en el blotter — solo nos interesa lo que sigue vivo o se ejecutó.
+function esEstadoActivo(status){
+  const s = (status||'').toUpperCase().replace(/\s+/g,'');
+  return ['WORKING','FILLED','PARTFILL','PARTIALFILL','PARTIALFILLED'].includes(s);
+}
+
 // =====================================================================
 // ORDENAMIENTO GENÉRICO — para no repetir la misma lógica de flechas en
 // cada tabla nueva (Bloomberg CB, Fidessa Trades/Folios crudos, RVI).
@@ -3338,7 +3345,7 @@ async function cargarEmsxCBDesdeSupabase(){
     const hoyDate = new Date();
     const inicioHoy = new Date(hoyDate.getFullYear(), hoyDate.getMonth(), hoyDate.getDate(), 0, 0, 0).toISOString(); // medianoche LOCAL convertida correctamente a UTC, sin ambigüedad de zona horaria
     const data = await supaFetch('emsx_orders', `exchange=eq.CB&order_time=gte.${inicioHoy}&order=order_time.desc&limit=500`);
-    _emsxCBCache = data;
+    _emsxCBCache = data.filter(row => esEstadoActivo(row.status));
     renderEmsxCBTable();
   }catch(e){
     console.error('Error cargando Bloomberg CB desde Supabase:', e);
@@ -3355,7 +3362,7 @@ function renderEmsxCBTable(){
     horaTxt: row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}) : '—',
     firm: row.originate_trader_firm||'CREDICORP CAPITAL COLOMBIA SA',
     account: row.account||'—',
-    ticker: row.ticker||'',
+    ticker: row.ticker || row.nombre_completo || '',
     lado: (row.side||'').toUpperCase().startsWith('B')?'Compra':'Venta',
     filled: Number(row.filled)||0,
     avgPrice: Number(row.avg_price)||0,
@@ -3995,9 +4002,15 @@ async function cargarEmsxDesdeSupabase(){
     const data = await supaFetch('emsx_orders', `order_time=gte.${inicioHoy}&order=order_time.desc&limit=500`);
 
     // RVI solo se queda con lo que NO es bolsa de Colombia — eso es de RVL.
+    // Y de eso, solo lo que sigue vivo (Working/Filled/Partial) — una orden
+    // cancelada con saldo cero ya no sirve de nada en el blotter.
     const paraRVI = data.filter(row => (row.exchange||'').toUpperCase() !== 'CB');
+    const idsCancelados = new Set(paraRVI.filter(row => !esEstadoActivo(row.status)).map(row=>row.id));
+    // Si algo que ya teníamos en pantalla se acaba de cancelar, se quita —
+    // no solo se actualiza su estado, se elimina del todo.
+    emsxData = emsxData.filter(e => !idsCancelados.has(e.id));
 
-    paraRVI.forEach(row=>{
+    paraRVI.filter(row => esEstadoActivo(row.status)).forEach(row=>{
       const existente = emsxData.find(e=>e.id===row.id);
       if(existente){
         // Refrescar solo los campos "vivos" de mercado; conservar lo que el trader ya asignó.
@@ -4012,7 +4025,8 @@ async function cargarEmsxDesdeSupabase(){
           hora: row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}) : '—',
           firm: row.originate_trader_firm || 'CREDICORP CAPITAL COLOMBIA SA',
           cliente: '', // se resuelve a mano igual que hoy, hasta tener el cruce de cuentas de RVI
-          especie: row.ticker || '',
+          especie: row.ticker || row.nombre_completo || '',
+          nombreCompleto: row.nombre_completo || '', // guardado aparte para Porvenir y otros usos futuros
           isin: '',
           exchange: row.exchange || '',
           tipo: clasif.tipo,
