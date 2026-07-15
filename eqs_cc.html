@@ -2254,6 +2254,7 @@ function calcularDesdeValores(modelo, side, amount, params){
   let comEqs, comMesa;
   if(modelo === 'UNICA_WMCO' || utilidadTotal < 0){
     // WMCO: siempre 100% EQS, sin reparto con Mesa Divisas (Bloomberg fixing, sin spread propio).
+    // Y en pérdida (cualquier modelo): también 100% EQS, sin repartir la pérdida con mesa.
     comEqs = utilidadTotal; comMesa = 0;
   } else {
     comEqs = utilidadTotal*0.8; comMesa = utilidadTotal*0.2;
@@ -2733,14 +2734,21 @@ async function generarReporteExcel(){
 
   const filas = operaciones
     .filter(op => (fondoReporte[op.cliente]||op.cliente) === fondoNombre)
-    .map(op => ({
-      tradeDate: op.tradeDate ? fmtFechaCorta(op.tradeDate) : '—',
-      settleDate: op.settleDate ? fmtFechaCorta(op.settleDate) : '—',
-      side: op.side,
-      amount: op.amount,
-      rate: (op.modelo==='ANDES'||op.modelo==='ANDES_MANUAL') ? op.params.rate : op.params.rateUnica,
-      trader: op.trader,
-    }));
+    .map(op => {
+      // Se recalcula con la misma lógica de siempre para obtener la tasa
+      // FINAL que se le reporta al cliente — antes se usaba op.params.rate
+      // (la tasa cotizada del día para modelo ANDES), que no es la que
+      // finalmente se le informa ni la que importa para el cumplimiento.
+      const r = calcularDesdeValores(op.modelo, op.side, op.amount, op.params);
+      return {
+        tradeDate: op.tradeDate ? fmtFechaCorta(op.tradeDate) : '—',
+        settleDate: op.settleDate ? fmtFechaCorta(op.settleDate) : '—',
+        side: op.side,
+        amount: op.amount,
+        rate: r.tasaFinalCliente,
+        trader: op.trader,
+      };
+    });
 
   if(filas.length===0){ alert(`No hay operaciones de ${fondoNombre} registradas hoy.`); return; }
 
@@ -3252,6 +3260,7 @@ async function cargarArchivoFidessa(input, tipo){
       _fidessaTradesRaw = mapa;
       document.getElementById('fidessaStatus').textContent = `Trades: ${n} órdenes leídas. `+ (_fidessaFoliosRaw ? `Folios: ${_fidessaFoliosRaw.length} filas leídas.` : 'Falta cargar Folios.');
       renderFidessaTradesPanel();
+      guardarFidessaTradesSupabase(mapa);
     } else {
       const filas = [];
       ws.eachRow((row, rowNumber)=>{
@@ -3272,6 +3281,7 @@ async function cargarArchivoFidessa(input, tipo){
       _fidessaFoliosRaw = filas;
       document.getElementById('fidessaStatus').textContent = (_fidessaTradesRaw ? `Trades: ${Object.keys(_fidessaTradesRaw).length} órdenes leídas. ` : 'Falta cargar Trades. ') + `Folios: ${filas.length} filas leídas.`;
       renderFidessaFoliosPanelRaw();
+      guardarFidessaFoliosSupabase(filas);
     }
 
     document.getElementById('btnProcesarFidessa').disabled = !(_fidessaTradesRaw && _fidessaFoliosRaw);
@@ -3356,6 +3366,74 @@ function horaDeTimestampFidessa(raw){
   if(!raw) return '—';
   const m = String(raw).match(/(\d{2}):(\d{2}):(\d{2})/);
   return m ? `${m[1]}:${m[2]}:${m[3]}` : '—';
+}
+
+// =====================================================================
+// PERSISTENCIA DE FIDESSA TRADES / FOLIOS
+// Antes, cada refresco de página borraba lo cargado y tocaba resubir los
+// archivos — un reproceso operativo innecesario. Ahora se guarda en
+// Supabase apenas se procesa el archivo, y se recarga solo al abrir la
+// página. Cargar un archivo nuevo más tarde en el día SUMA filas nuevas,
+// no reemplaza lo que ya había (mismo espíritu que EMSX).
+// =====================================================================
+async function guardarFidessaTradesSupabase(mapa){
+  const filas = Object.entries(mapa).map(([folioOrden, t]) => ({
+    folio_orden: String(folioOrden), grupo: t.grupo, lado: t.lado,
+    security: t.security, qty_done: t.qtyDone, avg_px: t.avgPx,
+  }));
+  if(filas.length===0) return;
+  try{
+    const res = await fetch(`${SUPA_URL}/rest/v1/fidessa_trades`, {
+      method: 'POST',
+      headers: { 'apikey': SUPA_KEY, 'Authorization': `Bearer ${SUPA_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(filas),
+    });
+    if(!res.ok) console.error(`⚠ No se pudieron guardar Fidessa Trades (HTTP ${res.status}).`);
+  }catch(e){ console.error('⚠ Error de red guardando Fidessa Trades:', e); }
+}
+
+async function guardarFidessaFoliosSupabase(filas){
+  const rows = filas.filter(f=>f.tcn).map(f => ({
+    tcn: Number(f.tcn), side: f.side, instrument: f.instrument, cantidad: f.cantidad,
+    precio: f.precio, traded: String(f.traded||''), client_book: f.clientBook, parent_order_id: f.parentOrderId,
+  }));
+  if(rows.length===0) return;
+  try{
+    const res = await fetch(`${SUPA_URL}/rest/v1/fidessa_folios`, {
+      method: 'POST',
+      headers: { 'apikey': SUPA_KEY, 'Authorization': `Bearer ${SUPA_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(rows),
+    });
+    if(!res.ok) console.error(`⚠ No se pudieron guardar Fidessa Folios (HTTP ${res.status}).`);
+  }catch(e){ console.error('⚠ Error de red guardando Fidessa Folios:', e); }
+}
+
+async function cargarFidessaDesdeSupabase(){
+  try{
+    const hoyDate = new Date();
+    const inicioHoy = new Date(hoyDate.getFullYear(), hoyDate.getMonth(), hoyDate.getDate(), 0, 0, 0).toISOString();
+
+    const trades = await supaFetch('fidessa_trades', `actualizado_en=gte.${inicioHoy}`);
+    if(trades.length > 0){
+      const mapa = {};
+      trades.forEach(t => { mapa[t.folio_orden] = { grupo: t.grupo, lado: t.lado, security: t.security, qtyDone: Number(t.qty_done)||0, avgPx: Number(t.avg_px)||0 }; });
+      _fidessaTradesRaw = mapa;
+      renderFidessaTradesPanel();
+    }
+
+    const folios = await supaFetch('fidessa_folios', `actualizado_en=gte.${inicioHoy}`);
+    if(folios.length > 0){
+      _fidessaFoliosRaw = folios.map(f => ({ side: f.side, tcn: f.tcn, instrument: f.instrument, cantidad: Number(f.cantidad)||0, precio: Number(f.precio)||0, traded: f.traded, clientBook: f.client_book, parentOrderId: f.parent_order_id }));
+      renderFidessaFoliosPanelRaw();
+    }
+
+    if(trades.length > 0 || folios.length > 0){
+      document.getElementById('fidessaStatus').textContent = `Trades: ${Object.keys(_fidessaTradesRaw||{}).length} órdenes cargadas. Folios: ${(_fidessaFoliosRaw||[]).length} filas cargadas (de sesiones anteriores hoy).`;
+    }
+    document.getElementById('btnProcesarFidessa').disabled = !(_fidessaTradesRaw && _fidessaFoliosRaw);
+  }catch(e){
+    console.error('Error cargando Fidessa desde Supabase:', e);
+  }
 }
 
 function procesarFidessa(){
@@ -4544,6 +4622,7 @@ poblarFiltros();
 renderFolios();
 initDatesRVL();
 cargarEmsxCBDesdeSupabase();
+cargarFidessaDesdeSupabase();
 // RVI
 poblarFiltrosRVI();
 cargarEmsxDesdeSupabase();
@@ -4555,6 +4634,7 @@ initDatesRVI();
 // órdenes que Bloomberg va empujando via emsx_bridge.py aparezcan solas.
 setInterval(cargarEmsxDesdeSupabase, 20000);
 setInterval(cargarEmsxCBDesdeSupabase, 20000);
+setInterval(cargarFidessaDesdeSupabase, 20000);
 
 // Clock
 tickClock();
