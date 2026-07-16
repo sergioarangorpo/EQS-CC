@@ -1611,6 +1611,23 @@ async function supaFetch(table, params='') {
   return res.json();
 }
 
+// Supabase/PostgREST solo devuelve 1000 filas por defecto aunque haya más
+// — silencioso, sin ningún error. Para tablas que pueden superar eso
+// (Fidessa Folios llega a tener miles de filas en un día normal) hay que
+// paginar explícito con limit/offset hasta que una página vuelva vacía.
+async function supaFetchTodo(table, params='', tamanoPagina=1000){
+  let todas = [];
+  let offset = 0;
+  while(true){
+    const sep = params ? '&' : '';
+    const pagina = await supaFetch(table, `${params}${sep}limit=${tamanoPagina}&offset=${offset}`);
+    todas = todas.concat(pagina);
+    if(pagina.length < tamanoPagina) break;
+    offset += tamanoPagina;
+  }
+  return todas;
+}
+
 // SHARED — module switcher
 // =====================================================================
 const MARKET_LABELS = {
@@ -3483,7 +3500,7 @@ async function cargarFidessaDesdeSupabase(){
     const hoyDate = new Date();
     const inicioHoy = new Date(hoyDate.getFullYear(), hoyDate.getMonth(), hoyDate.getDate(), 0, 0, 0).toISOString();
 
-    const trades = await supaFetch('fidessa_trades', `actualizado_en=gte.${inicioHoy}`);
+    const trades = await supaFetchTodo('fidessa_trades', `actualizado_en=gte.${inicioHoy}`);
     if(trades.length > 0){
       const mapa = {};
       trades.forEach(t => { mapa[t.folio_orden] = { grupo: t.grupo, lado: t.lado, security: t.security, qtyDone: Number(t.qty_done)||0, avgPx: Number(t.avg_px)||0 }; });
@@ -3491,7 +3508,7 @@ async function cargarFidessaDesdeSupabase(){
       renderFidessaTradesPanel();
     }
 
-    const folios = await supaFetch('fidessa_folios', `actualizado_en=gte.${inicioHoy}`);
+    const folios = await supaFetchTodo('fidessa_folios', `actualizado_en=gte.${inicioHoy}`);
     if(folios.length > 0){
       _fidessaFoliosRaw = folios.map(f => ({ side: f.side, tcn: f.tcn, instrument: f.instrument, cantidad: Number(f.cantidad)||0, precio: Number(f.precio)||0, traded: f.traded, clientBook: f.client_book, parentOrderId: f.parent_order_id }));
       renderFidessaFoliosPanelRaw();
@@ -3617,7 +3634,7 @@ function renderEmsxCBTable(){
     <div class="field-note" style="margin-bottom:10px;">
       Todavía sin cruce automático contra Fidessa (los tickers vienen en formatos distintos entre Bloomberg y Fidessa) — usa "Vincular" para asociar manualmente una orden con su Fidessa Trade y ver los folios que le corresponden. Clic en un Client/Book filtra los 3 cuadros de abajo por ese cliente.
     </div>
-    ${(document.getElementById('filtroCliente').value || document.getElementById('filtroEspecie').value || document.getElementById('filtroLado').value) ? `<div class="field-note" style="margin-bottom:10px;color:var(--purple);">Filtro activo (Client/Book, Security y/o Lado arriba) — <a href="#" onclick="borrarFiltros();return false;" style="color:var(--purple);text-decoration:underline;">quitar filtros</a></div>` : ''}
+    ${(document.getElementById('filtroCliente').value || document.getElementById('filtroEspecie').value || document.getElementById('filtroLado').value) ? `<div style="margin-bottom:12px;padding:8px 12px;background:rgba(168,85,247,0.12);border-radius:6px;color:var(--purple);font-size:15px;font-weight:700;">Filtro activo (Client/Book, Security y/o Lado arriba) — <a href="#" onclick="borrarFiltros();return false;" style="color:var(--purple);text-decoration:underline;">quitar filtros</a></div>` : ''}
     <div class="blotter-wrap" style="overflow-x:auto;">
       <table style="min-width:1050px;"><thead><tr>
         ${thOrdenable('emsxCB','hora','Hora')}
