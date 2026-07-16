@@ -1123,8 +1123,6 @@
 
   <div id="fidessaFoliosPanelRaw" style="display:none;"></div>
 
-  <div id="fidessaReconciliacion" style="display:none;"></div>
-
   <div class="stat-cards" style="padding:16px 24px 0;">
     <div class="stat-card">
       <div class="stat-label">Folios filtrados</div>
@@ -1270,6 +1268,8 @@
       </table>
     </div>
   </div>
+
+  <div id="fidessaReconciliacion" style="display:none;padding:0 24px;"></div>
 
 </div>
 
@@ -3031,6 +3031,9 @@ const PRESUPUESTO_DB = [{"grupo":"ALLIANZ","trader":"SAR","categoria":"INSTITUCI
 // CATEGORIAS. LV_CO es el código que se le creó en Bloomberg para enrutar a
 // Andes Investment (vehículo regional de Larrain Vial para su prop position) —
 // mapea al mismo grupo real "LARRAIN VIAL PP".
+// LV_CO (código Bloomberg) = LARRAIN VIAL PP (grupo en CATEGORIAS/RVL) =
+// ANDES INVESTMENT GROUP (nombre del cliente, key "ANDES" en FX) — mismo
+// cliente real, tres nombres distintos según el sistema.
 const ALIAS_GRUPO = { LV_CO: 'LARRAIN VIAL PP' };
 function normalizarGrupo(g){ return ALIAS_GRUPO[g] || g; }
 
@@ -3082,7 +3085,7 @@ const _sortState = {};
 // "AFP PROTECCION SA", nuestra base trae "PROTECCION") — Security y Lado
 // usan coincidencia exacta porque ya vienen canonizados/normalizados.
 // =====================================================================
-function coincideFiltroRVL({cliente, especie, lado}){
+function coincideFiltroRVL({cliente, cuenta, especie, lado}){
   const fc = document.getElementById('filtroCliente').value;
   const fe = document.getElementById('filtroEspecie').value;
   const fl = document.getElementById('filtroLado').value;
@@ -3093,7 +3096,15 @@ function coincideFiltroRVL({cliente, especie, lado}){
     const nombreCompleto = (getClienteDB(fc).nombre||'').toUpperCase().trim();
     const a = String(cliente||'').toUpperCase().trim();
     const b = fc.toUpperCase().trim();
-    if(!(a.includes(b) || b.includes(a) || (nombreCompleto && a.includes(nombreCompleto)))) return false;
+    const matchFirm = a.includes(b) || b.includes(a) || (nombreCompleto && a.includes(nombreCompleto));
+    // La cuenta (account) es más confiable que el Originating Firm para
+    // órdenes que Sergio digita a mano en Bloomberg por instrucción de chat
+    // — ahí el firm queda genérico ("CREDICORP CAPITAL COLOMBIA SA") pero
+    // la cuenta sí queda correcta (LV_CO, PORVENIR...). Se normaliza con
+    // el mismo alias que usamos para Fidessa (LV_CO -> LARRAIN VIAL PP).
+    const cuentaNorm = normalizarGrupo(String(cuenta||'').toUpperCase().trim());
+    const matchCuenta = cuentaNorm && (cuentaNorm===b || cuentaNorm.includes(b) || b.includes(cuentaNorm) || (nombreCompleto && cuentaNorm.includes(nombreCompleto)));
+    if(!matchFirm && !matchCuenta) return false;
   }
   return true;
 }
@@ -3555,7 +3566,10 @@ function procesarFidessa(){
     ${diferencias.length===0 ? '<div class="field-note">✓ Todas las órdenes cuadran: suma de folios = QTY DONE reportado por Fidessa.</div>' : `
     <div class="blotter-wrap">
       <table><thead><tr><th>Folio orden</th><th>Grupo</th><th>Especie</th><th>Lado</th><th class="num">Qty Done (Trades)</th><th class="num">Suma folios</th><th class="num">Diferencia</th></tr></thead>
-      <tbody>${diferencias.map(d=>`<tr><td class="mono-id">${d.folioOrden}</td><td>${d.grupo}</td><td>${d.security}</td><td>${d.lado}</td><td class="num">${fmtInt(d.qtyDone)}</td><td class="num">${fmtInt(d.sumaFolios)}</td><td class="num" style="color:var(--sell);">${fmtInt(d.sumaFolios-d.qtyDone)}</td></tr>`).join('')}</tbody></table>
+      <tbody>${diferencias.map(d=>`<tr><td class="mono-id">${d.folioOrden}</td><td>${d.grupo}</td><td>${nemoCanonico(d.security,'fidessa')}</td><td>${d.lado}</td><td class="num">${fmtInt(d.qtyDone)}</td><td class="num">${fmtInt(d.sumaFolios)}</td><td class="num" style="color:var(--sell);">${fmtInt(d.sumaFolios-d.qtyDone)}</td></tr>`).join('')}</tbody></table>
+    </div>
+    <div class="field-note" style="margin-top:12px;">
+      Las diferencias que ves acá casi siempre son por <b>composites/cruces</b> (ej. varias órdenes de PROTECCION agrupadas) — Fidessa les genera un Parent Order ID nuevo propio del composite, distinto al de cada orden individual, así que la suma directa por folio orden da 0 aunque el volumen sí está ahí. Es el mismo patrón que ya identificamos con ISA/PROTECCION — la asociación proporcional automática sigue pendiente de construir.
     </div>`}
   `;
 }
@@ -3597,7 +3611,7 @@ function renderEmsxCBTable(){
     avgPrice: Number(row.avg_price)||0,
     status: row.status||'',
     instructions: row.instructions||'—',
-  })), 'emsxCB').filter(row => coincideFiltroRVL({cliente: row.firm, especie: row.ticker, lado: row.lado}));
+  })), 'emsxCB').filter(row => coincideFiltroRVL({cliente: row.firm, cuenta: row.account, especie: row.ticker, lado: row.lado}));
   panel.innerHTML = `
     <div class="section-label" style="margin-top:16px;">Bloomberg EMSX — Bolsa de Colombia (exchange CB)</div>
     <div class="field-note" style="margin-bottom:10px;">
