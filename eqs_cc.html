@@ -3470,20 +3470,43 @@ function horaDeTimestampFidessa(raw){
 // página. Cargar un archivo nuevo más tarde en el día SUMA filas nuevas,
 // no reemplaza lo que ya había (mismo espíritu que EMSX).
 // =====================================================================
+// Guarda en lotes de 200 filas — una petición con 1000+ filas de un
+// archivo grande de Folios podía fallar completa (silencioso, solo en
+// consola); en lotes chicos, si uno falla no se pierden los demás, y
+// además se lo mostramos a Sergio en pantalla, no solo en consola.
+async function guardarEnLotesSupabase(tabla, filas, tamanoLote=200){
+  let fallaron = 0;
+  for(let i=0; i<filas.length; i+=tamanoLote){
+    const lote = filas.slice(i, i+tamanoLote);
+    try{
+      const res = await fetch(`${SUPA_URL}/rest/v1/${tabla}`, {
+        method: 'POST',
+        headers: { 'apikey': SUPA_KEY, 'Authorization': `Bearer ${SUPA_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify(lote),
+      });
+      if(!res.ok){
+        fallaron += lote.length;
+        console.error(`⚠ No se pudo guardar un lote de ${tabla} (HTTP ${res.status}, filas ${i}-${i+lote.length}):`, await res.text().catch(()=>'')); 
+      }
+    }catch(e){
+      fallaron += lote.length;
+      console.error(`⚠ Error de red guardando lote de ${tabla}:`, e);
+    }
+  }
+  if(fallaron > 0){
+    const el = document.getElementById('fidessaStatus');
+    if(el) el.innerHTML += ` <span style="color:var(--sell);">⚠ ${fallaron} filas de ${tabla} no se guardaron — revisa la consola (F12).</span>`;
+  }
+  return fallaron === 0;
+}
+
 async function guardarFidessaTradesSupabase(mapa){
   const filas = Object.entries(mapa).map(([folioOrden, t]) => ({
     folio_orden: String(folioOrden), grupo: t.grupo, lado: t.lado,
     security: t.security, qty_done: t.qtyDone, avg_px: t.avgPx,
   }));
   if(filas.length===0) return;
-  try{
-    const res = await fetch(`${SUPA_URL}/rest/v1/fidessa_trades`, {
-      method: 'POST',
-      headers: { 'apikey': SUPA_KEY, 'Authorization': `Bearer ${SUPA_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify(filas),
-    });
-    if(!res.ok) console.error(`⚠ No se pudieron guardar Fidessa Trades (HTTP ${res.status}).`);
-  }catch(e){ console.error('⚠ Error de red guardando Fidessa Trades:', e); }
+  await guardarEnLotesSupabase('fidessa_trades', filas);
 }
 
 async function guardarFidessaFoliosSupabase(filas){
@@ -3495,14 +3518,7 @@ async function guardarFidessaFoliosSupabase(filas){
     precio: f.precio, traded: String(f.traded||''), client_book: f.clientBook, parent_order_id: f.parentOrderId,
   }));
   if(rows.length===0) return;
-  try{
-    const res = await fetch(`${SUPA_URL}/rest/v1/fidessa_folios`, {
-      method: 'POST',
-      headers: { 'apikey': SUPA_KEY, 'Authorization': `Bearer ${SUPA_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify(rows),
-    });
-    if(!res.ok) console.error(`⚠ No se pudieron guardar Fidessa Folios (HTTP ${res.status}).`);
-  }catch(e){ console.error('⚠ Error de red guardando Fidessa Folios:', e); }
+  await guardarEnLotesSupabase('fidessa_folios', rows);
 }
 
 async function cargarFidessaDesdeSupabase(){
