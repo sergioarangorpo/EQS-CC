@@ -1056,13 +1056,32 @@
   <div id="mod-RVL" class="mod-section">
 <div class="toolbar">
     <div class="tb-field">
-      <label>Cliente</label>
+      <label>Fidessa Trades (.xlsx)</label>
+      <input type="file" id="fileFidessaTrades" accept=".xlsx" onchange="cargarArchivoFidessa(this,'trades')" style="font-size:11px;max-width:220px;">
+    </div>
+    <div class="tb-field">
+      <label>Fidessa Folios (.xlsx)</label>
+      <input type="file" id="fileFidessaFolios" accept=".xlsx" onchange="cargarArchivoFidessa(this,'folios')" style="font-size:11px;max-width:220px;">
+    </div>
+    <div class="tb-field">
+      <label>&nbsp;</label>
+      <button class="btn small" id="btnProcesarFidessa" onclick="procesarFidessa()" disabled>⚙ Conciliar y cargar folios</button>
+    </div>
+    <div class="tb-field" style="flex:1;min-width:220px;">
+      <label>&nbsp;</label>
+      <div class="field-note" id="fidessaStatus" style="margin-top:6px;">Sin archivos cargados todavía.</div>
+    </div>
+  </div>
+
+  <div class="toolbar" style="border-top:none;">
+    <div class="tb-field">
+      <label>Client/Book</label>
       <select id="filtroCliente" onchange="aplicarFiltros()">
         <option value="">Todos</option>
       </select>
     </div>
     <div class="tb-field">
-      <label>Especie</label>
+      <label>Security</label>
       <select id="filtroEspecie" onchange="aplicarFiltros()">
         <option value="">Todas</option>
       </select>
@@ -1081,24 +1100,9 @@
         <button class="btn small ghost" onclick="borrarFiltros()">✕ Borrar filtros</button>
       </div>
     </div>
-  </div>
-
-  <div class="toolbar" style="border-top:none;">
-    <div class="tb-field">
-      <label>Fidessa Trades (.xlsx)</label>
-      <input type="file" id="fileFidessaTrades" accept=".xlsx" onchange="cargarArchivoFidessa(this,'trades')" style="font-size:11px;max-width:220px;">
-    </div>
-    <div class="tb-field">
-      <label>Fidessa Folios (.xlsx)</label>
-      <input type="file" id="fileFidessaFolios" accept=".xlsx" onchange="cargarArchivoFidessa(this,'folios')" style="font-size:11px;max-width:220px;">
-    </div>
-    <div class="tb-field">
+    <div class="tb-field" style="flex:1;min-width:200px;">
       <label>&nbsp;</label>
-      <button class="btn small" id="btnProcesarFidessa" onclick="procesarFidessa()" disabled>⚙ Conciliar y cargar folios</button>
-    </div>
-    <div class="tb-field" style="flex:1;min-width:220px;">
-      <label>&nbsp;</label>
-      <div class="field-note" id="fidessaStatus" style="margin-top:6px;">Sin archivos cargados todavía.</div>
+      <div class="field-note">Filtra EMSX, Fidessa Trades y Folios a la vez — coincidencia flexible (ej. "AFP PROTECCION SA" calza con "PROTECCION").</div>
     </div>
   </div>
 
@@ -1163,12 +1167,13 @@
             <tr>
               <th><input type="checkbox" class="chk" id="chkSelectAll" onclick="toggleSeleccionarTodos(this.checked)" title="Seleccionar todos"></th>
               <th class="sortable" onclick="ordenarPor('hora')">Hora<span class="sort-arrow" id="arrow-hora"></span></th>
-              <th class="sortable" onclick="ordenarPor('id')">Folio<span class="sort-arrow" id="arrow-id"></span></th>
-              <th class="sortable" onclick="ordenarPor('especie')">Especie<span class="sort-arrow" id="arrow-especie"></span></th>
+              <th class="sortable" onclick="ordenarPor('folio')">Folio (TCN)<span class="sort-arrow" id="arrow-folio"></span></th>
               <th class="sortable" onclick="ordenarPor('lado')">Lado<span class="sort-arrow" id="arrow-lado"></span></th>
-              <th class="num sortable" onclick="ordenarPor('cantidad')">Cantidad<span class="sort-arrow" id="arrow-cantidad"></span></th>
+              <th class="sortable" onclick="ordenarPor('especie')">Security<span class="sort-arrow" id="arrow-especie"></span></th>
+              <th class="num sortable" onclick="ordenarPor('cantidad')">Qty Done<span class="sort-arrow" id="arrow-cantidad"></span></th>
               <th class="num sortable" onclick="ordenarPor('precio')">Precio<span class="sort-arrow" id="arrow-precio"></span></th>
-              <th class="num sortable" onclick="ordenarPor('bruto')">Valor bruto<span class="sort-arrow" id="arrow-bruto"></span></th>
+              <th class="sortable" onclick="ordenarPor('clientBook')">Client/Book<span class="sort-arrow" id="arrow-clientBook"></span></th>
+              <th class="sortable" onclick="ordenarPor('parentOrderId')">Parent Order ID<span class="sort-arrow" id="arrow-parentOrderId"></span></th>
               <th>Comisión</th>
             </tr>
           </thead>
@@ -3071,36 +3076,41 @@ function esEstadoActivo(status){
 const _sortState = {};
 
 // =====================================================================
-// FILTRO COMPARTIDO POR CLIENTE (EMSX + Fidessa Trades + Fidessa Folios)
-// Un clic en el Client/Book de cualquiera de los 3 cuadros filtra los tres
-// a la vez — coincidencia de texto (no exacta) porque el mismo cliente
-// puede venir escrito distinto entre Bloomberg ("AFP PROTECCION SA") y
-// Fidessa/CATEGORIAS ("PROTECCION").
+// FILTRO COMPARTIDO RVL (EMSX + Fidessa Trades + Folio/Asignación)
+// Los 3 dropdowns (Client/Book, Security, Lado) filtran los 3 cuadros a
+// la vez. Cliente usa coincidencia de texto flexible (Bloomberg trae
+// "AFP PROTECCION SA", nuestra base trae "PROTECCION") — Security y Lado
+// usan coincidencia exacta porque ya vienen canonizados/normalizados.
 // =====================================================================
-let _filtroClienteActivo = null;
+function coincideFiltroRVL({cliente, especie, lado}){
+  const fc = document.getElementById('filtroCliente').value;
+  const fe = document.getElementById('filtroEspecie').value;
+  const fl = document.getElementById('filtroLado').value;
 
-function coincideFiltroCliente(valor){
-  if(!_filtroClienteActivo) return true;
-  if(!valor) return false;
-  const a = String(valor).toUpperCase().trim();
-  const b = _filtroClienteActivo.toUpperCase().trim();
-  return a.includes(b) || b.includes(a);
+  if(fl && lado !== fl) return false;
+  if(fe && especie !== fe) return false;
+  if(fc){
+    const nombreCompleto = (getClienteDB(fc).nombre||'').toUpperCase().trim();
+    const a = String(cliente||'').toUpperCase().trim();
+    const b = fc.toUpperCase().trim();
+    if(!(a.includes(b) || b.includes(a) || (nombreCompleto && a.includes(nombreCompleto)))) return false;
+  }
+  return true;
 }
 
+// Clic en un Client/Book: pone ese valor en el dropdown de arriba y aplica
+// el filtro por ese medio (más confiable que filtrar aparte por clic).
 function filtrarPorClienteRVL(valor){
-  _filtroClienteActivo = valor;
-  renderEmsxCBTable();
-  renderFidessaTradesPanel();
-  renderFidessaFoliosPanelRaw();
-  const el = document.getElementById('filtroClienteActivoLabel');
-  if(el && typeof el.scrollIntoView === 'function') el.scrollIntoView({behavior:'smooth', block:'nearest'});
-}
-
-function quitarFiltroClienteRVL(){
-  _filtroClienteActivo = null;
-  renderEmsxCBTable();
-  renderFidessaTradesPanel();
-  renderFidessaFoliosPanelRaw();
+  const sel = document.getElementById('filtroCliente');
+  // Buscar la key de clientesDB cuyo nombre calce con el valor clickeado,
+  // para dejar el dropdown en un estado coherente con sus propias opciones.
+  const key = Object.keys(clientesDB).find(k=>{
+    const nombre = (clientesDB[k].nombre||'').toUpperCase();
+    const v = String(valor||'').toUpperCase();
+    return nombre.includes(v) || v.includes(nombre) || k.toUpperCase()===v;
+  });
+  sel.value = key || '';
+  aplicarFiltros();
 }
 
 const _renderRegistry = {};
@@ -3245,6 +3255,8 @@ function aplicarFiltros(){
   document.getElementById('folioContextLabel').textContent = cliente ? '— ' + getClienteDB(cliente).nombre : '— selecciona cliente';
   document.getElementById('errorCantidad').textContent = '';
   renderFolios();
+  renderEmsxCBTable();
+  renderFidessaTradesPanel();
   inicializarAllocationsDesdeCliente();
 }
 
@@ -3339,7 +3351,7 @@ function renderFidessaTradesPanel(){
   const panel = document.getElementById('fidessaTradesPanel');
   if(!_fidessaTradesRaw || Object.keys(_fidessaTradesRaw).length===0){ panel.style.display='none'; return; }
   panel.style.display = '';
-  const filas = ordenarArrayGenerico(Object.entries(_fidessaTradesRaw).map(([folioOrden, t]) => ({folioOrden, ...t})), 'fidessaTrades').filter(f => coincideFiltroCliente(f.grupo));
+  const filas = ordenarArrayGenerico(Object.entries(_fidessaTradesRaw).map(([folioOrden, t]) => ({folioOrden, ...t})), 'fidessaTrades').filter(f => coincideFiltroRVL({cliente: f.grupo, especie: nemoCanonico(f.security,'fidessa'), lado: f.lado}));
   panel.innerHTML = `
     <div class="section-label" style="margin-top:16px;">Fidessa Trades (crudo, ${filas.length} órdenes)</div>
     <div class="blotter-wrap" style="overflow-x:auto;">
@@ -3375,83 +3387,13 @@ function folioIdUnico(f){
   return `${f.tcn}_${f.parentOrderId||''}_${f.cantidad}_${f.precio}_${f.traded||''}`;
 }
 
+// Este panel se retiró — Sergio pidió unificar con el panel viejo de
+// "Folio — selecciona cliente" (que ya tiene la asignación a portafolios
+// que se va a usar mucho para reportar). Se deja como no-operación en vez
+// de borrar todas las llamadas, para no arriesgar romper algo más.
 function renderFidessaFoliosPanelRaw(){
   const panel = document.getElementById('fidessaFoliosPanelRaw');
-  if(!_fidessaFoliosRaw || _fidessaFoliosRaw.length===0){ panel.style.display='none'; return; }
-  panel.style.display = '';
-  const filas = ordenarArrayGenerico(_fidessaFoliosRaw.map(f=>({
-    ...f,
-    _id: folioIdUnico(f),
-    horaTxt: horaDeTimestampFidessa(f.traded),
-    ladoTxt: f.side==='B'?'Compra':'Venta',
-  })), 'fidessaFolios').filter(f => coincideFiltroCliente(f.clientBook));
-  const bloqueCount = filas.filter(f=>_foliosMarca[f._id]==='bloque').length;
-  const selCount = filas.filter(f=>_foliosSeleccionados.has(f._id)).length;
-  panel.innerHTML = `
-    <div class="section-label" style="margin-top:16px;">Fidessa Folios (crudo, ${filas.length} filas)</div>
-    <div class="hist-filtros" style="margin-bottom:10px;">
-      <div class="tb-field"><label>Seleccionados</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;">${selCount}</div></div>
-      <div class="tb-field"><label>Marcados Bloque/Cruce</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--purple);">${bloqueCount}</div></div>
-      <div class="tb-field">
-        <label>&nbsp;</label>
-        <div style="display:flex;gap:8px;">
-          <button class="btn small" onclick="marcarSeleccionadosFolios('bloque')">Marcar seleccionados: Bloque/Cruce</button>
-          <button class="btn small ghost" onclick="marcarSeleccionadosFolios('pantalla')">Marcar seleccionados: Pantalla</button>
-        </div>
-      </div>
-    </div>
-    <div class="blotter-wrap" style="overflow-x:auto;">
-      <table style="min-width:1000px;"><thead><tr>
-        <th style="width:36px;"><input type="checkbox" onchange="toggleTodosFolios(this.checked)"></th>
-        ${thOrdenable('fidessaFolios','horaTxt','Hora')}
-        ${thOrdenable('fidessaFolios','tcn','Folio (TCN)')}
-        ${thOrdenable('fidessaFolios','ladoTxt','Lado')}
-        ${thOrdenable('fidessaFolios','instrument','Security')}
-        ${thOrdenable('fidessaFolios','cantidad','Qty Done','num')}
-        ${thOrdenable('fidessaFolios','precio','Precio','num')}
-        ${thOrdenable('fidessaFolios','clientBook','Client/Book')}
-        ${thOrdenable('fidessaFolios','parentOrderId','Parent Order ID')}
-        <th>Comisión</th>
-      </tr></thead>
-      <tbody>${filas.map(f=>{
-        const marca = _foliosMarca[f._id] || 'pantalla';
-        return `<tr>
-        <td><input type="checkbox" ${_foliosSeleccionados.has(f._id)?'checked':''} onchange="toggleFolioSeleccionado('${f._id}', this.checked)"></td>
-        <td class="mono-id">${f.horaTxt}</td>
-        <td class="mono-id">${f.tcn||'—'}</td>
-        <td>${f.ladoTxt}</td>
-        <td class="mono-id">${nemoCanonico(f.instrument, 'fidessa')}</td>
-        <td class="num">${fmtInt(f.cantidad)}</td>
-        <td class="num">${fmtRate(f.precio)}</td>
-        <td class="mono-id" style="cursor:pointer;text-decoration:underline dotted;" onclick="filtrarPorClienteRVL('${(f.clientBook||'').replace(/'/g,"\\'")}')" title="Filtrar por este cliente">${f.clientBook||'—'}</td>
-        <td class="mono-id">${f.parentOrderId||'—'}</td>
-        <td><button class="tag-btn ${marca==='bloque'?'active-bloque':'active-pantalla'}" onclick="toggleMarcaFolio('${f._id}')">${marca==='bloque'?'Bloque':'Pantalla'}</button></td>
-      </tr>`;}).join('')}</tbody></table>
-    </div>
-  `;
-}
-registrarTablaOrdenable('fidessaFolios', renderFidessaFoliosPanelRaw);
-
-function toggleFolioSeleccionado(id, checked){
-  if(checked) _foliosSeleccionados.add(id); else _foliosSeleccionados.delete(id);
-  renderFidessaFoliosPanelRaw();
-}
-
-function toggleTodosFolios(checked){
-  const filas = _fidessaFoliosRaw.map(f=>folioIdUnico(f));
-  if(checked) filas.forEach(id=>_foliosSeleccionados.add(id));
-  else filas.forEach(id=>_foliosSeleccionados.delete(id));
-  renderFidessaFoliosPanelRaw();
-}
-
-function toggleMarcaFolio(id){
-  _foliosMarca[id] = _foliosMarca[id]==='bloque' ? 'pantalla' : 'bloque';
-  renderFidessaFoliosPanelRaw();
-}
-
-function marcarSeleccionadosFolios(tipo){
-  _foliosSeleccionados.forEach(id => { _foliosMarca[id] = tipo; });
-  renderFidessaFoliosPanelRaw();
+  if(panel) panel.style.display = 'none';
 }
 
 // Extrae solo la hora (HH:MM:SS) del timestamp de Fidessa
@@ -3563,9 +3505,12 @@ function procesarFidessa(){
     nuevosFolios.push({
       id: nextId++,
       cliente: grupo,
-      especie: (padre ? padre.security : f.instrument) || f.instrument,
-      lado: f.tcn === 'B' ? 'Compra' : 'Venta',
+      especie: nemoCanonico((padre ? padre.security : f.instrument) || f.instrument, 'fidessa'),
+      lado: f.side === 'B' ? 'Compra' : 'Venta',
       hora: horaDeTimestampFidessa(f.traded),
+      folio: f.tcn,
+      clientBook: f.clientBook,
+      parentOrderId: f.parentOrderId,
       cantidad: f.cantidad,
       precio: f.precio,
       marca: 'pantalla', // Fidessa no distingue bloque/pantalla por sí solo; se marca manual en la mesa
@@ -3648,13 +3593,13 @@ function renderEmsxCBTable(){
     avgPrice: Number(row.avg_price)||0,
     status: row.status||'',
     instructions: row.instructions||'—',
-  })), 'emsxCB').filter(row => coincideFiltroCliente(row.firm));
+  })), 'emsxCB').filter(row => coincideFiltroRVL({cliente: row.firm, especie: row.ticker, lado: row.lado}));
   panel.innerHTML = `
     <div class="section-label" style="margin-top:16px;">Bloomberg EMSX — Bolsa de Colombia (exchange CB)</div>
     <div class="field-note" style="margin-bottom:10px;">
       Todavía sin cruce automático contra Fidessa (los tickers vienen en formatos distintos entre Bloomberg y Fidessa) — usa "Vincular" para asociar manualmente una orden con su Fidessa Trade y ver los folios que le corresponden. Clic en un Client/Book filtra los 3 cuadros de abajo por ese cliente.
     </div>
-    ${_filtroClienteActivo ? `<div id="filtroClienteActivoLabel" class="field-note" style="margin-bottom:10px;color:var(--purple);">Filtrando por: <b>${_filtroClienteActivo}</b> — <a href="#" onclick="quitarFiltroClienteRVL();return false;" style="color:var(--purple);text-decoration:underline;">quitar filtro</a></div>` : ''}
+    ${(document.getElementById('filtroCliente').value || document.getElementById('filtroEspecie').value || document.getElementById('filtroLado').value) ? `<div class="field-note" style="margin-bottom:10px;color:var(--purple);">Filtro activo (Client/Book, Security y/o Lado arriba) — <a href="#" onclick="borrarFiltros();return false;" style="color:var(--purple);text-decoration:underline;">quitar filtros</a></div>` : ''}
     <div class="blotter-wrap" style="overflow-x:auto;">
       <table style="min-width:1050px;"><thead><tr>
         ${thOrdenable('emsxCB','hora','Hora')}
@@ -3797,20 +3742,20 @@ function renderFolios(){
   const tbody = document.getElementById('foliosBody');
 
   if(filtrados.length===0){
-    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">Selecciona un cliente para ver sus folios del día.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty-state">Selecciona un cliente para ver sus folios del día.</td></tr>';
   } else {
     tbody.innerHTML = filtrados.map(f=>{
       const selected = selectedFolios.has(f.id);
-      const bruto = f.cantidad * f.precio;
       return `<tr class="row-selectable ${selected?'row-selected':''}" onclick="toggleFolio(${f.id})">
         <td><input type="checkbox" class="chk" ${selected?'checked':''} onclick="event.stopPropagation();toggleFolio(${f.id})"></td>
         <td class="mono-id">${f.hora}</td>
-        <td class="mono-id">${f.id}</td>
-        <td class="mono-id">${f.especie}</td>
+        <td class="mono-id">${f.folio||'—'}</td>
         <td><span class="side-badge ${f.lado==='Compra'?'buy':'sell'}">${f.lado}</span></td>
+        <td class="mono-id">${f.especie}</td>
         <td class="num">${fmtInt(f.cantidad)}</td>
         <td class="num">${fmtRate(f.precio)}</td>
-        <td class="num">${fmtMoney(bruto)}</td>
+        <td class="mono-id">${f.clientBook||'—'}</td>
+        <td class="mono-id">${f.parentOrderId||'—'}</td>
         <td><button class="tag-btn ${f.marca==='bloque'?'active-bloque':'active-pantalla'}" onclick="event.stopPropagation();toggleMarca(${f.id})">${f.marca==='bloque'?'Bloque':'Pantalla'}</button></td>
       </tr>`;
     }).join('');
