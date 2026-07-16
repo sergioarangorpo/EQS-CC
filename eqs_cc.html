@@ -3452,10 +3452,14 @@ async function guardarFidessaTradesSupabase(mapa){
 }
 
 async function guardarFidessaFoliosSupabase(filas){
-  const rows = filas.filter(f=>f.tcn).map(f => ({
-    // Clave compuesta: en cruces/composites el mismo TCN se repite (fila
-    // padre + hijas de la distribución), así que tcn solo no sirve de llave.
-    id: `${f.tcn}_${f.parentOrderId||''}_${f.cantidad}_${f.precio}_${f.traded||''}`,
+  const rows = filas.filter(f=>f.tcn).map((f, i) => ({
+    // Clave compuesta + posición: en cruces/composites, varias filas de la
+    // distribución proporcional pueden coincidir EXACTO en tcn+parent+
+    // cantidad+precio+hora (chocaba con "ON CONFLICT DO UPDATE command
+    // cannot affect row a second time" — error 21000 de Postgres). Se
+    // agrega la posición dentro del archivo como desempate, así nunca hay
+    // dos filas con la misma llave dentro del mismo lote.
+    id: `${f.tcn}_${f.parentOrderId||''}_${f.cantidad}_${f.precio}_${f.traded||''}_${i}`,
     tcn: Number(f.tcn), side: f.side, instrument: f.instrument, cantidad: f.cantidad,
     precio: f.precio, traded: String(f.traded||''), client_book: f.clientBook, parent_order_id: f.parentOrderId,
   }));
