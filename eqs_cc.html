@@ -3382,13 +3382,34 @@ function parseLocaleNumber(str){
 // ----------------------------------------------------------------------
 function poblarFiltros(){
   const selCliente = document.getElementById('filtroCliente');
+  const clienteActual = selCliente.value;
   selCliente.innerHTML = '<option value="">Todos</option>' +
     Object.keys(clientesDB).map(k=>`<option value="${k}">${clientesDB[k].nombre}</option>`).join('');
+  selCliente.value = clienteActual;
 
-  const especies = [...new Set(foliosFidessa.map(f=>f.especie))];
+  // El desplegable de Security se armaba SOLO con foliosFidessa, que se llena
+  // apenas se le da "Conciliar y cargar folios". Al abrir la página con datos
+  // ya guardados en Supabase (o teniendo solo el blotter de EMSX), quedaba
+  // vacío y el filtro no hacía nada. Ahora se arma con la unión de las tres
+  // fuentes que muestra la pantalla, y se llama cada vez que llega data.
+  const especies = new Set();
+  foliosFidessa.forEach(f=> f.especie && especies.add(f.especie));
+  (_emsxCBCache||[]).forEach(r=>{
+    const n = nemoCanonico(r.ticker, 'emsx');
+    if(n) especies.add(n);
+  });
+  Object.values(_fidessaTradesRaw||{}).forEach(t=>{
+    const n = nemoCanonico(t.security, 'fidessa');
+    if(n) especies.add(n);
+  });
+
   const selEspecie = document.getElementById('filtroEspecie');
+  const especieActual = selEspecie.value;
   selEspecie.innerHTML = '<option value="">Todas</option>' +
-    especies.map(e=>`<option value="${e}">${e}</option>`).join('');
+    [...especies].sort().map(e=>`<option value="${e}">${e}</option>`).join('');
+  // Si la especie seleccionada sigue existiendo, se respeta; si no, se limpia
+  // (mejor mostrar todo que dejar la pantalla vacía sin explicación).
+  selEspecie.value = [...especies].includes(especieActual) ? especieActual : '';
 }
 
 function getFiltrados(){
@@ -3521,6 +3542,7 @@ async function cargarArchivoFidessa(input, tipo){
       guardarFidessaFoliosSupabase(filas);
     }
 
+    poblarFiltros();
     document.getElementById('btnProcesarFidessa').disabled = !(_fidessaTradesRaw && _fidessaFoliosRaw);
   }catch(e){
     console.error('Error leyendo archivo Fidessa:', e);
@@ -3675,6 +3697,7 @@ async function cargarFidessaDesdeSupabase(){
     }
 
     if(trades.length > 0 || folios.length > 0){
+      poblarFiltros();
       document.getElementById('fidessaStatus').textContent = `Trades: ${Object.keys(_fidessaTradesRaw||{}).length} órdenes cargadas. Folios: ${(_fidessaFoliosRaw||[]).length} filas cargadas (de sesiones anteriores hoy).`;
     }
     document.getElementById('btnProcesarFidessa').disabled = !(_fidessaTradesRaw && _fidessaFoliosRaw);
@@ -3830,16 +3853,49 @@ function resolverComposites(tradesRaw, composites){
     const pendientes = [];
 
     const aplicar = (poidsDelIntento, grupos, mejor, modo)=>{
-      grupos.forEach(({hijas})=>{
-        hijas.forEach((h,i)=>{
-          const o = mejor.orden[i];
-          if(o) asignacion.set(h.ord, {oid: o.oid, grupo: o.grupo, lado: o.lado, security: o.security});
+      let corregidos = 0;
+      // La verificación se hace composite por composite (no sobre la familia
+      // entera): cuando un mismo grupo de órdenes se compositea dos veces, cada
+      // composite reparte según el tamaño VIVO de las órdenes en ese momento, no
+      // según el ejecutado total del día. Comparar contra el total daría todos
+      // los prints como sospechosos y los dañaría.
+      poidsDelIntento.forEach(poid=>{
+        const gs = porPoid.get(poid);
+        const recon = totalesPorPosicion(gs);
+        const sumaRecon = recon.reduce((s,x)=>s+x, 0);
+        gs.forEach(({padre, hijas})=>{
+          // La posición dice a qué orden es cada hija, y en la enorme mayoría de
+          // los prints es correcta. Se verifica print por print contra la
+          // proporción del propio composite. En los datos reales del 17-jul el
+          // ruido de redondeo nunca pasó de ~3 acciones, mientras que el único
+          // print realmente invertido (PFGRUPOARG TCN 603691: hijas 156/90 donde
+          // tocaba 90/156) se desvió 66. Con el umbral en 5 se corrige ese sin
+          // tocar los demás — y ese solo print metía 66 acciones de desfase.
+          // No se corrigen los prints "cortos" (menos hijas que órdenes: Fidessa
+          // omite la fila cuando a una orden le tocan 0 acciones): ahí no se sabe
+          // cuál orden se saltó y reasignar haría más daño que bien.
+          const esperado = recon.map(r=> padre.cantidad * r / sumaRecon);
+          const completo = hijas.length === mejor.orden.length;
+          const desvio = Math.max(...hijas.map((h,i)=> i<esperado.length ? Math.abs(h.cantidad - esperado[i]) : 0));
+          const sospechoso = completo && desvio > 5;
+          let destino = mejor.orden;
+          if(sospechoso){
+            corregidos++;
+            const rangoHijas = hijas.map((h,i)=>i).sort((a,b)=> hijas[a].cantidad - hijas[b].cantidad);
+            const rangoOrden = mejor.orden.map((o,i)=>i).sort((a,b)=> mejor.orden[a].qtyDone - mejor.orden[b].qtyDone);
+            destino = [];
+            rangoHijas.forEach((iHija, rango)=>{ destino[iHija] = mejor.orden[rangoOrden[rango]]; });
+          }
+          hijas.forEach((h,i)=>{
+            const o = destino[i];
+            if(o) asignacion.set(h.ord, {oid: o.oid, grupo: o.grupo, lado: o.lado, security: o.security});
+          });
         });
       });
       mejor.orden.forEach(o=> usados.add(o.oid));
       reportes.push({nemo, lado: ladoLargo, poids: poidsDelIntento, modo, ok: true,
         total: grupos.reduce((s,g)=>s+g.padre.cantidad,0),
-        ntcn: grupos.length, err: mejor.err,
+        ntcn: grupos.length, err: mejor.err, corregidos,
         ordenes: mejor.orden.map(o=>({oid:o.oid, grupo:o.grupo, qtyDone:o.qtyDone}))});
     };
 
@@ -3944,7 +4000,13 @@ function procesarFidessa(){
     const cuadra = Math.abs(sumaFolios - t.qtyDone) <= 2;
     return { folioOrden, grupo: t.grupo, security: t.security, lado: t.lado, qtyDone: t.qtyDone, sumaFolios, cuadra };
   }).filter(f=> f.qtyDone > 0 || f.sumaFolios > 0);
-  const diferencias = filasRecon.filter(f=>!f.cuadra);
+  // Una orden ejecutada que no trae NI UN folio no es un descuadre: es DMA —
+  // el cliente (ej. HSBC con PFDAVIGRP/PFCIBEST) opera directo contra el
+  // mercado, así que no pasa por nuestros folios. Se deja en la pantalla de
+  // órdenes porque sí entra al reporte interno de comisiones, pero no hay nada
+  // que conciliar. Confirmado por Sergio.
+  const sinFolios = filasRecon.filter(f=> f.sumaFolios === 0 && f.qtyDone > 0);
+  const diferencias = filasRecon.filter(f=> !f.cuadra && f.sumaFolios > 0);
 
   foliosFidessa = nuevosFolios;
   selectedFolios.clear();
@@ -3963,33 +4025,44 @@ function procesarFidessa(){
       <div class="tb-field"><label>Folios (de composite)</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--text-0);">${composites.reduce((s,c)=>s+c.hijas.length,0)}</div></div>
       <div class="tb-field"><label>Sin asignar</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;color:${sinPadre>0?'var(--sell)':'var(--buy)'};">${sinPadre}</div></div>
       <div class="tb-field"><label>Órdenes con diferencia</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;color:${diferencias.length>0?'var(--sell)':'var(--buy)'};">${diferencias.length}</div></div>
+      <div class="tb-field"><label>Órdenes DMA (sin folios)</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--text-1);">${sinFolios.length}</div></div>
     </div>
 
     <div class="section-label">Composites / cruces resueltos</div>
     ${reportes.length===0 ? '<div class="field-note">No hay composites hoy — todas las órdenes ejecutaron directo.</div>' : `
     <div class="blotter-wrap">
-      <table><thead><tr><th>Especie</th><th>Lado</th><th class="num">Qty total</th><th class="num">TCNs</th><th>Composite</th><th>Órdenes individuales asignadas</th><th class="num">Desfase</th></tr></thead>
+      <table><thead><tr><th>Especie</th><th>Lado</th><th class="num">Qty total</th><th class="num">TCNs</th><th>Composite</th><th>Órdenes individuales asignadas</th><th class="num">Prints corregidos</th></tr></thead>
       <tbody>${reportes.map(r=>`<tr>
         <td>${r.nemo}</td><td>${r.lado}</td><td class="num">${fmtInt(r.total)}</td><td class="num">${r.ntcn}</td>
         <td class="mono-id">${r.poids.join('<br>')}</td>
         <td>${r.ok ? r.ordenes.map(o=>`<span class="mono-id">${o.oid}</span> ${o.grupo} <b>${fmtInt(o.qtyDone)}</b>`).join('<br>') : `<span style="color:var(--sell);">⚠️ sin resolver — ${r.ncands} órdenes candidatas, ninguna combinación suma ${fmtInt(r.total)}</span>`}</td>
-        <td class="num" style="color:${!r.ok?'var(--sell)':(r.err>2*r.ntcn?'var(--warn,#D44028)':'var(--buy)')};">${r.ok ? fmtInt(r.err) : '—'}</td>
+        <td class="num">${r.ok ? (r.corregidos||0) : '—'}</td>
       </tr>`).join('')}</tbody></table>
     </div>
     <div class="field-note" style="margin-top:12px;">
       ${compOk.length} de ${reportes.length} familias (especie + lado) resueltas${compMal.length?`, <b style="color:var(--sell);">${compMal.length} sin resolver</b>`:''}.
       Fidessa ya reparte proporcional en las filas hijas; lo que hace la app es identificar <b>a qué orden individual</b> pertenece cada hija, sumando por posición y cruzando contra el <b>QTY DONE</b> de Trades (no contra Qty — las órdenes casi siempre quedan parcialmente ejecutadas).
-      El <b>desfase</b> son acciones de diferencia por el redondeo del reparto en cada print: unas pocas sobre decenas de miles es normal; si se dispara, revisar a mano.
+      "Prints corregidos" son los TCNs donde Fidessa escribió las hijas en otro orden y la app lo detectó por proporción; normalmente es 0 o 1.
     </div>`}
 
     <div class="section-label" style="margin-top:16px;">Cuadre por orden</div>
-    ${diferencias.length===0 ? '<div class="field-note">✓ Todas las órdenes cuadran: suma de folios asignados = QTY DONE reportado por Fidessa (±2 acciones por redondeo).</div>' : `
+    ${diferencias.length===0 ? '<div class="field-note">✓ Todas las órdenes con folios cuadran: suma de folios asignados = QTY DONE reportado por Fidessa (±2 acciones por el redondeo del reparto).</div>' : `
     <div class="blotter-wrap">
       <table><thead><tr><th>Folio orden</th><th>Grupo</th><th>Especie</th><th>Lado</th><th class="num">Qty Done (Trades)</th><th class="num">Suma folios</th><th class="num">Diferencia</th></tr></thead>
-      <tbody>${diferencias.map(d=>`<tr><td class="mono-id">${d.folioOrden}</td><td>${d.grupo}</td><td>${nemoCanonico(d.security,'fidessa')}</td><td>${d.lado}</td><td class="num">${fmtInt(d.qtyDone)}</td><td class="num">${fmtInt(d.sumaFolios)}</td><td class="num" style="color:var(--sell);">${fmtInt(d.sumaFolios-d.qtyDone)}</td></tr>`).join('')}</tbody></table>
+      <tbody>${diferencias.map(d=>`<tr><td class="mono-id">${d.folioOrden}</td><td>${d.grupo}</td><td>${nemoCanonico(d.security,'fidessa')}</td><td>${d.lado}</td><td class="num">${fmtInt(d.qtyDone)}</td><td class="num">${fmtInt(d.sumaFolios)}</td><td class="num" style="color:${Math.abs(d.sumaFolios-d.qtyDone)>20?'var(--sell)':'var(--text-1)'};">${fmtInt(d.sumaFolios-d.qtyDone)}</td></tr>`).join('')}</tbody></table>
     </div>
     <div class="field-note" style="margin-top:12px;">
-      Una orden sin folios (suma 0) normalmente es una orden que se ejecutó pero cuyo composite no se pudo resolver arriba, o una orden de otra mesa. Una con diferencia grande sí hay que mirarla.
+      Diferencias de unas pocas acciones son el redondeo del reparto proporcional acumulado print a print — no es un descuadre real. Si ves una diferencia grande, ahí sí hay que mirar.
+    </div>`}
+
+    ${sinFolios.length===0 ? '' : `
+    <div class="section-label" style="margin-top:16px;">Órdenes sin folios — DMA</div>
+    <div class="field-note" style="margin-bottom:10px;">
+      Estas órdenes ejecutaron pero no generan folios nuestros porque el cliente opera <b>DMA</b> (directo contra el mercado). No hay nada que conciliar — quedan acá y en la pantalla de órdenes para el reporte interno de comisiones.
+    </div>
+    <div class="blotter-wrap">
+      <table><thead><tr><th>Folio orden</th><th>Grupo</th><th>Especie</th><th>Lado</th><th class="num">Qty Done</th></tr></thead>
+      <tbody>${sinFolios.map(d=>`<tr><td class="mono-id">${d.folioOrden}</td><td>${d.grupo}</td><td>${nemoCanonico(d.security,'fidessa')}</td><td>${d.lado}</td><td class="num">${fmtInt(d.qtyDone)}</td></tr>`).join('')}</tbody></table>
     </div>`}
   `;
 }
@@ -4009,6 +4082,7 @@ async function cargarEmsxCBDesdeSupabase(){
     const inicioHoy = new Date(hoyDate.getFullYear(), hoyDate.getMonth(), hoyDate.getDate(), 0, 0, 0).toISOString(); // medianoche LOCAL convertida correctamente a UTC, sin ambigüedad de zona horaria
     const data = await supaFetch('emsx_orders', `exchange=eq.CB&order_time=gte.${inicioHoy}&order=order_time.desc&limit=500`);
     _emsxCBCache = data.filter(row => esEstadoActivo(row.status));
+    poblarFiltros(); // el desplegable de Security se arma con lo que haya en pantalla
     renderEmsxCBTable();
   }catch(e){
     console.error('Error cargando Bloomberg CB desde Supabase:', e);
