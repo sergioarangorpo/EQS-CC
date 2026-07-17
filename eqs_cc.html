@@ -2750,6 +2750,95 @@ const REPORTE_COLOR = {
 // externo.
 const LOGO_CREDICORP_B64 = 'iVBORw0KGgoAAAANSUhEUgAAASwAAACgCAYAAAC2eFFiAAAFJklEQVR4nO3X25HkRBRFUQU+8IEF8IER4zlOYA4R8NF0TD/qoapSKvPcu5YDnUqNdp3ZNgAAAAAAAAAAAAj1629//jv7DJDkl9kH6Oo9VqIF+wkWEEOwJvi6qqws2EewgBiCdbJra8rKgvsEC4ghWCe6t6KsLLhNsIAYgnWSvevJyoLrBAuIIVgneHQ1WVlwmWABMQRrsGfXkpUF3wkWEEOwBnp1JVlZ8JlgATEEa5Cj1pGVBT8J1gBHR0a04I1gATEE62Cj1pCVBYIFBBGsA41eQVYW3QkWEEOwDnLW+rGy6EywgBiCdYCzV4+VRVeCBcQQrBfNWjtWFh0JFhBDsF4we+XM/vtwNsECYgjWk1ZZN6ucA84gWEAMwXrCaqtmtfPAKIIFxBCsB626ZlY9FxxJsB6wehRWPx+8SrCAGIK1U8p6STknPEOwgBiCtUPaakk7L+wlWEAMwbojda2knhtuESwghmDdkL5S0s8PXwkWEEOwrqiyTqo8B2ybYAFBBOuCaquk2vPQl2ABMQTri6prpOpz0YtgATEE64PqK6T681GfYP2vy8fc5TmpSbCAGIK19Vsd3Z6XOgQLiNE+WF3XRtfnJlv7YAE5Wger+8ro/vzkaR0sIEvbYFkXb9wDSdoGC8jTMlhWxWfugxQtgwVkahcsa+Iy90KCdsECcrUKlhVxm/thda2CBWRrEyzrYR/39N3fP/5wJ4toEyx4xnusRGsNLYJlNTzGfbGq8sHy8T3HvX1fVVbWfOWDBc+4FifRmqt0sKyE13S9v3tREq15SgcLqKVssLqug6N1u8e968nKmqNssOBRj0ZItM5XMljdVsFoHe7z2fiI1rlKBguoqVywOqyBGSrf66sryco6T7lgwSOOio1onaNUsCqvgBVUu9+jIyNa45UKFlBbmWBV+/VfVZV7HrWGrKyxygQL9hodFdEap0Swqvzqp0i+77NiIlpjlAgW0EN8sJJ/7ZMl3vvZq8fKOl50sBI/mkqS7n9WPETrWNHBAnqJDVbSr3tlCe9h9sqZ/fcriQ0W7LFKLFY5R7rIYCX8qney6vtYLRKrnSdRZLCAnuKCteqveXervZdV18yq50oRFyy4Z/UorH6+lUUFa7VfcT5b4f2kxCDlnKuJChbQW0ywVvj15r6Z7ylttaSddwUxwYJbUj/+1HPPEhEs6yrL2e8r/aNPP/+ZIoIFsG0BwbKuMp313qqskyrPMdrywYJrqn3k1Z5nhKWDZV1l8/442rLB8o+9hlHvseoaqfpcR1k2WHBN9Y+6+vO9YslgWVe1HPk+u3zMXZ7zUUsGC+CS5YJlXdV0xHvttjq6Pe8eywULLun68XZ97muWCpZ1Vduz77f7R9v9+T9aKlgAtywTLOuqh0ffs3Xxxj28WSZY8JWP9DP3sUiwrKte9rxvH+dl3e9liWAB7DE9WNZVT7fee/cVcU/n+5keLPio88f4iK73NDVY1lVvX99/14/wWR3vy8ICYkwLlnXFtv38d9BxLRyh271ZWEzX7aM7Wqf7mxIs6wp4xunBEis++uv3f2YfoYQuK8t/CZlGrI7VIVqnBsu64p1YjVE9WhYWEOO0YFlXvLOuxqq8siwsTiVW56garVOCZV2xbWJ1torRsrCAGMODZV2xbdbVLNVWloXFcGI1V6VoDQ2WdYVYraFKtCwsIMawYFlXWFdrqbCyLCyGEKs1pUdrSLCsq97Eam3J0bKwgBiHB8u66s26ypC8sgAAAAAAAAAAAABo4D84E6lV60PEWgAAAABJRU5ErkJggg==';
 
+// =====================================================================
+// HOJA CON MARCA REUTILIZABLE — el mismo header/footer de Credicorp que
+// ya usa el reporte de FX, empaquetado para no repetir el armado completo
+// cada vez que se necesite una hoja nueva con la misma identidad visual.
+// Devuelve {ws, cols, allCols, r, tituloSeccion} — "r" es la fila donde
+// empieza el contenido libre, después del header y la ficha superior.
+// =====================================================================
+function crearHojaConMarca(wb, nombreHoja, subtitulo, ficha){
+  const C = REPORTE_COLOR;
+  const ws = wb.addWorksheet(nombreHoja, {
+    pageSetup: { orientation: 'landscape', fitToPage: true },
+    views: [{ showGridLines: false }],
+  });
+  ws.columns = [
+    { width: 2.5 }, { width: 15 }, { width: 15 }, { width: 30 }, { width: 11 },
+    { width: 10 }, { width: 15 }, { width: 13 }, { width: 20 }, { width: 2.5 },
+  ];
+  const cols = ['B','C','D','E','F','G','H','I'];
+  const allCols = ['A','B','C','D','E','F','G','H','I','J'];
+
+  for(let rr=1; rr<=80; rr++){
+    allCols.forEach(col => { ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.paper}}; });
+  }
+
+  let r = 1;
+  const headerFilaIni = r;
+  const headerFilaFin = r + 3;
+  for(let rr=headerFilaIni; rr<=headerFilaFin; rr++){
+    allCols.forEach(col => ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}});
+  }
+  ws.getRow(headerFilaIni).height = 8;
+  ws.getRow(headerFilaIni+1).height = 30;
+  ws.getRow(headerFilaIni+2).height = 20;
+  ws.getRow(headerFilaIni+3).height = 10;
+
+  const imgId = wb.addImage({ base64: LOGO_CREDICORP_B64, extension: 'png' });
+  ws.addImage(imgId, { tl: { col: 7, row: headerFilaIni }, ext: { width: 90, height: 48 } });
+
+  ws.mergeCells(`B${headerFilaIni+1}:F${headerFilaIni+1}`);
+  const tituloCell = ws.getCell(`B${headerFilaIni+1}`);
+  tituloCell.value = 'CREDICORP CAPITAL COLOMBIA';
+  tituloCell.font = { name:'Calibri', size:20, bold:true, color:{argb:C.white} };
+  tituloCell.alignment = { horizontal:'left', vertical:'middle' };
+
+  ws.mergeCells(`B${headerFilaIni+2}:F${headerFilaIni+2}`);
+  const subtituloCell = ws.getCell(`B${headerFilaIni+2}`);
+  subtituloCell.value = subtitulo;
+  subtituloCell.font = { name:'Calibri', size:10.5, bold:true, color:{argb:C.white} };
+  subtituloCell.alignment = { horizontal:'left', vertical:'middle' };
+
+  r = headerFilaFin + 1;
+  allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+  ws.getRow(r).height = 4;
+  r += 2;
+
+  // Ficha superior tipo tarjeta (Fondo/Fecha, o lo que se le pase)
+  if(ficha && ficha.length){
+    let colCursor = 1;
+    ficha.forEach(({label, value, span})=>{
+      const startCol = cols[colCursor-1] || cols[0];
+      const endColIdx = colCursor - 1 + span - 1;
+      const endCol = cols[Math.min(endColIdx, cols.length-1)];
+      ws.mergeCells(`${startCol}${r}:${endCol}${r}`);
+      const c = ws.getCell(`${startCol}${r}`);
+      c.value = label;
+      c.font = { name:'Calibri', size:9, bold:true, color:{argb:C.textMuted} };
+      ws.mergeCells(`${startCol}${r+1}:${endCol}${r+1}`);
+      const v = ws.getCell(`${startCol}${r+1}`);
+      v.value = value;
+      v.font = { name:'Calibri', size:14, bold:true, color:{argb:C.navy} };
+      colCursor += span;
+    });
+    r += 3;
+  }
+
+  function tituloSeccion(texto){
+    ws.mergeCells(`B${r}:I${r}`);
+    const c = ws.getCell(`B${r}`);
+    c.value = texto;
+    c.font = { name:'Calibri', size:12, bold:true, color:{argb:C.navy} };
+    r++;
+    allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+    ws.getRow(r).height = 2.5;
+    r += 2;
+  }
+
+  return { ws, cols, allCols, getR: ()=>r, setR: (v)=>{ r = v; }, tituloSeccion, C };
+}
+
 async function generarReporteExcel(){
   const sel = document.getElementById('reporteCliente');
   const fondoNombre = sel.value;
@@ -3991,7 +4080,7 @@ function recalcularTodo(){
 // ----------------------------------------------------------------------
 // Generación de reportes
 // ----------------------------------------------------------------------
-function generarReporte(){
+async function generarReporte(){
   const cliente = document.getElementById('filtroCliente').value;
   const especie = document.getElementById('filtroEspecie').value || getFiltrados()[0]?.especie;
   const lado = document.getElementById('filtroLado').value || getFiltrados()[0]?.lado;
@@ -4046,9 +4135,153 @@ function generarReporte(){
   renderFolios();
   inicializarAllocationsDesdeCliente();
 
-  const toast = document.getElementById('toast');
+  const toast = document.getElementById('toastRVL');
   toast.classList.add('show');
   setTimeout(()=>toast.classList.remove('show'), 2400);
+
+  // Genera y descarga el Excel real — antes este botón solo actualizaba la
+  // tabla en pantalla, sin producir ningún archivo, a pesar de que su propio
+  // texto prometía "Genera Operaciones_CLIENTE... y agrega al Detalle...".
+  await generarYDescargarReporteRVL(cliente);
+}
+
+async function generarYDescargarReporteRVL(cliente){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar la librería de Excel (ExcelJS). Revisa tu conexión e intenta de nuevo.'); return; }
+  const nombreCliente = getClienteDB(cliente).nombre;
+  const opsCliente = operacionesHistorico.filter(o => o.cliente === nombreCliente);
+  const detCliente = detalleHistorico.filter(d => d.cliente === nombreCliente);
+  if(opsCliente.length===0) return;
+
+  const hoyDate = new Date();
+  const fechaHoyTxt = hoyDate.toLocaleDateString('es-CO', {day:'2-digit', month:'2-digit', year:'numeric'});
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'EQS CC — Credicorp Capital';
+  wb.created = hoyDate;
+
+  // ---------- HOJA 1: Operaciones_CLIENTE (resumen por portafolio) ----------
+  const h1 = crearHojaConMarca(wb, 'Operaciones_CLIENTE', 'EQUITY SALES  ·  RESUMEN POR PORTAFOLIO', [
+    { label: 'CLIENTE', value: nombreCliente, span: 5 },
+    { label: 'FECHA', value: fechaHoyTxt, span: 3 },
+  ]);
+  h1.tituloSeccion('OPERACIONES DEL DÍA POR PORTAFOLIO');
+  {
+    const C = h1.C;
+    let r = h1.getR();
+    h1.ws.getColumn('D').width = 22;
+    const headerCols = ['B','C','D','E','F','G','H','I'];
+    const headersReal = ['Hora','Portafolio','Security','Lado','Cantidad','Precio','Com %','Neto'];
+    headersReal.forEach((label,i)=>{
+      const c = h1.ws.getCell(`${headerCols[i]}${r}`);
+      c.value = label;
+      c.font = { name:'Calibri', size:9.5, bold:true, color:{argb:C.white} };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
+      c.alignment = { horizontal: i>=4 ? 'right':'left', vertical:'middle' };
+    });
+    h1.ws.getRow(r).height = 20;
+    r++;
+    const filaInicio = r;
+    opsCliente.forEach(op=>{
+      h1.ws.getCell(`B${r}`).value = op.hora;
+      h1.ws.getCell(`C${r}`).value = op.portafolio;
+      h1.ws.getCell(`D${r}`).value = nemoCanonico(op.especie);
+      h1.ws.getCell(`E${r}`).value = op.lado;
+      h1.ws.getCell(`F${r}`).value = op.cantidad;
+      h1.ws.getCell(`G${r}`).value = op.precio;
+      h1.ws.getCell(`H${r}`).value = op.comPct;
+      h1.ws.getCell(`I${r}`).value = op.montoNeto;
+      r++;
+    });
+    for(let rr=filaInicio; rr<r; rr++){
+      headerCols.forEach(col=>{
+        const c = h1.ws.getCell(`${col}${rr}`);
+        c.font = { name:'Calibri', size:9.5, color:{argb:C.textDark} };
+        c.border = { bottom: {style:'hair', color:{argb:C.cardBorder}} };
+      });
+      h1.ws.getCell(`F${rr}`).numFmt = '#,##0';
+      h1.ws.getCell(`G${rr}`).numFmt = '#,##0.0000';
+      h1.ws.getCell(`H${rr}`).numFmt = '0.0000%';
+      h1.ws.getCell(`I${rr}`).numFmt = '"$"#,##0';
+      h1.ws.getRow(rr).height = 18;
+      if((rr-filaInicio)%2===1) headerCols.forEach(col=> h1.ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}});
+    }
+    r += 2;
+    const footerFila = r;
+    ['A','B','C','D','E','F','G','H','I','J'].forEach(col => h1.ws.getCell(`${col}${footerFila}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+    h1.ws.getRow(footerFila).height = 4;
+    r++;
+    h1.ws.mergeCells(`B${r}:I${r}`);
+    const footerCell = h1.ws.getCell(`B${r}`);
+    footerCell.value = `Generado desde EQS CC · Credicorp Capital Colombia · ${opsCliente.length} línea(s) · ${fechaHoyTxt}`;
+    footerCell.font = { name:'Calibri', size:8.5, italic:true, color:{argb:C.textMuted} };
+    h1.ws.getRow(r).height = 18;
+  }
+
+  // ---------- HOJA 2: Detalle_operaciones_CLIENTE (folio a folio, acumulado del día) ----------
+  const h2 = crearHojaConMarca(wb, 'Detalle_operaciones_CLIENTE', 'EQUITY SALES  ·  DETALLE FOLIO A FOLIO', [
+    { label: 'CLIENTE', value: nombreCliente, span: 5 },
+    { label: 'FECHA', value: fechaHoyTxt, span: 3 },
+  ]);
+  h2.tituloSeccion('FOLIOS ACUMULADOS DEL DÍA');
+  {
+    const C = h2.C;
+    let r = h2.getR();
+    const headerCols = ['B','C','D','E','F','G'];
+    const headersReal = ['Folio','Security','Lado','Cantidad','Precio','Comisión'];
+    headersReal.forEach((label,i)=>{
+      const c = h2.ws.getCell(`${headerCols[i]}${r}`);
+      c.value = label;
+      c.font = { name:'Calibri', size:9.5, bold:true, color:{argb:C.white} };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
+      c.alignment = { horizontal: i>=3 ? 'right':'left', vertical:'middle' };
+    });
+    h2.ws.getRow(r).height = 20;
+    r++;
+    const filaInicio = r;
+    detCliente.forEach(d=>{
+      h2.ws.getCell(`B${r}`).value = d.folio;
+      h2.ws.getCell(`C${r}`).value = nemoCanonico(d.especie);
+      h2.ws.getCell(`D${r}`).value = d.lado;
+      h2.ws.getCell(`E${r}`).value = d.cantidad;
+      h2.ws.getCell(`F${r}`).value = d.precio;
+      h2.ws.getCell(`G${r}`).value = d.marca === 'bloque' ? 'Bloque/Cruce' : 'Pantalla';
+      r++;
+    });
+    for(let rr=filaInicio; rr<r; rr++){
+      headerCols.forEach(col=>{
+        const c = h2.ws.getCell(`${col}${rr}`);
+        c.font = { name:'Calibri', size:9.5, color:{argb:C.textDark} };
+        c.border = { bottom: {style:'hair', color:{argb:C.cardBorder}} };
+      });
+      h2.ws.getCell(`E${rr}`).numFmt = '#,##0';
+      h2.ws.getCell(`F${rr}`).numFmt = '#,##0.0000';
+      h2.ws.getRow(rr).height = 18;
+      if((rr-filaInicio)%2===1) headerCols.forEach(col=> h2.ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}});
+    }
+    r += 2;
+    const footerFila = r;
+    ['A','B','C','D','E','F','G','H','I','J'].forEach(col => h2.ws.getCell(`${col}${footerFila}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+    h2.ws.getRow(footerFila).height = 4;
+    r++;
+    h2.ws.mergeCells(`B${r}:G${r}`);
+    const footerCell = h2.ws.getCell(`B${r}`);
+    footerCell.value = `Generado desde EQS CC · Credicorp Capital Colombia · ${detCliente.length} folio(s) acumulados hoy · ${fechaHoyTxt}`;
+    footerCell.font = { name:'Calibri', size:8.5, italic:true, color:{argb:C.textMuted} };
+    h2.ws.getRow(r).height = 18;
+  }
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const slug = nombreCliente.replace(/[^A-Z0-9]+/gi, '_').toUpperCase();
+  const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
+  a.href = url;
+  a.download = `RVL_${slug}_${fechaSlug}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function renderHistoryRVL(){
