@@ -3270,7 +3270,15 @@ function construirClientesDBDesdeCategorias(){
     clientesDB[grupo] = {
       nombre: grupo,
       portafolios: porGrupo[grupo].map(c=>({
-        id: String(c.deceval), nombre: c.nombre, nit: null, iva: false, deceval: c.deceval,
+        id: String(c.deceval), nombre: c.nombre,
+        // Regla de Sergio: Fondos Voluntarios de Pensiones (FPV) y Fondos
+        // Obligatorios de Pensiones (FPO/FPO) NO pagan IVA sobre la comisión
+        // — todo lo demás sí (19%). El nombre ya trae esa pista ("PROTECCION
+        // FPV ...", "PROTECCION FPO ..."), así que se detecta automático.
+        // Ojo: Fondos de Cesantías no están confirmados como exentos — quedan
+        // gravados por defecto hasta que Sergio lo confirme.
+        iva: !/\bFPV\b|\bFPO\b/i.test(c.nombre),
+        nit: null, deceval: c.deceval,
       })),
       // Sin comisión pactada todavía para estos grupos — placeholder hasta que
       // Sergio confirme las tasas reales (quedaron iguales a COLFONDOS por ahora).
