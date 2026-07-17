@@ -3507,6 +3507,12 @@ async function cargarArchivoFidessa(input, tipo){
           traded: row.getCell(headers['Traded']).value,
           clientBook: row.getCell(headers['Client/Book']).value,
           parentOrderId: row.getCell(headers['Parent order ID']).value,
+          // La POSICIÓN de la fila dentro del archivo importa: en un composite,
+          // Fidessa escribe las hijas siempre en el mismo orden (una por orden
+          // individual), y ese orden es la única pista de a qué orden pertenece
+          // cada hija. Si se pierde el orden, no se puede asignar. Ver
+          // resolverComposites().
+          ord: rowNumber,
         });
       });
       _fidessaFoliosRaw = filas;
@@ -3659,7 +3665,12 @@ async function cargarFidessaDesdeSupabase(){
 
     const folios = await supaFetchTodo('fidessa_folios', `actualizado_en=gte.${inicioHoy}`);
     if(folios.length > 0){
-      _fidessaFoliosRaw = folios.map(f => ({ side: f.side, tcn: f.tcn, instrument: f.instrument, cantidad: Number(f.cantidad)||0, precio: Number(f.precio)||0, traded: f.traded, clientBook: f.client_book, parentOrderId: f.parent_order_id }));
+      // El orden de fila del archivo original va embebido al final del id
+      // (`..._${i}` — ver guardarFidessaFoliosSupabase). Se recupera de ahí
+      // porque PostgREST no garantiza el orden de retorno y las hijas de un
+      // composite DEBEN quedar en el orden del archivo para poder asignarlas.
+      _fidessaFoliosRaw = folios.map(f => ({ side: f.side, tcn: f.tcn, instrument: f.instrument, cantidad: Number(f.cantidad)||0, precio: Number(f.precio)||0, traded: f.traded, clientBook: f.client_book, parentOrderId: f.parent_order_id, ord: Number(String(f.id||'').split('_').pop()) || 0 }));
+      _fidessaFoliosRaw.sort((a,b)=> a.ord - b.ord);
       renderFidessaFoliosPanelRaw();
     }
 
@@ -3672,35 +3683,253 @@ async function cargarFidessaDesdeSupabase(){
   }
 }
 
+// =====================================================================
+// COMPOSITES / CRUCES — asignación de folios a órdenes individuales
+// =====================================================================
+// El problema: cuando un cliente (típicamente PROTECCION) agrupa varias
+// órdenes de portafolios distintos para que ejecuten al mismo precio (deber
+// fiduciario), Fidessa crea una orden "composite" con un Parent Order ID
+// NUEVO, distinto al de cada orden individual. Cruzar por Parent Order ID
+// contra Trades da 0 — no es un bug, es como funciona.
+//
+// Lo que se descubrió mirando los archivos reales del 17-jul-2026
+// (90 trades / 2.072 folios), y que hace que esto sea resoluble:
+//
+//  1. La unidad NO es el TCN — es (TCN + lado). Un mismo TCN trae los DOS
+//     lados cuando el cruce es entre dos clientes nuestros.
+//  2. Dentro de cada (TCN, lado) hay exactamente 1 fila "padre" (la que
+//     trae Parent Order ID) y N filas "hijas" (sin Parent Order ID).
+//     N=0 → operación directa. N>=1 → composite.
+//  3. qty(padre) == suma de qty(hijas), SIEMPRE (283/283 grupos, sin una
+//     sola excepción). O sea: Fidessa YA hizo el reparto proporcional.
+//     No hay que calcularlo — hay que saber a QUIÉN es cada hija.
+//  4. La posición de la hija dentro del bloque es estable: sumando las
+//     hijas por posición a lo largo de todos los TCNs del composite se
+//     reconstruye la cantidad ejecutada de cada orden individual.
+//  5. Ese vector reconstruido se empareja contra QTY DONE de Trades (NO
+//     contra Qty: las órdenes casi siempre quedan parcialmente ejecutadas).
+//
+// Ejemplo real (ECOPETROL, composite 00008986913ORIM1, 14 TCNs):
+//     reconstruido : 559.889 | 1.133.743 | 1.264.924 | 3.606.790 | 8.337.009
+//     Trades DONE  : 559.889 | 1.133.743 | 1.264.924 | 3.606.790 | 8.337.009
+//     -> exacto, 0 acciones de diferencia.
+// =====================================================================
+
+// Agrupa los folios por (TCN, lado) y clasifica cada grupo.
+function agruparFoliosPorTcnLado(filas){
+  const g = new Map();
+  filas.forEach(f=>{
+    const k = `${f.tcn}|${f.side}`;
+    if(!g.has(k)) g.set(k, []);
+    g.get(k).push(f);
+  });
+  const directos = [], composites = [], huerfanos = [];
+  g.forEach((rs, k)=>{
+    const padres = rs.filter(r=>r.parentOrderId);
+    const hijas  = rs.filter(r=>!r.parentOrderId).sort((a,b)=>(a.ord||0)-(b.ord||0));
+    if(padres.length === 0){ huerfanos.push({k, filas: rs}); return; }
+    const padre = padres[0]; // >1 padre en el mismo (TCN,lado) no se vio nunca en datos reales
+    if(hijas.length === 0) directos.push({k, padre});
+    else composites.push({k, padre, hijas});
+  });
+  return {directos, composites, huerfanos};
+}
+
+// Suma de hijas por posición a lo largo de varios grupos de un mismo composite.
+function totalesPorPosicion(grupos){
+  const pool = [];
+  grupos.forEach(({hijas})=>{
+    hijas.forEach((h,i)=>{ pool[i] = (pool[i]||0) + h.cantidad; });
+  });
+  return pool.map(x=>x||0);
+}
+
+// Empareja el vector reconstruido contra un conjunto de órdenes candidatas.
+// Se ordenan ambos lados por cantidad y se emparejan por rango: para un costo
+// de |diferencia| esto da la asignación óptima (verificado contra fuerza bruta
+// sobre los 11 composites reales — mismo resultado, sin el costo de probar
+// todas las permutaciones).
+function emparejarPorRango(cands, recon){
+  const idx = recon.map((v,i)=>i).sort((a,b)=>recon[a]-recon[b]);
+  const cs  = cands.slice().sort((a,b)=>a.qtyDone-b.qtyDone);
+  const out = new Array(recon.length);
+  idx.forEach((posicion, rango)=>{ out[posicion] = cs[rango]; });
+  const err = out.reduce((s,c,i)=> s + Math.abs(c.qtyDone - recon[i]), 0);
+  return {orden: out, err};
+}
+
+// Busca el subconjunto de `cands` de tamaño `npos` cuya suma de QTY DONE
+// calce EXACTO con el total ejecutado del composite, y de esos el que mejor
+// calce posición por posición.
+function buscarSubconjunto(cands, total, recon, npos, ntcn){
+  if(cands.length < npos) return null;
+  // Tope de seguridad: si hay demasiadas combinaciones, no se cuelga la página.
+  let combos = 1;
+  for(let i=0;i<npos;i++) combos = combos * (cands.length-i) / (i+1);
+  if(combos > 300000) return null;
+
+  const tol = Math.max(2*ntcn, 0.01*total); // el redondeo del reparto mete ±1 acción por hija por TCN
+  let mejor = null;
+  const elegir = (inicio, acc, suma)=>{
+    if(acc.length === npos){
+      if(Math.abs(suma - total) > 0.5) return;
+      const r = emparejarPorRango(acc, recon);
+      if(!mejor || r.err < mejor.err) mejor = {orden: r.orden, err: r.err};
+      return;
+    }
+    for(let i=inicio; i<cands.length; i++){
+      // poda: si ya nos pasamos del total, no sirve seguir por acá
+      if(suma + cands[i].qtyDone - total > 0.5) continue;
+      acc.push(cands[i]);
+      elegir(i+1, acc, suma + cands[i].qtyDone);
+      acc.pop();
+    }
+  };
+  elegir(0, [], 0);
+  return (mejor && mejor.err <= tol) ? mejor : null;
+}
+
+// Resuelve todos los composites. Devuelve un mapa `ord de la hija -> orden
+// individual asignada` y un reporte por familia (especie + lado) para mostrar
+// en pantalla.
+function resolverComposites(tradesRaw, composites){
+  const trades = Object.keys(tradesRaw).map(oid => ({oid, ...tradesRaw[oid]}));
+  const esPadreComposite = new Set(composites.map(c=>String(c.padre.parentOrderId)));
+
+  // agrupar composites por POID, y los POID por familia (especie + lado)
+  const porPoid = new Map();
+  composites.forEach(c=>{
+    const p = String(c.padre.parentOrderId);
+    if(!porPoid.has(p)) porPoid.set(p, []);
+    porPoid.get(p).push(c);
+  });
+  const familias = new Map();
+  porPoid.forEach((grupos, poid)=>{
+    const nemo = nemoCanonico(grupos[0].padre.instrument, 'fidessa');
+    const lado = grupos[0].padre.side;
+    const k = `${nemo}|${lado}`;
+    if(!familias.has(k)) familias.set(k, []);
+    familias.get(k).push(poid);
+  });
+
+  const asignacion = new Map(); // ord de la hija -> {oid, grupo, lado, security}
+  const reportes = [];
+
+  familias.forEach((poids, fk)=>{
+    const [nemo, lado] = fk.split('|');
+    const ladoLargo = lado === 'B' ? 'Compra' : 'Venta';
+    // Candidatas: órdenes de Trades de la misma especie y lado que NO sean
+    // ellas mismas el padre de un composite, y que tengan ejecución.
+    const cands = trades.filter(t =>
+      nemoCanonico(t.security,'fidessa') === nemo &&
+      t.lado === ladoLargo &&
+      !esPadreComposite.has(t.oid) &&
+      t.qtyDone > 0
+    );
+    const usados = new Set();
+    const pendientes = [];
+
+    const aplicar = (poidsDelIntento, grupos, mejor, modo)=>{
+      grupos.forEach(({hijas})=>{
+        hijas.forEach((h,i)=>{
+          const o = mejor.orden[i];
+          if(o) asignacion.set(h.ord, {oid: o.oid, grupo: o.grupo, lado: o.lado, security: o.security});
+        });
+      });
+      mejor.orden.forEach(o=> usados.add(o.oid));
+      reportes.push({nemo, lado: ladoLargo, poids: poidsDelIntento, modo, ok: true,
+        total: grupos.reduce((s,g)=>s+g.padre.cantidad,0),
+        ntcn: grupos.length, err: mejor.err,
+        ordenes: mejor.orden.map(o=>({oid:o.oid, grupo:o.grupo, qtyDone:o.qtyDone}))});
+    };
+
+    // PASO A — cada composite por su cuenta.
+    poids.sort().forEach(poid=>{
+      const grupos = porPoid.get(poid);
+      const recon = totalesPorPosicion(grupos);
+      const total = grupos.reduce((s,g)=>s+g.padre.cantidad, 0);
+      const libres = cands.filter(c=>!usados.has(c.oid));
+      const mejor = buscarSubconjunto(libres, total, recon, recon.length, grupos.length);
+      if(mejor) aplicar([poid], grupos, mejor, 'individual');
+      else pendientes.push(poid);
+    });
+
+    // PASO B — los que no salieron solos, en conjunto. Pasa cuando un mismo
+    // grupo de órdenes se compositea DOS veces en el día (ej. CEMARGOS del
+    // 17-jul: los composites 6927 y 7485 comparten las mismas 8 órdenes, así
+    // que ninguno cuadra solo pero sumados sí dan el QTY DONE exacto).
+    if(pendientes.length > 0){
+      const grupos = pendientes.flatMap(p=>porPoid.get(p));
+      const recon = totalesPorPosicion(grupos);
+      const total = grupos.reduce((s,g)=>s+g.padre.cantidad, 0);
+      const libres = cands.filter(c=>!usados.has(c.oid));
+      const mejor = buscarSubconjunto(libres, total, recon, recon.length, grupos.length);
+      if(mejor) aplicar(pendientes, grupos, mejor, 'familia');
+      else reportes.push({nemo, lado: ladoLargo, poids: pendientes, modo: 'familia', ok: false,
+        total, ntcn: grupos.length, recon, ncands: libres.length});
+    }
+  });
+
+  return {asignacion, reportes};
+}
+
 function procesarFidessa(){
   if(!_fidessaTradesRaw || !_fidessaFoliosRaw) return;
 
-  const nuevosFolios = [];
-  let sinPadre = 0;
-  let nextId = 1;
+  _fidessaFoliosRaw.sort((a,b)=>(a.ord||0)-(b.ord||0));
+  const {directos, composites, huerfanos} = agruparFoliosPorTcnLado(_fidessaFoliosRaw);
+  const {asignacion, reportes} = resolverComposites(_fidessaTradesRaw, composites);
 
-  _fidessaFoliosRaw.forEach(f=>{
-    const padre = f.parentOrderId ? _fidessaTradesRaw[String(f.parentOrderId)] : null;
-    const grupo = padre ? padre.grupo : normalizarGrupo(f.clientBook || 'SIN_IDENTIFICAR');
-    if(!padre) sinPadre++;
+  const nuevosFolios = [];
+  let nextId = 1;
+  const armar = (f, orden, origen)=>{
+    const t = orden ? _fidessaTradesRaw[orden.oid] : null;
+    const grupo = t ? t.grupo : normalizarGrupo(f.clientBook || 'SIN_IDENTIFICAR');
     nuevosFolios.push({
       id: nextId++,
       cliente: grupo,
-      especie: nemoCanonico((padre ? padre.security : f.instrument) || f.instrument, 'fidessa'),
+      especie: nemoCanonico((t ? t.security : f.instrument) || f.instrument, 'fidessa'),
       lado: f.side === 'B' ? 'Compra' : 'Venta',
       hora: horaDeTimestampFidessa(f.traded),
       folio: f.tcn,
       clientBook: f.clientBook,
-      parentOrderId: f.parentOrderId,
+      parentOrderId: orden ? orden.oid : f.parentOrderId,
       cantidad: f.cantidad,
       precio: f.precio,
+      origen,                      // 'directo' | 'composite' | 'huerfano'
+      ordenAsignada: orden ? orden.oid : null,
       marca: 'pantalla', // Fidessa no distingue bloque/pantalla por sí solo; se marca manual en la mesa
+    });
+  };
+
+  // Directos: la fila padre ES el folio del cliente.
+  directos.forEach(({padre})=>{
+    const oid = String(padre.parentOrderId);
+    armar(padre, _fidessaTradesRaw[oid] ? {oid} : null, 'directo');
+  });
+
+  // Composites: se toman SOLO las hijas. La fila padre es el print de mercado
+  // agregado y su cantidad ya está repartida entre las hijas — meterla también
+  // duplicaría el volumen (antes se metían las dos: el panel mostraba 2.072
+  // folios donde debía mostrar 1.703).
+  let hijasSinAsignar = 0;
+  composites.forEach(({hijas})=>{
+    hijas.forEach(h=>{
+      const a = asignacion.get(h.ord);
+      if(!a) hijasSinAsignar++;
+      armar(h, a || null, 'composite');
     });
   });
 
-  // ---------- Conciliación: QTY DONE (Trades) vs suma de folios por orden ----------
+  // Huérfanas: (TCN, lado) sin ninguna fila padre. Son pocas y raras — se
+  // muestran para que no desaparezca volumen en silencio.
+  huerfanos.forEach(({filas})=> filas.forEach(f=> armar(f, null, 'huerfano')));
+
+  const sinPadre = hijasSinAsignar + huerfanos.reduce((s,h)=>s+h.filas.length,0);
+
+  // ---------- Conciliación: QTY DONE (Trades) vs folios asignados por orden ----------
   const sumaPorOrden = {};
-  _fidessaFoliosRaw.forEach(f=>{
+  nuevosFolios.forEach(f=>{
     if(!f.parentOrderId) return;
     const k = String(f.parentOrderId);
     sumaPorOrden[k] = (sumaPorOrden[k]||0) + f.cantidad;
@@ -3709,9 +3938,12 @@ function procesarFidessa(){
   const filasRecon = Object.keys(_fidessaTradesRaw).map(folioOrden=>{
     const t = _fidessaTradesRaw[folioOrden];
     const sumaFolios = sumaPorOrden[folioOrden] || 0;
-    const cuadra = Math.abs(sumaFolios - t.qtyDone) < 0.5;
+    // Tolerancia de 2 acciones: el reparto proporcional de Fidessa redondea a
+    // acciones enteras en cada print, y esos redondeos se acumulan. No es un
+    // descuadre real.
+    const cuadra = Math.abs(sumaFolios - t.qtyDone) <= 2;
     return { folioOrden, grupo: t.grupo, security: t.security, lado: t.lado, qtyDone: t.qtyDone, sumaFolios, cuadra };
-  });
+  }).filter(f=> f.qtyDone > 0 || f.sumaFolios > 0);
   const diferencias = filasRecon.filter(f=>!f.cuadra);
 
   foliosFidessa = nuevosFolios;
@@ -3721,21 +3953,43 @@ function procesarFidessa(){
 
   const panel = document.getElementById('fidessaReconciliacion');
   panel.style.display = '';
+  const compOk = reportes.filter(r=>r.ok);
+  const compMal = reportes.filter(r=>!r.ok);
   panel.innerHTML = `
     <div class="section-label" style="margin-top:16px;">Conciliación Trades ↔ Folios</div>
     <div class="hist-filtros" style="margin-bottom:14px;">
       <div class="tb-field"><label>Órdenes (Trades)</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--text-0);">${filasRecon.length}</div></div>
-      <div class="tb-field"><label>Folios cargados</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--text-0);">${nuevosFolios.length}</div></div>
-      <div class="tb-field"><label>Sin orden padre</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;color:${sinPadre>0?'var(--sell)':'var(--buy)'};">${sinPadre}</div></div>
+      <div class="tb-field"><label>Folios (directos)</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--text-0);">${directos.length}</div></div>
+      <div class="tb-field"><label>Folios (de composite)</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--text-0);">${composites.reduce((s,c)=>s+c.hijas.length,0)}</div></div>
+      <div class="tb-field"><label>Sin asignar</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;color:${sinPadre>0?'var(--sell)':'var(--buy)'};">${sinPadre}</div></div>
       <div class="tb-field"><label>Órdenes con diferencia</label><div style="font-family:var(--mono);font-size:16px;font-weight:700;color:${diferencias.length>0?'var(--sell)':'var(--buy)'};">${diferencias.length}</div></div>
     </div>
-    ${diferencias.length===0 ? '<div class="field-note">✓ Todas las órdenes cuadran: suma de folios = QTY DONE reportado por Fidessa.</div>' : `
+
+    <div class="section-label">Composites / cruces resueltos</div>
+    ${reportes.length===0 ? '<div class="field-note">No hay composites hoy — todas las órdenes ejecutaron directo.</div>' : `
+    <div class="blotter-wrap">
+      <table><thead><tr><th>Especie</th><th>Lado</th><th class="num">Qty total</th><th class="num">TCNs</th><th>Composite</th><th>Órdenes individuales asignadas</th><th class="num">Desfase</th></tr></thead>
+      <tbody>${reportes.map(r=>`<tr>
+        <td>${r.nemo}</td><td>${r.lado}</td><td class="num">${fmtInt(r.total)}</td><td class="num">${r.ntcn}</td>
+        <td class="mono-id">${r.poids.join('<br>')}</td>
+        <td>${r.ok ? r.ordenes.map(o=>`<span class="mono-id">${o.oid}</span> ${o.grupo} <b>${fmtInt(o.qtyDone)}</b>`).join('<br>') : `<span style="color:var(--sell);">⚠️ sin resolver — ${r.ncands} órdenes candidatas, ninguna combinación suma ${fmtInt(r.total)}</span>`}</td>
+        <td class="num" style="color:${!r.ok?'var(--sell)':(r.err>2*r.ntcn?'var(--warn,#D44028)':'var(--buy)')};">${r.ok ? fmtInt(r.err) : '—'}</td>
+      </tr>`).join('')}</tbody></table>
+    </div>
+    <div class="field-note" style="margin-top:12px;">
+      ${compOk.length} de ${reportes.length} familias (especie + lado) resueltas${compMal.length?`, <b style="color:var(--sell);">${compMal.length} sin resolver</b>`:''}.
+      Fidessa ya reparte proporcional en las filas hijas; lo que hace la app es identificar <b>a qué orden individual</b> pertenece cada hija, sumando por posición y cruzando contra el <b>QTY DONE</b> de Trades (no contra Qty — las órdenes casi siempre quedan parcialmente ejecutadas).
+      El <b>desfase</b> son acciones de diferencia por el redondeo del reparto en cada print: unas pocas sobre decenas de miles es normal; si se dispara, revisar a mano.
+    </div>`}
+
+    <div class="section-label" style="margin-top:16px;">Cuadre por orden</div>
+    ${diferencias.length===0 ? '<div class="field-note">✓ Todas las órdenes cuadran: suma de folios asignados = QTY DONE reportado por Fidessa (±2 acciones por redondeo).</div>' : `
     <div class="blotter-wrap">
       <table><thead><tr><th>Folio orden</th><th>Grupo</th><th>Especie</th><th>Lado</th><th class="num">Qty Done (Trades)</th><th class="num">Suma folios</th><th class="num">Diferencia</th></tr></thead>
       <tbody>${diferencias.map(d=>`<tr><td class="mono-id">${d.folioOrden}</td><td>${d.grupo}</td><td>${nemoCanonico(d.security,'fidessa')}</td><td>${d.lado}</td><td class="num">${fmtInt(d.qtyDone)}</td><td class="num">${fmtInt(d.sumaFolios)}</td><td class="num" style="color:var(--sell);">${fmtInt(d.sumaFolios-d.qtyDone)}</td></tr>`).join('')}</tbody></table>
     </div>
     <div class="field-note" style="margin-top:12px;">
-      Las diferencias que ves acá casi siempre son por <b>composites/cruces</b> (ej. varias órdenes de PROTECCION agrupadas) — Fidessa les genera un Parent Order ID nuevo propio del composite, distinto al de cada orden individual, así que la suma directa por folio orden da 0 aunque el volumen sí está ahí. Es el mismo patrón que ya identificamos con ISA/PROTECCION — la asociación proporcional automática sigue pendiente de construir.
+      Una orden sin folios (suma 0) normalmente es una orden que se ejecutó pero cuyo composite no se pudo resolver arriba, o una orden de otra mesa. Una con diferencia grande sí hay que mirarla.
     </div>`}
   `;
 }
