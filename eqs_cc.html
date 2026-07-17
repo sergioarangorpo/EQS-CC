@@ -3147,6 +3147,7 @@ function initDatesFX(){
 const clientesDB = {
   COLFONDOS: {
     nombre: 'COLFONDOS SA',
+    formatoReporte: 'colfondos', // formato propio (plano, sin marca) — piden un reporte por cada orden que termina, no acumulado del día
     portafolios: [
       {id:'CESLP', nombre:'COLFONDOS FONDO DE CESANTÍAS LARGO PLAZO', nit:'800.198.644-5', iva:true},
       {id:'CONS', nombre:'COLFONDOS - FPO CONSERVADOR', nit:'900.391.896-3', iva:false},
@@ -4177,6 +4178,12 @@ async function generarReporte(){
   const hora = new Date().toLocaleTimeString('es-CO');
   const loteId = Date.now();
 
+  // Se guarda el lote de ESTE reporte aparte (no solo en el histórico
+  // acumulado) — algunos clientes como COLFONDOS piden un reporte por cada
+  // orden que termina, no el acumulado del día completo.
+  const loteOps = [];
+  const loteDet = [];
+
   allocations.forEach(a=>{
     if(a.cantidad<=0) return;
     const port = ports.find(p=>p.id===a.portId);
@@ -4185,20 +4192,25 @@ async function generarReporte(){
     const ivaMonto = port.iva ? comisionMonto*0.19 : 0;
     const montoNeto = lado==='Compra' ? montoBruto + comisionMonto + ivaMonto : montoBruto - comisionMonto - ivaMonto;
 
-    operacionesHistorico.unshift({
+    const fila = {
       id: Date.now() + Math.random(),
       loteId,
-      hora, cliente: getClienteDB(cliente).nombre, portafolio: port.nombre, especie, lado,
+      hora, cliente: getClienteDB(cliente).nombre, portafolio: port, especie, lado,
       cantidad: a.cantidad, precio: ppp, comPct: comisionEfectiva, comMonto: comisionMonto,
       ivaMonto, montoNeto, fechaReg, fechaCum,
-    });
+    };
+    operacionesHistorico.unshift({...fila, portafolio: port.nombre});
+    loteOps.push(fila);
   });
 
   seleccionados.forEach(f=>{
-    detalleHistorico.push({
-      folio: f.id, cliente: getClienteDB(cliente).nombre, especie, lado,
+    const fila = {
+      folio: f.folio || f.id, cliente: getClienteDB(cliente).nombre, especie, lado,
       cantidad: f.cantidad, precio: f.precio, marca: f.marca, fechaReg, fechaCum,
-    });
+      clientBook: f.clientBook, parentOrderId: f.parentOrderId,
+    };
+    detalleHistorico.push(fila);
+    loteDet.push(fila);
   });
 
   // Quitar de la bandeja de folios pendientes los que ya quedaron reportados,
@@ -4222,7 +4234,89 @@ async function generarReporte(){
   // Genera y descarga el Excel real — antes este botón solo actualizaba la
   // tabla en pantalla, sin producir ningún archivo, a pesar de que su propio
   // texto prometía "Genera Operaciones_CLIENTE... y agrega al Detalle...".
-  await generarYDescargarReporteRVL(cliente);
+  const formato = getClienteDB(cliente).formatoReporte;
+  if(formato === 'colfondos'){
+    await generarReporteColfondos(cliente, loteOps, loteDet);
+  } else {
+    await generarYDescargarReporteRVL(cliente);
+  }
+}
+
+// =====================================================================
+// FORMATO COLFONDOS — plano, sin marca (calcado de los archivos reales que
+// Sergio ya les envía). A diferencia del genérico, NO es acumulado del día:
+// piden un reporte cada vez que termina una orden, así que trabaja solo con
+// el lote de ESTE "Generar reporte", no con todo el histórico.
+// =====================================================================
+async function generarReporteColfondos(cliente, loteOps, loteDet){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar la librería de Excel (ExcelJS). Revisa tu conexión e intenta de nuevo.'); return; }
+  if(loteOps.length===0) return;
+
+  const hoyDate = new Date();
+  const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
+
+  const HEADERS = ['REGISTRO','CUMPLIMIENTO','PORTAFOLIO','NIT','CONTRAPARTE','C/V','ESPECIE','MONEDA',
+                    'CANTIDAD','PRECIO','MONTO BRUTO','COM%','COM$$','IVA%','IVA$$','MONTO NETO','MONTO NETO Planilla','dif'];
+
+  function construirFilaBase(portafolioObj, especie, lado, cantidad, precio, comPct, comMonto, ivaMonto, montoNeto, fechaReg, fechaCum){
+    return [
+      fechaReg, fechaCum, portafolioObj.nombre, portafolioObj.nit || '', 'CREDICORP CAPITAL', lado,
+      nemoCanonico(especie), 'COP', cantidad, precio, cantidad*precio, comPct, comMonto,
+      portafolioObj.iva ? 0.19 : 0, ivaMonto, montoNeto, null, null,
+    ];
+  }
+
+  async function descargarPlano(nombreArchivo, filaEncabezadoExtra, filas){
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Hoja1');
+    const todosHeaders = [filaEncabezadoExtra, ...HEADERS];
+    todosHeaders.forEach((h, col) => { ws.getCell(1, col+1).value = h; });
+    filas.forEach((f, filaIdx) => {
+      f.forEach((valor, col) => { ws.getCell(filaIdx+2, col+1).value = valor; });
+    });
+    for(let i=1; i<=todosHeaders.length; i++){ ws.getColumn(i).width = 16; }
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nombreArchivo;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // ---------- Operaciones_COLFONDOS (por portafolio, resumen del lote) ----------
+  const filasOps = loteOps.map((op, i) => [
+    i+1,
+    ...construirFilaBase(op.portafolio, op.especie, op.lado, op.cantidad, op.precio, op.comPct, op.comMonto, op.ivaMonto, op.montoNeto, op.fechaReg, op.fechaCum),
+  ]);
+  await descargarPlano(`Operaciones_COLFONDOS_${fechaSlug}.xlsx`, 'No.', filasOps);
+
+  // ---------- Detalle_operaciones_COLFONDOS (folio a folio) ----------
+  // Los folios no traen su portafolio propio en nuestro modelo de datos hoy
+  // (la asignación reparte por cantidad total, no folio por folio) — se
+  // reparten aquí en el mismo orden de la asignación, consumiendo folios
+  // hasta completar la cantidad de cada portafolio. Si esto no calza con
+  // cómo se debe repartir de verdad, avísame y lo ajustamos.
+  let opIdx = 0, restanteEnOp = loteOps[0]?.cantidad || 0;
+  const filasDet = [];
+  for(const f of loteDet){
+    let pendiente = f.cantidad;
+    while(pendiente > 0 && opIdx < loteOps.length){
+      const usar = Math.min(pendiente, restanteEnOp);
+      const op = loteOps[opIdx];
+      filasDet.push([
+        f.folio,
+        ...construirFilaBase(op.portafolio, f.especie, f.lado, usar, f.precio, op.comPct, usar*f.precio*op.comPct, op.portafolio.iva ? usar*f.precio*op.comPct*0.19 : 0, 0, f.fechaReg, f.fechaCum),
+      ]);
+      pendiente -= usar;
+      restanteEnOp -= usar;
+      if(restanteEnOp <= 0){ opIdx++; restanteEnOp = loteOps[opIdx]?.cantidad || 0; }
+    }
+  }
+  await descargarPlano(`Detalle_operaciones_COLFONDOS_${fechaSlug}.xlsx`, 'FOLIO', filasDet);
 }
 
 async function generarYDescargarReporteRVL(cliente){
