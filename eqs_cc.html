@@ -1185,6 +1185,49 @@
 
     <div class="col-side">
 
+      <div class="section-label">Comisión del día</div>
+      <div class="panel">
+        <div class="field-note" style="margin-bottom:10px;">Elige la comisión vigente para hoy — aplica según cómo esté marcado cada folio (Bloque/Cruce o Pantalla).</div>
+        <div class="field-row">
+          <div class="field" style="flex:1 1 100%;">
+            <label>Comisión Cruce</label>
+            <select id="comisionCruceSel" onchange="onCambioComisionSel('Cruce')">
+              <option value="0.0008">0.08%</option>
+              <option value="0.0009">0.09%</option>
+              <option value="0.0010">0.10%</option>
+              <option value="0.0015" selected>0.15%</option>
+              <option value="0.0018">0.18%</option>
+              <option value="otro">Otro (escribir)...</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row" id="comisionCruceOtroRow" style="display:none;">
+          <div class="field" style="flex:1 1 100%;">
+            <label>Comisión Cruce personalizada (%)</label>
+            <input type="text" inputmode="decimal" id="comisionCruceOtro" placeholder="0.00" oninput="recalcularTodo()">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field" style="flex:1 1 100%;">
+            <label>Comisión Pantalla</label>
+            <select id="comisionPantallaSel" onchange="onCambioComisionSel('Pantalla')">
+              <option value="0.0008" selected>0.08%</option>
+              <option value="0.0009">0.09%</option>
+              <option value="0.0010">0.10%</option>
+              <option value="0.0015">0.15%</option>
+              <option value="0.0018">0.18%</option>
+              <option value="otro">Otro (escribir)...</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row" id="comisionPantallaOtroRow" style="display:none;">
+          <div class="field" style="flex:1 1 100%;">
+            <label>Comisión Pantalla personalizada (%)</label>
+            <input type="text" inputmode="decimal" id="comisionPantallaOtro" placeholder="0.00" oninput="recalcularTodo()">
+          </div>
+        </div>
+      </div>
+
       <div class="section-label">Asignación a portafolios</div>
       <div class="panel">
         <div class="field-note" style="margin-bottom:10px;">Reparte la cantidad seleccionada entre los portafolios indicados por el cliente. Todos quedan al mismo precio promedio ponderado.</div>
@@ -3265,19 +3308,27 @@ function construirClientesDBDesdeCategorias(){
     if(!porGrupo[c.grupo]) porGrupo[c.grupo] = [];
     porGrupo[c.grupo].push(c);
   });
+  // Regla de Sergio: Fondos Voluntarios de Pensiones y Fondos Obligatorios de
+  // Pensiones NO pagan IVA sobre la comisión — todo lo demás sí (19%),
+  // Cesantías INCLUIDO (confirmado, sí paga). El nombre casi siempre trae la
+  // sigla ("FPV"/"FPO") pero a veces viene escrito completo ("FONDO
+  // VOLUNTARIO DE PENSIONES ALLIANZ") — de ahí el segundo patrón.
+  // Dos excepciones puntuales sin ningún patrón reconocible en el nombre,
+  // confirmadas por Sergio: Skandia Seguros-Seguro Pensión y CAXDAC-Vejez
+  // (fondo de pensiones de pilotos) — ambas SIN IVA.
+  const DECEVAL_SIN_IVA_EXCEPCION = new Set([1995828, 48037]);
+  function calcularIva(c){
+    if(DECEVAL_SIN_IVA_EXCEPCION.has(Number(c.deceval))) return false;
+    const patronExento = /\bFPV\b|\bFPO\b|VOLUNTARI[OA]S?\s+DE\s+PENSIONES|PENSIONES\s+VOLUNTARI[OA]S?|OBLIGATORI[OA]S?\s+DE\s+PENSIONES/i;
+    return !patronExento.test(c.nombre);
+  }
   Object.keys(porGrupo).forEach(grupo=>{
     if(clientesDB[grupo]) return; // ya está curado a mano, no lo pisamos
     clientesDB[grupo] = {
       nombre: grupo,
       portafolios: porGrupo[grupo].map(c=>({
         id: String(c.deceval), nombre: c.nombre,
-        // Regla de Sergio: Fondos Voluntarios de Pensiones (FPV) y Fondos
-        // Obligatorios de Pensiones (FPO/FPO) NO pagan IVA sobre la comisión
-        // — todo lo demás sí (19%). El nombre ya trae esa pista ("PROTECCION
-        // FPV ...", "PROTECCION FPO ..."), así que se detecta automático.
-        // Ojo: Fondos de Cesantías no están confirmados como exentos — quedan
-        // gravados por defecto hasta que Sergio lo confirme.
-        iva: !/\bFPV\b|\bFPO\b/i.test(c.nombre),
+        iva: calcularIva(c),
         nit: null, deceval: c.deceval,
       })),
       // Sin comisión pactada todavía para estos grupos — placeholder hasta que
@@ -4049,14 +4100,35 @@ function renderAllocations(){
 // ----------------------------------------------------------------------
 // Cálculo central: precio promedio ponderado + comisión efectiva por portafolio
 // ----------------------------------------------------------------------
+// Comisión Cruce/Pantalla — Sergio prefiere elegirla manualmente cada día
+// desde un selector de valores frecuentes (0.08/0.09/0.10/0.15/0.18%), con
+// opción de escribir un valor distinto para casos raros — en vez de usar
+// la tarifa fija por cliente que había antes (placeholder sin confirmar).
+function onCambioComisionSel(tipo){
+  const sel = document.getElementById(`comision${tipo}Sel`);
+  const row = document.getElementById(`comision${tipo}OtroRow`);
+  row.style.display = sel.value === 'otro' ? '' : 'none';
+  recalcularTodo();
+}
+
+function leerComisionSeleccionada(tipo){
+  const sel = document.getElementById(`comision${tipo}Sel`);
+  if(sel.value === 'otro'){
+    const val = parseLocaleNumber(document.getElementById(`comision${tipo}Otro`).value);
+    return (val||0) / 100; // el campo libre se escribe en % (ej. 0.12), se guarda como decimal
+  }
+  return Number(sel.value);
+}
+
 function calcularComisionEfectiva(cliente, folios){
   // Mezcla ponderada de comisión según folios bloque/pantalla seleccionados,
-  // tal como en la macro original (cada folio aporta su tarifa segun su marca).
+  // usando las tarifas del selector de "Comisión del día" (no la tarifa fija
+  // por cliente — esa quedó solo como referencia/respaldo si el selector no
+  // se ha tocado).
   const totalQty = folios.reduce((s,f)=>s+f.cantidad,0);
   if(totalQty===0) return 0;
-  const db = getClienteDB(cliente);
-  const tarifaBloque = db.comisionBloque !== undefined ? db.comisionBloque : db.comisionCruce;
-  const tarifaPantalla = db.comisionPantalla;
+  const tarifaBloque = leerComisionSeleccionada('Cruce');
+  const tarifaPantalla = leerComisionSeleccionada('Pantalla');
   const sumaComision = folios.reduce((s,f)=>{
     const tarifa = f.marca==='bloque' ? tarifaBloque : tarifaPantalla;
     return s + f.cantidad*tarifa;
