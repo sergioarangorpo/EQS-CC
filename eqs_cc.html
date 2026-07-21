@@ -5916,6 +5916,50 @@ function clienteRVIporFirm(firm){
   return '';
 }
 
+// =====================================================================
+// VÍNCULO RVI: línea del cliente (COLFONDOS) ↔ nuestra(s) ejecución(es)
+// de afuera (broker CCSI / firm CREDICORP). La utilidad de RVI necesita el
+// precio nuestro real, que está en esas líneas. Se agrupan como el "Vincular"
+// de RVL.
+// Reglas confirmadas por Sergio: misma especie y mismo lado; la SUMA de las
+// patas de afuera DEBE ser igual a la cantidad del cliente (exacta). Puede ser
+// 1 cliente ↔ N patas (ejecución en varios brokers). Si no hay pata de afuera,
+// simplemente no hubo margen (solo comisión).
+// _rviVinculos: clienteLineaId -> [idsAfuera]
+let _rviVinculos = {};
+
+// ¿Es una línea "de afuera" (nuestra ejecución)? firm CREDICORP o con broker.
+function esLineaAfueraRVI(linea){
+  const f = String(linea.firm||'').toUpperCase();
+  return f.includes('CREDICORP') || (!!linea.broker && linea.broker !== '—' && linea.broker !== '');
+}
+
+// Candidatas a vincular con la línea del cliente: mismo símbolo y lado, que
+// sean líneas de afuera, y que no estén ya vinculadas a otra.
+function candidatasVinculoRVI(clienteLinea){
+  const yaUsadas = new Set(Object.values(_rviVinculos).flat());
+  return emsxData.filter(l =>
+    l.id !== clienteLinea.id &&
+    esLineaAfueraRVI(l) &&
+    nemoCanonico(l.especie,'emsx') === nemoCanonico(clienteLinea.especie,'emsx') &&
+    l.lado === clienteLinea.lado &&
+    !yaUsadas.has(l.id)
+  );
+}
+
+// Precio promedio ponderado de las patas de afuera vinculadas a una línea.
+function precioNuestroVinculo(clienteLineaId){
+  const ids = _rviVinculos[clienteLineaId] || [];
+  if(ids.length === 0) return null;
+  let qtyTot = 0, valorTot = 0;
+  ids.forEach(id => {
+    const l = emsxData.find(x=>x.id===id);
+    if(l){ qtyTot += l.qty; valorTot += l.qty * l.avgPr; }
+  });
+  return qtyTot > 0 ? { precio: valorTot/qtyTot, qty: qtyTot } : null;
+}
+
+
 // CCSI: comisión que nos cobran a nosotros
 const CCSI = {
   comETF:0.003,   // USD/acción
@@ -6076,10 +6120,19 @@ function renderEmsx(){
     tbody.innerHTML='<tr><td colspan="11" class="empty-state">Sin líneas que coincidan con los filtros.</td></tr>';
     return;
   }
-  tbody.innerHTML = data.map(r=>`
+  const idsAfueraVinculadas = new Set(Object.values(_rviVinculos).flat());
+  tbody.innerHTML = data.map(r=>{
+    const esCliente = !!r.cliente;
+    const tieneVinculo = _rviVinculos[r.id] && _rviVinculos[r.id].length>0;
+    const esAfueraVinc = idsAfueraVinculadas.has(r.id);
+    let badge = '';
+    if(tieneVinculo) badge = ` <span class="status-badge filled" title="Vinculada con ${_rviVinculos[r.id].length} ejecución(es) de afuera">🔗 ${_rviVinculos[r.id].length}</span>`;
+    else if(esAfueraVinc) badge = ` <span class="status-badge filled" title="Ejecución de afuera vinculada a una línea de cliente">🔗</span>`;
+    else if(esCliente) badge = ` <span class="status-badge pending" title="Línea de cliente — puedes vincular tu ejecución de afuera">cliente</span>`;
+    return `
     <tr class="clickable ${lineaActiva===r.id?'row-active':''} ${r.procesado?'':'opacity-pending'}" onclick="seleccionarLinea(${r.id})">
       <td class="mono-id">${r.hora}</td>
-      <td>${r.firm}</td>
+      <td>${r.firm}${badge}</td>
       <td class="mono-id"><b>${r.especie}</b>${r.revisarExchange?` <span class="status-badge pending" title="Exchange inusual (${r.exchange||'?'}) — normalmente no operamos esto, casi siempre está en EUR. Revisar antes de procesar.">⚠ ${r.exchange||'?'}</span>`:''}</td>
       <td><span class="tipo-badge">${r.tipo || '— elegir —'}</span></td>
       <td><span class="side-badge ${r.lado==='Buy'?'buy':'sell'}">${r.lado}</span></td>
@@ -6089,7 +6142,8 @@ function renderEmsx(){
       <td class="mono-id">${r.broker}</td>
       <td class="mono-id">${r.account||'—'}</td>
       <td><span class="status-badge ${r.procesado?'filled':'pending'}">${r.procesado?'Procesado':'Pendiente'}</span></td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 registrarTablaOrdenable('rvi', renderEmsx);
 
