@@ -3249,11 +3249,22 @@ async function generarExcelCruce(clienteKey, registrados, trader){
     views: [{ showGridLines: false }],
   });
   ws.columns = [
-    { width: 2.5 }, { width: 13 }, { width: 13 }, { width: 14 }, { width: 12 },
-    { width: 10 }, { width: 15 }, { width: 15 }, { width: 17 }, { width: 2.5 },
+    { width: 2.5 },  // A margen
+    { width: 12 },   // B Trade Date
+    { width: 12 },   // C Settle Date
+    { width: 8 },    // D Side
+    { width: 12 },   // E Symbol
+    { width: 15 },   // F ISIN
+    { width: 11 },   // G Quantity
+    { width: 13 },   // H Price
+    { width: 16 },   // I Gross
+    { width: 14 },   // J Commission
+    { width: 17 },   // K Net
+    { width: 2.5 },  // L margen
   ];
-  const cols = ['B','C','D','E','F','G','H','I'];
-  const allCols = ['A','B','C','D','E','F','G','H','I','J'];
+  // El bloque EQUITY usa 10 columnas (B..K). El bloque FX usa las primeras 7.
+  const cols = ['B','C','D','E','F','G','H','I','J','K'];
+  const allCols = ['A','B','C','D','E','F','G','H','I','J','K','L'];
 
   for(let rr=1; rr<=80; rr++){ allCols.forEach(col => { ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.paper}}; }); }
 
@@ -3263,13 +3274,13 @@ async function generarExcelCruce(clienteKey, registrados, trader){
   for(let rr=hIni; rr<=hFin; rr++){ allCols.forEach(col => ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}}); }
   ws.getRow(hIni).height = 8; ws.getRow(hIni+1).height = 30; ws.getRow(hIni+2).height = 20; ws.getRow(hIni+3).height = 10;
   const imgId = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension: 'png' });
-  ws.addImage(imgId, { tl: { col: 7, row: hIni }, ext: { width: 90, height: 48 } });
-  ws.mergeCells(`B${hIni+1}:F${hIni+1}`);
+  ws.addImage(imgId, { tl: { col: 9, row: hIni }, ext: { width: 90, height: 48 } });
+  ws.mergeCells(`B${hIni+1}:H${hIni+1}`);
   const tit = ws.getCell(`B${hIni+1}`);
   tit.value = 'CREDICORP CAPITAL COLOMBIA';
   tit.font = { name:'Calibri', size:20, bold:true, color:{argb:C.white} };
   tit.alignment = { horizontal:'left', vertical:'middle' };
-  ws.mergeCells(`B${hIni+2}:F${hIni+2}`);
+  ws.mergeCells(`B${hIni+2}:H${hIni+2}`);
   const sub = ws.getCell(`B${hIni+2}`);
   sub.value = 'EQUITY SALES  ·  EQUITY + FX CONFIRMATION';
   sub.font = { name:'Calibri', size:10.5, bold:true, color:{argb:C.white} };
@@ -3291,7 +3302,7 @@ async function generarExcelCruce(clienteKey, registrados, trader){
   r += 3;
 
   function tituloSeccion(texto){
-    ws.mergeCells(`B${r}:I${r}`);
+    ws.mergeCells(`B${r}:K${r}`);
     const c = ws.getCell(`B${r}`); c.value = texto; c.font = { name:'Calibri', size:12, bold:true, color:{argb:C.navy} };
     r++;
     allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
@@ -3309,37 +3320,42 @@ async function generarExcelCruce(clienteKey, registrados, trader){
 
   // ================= BLOQUE 1: EQUITY =================
   tituloSeccion('EQUITY');
-  headerFila(['Trade Date','Settle Date','Side','Symbol','Quantity','Price','Gross','Net (ALL IN)'],
-             ['center','center','left','left','right','right','right','right']);
+  headerFila(['Trade Date','Settle Date','Side','Symbol','ISIN','Quantity','Price','Gross','Commission','Net'],
+             ['center','center','left','left','left','right','right','right','right','right']);
   const eqIni = r;
   registrados.forEach(lado=>{
     const tdTxt = fmtFechaCorta(lado.tradeDate.toISOString().slice(0,10));
     const sdTxt = fmtFechaCorta(lado.settleDate.toISOString().slice(0,10));
     lado.detalle.forEach(d=>{
-      const comision = d.gross * MLI_COMISION_ALL_IN;
-      const neto = lado.ladoAccion === 'Compra' ? d.gross + comision : d.gross - comision;
+      // Valores redondeados a 2 decimales reales (misma regla que el FX).
+      const gross = redondear(d.gross, 2);
+      const comision = redondear(d.gross * MLI_COMISION_ALL_IN, 2);
+      const neto = redondear(lado.ladoAccion === 'Compra' ? gross + comision : gross - comision, 2);
       ws.getCell(`B${r}`).value = tdTxt;
       ws.getCell(`C${r}`).value = sdTxt;
       ws.getCell(`D${r}`).value = lado.ladoAccion === 'Compra' ? 'Buy' : 'Sell';
       ws.getCell(`E${r}`).value = d.security;
-      ws.getCell(`F${r}`).value = d.qty;
-      ws.getCell(`G${r}`).value = d.precio;
-      ws.getCell(`H${r}`).value = d.gross;
-      ws.getCell(`I${r}`).value = neto;
+      ws.getCell(`F${r}`).value = isinDeNemo(d.security);   // ISIN de la base (NEMO); '' si no está
+      ws.getCell(`G${r}`).value = d.qty;
+      ws.getCell(`H${r}`).value = redondear(d.precio, 4);
+      ws.getCell(`I${r}`).value = gross;
+      ws.getCell(`J${r}`).value = comision;
+      ws.getCell(`K${r}`).value = neto;
       r++;
     });
   });
   const eqFin = r-1;
   for(let rr=eqIni; rr<=eqFin; rr++){
     ['B','C'].forEach(col=> ws.getCell(`${col}${rr}`).alignment = {horizontal:'center'});
-    ws.getCell(`F${rr}`).numFmt = '#,##0';
-    ws.getCell(`G${rr}`).numFmt = '"$"#,##0.0000';
-    ws.getCell(`H${rr}`).numFmt = '"$"#,##0.00';
+    ws.getCell(`G${rr}`).numFmt = '#,##0';
+    ws.getCell(`H${rr}`).numFmt = '"$"#,##0.0000';
     ws.getCell(`I${rr}`).numFmt = '"$"#,##0.00';
+    ws.getCell(`J${rr}`).numFmt = '"$"#,##0.00';
+    ws.getCell(`K${rr}`).numFmt = '"$"#,##0.00';
     cols.forEach(col=>{
       ws.getCell(`${col}${rr}`).font = { name:'Calibri', size:9.5, color:{argb:C.textDark} };
       ws.getCell(`${col}${rr}`).border = { bottom: {style:'hair', color:{argb:C.cardBorder}} };
-      if(['E','F','G','H','I'].includes(col) && col!=='E') ws.getCell(`${col}${rr}`).alignment = {horizontal:'right'};
+      if(['G','H','I','J','K'].includes(col)) ws.getCell(`${col}${rr}`).alignment = {horizontal:'right'};
     });
     ws.getRow(rr).height = 18;
     if((rr-eqIni)%2===1){ cols.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}}); }
@@ -3348,8 +3364,8 @@ async function generarExcelCruce(clienteKey, registrados, trader){
 
   // ================= BLOQUE 2: FX =================
   tituloSeccion('FX');
-  headerFila(['Trade Date','Settle Date','Side','Pair','USD Amount','Rate','COP Value',''],
-             ['center','center','left','left','right','right','right','left']);
+  headerFila(['Trade Date','Settle Date','Side','Pair','USD Amount','Rate','COP Value'],
+             ['center','center','left','left','right','right','right']);
   const fxIni = r;
   registrados.forEach(lado=>{
     const tdTxt = fmtFechaCorta(lado.tradeDate.toISOString().slice(0,10));
@@ -3358,31 +3374,32 @@ async function generarExcelCruce(clienteKey, registrados, trader){
     ws.getCell(`C${r}`).value = sdTxt;
     ws.getCell(`D${r}`).value = lado.ladoFX === 'SELL' ? 'Sell' : 'Buy';
     ws.getCell(`E${r}`).value = 'USDCOP';
-    ws.getCell(`F${r}`).value = lado.usd;
-    ws.getCell(`G${r}`).value = lado.tasaFinalCliente;
-    ws.getCell(`H${r}`).value = lado.netoCOP;
+    ws.getCell(`F${r}`).value = redondear(lado.usd, 2);
+    ws.getCell(`G${r}`).value = redondear(lado.tasaFinalCliente, 2);
+    ws.getCell(`H${r}`).value = redondear(lado.netoCOP, 2);
     r++;
   });
   const fxFin = r-1;
+  const colsFX = ['B','C','D','E','F','G','H'];
   for(let rr=fxIni; rr<=fxFin; rr++){
     ['B','C'].forEach(col=> ws.getCell(`${col}${rr}`).alignment = {horizontal:'center'});
     ws.getCell(`F${rr}`).numFmt = '"$"#,##0.00';
     ws.getCell(`G${rr}`).numFmt = '"$"#,##0.00';
     ws.getCell(`H${rr}`).numFmt = '"$"#,##0.00';
-    cols.forEach(col=>{
+    colsFX.forEach(col=>{
       ws.getCell(`${col}${rr}`).font = { name:'Calibri', size:9.5, color:{argb:C.textDark} };
       ws.getCell(`${col}${rr}`).border = { bottom: {style:'hair', color:{argb:C.cardBorder}} };
       if(['F','G','H'].includes(col)) ws.getCell(`${col}${rr}`).alignment = {horizontal:'right'};
     });
     ws.getRow(rr).height = 18;
-    if((rr-fxIni)%2===1){ cols.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}}); }
+    if((rr-fxIni)%2===1){ colsFX.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}}); }
   }
   r += 2;
 
   // ---------- FOOTER ----------
   allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
   ws.getRow(r).height = 4; r++;
-  ws.mergeCells(`B${r}:I${r}`);
+  ws.mergeCells(`B${r}:K${r}`);
   const foot = ws.getCell(`B${r}`);
   foot.value = `Generated by EQS CC · Credicorp Capital Colombia · ${registrados.length} FX side(s) · ${fechaHoyTxt}`;
   foot.font = { name:'Calibri', size:8.5, italic:true, color:{argb:C.textMuted} };
@@ -3520,6 +3537,14 @@ function nemoCanonico(raw, fuente){
   if(fuente==='fidessa') return _FIDESSA_A_NUAM[key] || raw;
   // Si no se especifica fuente, probar ambas tablas
   return _EMSX_A_NUAM[key] || _FIDESSA_A_NUAM[key] || raw;
+}
+
+// ISIN por nemo canónico (Nuam). Se arma una vez desde NEMO_TABLE. Si no está,
+// retorna '' (no se inventa un ISIN).
+const _ISIN_POR_NUAM = {};
+NEMO_TABLE.forEach(n => { if(n.nuam && n.isin) _ISIN_POR_NUAM[String(n.nuam).toUpperCase()] = n.isin; });
+function isinDeNemo(nemo){
+  return _ISIN_POR_NUAM[String(nemo||'').trim().toUpperCase()] || '';
 }
 
 function esEstadoActivo(status){
@@ -5866,6 +5891,31 @@ const clientesRVI = {
   },
 };
 
+// Resuelve la key de clientesRVI a partir del nombre del firm de la línea de
+// EMSX. Calza por nombre exacto o por inclusión (ej. "COLFONDOS SA" -> COLFONDOS,
+// "AFP PROTECCION SA" -> PROTECCION). La línea de nuestra propia ejecución
+// ("CREDICORP CAPITAL COLOMBIA SA") NO es cliente: retorna '' para que quede
+// como la pata de afuera a vincular, no como cliente.
+function clienteRVIporFirm(firm){
+  const f = String(firm||'').trim().toUpperCase();
+  if(!f) return '';
+  if(f.includes('CREDICORP')) return ''; // nuestra ejecución, no un cliente
+  // 1) match exacto por nombre
+  for(const [k,v] of Object.entries(clientesRVI)){
+    if(String(v.nombre||'').toUpperCase() === f) return k;
+  }
+  // 2) match por key contenida en el firm (COLFONDOS, PROTECCION, ...)
+  for(const k of Object.keys(clientesRVI)){
+    if(f.includes(k)) return k;
+  }
+  // 3) match por palabra significativa del nombre del cliente
+  for(const [k,v] of Object.entries(clientesRVI)){
+    const primera = String(v.nombre||'').toUpperCase().split(/\s+/)[0];
+    if(primera && primera.length>3 && f.includes(primera)) return k;
+  }
+  return '';
+}
+
 // CCSI: comisión que nos cobran a nosotros
 const CCSI = {
   comETF:0.003,   // USD/acción
@@ -5981,7 +6031,11 @@ async function cargarEmsxDesdeSupabase(){
           id: row.id,
           hora: row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}) : '—',
           firm: row.originate_trader_firm || 'CREDICORP CAPITAL COLOMBIA SA',
-          cliente: '', // se resuelve a mano igual que hoy, hasta tener el cruce de cuentas de RVI
+          // Cliente resuelto por el nombre del firm de la línea de EMSX
+          // (ej. "COLFONDOS SA" -> key COLFONDOS). Si no calza, queda '' y se
+          // elige a mano. La línea de nuestra ejecución (CREDICORP CAPITAL
+          // COLOMBIA SA) no es un cliente: es la pata de afuera para vincular.
+          cliente: clienteRVIporFirm(row.originate_trader_firm),
           especie: row.ticker || row.nombre_completo || '',
           nombreCompleto: row.nombre_completo || '', // guardado aparte para Porvenir y otros usos futuros
           isin: '',
