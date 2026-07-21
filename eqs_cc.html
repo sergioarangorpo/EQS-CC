@@ -933,11 +933,20 @@
           </div>
         </div>
 
+        <!-- Cruce FX (MLI y extranjeros directo a Fidessa): parte del COP, no del USD.
+             El Monto USD de arriba se calcula solo = COP objetivo ÷ tasa final cliente. -->
+        <div class="field-row" id="campoCruceCOP" style="display:none;">
+          <div class="field" style="flex:1 1 100%;">
+            <label>COP objetivo del cruce <span class="field-note" style="display:inline">(neto con comisión — el USD se calcula solo)</span></label>
+            <input type="text" inputmode="decimal" id="cruceCOP" value="" oninput="recalcularCruceUSD()" onblur="formatInputAsNumber(this,2);recalcularCruceUSD()" style="font-weight:700;">
+          </div>
+        </div>
+
         <div id="bloqueUnica" style="display:none;">
           <div class="field-row">
             <div class="field" style="flex:1 1 100%;">
               <label>Tasa final cliente <span class="field-note" style="display:inline">(todo incluido, a fecha cumplimiento)</span></label>
-              <input type="text" inputmode="decimal" id="rateUnica" value="" oninput="calcular()" onblur="formatInputAsNumber(this,2);calcular()">
+              <input type="text" inputmode="decimal" id="rateUnica" value="" oninput="if(typeof _cruceActivo!=='undefined'&&_cruceActivo)recalcularCruceUSD();else calcular();" onblur="formatInputAsNumber(this,2);if(typeof _cruceActivo!=='undefined'&&_cruceActivo)recalcularCruceUSD();else calcular();">
             </div>
           </div>
         </div>
@@ -1352,6 +1361,18 @@
     <div class="edit-actions" style="margin-top:16px;">
       <button class="btn ghost" onclick="document.getElementById('modalAprobProteccion').style.display='none';">Cancelar</button>
       <button class="btn primary" id="btnAprobarProt">Aprobar y generar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Resumen del cruce FX (MLI y extranjeros directo a Fidessa) -->
+<div class="edit-overlay" id="modalCruceFX" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(820px,94vw);margin-top:5vh;max-height:88vh;overflow:auto;">
+    <h3 style="font-size:15px;">Cruce FX — consolidación de acciones</h3>
+    <div id="cruceFXBody"></div>
+    <div class="edit-actions" style="margin-top:16px;">
+      <button class="btn ghost" onclick="cancelarCruce();document.getElementById('modalCruceFX').style.display='none';">Cancelar</button>
+      <button class="btn primary" onclick="irACalculadoraCruce()">Continuar a la calculadora →</button>
     </div>
   </div>
 </div>
@@ -2423,6 +2444,44 @@ function registrar(){
   document.getElementById('amount').value = '';
   calcular();
 
+  // ---- Continuación del cruce FX (MLI y extranjeros directo a Fidessa) ----
+  if(_cruceActivo && _cruceFXPendiente){
+    // Guardar el lado recién registrado con sus tasas para el Excel de 2 bloques.
+    _cruceFXPendiente.registrados.push({
+      ...(_cruceActivo),
+      opId: op.id,
+      tasaFinalCliente: c.tasaFinalCliente,
+      tasaMercado: c.fxMkt,
+      usd: c.amount,
+      utilidad: c.utilidadTotal,
+    });
+    const p = _cruceFXPendiente;
+    p.idx++;
+    // Limpiar el estado de cruce del lado que acaba de cerrar.
+    _cruceActivo = null;
+    document.getElementById('cruceCOP').value = '';
+    if(p.idx < p.bloques.length){
+      // Quedan lados: reabrir la calculadora con el siguiente.
+      mostrarResumenCruceFX();
+      irACalculadoraCruce();
+    } else {
+      // Todos los lados cerrados: cerrar el modo cruce y ofrecer el Excel.
+      const banner = document.getElementById('cruceBanner');
+      if(banner) banner.style.display = 'none';
+      document.getElementById('campoCruceCOP').style.display = 'none';
+      const amountEl = document.getElementById('amount');
+      amountEl.readOnly = false; amountEl.style.opacity = '1';
+      const reg = p.registrados.slice();
+      const cli = p.cliente;
+      _tradesConsolidar.clear();
+      renderFidessaTradesPanel();
+      _cruceFXPendiente = null;
+      if(confirm(`Cruce FX completo: ${reg.length} lado(s) registrado(s). ¿Generar el Excel con los 2 bloques (EQUITY + FX)?`)){
+        generarExcelCruce(cli, reg);
+      }
+    }
+  }
+
   const toast = document.getElementById('toast');
   toast.classList.add('show');
   setTimeout(()=>toast.classList.remove('show'), 2400);
@@ -3146,9 +3205,186 @@ async function generarReporteExcel(){
   URL.revokeObjectURL(url);
 }
 
+// Excel del cruce FX: UN archivo con DOS bloques — EQUITY (las acciones que se
+// consolidaron, con su comisión ALL IN) y FX (las operaciones de dólar que se
+// cerraron por lado). Reutiliza el formato de marca genérico (header navy con
+// logo, barra naranja, secciones) — NO el formato propio de MLI. Sin el bloque
+// de "totales FX" de arriba, por pedido de Sergio.
+async function generarExcelCruce(clienteKey, registrados){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  if(!registrados || registrados.length===0){ alert('No hay lados registrados para el reporte del cruce.'); return; }
 
-function tickClock(){
-  document.getElementById('clock').textContent = new Date().toLocaleTimeString('es-CO');
+  const hoyDate = new Date();
+  const fechaHoyTxt = hoyDate.toLocaleDateString('es-CO', {day:'2-digit', month:'2-digit', year:'numeric'});
+  const C = REPORTE_COLOR;
+  const nombreCliente = (getClienteDB(clienteKey) && getClienteDB(clienteKey).nombre) || clienteKey;
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'EQS CC — Credicorp Capital';
+  wb.created = hoyDate;
+  const ws = wb.addWorksheet('Cruce Equity-FX', {
+    pageSetup: { orientation: 'landscape', fitToPage: true },
+    views: [{ showGridLines: false }],
+  });
+  ws.columns = [
+    { width: 2.5 }, { width: 13 }, { width: 13 }, { width: 14 }, { width: 12 },
+    { width: 10 }, { width: 15 }, { width: 15 }, { width: 17 }, { width: 2.5 },
+  ];
+  const cols = ['B','C','D','E','F','G','H','I'];
+  const allCols = ['A','B','C','D','E','F','G','H','I','J'];
+
+  for(let rr=1; rr<=80; rr++){ allCols.forEach(col => { ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.paper}}; }); }
+
+  let r = 1;
+  // ---------- HEADER DE MARCA ----------
+  const hIni = r, hFin = r+3;
+  for(let rr=hIni; rr<=hFin; rr++){ allCols.forEach(col => ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}}); }
+  ws.getRow(hIni).height = 8; ws.getRow(hIni+1).height = 30; ws.getRow(hIni+2).height = 20; ws.getRow(hIni+3).height = 10;
+  const imgId = wb.addImage({ base64: LOGO_CREDICORP_B64, extension: 'png' });
+  ws.addImage(imgId, { tl: { col: 7, row: hIni }, ext: { width: 90, height: 48 } });
+  ws.mergeCells(`B${hIni+1}:F${hIni+1}`);
+  const tit = ws.getCell(`B${hIni+1}`);
+  tit.value = 'CREDICORP CAPITAL COLOMBIA';
+  tit.font = { name:'Calibri', size:20, bold:true, color:{argb:C.white} };
+  tit.alignment = { horizontal:'left', vertical:'middle' };
+  ws.mergeCells(`B${hIni+2}:F${hIni+2}`);
+  const sub = ws.getCell(`B${hIni+2}`);
+  sub.value = 'EQUITY SALES  ·  CONFIRMACIÓN EQUITY + FX';
+  sub.font = { name:'Calibri', size:10.5, bold:true, color:{argb:C.white} };
+  sub.alignment = { horizontal:'left', vertical:'middle' };
+  r = hFin + 1;
+  allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+  ws.getRow(r).height = 4; r += 2;
+
+  // ---------- FICHA (Cliente / Fecha) ----------
+  [['CLIENTE', nombreCliente, 5], ['FECHA', fechaHoyTxt, 3]].reduce((cc,[label,value,span])=>{
+    const startCol = cols[cc-1] || cols[0];
+    const endCol = cols[Math.min(cc-1+span-1, cols.length-1)];
+    ws.mergeCells(`${startCol}${r}:${endCol}${r}`);
+    const c = ws.getCell(`${startCol}${r}`); c.value = label; c.font = { name:'Calibri', size:9, bold:true, color:{argb:C.textMuted} };
+    ws.mergeCells(`${startCol}${r+1}:${endCol}${r+1}`);
+    const v = ws.getCell(`${startCol}${r+1}`); v.value = value; v.font = { name:'Calibri', size:14, bold:true, color:{argb:C.navy} };
+    return cc+span;
+  }, 1);
+  r += 3;
+
+  function tituloSeccion(texto){
+    ws.mergeCells(`B${r}:I${r}`);
+    const c = ws.getCell(`B${r}`); c.value = texto; c.font = { name:'Calibri', size:12, bold:true, color:{argb:C.navy} };
+    r++;
+    allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+    ws.getRow(r).height = 2.5; r += 2;
+  }
+  function headerFila(labels, aligns){
+    labels.forEach((t,i)=>{
+      const c = ws.getCell(`${cols[i]}${r}`);
+      c.value = t; c.font = { name:'Calibri', size:9.5, bold:true, color:{argb:C.white} };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
+      c.alignment = { horizontal: aligns[i]||'left', vertical:'middle' };
+    });
+    ws.getRow(r).height = 20; r++;
+  }
+
+  // ================= BLOQUE 1: EQUITY =================
+  tituloSeccion('EQUITY — ACCIONES');
+  headerFila(['Liquidación','Cumplimiento','Lado','Nemo','Cantidad','Precio','Bruto','Neto (ALL IN)'],
+             ['center','center','left','left','right','right','right','right']);
+  const eqIni = r;
+  registrados.forEach(lado=>{
+    const tdTxt = fmtFechaCorta(lado.tradeDate.toISOString().slice(0,10));
+    const sdTxt = fmtFechaCorta(lado.settleDate.toISOString().slice(0,10));
+    lado.detalle.forEach(d=>{
+      const comision = d.gross * MLI_COMISION_ALL_IN;
+      const neto = lado.ladoAccion === 'Compra' ? d.gross + comision : d.gross - comision;
+      ws.getCell(`B${r}`).value = tdTxt;
+      ws.getCell(`C${r}`).value = sdTxt;
+      ws.getCell(`D${r}`).value = lado.ladoAccion;
+      ws.getCell(`E${r}`).value = d.security;
+      ws.getCell(`F${r}`).value = d.qty;
+      ws.getCell(`G${r}`).value = d.precio;
+      ws.getCell(`H${r}`).value = d.gross;
+      ws.getCell(`I${r}`).value = neto;
+      r++;
+    });
+  });
+  const eqFin = r-1;
+  for(let rr=eqIni; rr<=eqFin; rr++){
+    ['B','C'].forEach(col=> ws.getCell(`${col}${rr}`).alignment = {horizontal:'center'});
+    ws.getCell(`F${rr}`).numFmt = '#,##0';
+    ws.getCell(`G${rr}`).numFmt = '"$"#,##0.0000';
+    ws.getCell(`H${rr}`).numFmt = '"$"#,##0.00';
+    ws.getCell(`I${rr}`).numFmt = '"$"#,##0.00';
+    cols.forEach(col=>{
+      ws.getCell(`${col}${rr}`).font = { name:'Calibri', size:9.5, color:{argb:C.textDark} };
+      ws.getCell(`${col}${rr}`).border = { bottom: {style:'hair', color:{argb:C.cardBorder}} };
+      if(['E','F','G','H','I'].includes(col) && col!=='E') ws.getCell(`${col}${rr}`).alignment = {horizontal:'right'};
+    });
+    ws.getRow(rr).height = 18;
+    if((rr-eqIni)%2===1){ cols.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}}); }
+  }
+  r += 2;
+
+  // Nota de comisión ALL IN
+  ws.mergeCells(`B${r}:I${r}`);
+  const nota = ws.getCell(`B${r}`);
+  nota.value = 'Comisión 0.1% ALL IN (impuesto incluido). Neto compra = bruto + comisión; neto venta = bruto − comisión.';
+  nota.font = { name:'Calibri', size:8.5, italic:true, color:{argb:C.textMuted} };
+  r += 2;
+
+  // ================= BLOQUE 2: FX =================
+  tituloSeccion('FX — DÓLAR');
+  headerFila(['Liquidación','Cumplimiento','Lado','Par','Monto USD','Tasa','Valor COP',''],
+             ['center','center','left','left','right','right','right','left']);
+  const fxIni = r;
+  registrados.forEach(lado=>{
+    const tdTxt = fmtFechaCorta(lado.tradeDate.toISOString().slice(0,10));
+    const sdTxt = fmtFechaCorta(lado.settleDate.toISOString().slice(0,10));
+    ws.getCell(`B${r}`).value = tdTxt;
+    ws.getCell(`C${r}`).value = sdTxt;
+    ws.getCell(`D${r}`).value = lado.ladoFX === 'SELL' ? 'Venta' : 'Compra';
+    ws.getCell(`E${r}`).value = 'USDCOP';
+    ws.getCell(`F${r}`).value = lado.usd;
+    ws.getCell(`G${r}`).value = lado.tasaFinalCliente;
+    ws.getCell(`H${r}`).value = lado.netoCOP;
+    r++;
+  });
+  const fxFin = r-1;
+  for(let rr=fxIni; rr<=fxFin; rr++){
+    ['B','C'].forEach(col=> ws.getCell(`${col}${rr}`).alignment = {horizontal:'center'});
+    ws.getCell(`F${rr}`).numFmt = '"$"#,##0.00';
+    ws.getCell(`G${rr}`).numFmt = '"$"#,##0.00';
+    ws.getCell(`H${rr}`).numFmt = '"$"#,##0.00';
+    cols.forEach(col=>{
+      ws.getCell(`${col}${rr}`).font = { name:'Calibri', size:9.5, color:{argb:C.textDark} };
+      ws.getCell(`${col}${rr}`).border = { bottom: {style:'hair', color:{argb:C.cardBorder}} };
+      if(['F','G','H'].includes(col)) ws.getCell(`${col}${rr}`).alignment = {horizontal:'right'};
+    });
+    ws.getRow(rr).height = 18;
+    if((rr-fxIni)%2===1){ cols.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}}); }
+  }
+  r += 2;
+
+  // ---------- FOOTER ----------
+  allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+  ws.getRow(r).height = 4; r++;
+  ws.mergeCells(`B${r}:I${r}`);
+  const foot = ws.getCell(`B${r}`);
+  foot.value = `Generado desde EQS CC · Credicorp Capital Colombia · ${registrados.length} lado(s) FX · ${fechaHoyTxt}`;
+  foot.font = { name:'Calibri', size:8.5, italic:true, color:{argb:C.textMuted} };
+  ws.getRow(r).height = 18;
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const slug = nombreCliente.replace(/[^A-Z0-9]+/gi, '_').toUpperCase();
+  const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
+  a.href = url;
+  a.download = `CRUCE_EQUITY_FX_${slug}_${fechaSlug}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function initDatesFX(){
@@ -3405,6 +3641,8 @@ function getClienteDB(key){
 // Folios crudos de Fidessa (simulando lo que vimos hoy en COR para ECOPETROL/COLFONDOS,
 // más unos folios de PROTECCION/CELSIA para validar el filtro)
 let foliosFidessa = []; // Se llena al "Conciliar y cargar folios" con datos reales de Fidessa Trades+Folios — antes tenía filas de ejemplo hardcodeadas.
+let _cruceFXPendiente = null; // cruce FX en curso: { cliente, bloques:[...], idx, registrados }
+let _cruceActivo = null;      // el lado del cruce que se está cerrando en la calculadora
 
 let selectedFolios = new Set();
 let sortCol = null;
@@ -3614,10 +3852,18 @@ function renderFidessaTradesPanel(){
   if(!_fidessaTradesRaw || Object.keys(_fidessaTradesRaw).length===0){ panel.style.display='none'; return; }
   panel.style.display = '';
   const filas = ordenarArrayGenerico(Object.entries(_fidessaTradesRaw).map(([folioOrden, t]) => ({folioOrden, ...t})), 'fidessaTrades').filter(f => coincideFiltroRVL({cliente: f.grupo, especie: nemoCanonico(f.security,'fidessa'), lado: f.lado}));
+  const nSel = _tradesConsolidar.size;
   panel.innerHTML = `
-    <div class="section-label" style="margin-top:16px;">Fidessa Trades (crudo, ${filas.length} órdenes)</div>
+    <div class="section-label" style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <span>Fidessa Trades (crudo, ${filas.length} órdenes)</span>
+      <span style="display:flex;align-items:center;gap:8px;">
+        <span class="field-note">${nSel>0 ? nSel+' seleccionada(s) para cruzar FX' : 'Selecciona trades para cruzar con FX'}</span>
+        <button class="btn small purple" onclick="continuarConsolidarFX()" ${nSel===0?'disabled':''}>Consolidar y cerrar FX →</button>
+      </span>
+    </div>
     <div class="blotter-wrap" style="overflow-x:auto;">
-      <table style="min-width:750px;"><thead><tr>
+      <table style="min-width:800px;"><thead><tr>
+        <th style="width:34px;"></th>
         ${thOrdenable('fidessaTrades','folioOrden','Parent Order ID')}
         ${thOrdenable('fidessaTrades','grupo','Client/Book')}
         ${thOrdenable('fidessaTrades','lado','Lado')}
@@ -3625,7 +3871,8 @@ function renderFidessaTradesPanel(){
         ${thOrdenable('fidessaTrades','qtyDone','Qty Done','num')}
         ${thOrdenable('fidessaTrades','avgPx','Avg Px','num')}
       </tr></thead>
-      <tbody>${filas.map(f=>`<tr>
+      <tbody>${filas.map(f=>`<tr class="${_tradesConsolidar.has(f.folioOrden)?'row-sel':''}">
+        <td style="text-align:center;"><input type="checkbox" ${_tradesConsolidar.has(f.folioOrden)?'checked':''} onclick="toggleTradeConsolidar('${(f.folioOrden||'').replace(/'/g,"\\'")}')"></td>
         <td class="mono-id">${f.folioOrden}</td>
         <td style="cursor:pointer;text-decoration:underline dotted;" onclick="filtrarPorClienteRVL('${(f.grupo||'').replace(/'/g,"\\'")}')" title="Filtrar por este cliente">${f.grupo||'—'}</td>
         <td>${f.lado}</td>
@@ -3637,6 +3884,213 @@ function renderFidessaTradesPanel(){
   `;
 }
 registrarTablaOrdenable('fidessaTrades', renderFidessaTradesPanel);
+
+// Selección de trades de Fidessa para el cruce con FX (clientes extranjeros
+// tipo MLI, que llegan directo a Fidessa y hay que cerrarles el dólar).
+const _tradesConsolidar = new Set(); // folioOrden seleccionados
+function toggleTradeConsolidar(folioOrden){
+  if(_tradesConsolidar.has(folioOrden)) _tradesConsolidar.delete(folioOrden);
+  else _tradesConsolidar.add(folioOrden);
+  renderFidessaTradesPanel();
+}
+
+// =====================================================================
+// CRUCE FX (MLI y extranjeros que llegan directo a Fidessa)
+// =====================================================================
+// Comisión ALL IN fija de MLI: 0.1% del bruto. No hay línea de TAX aparte
+// (el impuesto existe pero va incluido en el all-in).
+const MLI_COMISION_ALL_IN = 0.001; // 0.1%
+
+// Lógica de lados confirmada con Sergio y validada contra la muestra:
+//   compro acciones (equity BUY)  -> necesito COP -> VENDO USD
+//   vendo acciones  (equity SELL) -> recibo COP   -> COMPRO USD
+// El neto COP de cada lado YA incluye la comisión; al dividirlo por la tasa
+// FX sale el USD a cerrar. Se registra UNA operación FX por lado (regulación
+// local), nunca neteada en una sola.
+function consolidarTradesParaFX(){
+  const sel = [...(_tradesConsolidar)]
+    .map(oid => ({ oid, ..._fidessaTradesRaw[oid] }))
+    .filter(t => t && t.grupo);
+  // Agrupar por lado de la ACCIÓN (Compra/Venta).
+  const lados = { Compra: [], Venta: [] };
+  sel.forEach(t => { (lados[t.lado] || (lados[t.lado]=[])).push(t); });
+
+  const bloques = [];
+  ['Compra','Venta'].forEach(ladoAccion => {
+    const trades = lados[ladoAccion];
+    if(!trades || trades.length===0) return;
+    let bruto = 0;
+    const detalle = trades.map(t => {
+      const g = t.qtyDone * t.avgPx;
+      bruto += g;
+      return { security: nemoCanonico(t.security,'fidessa'), qty: t.qtyDone, precio: t.avgPx, gross: g };
+    });
+    const comision = bruto * MLI_COMISION_ALL_IN;
+    // Compra de acción: el cliente paga (neto = bruto + comisión).
+    // Venta de acción: el cliente recibe (neto = bruto − comisión).
+    const netoCOP = ladoAccion === 'Compra' ? bruto + comision : bruto - comision;
+    // Lado FX: compro acciones -> vendo USD; vendo acciones -> compro USD.
+    const ladoFX = ladoAccion === 'Compra' ? 'SELL' : 'BUY';
+    bloques.push({ ladoAccion, ladoFX, cliente: trades[0].grupo, detalle, bruto, comision, netoCOP });
+  });
+  return bloques;
+}
+
+// SD del cruce: T+2 hábiles contra acciones. Si en la ventana T→T+2 cae un
+// festivo US, se ajusta: comprando acciones (vendo USD) el SD es un día antes;
+// vendiendo acciones (compro USD) el SD es un día después. (Confirmado con
+// Sergio.) El festivo CO ya lo maneja sumarDiasHabiles.
+function settleDateCruce(tradeDate, ladoAccion){
+  const base = sumarDiasHabiles(tradeDate, 2); // T+2 contra acciones
+  // ¿Cayó un festivo US dentro de la ventana [tradeDate, base]?
+  let cayoFestivoUS = false;
+  const cur = new Date(tradeDate);
+  while(cur < base){
+    cur.setDate(cur.getDate()+1);
+    if(festivosUS.includes(cur.toISOString().slice(0,10))) cayoFestivoUS = true;
+  }
+  if(!cayoFestivoUS) return base;
+  const ajustada = new Date(base);
+  if(ladoAccion === 'Compra') ajustada.setDate(ajustada.getDate()-1); // vendo USD -> un día antes
+  else ajustada.setDate(ajustada.getDate()+1);                        // compro USD -> un día después
+  return ajustada;
+}
+
+// Cola de lados pendientes de registrar en la calculadora FX. Cuando Sergio
+// registra un lado, se pasa al siguiente; al terminar todos, se ofrece generar
+// el Excel de 2 bloques (EQUITY + FX).
+let _cruceFXPendienteUnused; // (declarado arriba con foliosFidessa)
+
+function continuarConsolidarFX(){
+  const bloques = consolidarTradesParaFX();
+  if(bloques.length === 0){ alert('Selecciona al menos un trade de Fidessa para cruzar con FX.'); return; }
+  // Todos deben ser del mismo cliente (un cruce es por cliente).
+  const clientes = [...new Set(bloques.map(b=>b.cliente))];
+  if(clientes.length > 1){
+    alert('Seleccionaste trades de varios clientes ('+clientes.join(', ')+'). El cruce FX es por cliente — selecciona los de uno solo.');
+    return;
+  }
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  _cruceFXPendiente = {
+    cliente: clientes[0],
+    bloques: bloques.map(b => ({ ...b, tradeDate: hoy, settleDate: settleDateCruce(hoy, b.ladoAccion) })),
+    idx: 0,
+    registrados: [],
+  };
+  mostrarResumenCruceFX();
+}
+
+// Resumen del cruce antes de mandar a la calculadora: muestra por lado el neto
+// COP (con comisión) y qué se va a cerrar en FX. Sergio confirma y sigue.
+function mostrarResumenCruceFX(){
+  const p = _cruceFXPendiente;
+  const nombreCliente = (getClienteDB(p.cliente) && getClienteDB(p.cliente).nombre) || p.cliente;
+  const filas = p.bloques.map((b,i)=>{
+    const accTxt = b.detalle.map(d=>`${d.security} ${b.ladoAccion==='Compra'?'C':'V'} ${fmtInt(d.qty)} @ ${fmtRate(d.precio)}`).join('<br>');
+    const ladoFXtxt = b.ladoFX === 'SELL' ? 'VENDE USD' : 'COMPRA USD';
+    return `<tr>
+      <td>${accTxt}</td>
+      <td style="text-align:center;font-weight:700;color:${b.ladoFX==='SELL'?'var(--sell)':'var(--buy)'};">${ladoFXtxt}</td>
+      <td class="num">${fmtCOP(b.bruto)}</td>
+      <td class="num">${fmtCOP(b.comision)}</td>
+      <td class="num" style="font-weight:700;">${fmtCOP(b.netoCOP)}</td>
+      <td style="text-align:center;">${fmtFechaCorta(b.settleDate.toISOString().slice(0,10))}</td>
+    </tr>`;
+  }).join('');
+  const modal = document.getElementById('modalCruceFX');
+  document.getElementById('cruceFXBody').innerHTML = `
+    <div class="field-note" style="margin-bottom:12px;">
+      Cliente <b>${nombreCliente}</b> · comisión <b>0.1% ALL IN</b>. El neto COP de cada lado ya la incluye.
+      Al continuar, cada lado se abre en la calculadora de FX para que metas la <b>tasa cliente</b> y la <b>tasa mercado</b>; la calculadora saca el USD (COP ÷ tasa) y la utilidad. Se registra <b>una operación FX por lado</b>.
+    </div>
+    <div class="blotter-wrap"><table>
+      <thead><tr><th>Acciones</th><th style="text-align:center;">FX</th><th class="num">Bruto COP</th><th class="num">Comisión</th><th class="num">Neto COP</th><th style="text-align:center;">SD</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table></div>
+    <div class="field-note" style="margin-top:10px;">${p.bloques.length} lado(s) a cerrar. Empezamos por el primero.</div>
+  `;
+  modal.style.display = 'flex';
+}
+
+// Manda el lado actual del cruce a la calculadora de FX, pre-cargando cliente,
+// lado, fechas y el COP objetivo. Sergio mete las tasas y registra.
+function irACalculadoraCruce(){
+  document.getElementById('modalCruceFX').style.display = 'none';
+  const p = _cruceFXPendiente;
+  const b = p.bloques[p.idx];
+
+  switchModule('FX');
+
+  // Cliente: si el grupo existe como opción de la calculadora, se selecciona;
+  // MLI existe. Se usa su modelo (UNICA — extranjero no-Andes).
+  const selCliente = document.getElementById('cliente');
+  const opt = [...selCliente.options].find(o => o.value === p.cliente);
+  if(opt){ selCliente.value = p.cliente; }
+  cambiarCliente();
+
+  document.getElementById('side').value = b.ladoFX;
+  document.getElementById('tradeDate').value = b.tradeDate.toISOString().slice(0,10);
+  document.getElementById('settleDate').value = b.settleDate.toISOString().slice(0,10);
+
+  // Marcar la calculadora en modo cruce: mostrar el campo COP objetivo y dejar
+  // el Monto USD como derivado (se llena solo al meter la tasa final cliente).
+  _cruceActivo = { ...b, idxLado: p.idx, total: p.bloques.length };
+  document.getElementById('campoCruceCOP').style.display = '';
+  document.getElementById('cruceCOP').value = b.netoCOP.toFixed(2);
+  document.getElementById('amount').readOnly = true;
+  document.getElementById('amount').style.opacity = '0.7';
+
+  // Banner en el header de la calculadora indicando el cruce.
+  mostrarBannerCruce(b, p.idx, p.bloques.length);
+  recalcularCruceUSD();
+  // Llevar el foco a la tasa final cliente (rateUnica) para que Sergio escriba.
+  const rf = document.getElementById('rateUnica');
+  if(rf) setTimeout(()=>rf.focus(), 100);
+}
+
+// _cruceActivo se declara arriba junto a foliosFidessa (para evitar TDZ en los
+// handlers inline de la calculadora).
+
+// COP objetivo ÷ tasa final cliente = USD. Al escribir la tasa, el Monto USD se
+// llena solo y dispara calcular() para márgenes/utilidad.
+function recalcularCruceUSD(){
+  if(!_cruceActivo){ return; }
+  const cop = parseLocaleNumber(document.getElementById('cruceCOP').value);
+  const tasaFinal = parseLocaleNumber(document.getElementById('rateUnica').value);
+  const amountEl = document.getElementById('amount');
+  if(cop && tasaFinal){
+    const usd = cop / tasaFinal;
+    amountEl.value = usd.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  } else {
+    amountEl.value = '';
+  }
+  calcular();
+}
+
+function mostrarBannerCruce(b, idx, total){
+  let banner = document.getElementById('cruceBanner');
+  if(!banner){
+    banner = document.createElement('div');
+    banner.id = 'cruceBanner';
+    banner.style.cssText = 'background:var(--accent-dim,#2a2140);border:1px solid var(--accent,#7c5cff);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;';
+    const cont = document.getElementById('cliente').closest('.calc-card, .card, div');
+    const form = document.getElementById('cliente').closest('div');
+    form.parentNode.insertBefore(banner, form);
+  }
+  const ladoFXtxt = b.ladoFX === 'SELL' ? 'VENDE USD' : 'COMPRA USD';
+  banner.innerHTML = `🔗 <b>Cruce FX ${idx+1} de ${total}</b> — ${b.ladoAccion==='Compra'?'compraste':'vendiste'} acciones → <b>${ladoFXtxt}</b> por <b>${fmtCOP(b.netoCOP)} COP</b>. Mete tasa cliente y tasa mercado; el USD se calcula solo. <button class="btn small ghost" onclick="cancelarCruce()" style="margin-left:8px;">Cancelar cruce</button>`;
+  banner.style.display = '';
+}
+
+function cancelarCruce(){
+  _cruceActivo = null;
+  _cruceFXPendiente = null;
+  const banner = document.getElementById('cruceBanner');
+  if(banner) banner.style.display = 'none';
+  document.getElementById('campoCruceCOP').style.display = 'none';
+  const amountEl = document.getElementById('amount');
+  amountEl.readOnly = false; amountEl.style.opacity = '1';
+}
 
 // Panel 3 de 3: Fidessa Folios tal como viene del archivo, sin procesar.
 const _foliosMarca = {}; // { folioId: 'bloque'|'pantalla' } — default 'pantalla' si no se ha marcado
