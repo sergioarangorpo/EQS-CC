@@ -4152,10 +4152,12 @@ async function guardarEnLotesSupabase(tabla, filas, tamanoLote=200){
 }
 
 async function guardarFidessaTradesSupabase(mapa){
+  // OJO: la tabla fidessa_trades de Supabase NO tiene columna `notes`, así que
+  // no se persiste. El Notes del archivo se usa solo en runtime; el ORD_NUM del
+  // reporte PROTECCIÓN sale de EMSX (Instructions), no de este campo guardado.
   const filas = Object.entries(mapa).map(([folioOrden, t]) => ({
     folio_orden: String(folioOrden), grupo: t.grupo, lado: t.lado,
     security: t.security, qty_done: t.qtyDone, avg_px: t.avgPx,
-    notes: t.notes || '',
   }));
   if(filas.length===0) return;
   await guardarEnLotesSupabase('fidessa_trades', filas);
@@ -5902,7 +5904,10 @@ async function cargarEmsxDesdeSupabase(){
       const existente = emsxData.find(e=>e.id===row.id);
       if(existente){
         // Refrescar solo los campos "vivos" de mercado; conservar lo que el trader ya asignó.
-        existente.qty = Number(row.amount)||0;
+        // Qty = lo EJECUTADO (EMSX_FILLED), no el tamaño de la orden (EMSX_AMOUNT).
+        // Una orden puede estar parcialmente ejecutada; se reporta lo hecho.
+        existente.qty = Number(row.filled)||0;
+        existente.qtyOrden = Number(row.amount)||0;
         existente.avgPr = Number(row.avg_price)||0;
         existente.status = row.status || existente.status;
         existente.broker = row.broker || existente.broker;
@@ -5920,7 +5925,10 @@ async function cargarEmsxDesdeSupabase(){
           tipo: clasif.tipo,
           revisarExchange: clasif.revisar, // exchange raro, nunca deberíamos operar esto — avisar
           lado: (row.side||'').toUpperCase().startsWith('B') ? 'Buy' : 'Sell',
-          qty: Number(row.amount)||0,
+          // Qty = EJECUTADO (EMSX_FILLED). El tamaño de la orden (EMSX_AMOUNT)
+          // se guarda aparte por si se necesita mostrar cuánto falta.
+          qty: Number(row.filled)||0,
+          qtyOrden: Number(row.amount)||0,
           avgPr: Number(row.avg_price)||0,
           broker: row.broker || '',
           account: row.account || '',
