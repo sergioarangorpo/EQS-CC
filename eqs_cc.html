@@ -1365,6 +1365,18 @@
   </div>
 </div>
 
+<!-- Vincular ejecución de afuera (CCSI) con la línea del cliente en RVI -->
+<div class="edit-overlay" id="modalVinculoRVI" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(760px,94vw);margin-top:5vh;max-height:88vh;overflow:auto;">
+    <h3 style="font-size:15px;">Vincular nuestra ejecución (afuera)</h3>
+    <div id="vinculoRVIBody"></div>
+    <div class="edit-actions" style="margin-top:16px;">
+      <button class="btn ghost" onclick="document.getElementById('modalVinculoRVI').style.display='none';">Cancelar</button>
+      <button class="btn primary" id="btnConfirmarVinculo" onclick="confirmarVinculoRVI()">Vincular</button>
+    </div>
+  </div>
+</div>
+
 <!-- Resumen del cruce FX (MLI y extranjeros directo a Fidessa) -->
 <div class="edit-overlay" id="modalCruceFX" style="align-items:flex-start;">
   <div class="edit-modal" style="width:min(820px,94vw);margin-top:5vh;max-height:88vh;overflow:auto;">
@@ -1544,6 +1556,29 @@
         </div>
       </div>
 
+      <!-- NUESTRA EJECUCIÓN (afuera, broker CCSI) — para el margen -->
+      <div class="panel">
+        <div class="section-label" style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+          <span>Nuestra ejecución (afuera)</span>
+          <button class="btn small purple" id="btn-vincular-rvi" onclick="abrirVinculoRVI()">🔗 Vincular ejecución</button>
+        </div>
+        <div class="result-row" style="margin-bottom:6px;">
+          <span class="label">Precio nuestro (ponderado)</span>
+          <span class="value" id="rc-precio-nuestro">—</span>
+        </div>
+        <div class="result-row" style="margin-bottom:10px;">
+          <span class="label">Cantidad vinculada</span>
+          <span class="value" id="rc-qty-vinculada">—</span>
+        </div>
+        <div class="field-row">
+          <div class="field" style="flex:1 1 100%;">
+            <label>Comisión CCSI (¢/acción o % según tipo) — la que nos cobran</label>
+            <input type="text" inputmode="decimal" id="tc-com-ccsi" oninput="calcularRVI()" onblur="fmtInput(this,4);calcularRVI()" placeholder="0.003">
+          </div>
+        </div>
+        <div class="field-note">Al vincular, el precio nuestro sale de la(s) línea(s) de EMSX con Originating Firm CREDICORP CAPITAL COLOMBIA SA (broker CCSI). La comisión que nos cobran es editable — por defecto la de la tabla.</div>
+      </div>
+
       <!-- DISTRIBUCIÓN POR ACCOUNT -->
       <div class="panel">
         <div class="section-label" style="margin-bottom:8px;">
@@ -1607,7 +1642,11 @@
 
         <div class="result-row"><span class="label">Tarifa cliente (tabla)</span><span class="value" id="rc-tarifa-cliente">—</span></div>
         <div class="result-row"><span class="label">Tarifa CCSI</span><span class="value" id="rc-tarifa-ccsi">—</span></div>
-        <div class="result-row total"><span class="label">Utilidad bruta (Cost − CCSI)</span><span class="value" id="rc-utilidad">—</span></div>
+        <div class="divider"></div>
+        <div class="result-row"><span class="label">Margen de precio</span><span class="value" id="rc-margen">—</span></div>
+        <div class="result-row"><span class="label">+ Comisión cliente</span><span class="value" id="rc-mas-cost">—</span></div>
+        <div class="result-row"><span class="label">− Comisión CCSI</span><span class="value" id="rc-menos-ccsi">—</span></div>
+        <div class="result-row total"><span class="label">Utilidad bruta</span><span class="value" id="rc-utilidad">—</span></div>
       </div>
 
       <button class="btn primary" style="width:100%;" id="btn-generar" onclick="generarTC()" disabled>Generar Trade Confirmation</button>
@@ -5959,6 +5998,68 @@ function precioNuestroVinculo(clienteLineaId){
   return qtyTot > 0 ? { precio: valorTot/qtyTot, qty: qtyTot } : null;
 }
 
+// Abre el modal para elegir cuáles líneas de afuera (CCSI) se vinculan a la
+// línea de cliente activa. Valida que la suma sea EXACTA a la del cliente.
+function abrirVinculoRVI(){
+  const cliente = emsxData.find(r=>r.id===lineaActiva);
+  if(!cliente){ alert('Selecciona primero la línea del cliente en el blotter.'); return; }
+  if(!cliente.cliente){ alert('La línea activa no es de un cliente (es una ejecución de afuera). Selecciona la línea del cliente.'); return; }
+  const cands = candidatasVinculoRVI(cliente);
+  if(cands.length === 0){
+    alert('No hay líneas de ejecución de afuera (CREDICORP/CCSI) con la misma especie y lado para vincular. Si no operaste afuera, no hubo margen.');
+    return;
+  }
+  const yaVinc = new Set(_rviVinculos[cliente.id] || []);
+  const filas = cands.map(l=>`
+    <tr>
+      <td style="text-align:center;"><input type="checkbox" class="vinc-chk" value="${l.id}" ${yaVinc.has(l.id)?'checked':''} onchange="actualizarSumaVinculo(${cliente.qty})"></td>
+      <td>${l.hora}</td>
+      <td>${l.firm}</td>
+      <td class="mono-id">${l.especie}</td>
+      <td>${l.lado}</td>
+      <td class="num">${fmtInt(l.qty)}</td>
+      <td class="num">${fmtRateRVI(l.avgPr,4)}</td>
+      <td class="mono-id">${l.broker||'—'}</td>
+    </tr>`).join('');
+  document.getElementById('vinculoRVIBody').innerHTML = `
+    <div class="field-note" style="margin-bottom:10px;">
+      Cliente <b>${cliente.firm}</b> · ${cliente.especie} · ${cliente.lado} · <b>${fmtInt(cliente.qty)}</b> acciones.
+      Marca la(s) línea(s) de nuestra ejecución de afuera. La suma <b>debe ser igual</b> a la cantidad del cliente.
+    </div>
+    <div class="blotter-wrap"><table>
+      <thead><tr><th></th><th>Hora</th><th>Originating Firm</th><th>Especie</th><th>Lado</th><th class="num">Qty</th><th class="num">Precio</th><th>Broker</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table></div>
+    <div class="result-row total" style="margin-top:10px;"><span class="label">Suma vinculada / requerida</span><span class="value" id="vinc-suma">0 / ${fmtInt(cliente.qty)}</span></div>
+  `;
+  document.getElementById('modalVinculoRVI').style.display = 'flex';
+  actualizarSumaVinculo(cliente.qty);
+}
+
+// Recalcula la suma marcada y habilita/deshabilita el botón según cuadre exacto.
+function actualizarSumaVinculo(qtyCliente){
+  const marcadas = [...document.querySelectorAll('.vinc-chk:checked')].map(c=>Number(c.value));
+  let suma = 0;
+  marcadas.forEach(id=>{ const l = emsxData.find(x=>x.id===id); if(l) suma += l.qty; });
+  const el = document.getElementById('vinc-suma');
+  const cuadra = suma === qtyCliente;
+  el.textContent = `${fmtInt(suma)} / ${fmtInt(qtyCliente)}`;
+  el.style.color = cuadra ? 'var(--buy)' : 'var(--sell)';
+  document.getElementById('btnConfirmarVinculo').disabled = !cuadra || marcadas.length===0;
+}
+
+// Guarda el vínculo y refresca el cálculo con el precio nuestro.
+function confirmarVinculoRVI(){
+  const cliente = emsxData.find(r=>r.id===lineaActiva);
+  if(!cliente) return;
+  const marcadas = [...document.querySelectorAll('.vinc-chk:checked')].map(c=>Number(c.value));
+  _rviVinculos[cliente.id] = marcadas;
+  document.getElementById('modalVinculoRVI').style.display = 'none';
+  renderEmsx();
+  seleccionarLinea(cliente.id); // re-selecciona para refrescar panel con el precio nuestro
+}
+
+
 
 // CCSI: comisión que nos cobran a nosotros
 const CCSI = {
@@ -6173,6 +6274,28 @@ function seleccionarLinea(id){
 
   document.getElementById('res-qty-total').textContent = fmtInt(linea.qty);
   document.getElementById('error-dist').textContent = '';
+
+  // Vínculo con nuestra ejecución de afuera (precio nuestro para el margen).
+  const vinc = precioNuestroVinculo(linea.id);
+  const elPrecioN = document.getElementById('rc-precio-nuestro');
+  const elQtyV = document.getElementById('rc-qty-vinculada');
+  if(vinc){
+    elPrecioN.textContent = fmtRateRVI(vinc.precio,4);
+    elQtyV.textContent = fmtInt(vinc.qty);
+  } else {
+    elPrecioN.textContent = '—';
+    elQtyV.textContent = '—';
+  }
+  // Comisión CCSI por defecto de la tabla si aún no la escribió el usuario.
+  const comCcsiEl = document.getElementById('tc-com-ccsi');
+  if(comCcsiEl && (!comCcsiEl.value || comCcsiEl.value==='—')){
+    const db = clientesRVI[linea.cliente];
+    const tipo = linea.tipo;
+    if(tipo==='ETF') comCcsiEl.value = String(CCSI.comETF);
+    else if(tipo==='ADR') comCcsiEl.value = String(CCSI.comADR);
+    else comCcsiEl.value = String(CCSI.comUCIT);
+  }
+
   onCambioCliente();
   renderDistribuciones();
   calcularRVI();
@@ -6271,23 +6394,41 @@ function renderDistribuciones(){
 // =====================================================================
 // CÁLCULO DE COMISIONES
 // =====================================================================
-function calcularComisiones(clienteKey, tipo, qty, price){
+function calcularComisiones(clienteKey, tipo, qty, price, opts){
   const db = clientesRVI[clienteKey];
   if(!db) return null;
   const gross = qty * price;
+  opts = opts || {};
 
-  let costCliente, costCCSI;
+  let costCliente, costCCSI, tarifaCCSIusada;
+  // Comisión CCSI: si viene una editada (¢/acción o %, según tipo), se usa esa;
+  // si no, la de la tabla. Es la que NOS cobran por operar afuera.
+  const comCcsiEdit = (opts.comCCSI!=null && isFinite(opts.comCCSI)) ? opts.comCCSI : null;
   if(tipo==='ETF'){
     costCliente = Math.max(qty * db.comETF, 0);
-    costCCSI    = Math.max(qty * CCSI.comETF, CCSI.minUSD);
+    tarifaCCSIusada = comCcsiEdit!=null ? comCcsiEdit : CCSI.comETF;
+    costCCSI    = Math.max(qty * tarifaCCSIusada, CCSI.minUSD);
   } else if(tipo==='ADR'){
     costCliente = Math.max(qty * db.comADR, 0);
-    costCCSI    = Math.max(qty * CCSI.comADR, CCSI.minUSD);
+    tarifaCCSIusada = comCcsiEdit!=null ? comCcsiEdit : CCSI.comADR;
+    costCCSI    = Math.max(qty * tarifaCCSIusada, CCSI.minUSD);
   } else { // UCIT
     costCliente = Math.max(gross * db.comUCIT, 0);
-    costCCSI    = Math.max(gross * CCSI.comUCIT, CCSI.minUSD);
+    tarifaCCSIusada = comCcsiEdit!=null ? comCcsiEdit : CCSI.comUCIT;
+    costCCSI    = Math.max(gross * tarifaCCSIusada, CCSI.minUSD);
   }
-  return {gross, costCliente, costCCSI, utilidad: costCliente - costCCSI};
+  // Margen de precio: (precio cliente − precio nuestro) × qty, con el signo
+  // según el lado. En compra ganamos si el cliente paga MÁS que lo que
+  // ejecutamos afuera; en venta, al revés.
+  let margen = 0;
+  if(opts.precioNuestro!=null && isFinite(opts.precioNuestro)){
+    margen = (opts.lado==='Sell')
+      ? (opts.precioNuestro - price) * qty
+      : (price - opts.precioNuestro) * qty;
+  }
+  // Utilidad bruta = margen de precio + comisión cliente − comisión CCSI.
+  const utilidad = margen + costCliente - costCCSI;
+  return {gross, costCliente, costCCSI, tarifaCCSIusada, margen, utilidad};
 }
 
 function calcularSecFee(lado, gross){
@@ -6308,7 +6449,11 @@ function calcularRVI(){
     return;
   }
 
-  const c = calcularComisiones(clienteKey, tipo, qty, price);
+  const c = calcularComisiones(clienteKey, tipo, qty, price, {
+    comCCSI: parseNum(document.getElementById('tc-com-ccsi').value),
+    precioNuestro: (precioNuestroVinculo(lineaActiva)||{}).precio,
+    lado,
+  });
   if(!c) return;
   const secFee = calcularSecFee(lado, c.gross);
   const netCliente = lado==='Sell' ? c.gross - c.costCliente - secFee : c.gross + c.costCliente;
@@ -6317,12 +6462,19 @@ function calcularRVI(){
   document.getElementById('rc-cost').textContent = fmtMoneyRVI(c.costCliente,2);
   document.getElementById('rc-ccsi').textContent = fmtMoneyRVI(c.costCCSI,2);
   document.getElementById('rc-net').textContent = fmtMoneyRVI(netCliente,2);
+  // Desglose de utilidad.
+  const elMargen = document.getElementById('rc-margen');
+  const elMas = document.getElementById('rc-mas-cost');
+  const elMenos = document.getElementById('rc-menos-ccsi');
+  if(elMargen) elMargen.textContent = fmtMoneyRVI(c.margen,2);
+  if(elMas) elMas.textContent = fmtMoneyRVI(c.costCliente,2);
+  if(elMenos) elMenos.textContent = fmtMoneyRVI(c.costCCSI,2);
   document.getElementById('rc-utilidad').textContent = fmtMoneyRVI(c.utilidad,2);
   document.getElementById('tc-secfee').value = secFee>0 ? fmtRateRVI(secFee,4) : '0.0000';
 
   const db = clientesRVI[clienteKey];
   const tarifaLabel = tipo==='UCIT' ? (db.comUCIT*100).toFixed(2)+'%' : '$'+db.comETF+'/acc';
-  const ccsiLabel   = tipo==='UCIT' ? (CCSI.comUCIT*100).toFixed(2)+'% (mín $'+CCSI.minUSD+')' : '$'+CCSI.comETF+'/acc (mín $'+CCSI.minUSD+')';
+  const ccsiLabel   = tipo==='UCIT' ? (c.tarifaCCSIusada*100).toFixed(2)+'%' : '$'+c.tarifaCCSIusada+'/acc';
   document.getElementById('rc-tarifa-cliente').textContent = tarifaLabel;
   document.getElementById('rc-tarifa-ccsi').textContent   = ccsiLabel;
 
@@ -6345,7 +6497,12 @@ function generarTC(){
   const settleDate = document.getElementById('tc-settle-date').value;
   const qty        = getQtyTotal();
   const db         = clientesRVI[clienteKey];
-  const c          = calcularComisiones(clienteKey, tipo, qty, price);
+  const vincPrecio = (precioNuestroVinculo(lineaActiva)||{}).precio;
+  const c          = calcularComisiones(clienteKey, tipo, qty, price, {
+    comCCSI: parseNum(document.getElementById('tc-com-ccsi').value),
+    precioNuestro: vincPrecio,
+    lado,
+  });
   const secFee     = calcularSecFee(lado, c.gross);
   const netCliente = lado==='Sell' ? c.gross - c.costCliente - secFee : c.gross + c.costCliente;
   const hora       = new Date().toLocaleTimeString('es-CO');
