@@ -1893,6 +1893,15 @@ function fmtFechaCorta(isoDate){
   const [y,m,d] = isoDate.split('-');
   return `${d}/${m}/${y}`;
 }
+// Redondea a N decimales REALES (no solo visual). Excel guarda en la celda el
+// valor completo aunque el numFmt muestre 2 decimales; al agrupar/procesar los
+// correos eso deja colas de decimales. Se redondea el valor antes de escribirlo.
+function redondear(x, dec=2){
+  const n = Number(x);
+  if(!isFinite(n)) return 0;
+  const f = Math.pow(10, dec);
+  return Math.round((n + Number.EPSILON) * f) / f;
+}
 function parseLocaleNumber(str){
   if(str===null || str===undefined) return 0;
   const cleaned = String(str).replace(/[^0-9.\-]/g,'');
@@ -2473,11 +2482,12 @@ function registrar(){
       amountEl.readOnly = false; amountEl.style.opacity = '1';
       const reg = p.registrados.slice();
       const cli = p.cliente;
+      const trader = p.trader || '';
       _tradesConsolidar.clear();
       renderFidessaTradesPanel();
       _cruceFXPendiente = null;
       if(confirm(`Cruce FX completo: ${reg.length} lado(s) registrado(s). ¿Generar el Excel con los 2 bloques (EQUITY + FX)?`)){
-        generarExcelCruce(cli, reg);
+        generarExcelCruce(cli, reg, trader);
       }
     }
   }
@@ -3107,15 +3117,21 @@ async function generarReporteExcel(){
   const ventaFilas = filas.filter(f=>f.side==='SELL');
   const filaTotalesInicio = r;
   [['Compra', compraFilas], ['Venta', ventaFilas]].forEach(([tipo, fs])=>{
-    const cantidad = fs.reduce((s,f)=>s+f.amount,0);
-    const valor = fs.reduce((s,f)=>s+f.amount*f.rate,0);
-    const tasaProm = cantidad>0 ? valor/cantidad : 0;
+    // Se suman los valores YA redondeados por fila (igual que en el detalle),
+    // para que el bloque de totales cuadre exactamente con la suma de las filas
+    // y ninguna celda arrastre colas de decimales.
+    const cantidad = fs.reduce((s,f)=>s+redondear(f.amount,2),0);
+    const valor = fs.reduce((s,f)=>{
+      const montoR = redondear(f.amount,2), tasaR = redondear(f.rate,2);
+      return s + redondear(montoR*tasaR,2);
+    },0);
+    const tasaProm = cantidad>0 ? redondear(valor/cantidad, 2) : 0;
     ws.getCell(`D${r}`).value = fondoNombre;
     ws.getCell(`E${r}`).value = tipo;
     ws.getCell(`F${r}`).value = 'USDCOP';
-    ws.getCell(`G${r}`).value = cantidad;
+    ws.getCell(`G${r}`).value = redondear(cantidad, 2);
     ws.getCell(`H${r}`).value = tasaProm;
-    ws.getCell(`I${r}`).value = valor;
+    ws.getCell(`I${r}`).value = redondear(valor, 2);
     r++;
   });
   const filaTotalesFin = r-1;
@@ -3151,14 +3167,20 @@ async function generarReporteExcel(){
 
   const filaDetalleInicio = r;
   filas.forEach(f=>{
+    // Valores REALES a 2 decimales. El valor COP se calcula con el monto y la
+    // tasa ya redondeados, para que la celda cuadre exactamente (monto × tasa)
+    // y no arrastre colas de decimales al agrupar los correos.
+    const montoR = redondear(f.amount, 2);
+    const tasaR = redondear(f.rate, 2);
+    const valorR = redondear(montoR * tasaR, 2);
     ws.getCell(`B${r}`).value = f.tradeDate;
     ws.getCell(`C${r}`).value = f.settleDate;
     ws.getCell(`D${r}`).value = fondoNombre;
     ws.getCell(`E${r}`).value = f.side==='BUY' ? 'Compra' : 'Venta';
     ws.getCell(`F${r}`).value = 'USDCOP';
-    ws.getCell(`G${r}`).value = f.amount;
-    ws.getCell(`H${r}`).value = f.rate;
-    ws.getCell(`I${r}`).value = f.amount*f.rate;
+    ws.getCell(`G${r}`).value = montoR;
+    ws.getCell(`H${r}`).value = tasaR;
+    ws.getCell(`I${r}`).value = valorR;
     r++;
   });
   const filaDetalleFin = r-1;
@@ -3210,7 +3232,7 @@ async function generarReporteExcel(){
 // cerraron por lado). Reutiliza el formato de marca genérico (header navy con
 // logo, barra naranja, secciones) — NO el formato propio de MLI. Sin el bloque
 // de "totales FX" de arriba, por pedido de Sergio.
-async function generarExcelCruce(clienteKey, registrados){
+async function generarExcelCruce(clienteKey, registrados, trader){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
   if(!registrados || registrados.length===0){ alert('No hay lados registrados para el reporte del cruce.'); return; }
 
@@ -3370,10 +3392,18 @@ async function generarExcelCruce(clienteKey, registrados){
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const slug = nombreCliente.replace(/[^A-Z0-9]+/gi, '_').toUpperCase();
   const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
   a.href = url;
-  a.download = `CRUCE_EQUITY_FX_${slug}_${fechaSlug}.xlsx`;
+  // Nombre estándar que espera la mesa: Trade_Confirmation_<CLIENTE>_<TRADER>_<yyyymmdd>.
+  // El cliente se abrevia (MLI, CITI_NY); el trader va en MAYÚSCULAS con guion
+  // bajo (BEATRIZ_RIPAMONTI), como los archivos que llegan del cliente.
+  const clienteSlug = (String(clienteKey||'').toUpperCase().includes('CITI')) ? 'CITI_NY'
+                    : (String(clienteKey||'').toUpperCase().includes('MLI') || String(clienteKey||'').toUpperCase().includes('MERRILL')) ? 'MLI'
+                    : nombreCliente.replace(/[^A-Z0-9]+/gi, '_').toUpperCase();
+  const traderSlug = (trader||'').trim().replace(/\s+/g,'_').toUpperCase();
+  a.download = traderSlug
+    ? `Trade_Confirmation_${clienteSlug}_${traderSlug}_${fechaSlug}.xlsx`
+    : `Trade_Confirmation_${clienteSlug}_${fechaSlug}.xlsx`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -3894,6 +3924,23 @@ function toggleTradeConsolidar(folioOrden){
 // (el impuesto existe pero va incluido en el all-in).
 const MLI_COMISION_ALL_IN = 0.001; // 0.1%
 
+// Traders de los clientes extranjeros que operan cruce FX. Se usan para (a) el
+// selector de trader al consolidar, y (b) nombrar el archivo:
+// Trade_Confirmation_MLI_<TRADER>_<yyyymmdd>.xlsx. De la base (hojas MLI y
+// CITI_NY de Bases_de_datos.xlsx).
+const TRADERS_CRUCE = {
+  MLI: ['BEATRIZ RIPAMONTI','CAIO BARROS','CAMILLA PEREIRA','ERIC NASCIMIENTO','LUANA CAMPOS','LUCAS APOLLARO','MARIO MURO','RENAN ROCHA','ROBSOM LIMA'],
+  CITI_NY: ['ANDRE CARLETTI','DOUGLAS DALBERTO','HERBERT LIU','JAMES CURRIE','JENNIFER LI','KAMILA ALMEIDA','RUSELL MOLINA','SINCLAIR SIMELANE','VICTORIA MCGUIRE'],
+};
+// Devuelve la lista de traders del cliente del cruce (por si el grupo trae otro
+// nombre, se normaliza a MLI/CITI_NY). Si no hay lista, retorna vacío.
+function tradersDeCliente(grupo){
+  const g = String(grupo||'').toUpperCase();
+  if(g.includes('MLI') || g.includes('MERRILL')) return TRADERS_CRUCE.MLI;
+  if(g.includes('CITI')) return TRADERS_CRUCE.CITI_NY;
+  return [];
+}
+
 // Lógica de lados confirmada con Sergio y validada contra la muestra:
 //   compro acciones (equity BUY)  -> necesito COP -> VENDO USD
 //   vendo acciones  (equity SELL) -> recibo COP   -> COMPRO USD
@@ -3991,11 +4038,22 @@ function mostrarResumenCruceFX(){
     </tr>`;
   }).join('');
   const modal = document.getElementById('modalCruceFX');
+  const traders = tradersDeCliente(p.cliente);
+  const opcionesTrader = traders.length
+    ? `<option value="">— selecciona el trader —</option>` + traders.map(t=>`<option value="${t}"${p.trader===t?' selected':''}>${t}</option>`).join('')
+    : `<option value="">(sin lista de traders para este cliente)</option>`;
+  const selectorTrader = `
+    <div class="field" style="margin:12px 0;max-width:340px;">
+      <label>Trader de ${nombreCliente}</label>
+      <select id="cruceTraderSel" onchange="_cruceFXPendiente.trader=this.value;">${opcionesTrader}</select>
+      <div class="field-note">Nombra el archivo (Trade_Confirmation_MLI_&lt;TRADER&gt;_fecha) y va en la confirmación.</div>
+    </div>`;
   document.getElementById('cruceFXBody').innerHTML = `
     <div class="field-note" style="margin-bottom:12px;">
       Cliente <b>${nombreCliente}</b> · comisión <b>0.1% ALL IN</b>. El neto COP de cada lado ya la incluye.
       Al continuar, cada lado se abre en la calculadora de FX para que metas la <b>tasa cliente</b> y la <b>tasa mercado</b>; la calculadora saca el USD (COP ÷ tasa) y la utilidad. Se registra <b>una operación FX por lado</b>.
     </div>
+    ${selectorTrader}
     <div class="blotter-wrap"><table>
       <thead><tr><th>Acciones</th><th style="text-align:center;">FX</th><th class="num">Bruto COP</th><th class="num">Comisión</th><th class="num">Neto COP</th><th style="text-align:center;">SD</th></tr></thead>
       <tbody>${filas}</tbody>
@@ -4008,8 +4066,14 @@ function mostrarResumenCruceFX(){
 // Manda el lado actual del cruce a la calculadora de FX, pre-cargando cliente,
 // lado, fechas y el COP objetivo. Sergio mete las tasas y registra.
 function irACalculadoraCruce(){
-  document.getElementById('modalCruceFX').style.display = 'none';
   const p = _cruceFXPendiente;
+  // Exigir trader si el cliente tiene lista (MLI, Citi). Nombra el archivo.
+  const traders = tradersDeCliente(p.cliente);
+  if(traders.length > 0 && !p.trader){
+    alert('Selecciona el trader de '+((getClienteDB(p.cliente)&&getClienteDB(p.cliente).nombre)||p.cliente)+' antes de continuar.');
+    return;
+  }
+  document.getElementById('modalCruceFX').style.display = 'none';
   const b = p.bloques[p.idx];
 
   switchModule('FX');
