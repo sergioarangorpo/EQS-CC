@@ -4554,9 +4554,55 @@ function resolverComposites(tradesRaw, composites){
       const recon = totalesPorPosicion(grupos);
       const total = grupos.reduce((s,g)=>s+g.padre.cantidad, 0);
       const libres = cands.filter(c=>!usados.has(c.oid));
-      const mejor = buscarSubconjunto(libres, total, recon, recon.length, grupos.length);
-      if(mejor) aplicar(pendientes, grupos, mejor, 'familia');
-      else reportes.push({nemo, lado: ladoLargo, poids: pendientes, modo: 'familia', ok: false,
+      let mejor = buscarSubconjunto(libres, total, recon, recon.length, grupos.length);
+
+      // PASO C — cruces grandes de VARIAS TANDAS (ej. ECOPETROL del 21-jul:
+      // Sergio agrupó 2 rondas de órdenes y las cruzó como un solo composite).
+      // El reparto por posición de Fidessa NO reconstruye las órdenes originales
+      // porque mezcla tandas con proporciones distintas, así que el subset-sum
+      // se rinde. PERO para el reporte no importa a qué orden individual va cada
+      // hija: en el archivo real de PROTECCIÓN, TODO el composite lleva un ÚNICO
+      // ORD_NUM (el Instructions de EMSX del cruce, ej. 12050242). Si las
+      // candidatas de este composite comparten un mismo Instructions (Notes
+      // numérico) — más las huérfanas del mismo grupo, que son la tanda VWAP sin
+      // numerar — se asigna ese ORD_NUM a todas las hijas y se cierra el
+      // composite sin emparejar orden por orden.
+      if(!mejor){
+        const conNotes = libres.filter(c=>/^\d+$/.test(String(c.notes||'').trim()));
+        const instrs = new Set(conNotes.map(c=>String(c.notes).trim()));
+        if(instrs.size === 1){
+          const instrUnico = [...instrs][0];
+          const grpTop = conNotes[0].grupo;
+          // Las órdenes del cruce: las numeradas + las huérfanas del mismo grupo.
+          const delCruce = libres.filter(c=>{
+            const n = String(c.notes||'').trim();
+            return n === instrUnico || (!/^\d+$/.test(n) && c.grupo === grpTop);
+          });
+          const sumaCruce = delCruce.reduce((s,c)=>s+c.qtyDone, 0);
+          // Deben sumar el total del composite (± tolerancia de redondeo).
+          if(Math.abs(sumaCruce - total) <= Math.max(2*grupos.length, 3)){
+            // Asignar a TODAS las hijas el ORD_NUM único del cruce. No se empareja
+            // orden por orden (imposible con 2 tandas); se marca una "orden
+            // sintética" que solo porta el grupo, el lado, la especie y el ORD_NUM.
+            const ordenCruce = { oid: `CRUCE_${instrUnico}`, grupo: grpTop, lado: ladoLargo,
+              security: delCruce[0].security, ordNum: instrUnico };
+            grupos.forEach(({hijas})=>{
+              hijas.forEach(h=>{
+                asignacion.set(h.ord, { oid: ordenCruce.oid, grupo: grpTop, lado: ladoLargo,
+                  security: ordenCruce.security, ordNum: instrUnico });
+              });
+            });
+            delCruce.forEach(o=>usados.add(o.oid));
+            reportes.push({nemo, lado: ladoLargo, poids: pendientes, modo: 'cruce-instructions', ok: true,
+              total, ntcn: grupos.length, err: 0, corregidos: 0,
+              ordenes: delCruce.map(o=>({oid:o.oid, grupo:o.grupo, qtyDone:o.qtyDone}))});
+            mejor = true; // marca que ya se resolvió, salta el push de "sin resolver"
+          }
+        }
+      }
+
+      if(mejor && mejor !== true) aplicar(pendientes, grupos, mejor, 'familia');
+      else if(!mejor) reportes.push({nemo, lado: ladoLargo, poids: pendientes, modo: 'familia', ok: false,
         total, ntcn: grupos.length, recon, ncands: libres.length});
     }
   });
@@ -4594,18 +4640,25 @@ function procesarFidessa(){
     };
   });
   const armar = (f, orden, origen, fraccion)=>{
-    const t = orden ? _fidessaTradesRaw[orden.oid] : null;
-    const grupo = t ? t.grupo : normalizarGrupo(f.clientBook || 'SIN_IDENTIFICAR');
+    const t = orden && _fidessaTradesRaw[orden.oid] ? _fidessaTradesRaw[orden.oid] : null;
+    // Para composites resueltos por PASO C (cruce con Instructions único), la
+    // "orden" es sintética: no está en _fidessaTradesRaw pero trae grupo, especie
+    // y ordNum. Se usan esos directamente.
+    const ordenSintetica = orden && !t && orden.ordNum ? orden : null;
+    const grupo = t ? t.grupo : (ordenSintetica ? ordenSintetica.grupo : normalizarGrupo(f.clientBook || 'SIN_IDENTIFICAR'));
     const notes = t ? (t.notes || '') : '';
     // El Notes de Fidessa apunta a la línea de EMSX. Si es numérico, ES el
     // ORD_NUM. Si es texto ("UBS", composite), se busca la línea de EMSX por
     // ese texto para recuperar el número real y el account.
     const emsx = emsxPorNotes[notes] || null;
-    const ordNumFinal = /^\d+$/.test(notes) ? notes : (emsx ? emsx.instructions : '');
+    // ORD_NUM: (1) el de la orden sintética del cruce si aplica; (2) el Notes
+    // numérico; (3) el de la línea de EMSX; si nada, vacío.
+    const ordNumFinal = ordenSintetica ? ordenSintetica.ordNum
+      : (/^\d+$/.test(notes) ? notes : (emsx ? emsx.instructions : ''));
     nuevosFolios.push({
       id: nextId++,
       cliente: grupo,
-      especie: nemoCanonico((t ? t.security : f.instrument) || f.instrument, 'fidessa'),
+      especie: nemoCanonico((t ? t.security : (ordenSintetica ? ordenSintetica.security : f.instrument)) || f.instrument, 'fidessa'),
       lado: f.side === 'B' ? 'Compra' : 'Venta',
       hora: horaDeTimestampFidessa(f.traded),
       folio: f.tcn,
