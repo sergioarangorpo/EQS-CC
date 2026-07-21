@@ -4946,7 +4946,7 @@ async function generarCredicorpProteccion(loteDet){
 
   const hoyDate = new Date();
   const fechaCum = sumarDiasHabiles(hoyDate, 2); // T+2
-  // Solo fecha, sin hora (el archivo real usa fecha de verdad, formato mm-dd-yy).
+  // Solo fecha, sin hora, en formato dd/mm/aaaa (convención de la mesa).
   const soloFecha = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
   const wb = new ExcelJS.Workbook();
@@ -4988,8 +4988,8 @@ async function generarCredicorpProteccion(loteDet){
     fila.forEach((v,i)=>{ ws.getCell(r, i+1).value = v; });
     // TRADE_DATE (col 6) y SETTLE_DATE (col 7): solo fecha, sin hora, igual que
     // el archivo real.
-    ws.getCell(r, 6).numFmt = 'mm-dd-yy';
-    ws.getCell(r, 7).numFmt = 'mm-dd-yy';
+    ws.getCell(r, 6).numFmt = 'dd/mm/yyyy';
+    ws.getCell(r, 7).numFmt = 'dd/mm/yyyy';
     r++;
   });
 
