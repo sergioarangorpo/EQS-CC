@@ -3240,7 +3240,7 @@ async function generarExcelCruce(clienteKey, registrados){
   const hIni = r, hFin = r+3;
   for(let rr=hIni; rr<=hFin; rr++){ allCols.forEach(col => ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}}); }
   ws.getRow(hIni).height = 8; ws.getRow(hIni+1).height = 30; ws.getRow(hIni+2).height = 20; ws.getRow(hIni+3).height = 10;
-  const imgId = wb.addImage({ base64: LOGO_CREDICORP_B64, extension: 'png' });
+  const imgId = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension: 'png' });
   ws.addImage(imgId, { tl: { col: 7, row: hIni }, ext: { width: 90, height: 48 } });
   ws.mergeCells(`B${hIni+1}:F${hIni+1}`);
   const tit = ws.getCell(`B${hIni+1}`);
@@ -4029,7 +4029,7 @@ function irACalculadoraCruce(){
   // el Monto USD como derivado (se llena solo al meter la tasa final cliente).
   _cruceActivo = { ...b, idxLado: p.idx, total: p.bloques.length };
   document.getElementById('campoCruceCOP').style.display = '';
-  document.getElementById('cruceCOP').value = b.netoCOP.toFixed(2);
+  document.getElementById('cruceCOP').value = b.netoCOP.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   document.getElementById('amount').readOnly = true;
   document.getElementById('amount').style.opacity = '0.7';
 
