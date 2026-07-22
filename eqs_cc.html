@@ -5092,6 +5092,13 @@ function procesarFidessa(){
   const diferencias = filasRecon.filter(f=> !f.cuadra && f.sumaFolios > 0);
 
   foliosFidessa = nuevosFolios;
+  // Guardar el resultado de la conciliación (por orden) para que la validación
+  // del botón "Generar reporte" se apoye en él — ya maneja composites, cruces
+  // de doble representación y DMA correctamente, a diferencia de una suma cruda
+  // de folios (que doble-cuenta los cruces).
+  window._reconPorOrden = filasRecon;
+  window._reconDiferencias = diferencias;
+  window._reconSinFolios = sinFolios;
   selectedFolios.clear();
   poblarFiltros();
   aplicarFiltros();
@@ -5670,20 +5677,31 @@ function recalcularTodo(){
 // se llama si Sergio decide seguir (trade raro fuera de Fidessa).
 function mostrarAlertaDescuadre(val, onContinuar){
   const fmtQ = n => Number(n||0).toLocaleString('es-CO');
-  let html = `<table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+  // Pista frecuente: si no hay ninguna orden con folios cuadrando (todo en 0),
+  // casi siempre es que el Fidessa Trades y el Fidessa Folios son de días
+  // distintos (o no se volvió a "Conciliar y cargar folios" tras cambiar un
+  // archivo) — sus Parent order ID no cruzan y los folios no se asignan.
+  const todosFoliosCero = val.descuadres.length>0 && val.descuadres.every(d=>(d.folios||0)===0);
+  let aviso = '';
+  if(todosFoliosCero){
+    aviso = `<div style="background:#fbeaea;border:1px solid #e6b0b0;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12.5px;color:#8a2020;">
+      <b>Los folios no se asignaron a ninguna orden.</b> Suele pasar cuando el <b>Fidessa Trades</b> y el <b>Fidessa Folios</b> son de <b>días distintos</b> (sus Parent order ID no cruzan) o cuando no se volvió a dar <b>“Conciliar y cargar folios”</b> tras cambiar un archivo. Revisa que ambos sean de hoy y vuelve a conciliar.</div>`;
+  }
+  let html = aviso + `<table style="width:100%;border-collapse:collapse;font-size:12.5px;">
     <thead><tr style="text-align:left;color:#8a94a6;border-bottom:1px solid #e3e7ee;">
-    <th style="padding:6px 8px;">Especie</th><th>Lado</th>
-    <th style="text-align:right;">EMSX</th><th style="text-align:right;">Fidessa Trades</th>
-    <th style="text-align:right;">Fidessa Folios</th></tr></thead><tbody>`;
+    <th style="padding:6px 8px;">Especie</th><th>Lado</th><th>Orden</th>
+    <th style="text-align:right;">Qty Done (Trades)</th><th style="text-align:right;">Folios asignados</th>
+    <th style="text-align:right;">Dif.</th></tr></thead><tbody>`;
   val.descuadres.forEach(d=>{
     const col = d.lado==='Compra' ? '#1a2b4a' : '#c0392b';
-    const difFT = Math.abs(d.folios - d.trades) > 1;
+    const dif = (d.folios||0) - (d.trades||0);
     html += `<tr style="border-bottom:1px solid #f0f2f6;">
       <td style="padding:6px 8px;font-weight:600;">${d.esp}</td>
       <td style="color:${col};font-weight:600;">${d.lado}</td>
-      <td style="text-align:right;">${fmtQ(d.emsx)}</td>
-      <td style="text-align:right;${difFT?'color:#c0392b;font-weight:700;':''}">${fmtQ(d.trades)}</td>
-      <td style="text-align:right;${difFT?'color:#c0392b;font-weight:700;':''}">${fmtQ(d.folios)}</td></tr>`;
+      <td style="font-family:monospace;font-size:11px;">${d.orden||'—'}</td>
+      <td style="text-align:right;">${fmtQ(d.trades)}</td>
+      <td style="text-align:right;">${fmtQ(d.folios)}</td>
+      <td style="text-align:right;color:#c0392b;font-weight:700;">${dif>0?'+':''}${fmtQ(dif)}</td></tr>`;
   });
   html += `</tbody></table>`;
   document.getElementById('descuadreBody').innerHTML = html;
@@ -5696,63 +5714,36 @@ function mostrarAlertaDescuadre(val, onContinuar){
 }
 
 // Validación de coincidencia de cantidades para clientes de generación
-// automática (Andes, PROTECCIÓN): la cantidad total por especie+lado debe
-// coincidir entre las 3 fuentes — EMSX, Fidessa Trades y Fidessa Folios. Si no
-// coincide, se devuelve el detalle del descuadre para mostrar una alerta que
-// Sergio pueda cancelar (revisar archivos) o continuar (trades raros fuera de
-// Fidessa). Compara por especie canónica para salvar el distinto formato de
-// ticker Bloomberg vs Fidessa. Tolerancia 1 acción (redondeos).
+// automática (Andes, PROTECCIÓN). NO suma folios crudos (los cruces aparecen
+// dos veces en Fidessa — una con Parent order ID y otra como hijas por Notes —
+// y sumarlos doble-cuenta). En su lugar se apoya en la CONCILIACIÓN ya hecha
+// (window._reconPorOrden): por cada orden del cliente, la suma de folios
+// ASIGNADOS a esa orden debe igualar su QTY DONE (±2 por redondeo). La
+// conciliación ya resolvió composites, cruces de doble representación y DMA.
+// Devuelve las órdenes del cliente que NO cuadran, para la alerta.
 function validarCoincidenciaCantidades(cliente){
-  const TOL = 1;
   const nombreCliente = (getClienteDB(cliente) && getClienteDB(cliente).nombre) || cliente;
+  const recon = window._reconPorOrden || [];
 
-  // Acumular por clave "ESPECIE|LADO".
-  const emsx = {}, trades = {}, folios = {};
-  const add = (obj,k,q)=>{ obj[k] = (obj[k]||0) + q; };
+  // Si aún no hay conciliación cargada, no se puede validar → se deja pasar
+  // (no bloquear por falta de datos; el usuario verá que no hay folios).
+  if(recon.length === 0){
+    return { ok: true, descuadres: [], nombreCliente, sinDatos: true };
+  }
 
-  // EMSX: filtrar las órdenes del cliente (por firm) — realmente EMSX es todo
-  // CREDICORP como firm, así que EMSX aquí representa el total ejecutado; se
-  // filtra por especie+lado que correspondan a los folios del cliente.
-  (_emsxCBCache||[]).forEach(r=>{
-    const esp = nemoCanonico(r.ticker,'emsx') || r.nombre_completo || '';
-    const lado = (r.side||'').toUpperCase().startsWith('B') ? 'Compra' : 'Venta';
-    if(!esp) return;
-    add(emsx, `${esp}|${lado}`, Number(r.filled)||0);
-  });
-
-  // Fidessa Trades: filtrar por grupo === cliente.
-  Object.values(_fidessaTradesRaw||{}).forEach(t=>{
-    if(normalizarGrupo(t.grupo) !== normalizarGrupo(cliente)) return;
-    const esp = nemoCanonico(t.security,'fidessa') || t.security || '';
-    if(!esp) return;
-    add(trades, `${esp}|${t.lado}`, Number(t.qtyDone)||0);
-  });
-
-  // Fidessa Folios: los folios conciliados del cliente.
-  (foliosFidessa||[]).filter(f=>f.cliente===cliente).forEach(f=>{
-    add(folios, `${f.especie}|${f.lado}`, Number(f.cantidad)||0);
-  });
-
-  // Solo tiene sentido validar contra Fidessa las especies que el cliente
-  // realmente tiene en folios (EMSX trae TODO el mercado del día). Se toman las
-  // claves de los folios del cliente como universo de comparación.
-  const claves = new Set([...Object.keys(folios), ...Object.keys(trades)]);
-  const descuadres = [];
-  claves.forEach(k=>{
-    const [esp,lado] = k.split('|');
-    const qF = folios[k]||0;
-    const qT = trades[k]||0;
-    const qE = emsx[k]||0;
-    // Folios vs Trades siempre deben coincidir (ambos son Fidessa del cliente).
-    // EMSX se compara como referencia: si EMSX < Trades es raro, pero EMSX puede
-    // tener MÁS (otras cuentas del mismo ticker), así que solo se marca si EMSX
-    // es MENOR que lo de Fidessa (faltaría ejecución) o si Folios≠Trades.
-    const difFT = Math.abs(qF - qT);
-    const emsxCorto = qE + TOL < Math.max(qF, qT);
-    if(difFT > TOL || emsxCorto){
-      descuadres.push({ esp, lado, folios:qF, trades:qT, emsx:qE });
-    }
-  });
+  // Órdenes del cliente (por grupo) que tienen folios pero no cuadran con su
+  // QTY DONE. Las DMA (sumaFolios===0 con qtyDone>0) NO son descuadre: el
+  // cliente operó directo contra el mercado, no pasa por folios.
+  const delCliente = recon.filter(f=> normalizarGrupo(f.grupo) === normalizarGrupo(cliente));
+  const descuadres = delCliente
+    .filter(f=> f.sumaFolios > 0 && Math.abs(f.sumaFolios - f.qtyDone) > 2)
+    .map(f=>({
+      esp: nemoCanonico(f.security,'fidessa') || f.security,
+      lado: f.lado,
+      orden: f.folioOrden,
+      trades: f.qtyDone,      // QTY DONE del trade
+      folios: f.sumaFolios,   // folios asignados a esa orden
+    }));
 
   return { ok: descuadres.length === 0, descuadres, nombreCliente };
 }
