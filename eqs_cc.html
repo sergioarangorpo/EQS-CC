@@ -4820,7 +4820,7 @@ function renderEmsxCBTable(){
   const filas = ordenarArrayGenerico(_emsxCBCache.map(row=>({
     id: row.id,
     hora: row.order_time || '',
-    horaTxt: row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{timeZone:'America/Bogota', hour:'2-digit', minute:'2-digit', hour12:false}) : '—',
+    horaTxt: row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{timeZone:'America/Bogota', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}) : '—',
     firm: row.originate_trader_firm||'CREDICORP CAPITAL COLOMBIA SA',
     account: row.account||'—',
     ticker: nemoCanonico(row.ticker, 'emsx') || row.nombre_completo || '',
@@ -6227,7 +6227,7 @@ async function cargarEmsxDesdeSupabase(){
         const clasif = clasificarTipoPorExchange(row.exchange);
         emsxData.push({
           id: row.id,
-          hora: row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{timeZone:'America/Bogota', hour:'2-digit', minute:'2-digit', hour12:false}) : '—',
+          hora: row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{timeZone:'America/Bogota', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}) : '—',
           firm: row.originate_trader_firm || 'CREDICORP CAPITAL COLOMBIA SA',
           // Cliente resuelto por el nombre del firm de la línea de EMSX
           // (ej. "COLFONDOS SA" -> key COLFONDOS). Si no calza, queda '' y se
