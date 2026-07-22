@@ -1367,7 +1367,7 @@
 
 <!-- Verificación de operaciones de Andes (Equity + FX) antes de generar el Excel -->
 <div class="edit-overlay" id="modalVerifAndes" style="align-items:flex-start;">
-  <div class="edit-modal" style="width:min(920px,94vw);margin-top:5vh;max-height:88vh;overflow:auto;">
+  <div class="edit-modal" style="width:min(1080px,96vw);margin-top:4vh;max-height:90vh;overflow:auto;">
     <h3 style="font-size:15px;">Verificar operaciones — ANDES INVESTMENT GROUP INC</h3>
     <div id="verifAndesBody"></div>
     <div class="edit-actions" style="margin-top:16px;">
@@ -3700,17 +3700,28 @@ async function generarExcelAndes(eqLotes, fxOps){
   if(fxOps.length){
     tituloSeccion('FX');
 
+    // La tasa que reporta el cliente (tasaFinalCliente) NO está guardada en la
+    // operación — se recalcula con calcularDesdeValores a partir de params.
+    // (Antes se leía o.params.rateUnica, que Andes no tiene → tasa 0 → COP 0.)
+    // side viene como 'BUY'/'SELL' (no 'Compra'/'Venta').
+    function tasaDeOp(o){
+      try {
+        const r = calcularDesdeValores(o.modelo, o.side, o.amount, o.params);
+        return r.tasaFinalCliente || 0;
+      } catch(e){ return (o.params && (o.params.rateUnica || o.params.rate)) || 0; }
+    }
+
     // Resumen FX: agrupar por lado (Compra/Venta USD).
     const fxAgrup = {};
     fxOps.forEach(o=>{
-      const rate = (o.params && (o.params.rateUnica || o.params.tasaFinalCliente)) || 0;
-      const ladoUSD = o.side; // 'Compra' o 'Venta' desde Andes
+      const rate = tasaDeOp(o);
+      const ladoUSD = o.side === 'BUY' ? 'Compra' : 'Venta';
       if(!fxAgrup[ladoUSD]) fxAgrup[ladoUSD] = {lado:ladoUSD, cant:0, montoPx:0};
       fxAgrup[ladoUSD].cant += o.amount;
       fxAgrup[ladoUSD].montoPx += o.amount * rate;
     });
     const fxResumen = Object.values(fxAgrup).map(g=>({
-      lado: g.lado==='Compra'?'Compra':'Venta',
+      lado: g.lado,
       nombre: 'USDCOP',
       cantidad: g.cant,
       precioProm: redondear(g.montoPx / g.cant, 2),
@@ -3723,14 +3734,14 @@ async function generarExcelAndes(eqLotes, fxOps){
                ['center','center','left','left','right','right','right']);
     const fxIni = r;
     fxOps.forEach(o=>{
-      const rate = (o.params && (o.params.rateUnica || o.params.tasaFinalCliente)) || 0;
+      const rate = tasaDeOp(o);
       const usd = o.amount;
       const cop = redondear(usd * rate, 2);
       const tdTxt = fmtFechaCorta(o.tradeDate);
       const sdTxt = fmtFechaCorta(o.settleDate);
       ws.getCell(`B${r}`).value = tdTxt;
       ws.getCell(`C${r}`).value = sdTxt;
-      ws.getCell(`D${r}`).value = o.side === 'Compra' ? 'Buy' : 'Sell';
+      ws.getCell(`D${r}`).value = o.side === 'BUY' ? 'Buy' : 'Sell';
       ws.getCell(`E${r}`).value = 'USDCOP';
       ws.getCell(`F${r}`).value = redondear(usd, 2);
       ws.getCell(`G${r}`).value = redondear(rate, 2);
@@ -5712,24 +5723,28 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
   if(nEq === 0){
     html += `<div style="color:#8a94a6;font-size:13px;margin-bottom:14px;">No hay folios de acciones seleccionados.</div>`;
   } else {
-    html += `<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:8px;">
+    html += `<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px;">
       <thead><tr style="text-align:left;color:#8a94a6;border-bottom:1px solid #e3e7ee;">
-      <th style="padding:5px 8px;">Lado</th><th>Especie</th><th style="text-align:right;">Cantidad</th>
-      <th style="text-align:right;">Precio prom.</th><th style="text-align:right;">Comisi&oacute;n 0.1%</th><th style="text-align:right;">IVA 19%</th></tr></thead><tbody>`;
+      <th style="padding:5px 6px;">Lado</th><th>Especie</th><th style="text-align:right;">Cantidad</th>
+      <th style="text-align:right;">Precio</th><th style="text-align:right;">Gross</th><th style="text-align:right;">Comisi&oacute;n</th>
+      <th style="text-align:right;">IVA</th><th style="text-align:right;">Net</th></tr></thead><tbody>`;
     eqLotes.forEach(l=>{
       l.detalle.forEach(d=>{
         const gross = d.qty * d.precio;
         const com = gross * 0.001;
         const iva = com * 0.19;
+        const net = l.ladoAccion === 'Compra' ? gross + com + iva : gross - com - iva;
         const ladoTxt = l.ladoAccion === 'Compra' ? 'Compra' : 'Venta';
         const col = l.ladoAccion === 'Compra' ? '#1a2b4a' : '#c0392b';
         html += `<tr style="border-bottom:1px solid #f0f2f6;">
-          <td style="padding:5px 8px;font-weight:600;color:${col};">${ladoTxt}</td>
+          <td style="padding:5px 6px;font-weight:600;color:${col};">${ladoTxt}</td>
           <td>${d.security}</td>
           <td style="text-align:right;">${fmtQ(d.qty)}</td>
           <td style="text-align:right;">$${fmtP(d.precio)}</td>
+          <td style="text-align:right;">$${fmtP(gross)}</td>
           <td style="text-align:right;">$${fmtP(com)}</td>
-          <td style="text-align:right;">$${fmtP(iva)}</td></tr>`;
+          <td style="text-align:right;">$${fmtP(iva)}</td>
+          <td style="text-align:right;">$${fmtP(net)}</td></tr>`;
       });
     });
     html += `</tbody></table>`;
@@ -5757,10 +5772,14 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
       <th style="text-align:right;">Tasa</th><th style="text-align:right;">COP</th></tr></thead><tbody>`;
     const fxAgrup = {};
     fxOps.forEach(o=>{
-      const rate = (o.params && (o.params.rateUnica || o.params.tasaFinalCliente)) || 0;
+      // La tasa reportada al cliente se recalcula (no está guardada en params).
+      let rate = 0;
+      try { rate = calcularDesdeValores(o.modelo, o.side, o.amount, o.params).tasaFinalCliente || 0; }
+      catch(e){ rate = (o.params && (o.params.rateUnica || o.params.rate)) || 0; }
       const cop = o.amount * rate;
-      const ladoTxt = o.side === 'Compra' ? 'Compra USD' : 'Venta USD';
-      const col = o.side === 'Compra' ? '#1a2b4a' : '#c0392b';
+      const ladoUSD = o.side === 'BUY' ? 'Compra' : 'Venta';
+      const ladoTxt = ladoUSD === 'Compra' ? 'Compra USD' : 'Venta USD';
+      const col = ladoUSD === 'Compra' ? '#1a2b4a' : '#c0392b';
       html += `<tr style="border-bottom:1px solid #f0f2f6;">
         <td style="padding:5px 8px;">${o.horaRegistro||'—'}</td>
         <td style="font-weight:600;color:${col};">${ladoTxt}</td>
@@ -5768,14 +5787,14 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
         <td style="text-align:right;">$${fmtQ(Math.round(o.amount))}</td>
         <td style="text-align:right;">${fmtP(rate)}</td>
         <td style="text-align:right;">$${fmtP(cop)}</td></tr>`;
-      if(!fxAgrup[o.side]) fxAgrup[o.side]={q:0,mpx:0};
-      fxAgrup[o.side].q += o.amount; fxAgrup[o.side].mpx += o.amount*rate;
+      if(!fxAgrup[ladoUSD]) fxAgrup[ladoUSD]={q:0,mpx:0};
+      fxAgrup[ladoUSD].q += o.amount; fxAgrup[ladoUSD].mpx += o.amount*rate;
     });
     html += `</tbody></table>`;
     html += `<div style="font-size:12px;color:#5a6472;">`;
     Object.keys(fxAgrup).forEach(side=>{
       const g = fxAgrup[side];
-      html += `<div>${side==='Compra'?'Compra':'Venta'} USDCOP <b>${fmtQ(Math.round(g.q))}</b> &middot; <b>${fmtP(g.mpx/g.q)}</b></div>`;
+      html += `<div>${side} USDCOP <b>${fmtQ(Math.round(g.q))}</b> &middot; <b>${fmtP(g.mpx/g.q)}</b></div>`;
     });
     html += `</div>`;
   }
