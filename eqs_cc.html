@@ -1109,9 +1109,15 @@
         <button class="btn small ghost" onclick="borrarFiltros()">✕ Borrar filtros</button>
       </div>
     </div>
-    <div class="tb-field" style="flex:1;min-width:200px;">
+    <div class="tb-field" style="flex:1;min-width:160px;">
       <label>&nbsp;</label>
       <div class="field-note">Filtra EMSX, Fidessa Trades y Folios a la vez — coincidencia flexible (ej. "AFP PROTECCION SA" calza con "PROTECCION").</div>
+    </div>
+    <div class="tb-field">
+      <label>&nbsp;</label>
+      <button class="btn primary" id="btnGenerarTop" onclick="generarReporte()" disabled
+        style="font-size:14px;font-weight:700;padding:11px 22px;white-space:nowrap;"
+        title="Selecciona un cliente y sus folios para habilitar">Generar reporte</button>
     </div>
   </div>
 
@@ -1247,20 +1253,23 @@
 
         <div class="divider"></div>
 
-        <div class="field-row">
-          <div class="field" style="flex:1 1 100%;">
-            <label>Portafolio</label>
-            <select id="nuevoPortSelect"></select>
+        <div id="allocManualControls">
+          <div class="field-note" id="allocAutoNote" style="display:none;margin-bottom:8px;color:var(--muted);">Cliente de generación automática — la cantidad va completa a su portafolio. No requiere reparto manual.</div>
+          <div class="field-row" id="allocPortRow">
+            <div class="field" style="flex:1 1 100%;">
+              <label>Portafolio</label>
+              <select id="nuevoPortSelect"></select>
+            </div>
           </div>
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label>Cantidad</label>
-            <input type="text" inputmode="decimal" id="nuevoPortCantidad" placeholder="0">
+          <div class="field-row" id="allocCantRow">
+            <div class="field">
+              <label>Cantidad</label>
+              <input type="text" inputmode="decimal" id="nuevoPortCantidad" placeholder="0">
+            </div>
           </div>
+          <button class="btn small purple" id="btnAgregarPort" style="width:100%;" onclick="agregarPortafolio()">+ Agregar a la asignación</button>
+          <div class="field-note" id="errorCantidad" style="color:var(--sell);min-height:14px;margin-top:4px;"></div>
         </div>
-        <button class="btn small purple" style="width:100%;" onclick="agregarPortafolio()">+ Agregar a la asignación</button>
-        <div class="field-note" id="errorCantidad" style="color:var(--sell);min-height:14px;margin-top:4px;"></div>
 
         <div class="divider"></div>
 
@@ -1373,6 +1382,19 @@
     <div class="edit-actions" style="margin-top:16px;">
       <button class="btn ghost" onclick="document.getElementById('modalVerifAndes').style.display='none';">Cancelar</button>
       <button class="btn primary" id="btnGenerarAndes">Confirmar y generar Excel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Alerta de descuadre EMSX vs Fidessa Trades vs Fidessa Folios -->
+<div class="edit-overlay" id="modalDescuadre" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(760px,94vw);margin-top:6vh;max-height:86vh;overflow:auto;">
+    <h3 style="font-size:15px;color:#c0392b;">⚠ No coinciden las cantidades</h3>
+    <div class="field-note" style="margin-bottom:12px;">Las cantidades de EMSX, Fidessa Trades y Fidessa Folios no cuadran para este cliente. Revisa el detalle: si subiste mal un archivo de Fidessa, cancela y vuelve a cargarlo. Si es un trade que no pasó por Fidessa, puedes continuar.</div>
+    <div id="descuadreBody"></div>
+    <div class="edit-actions" style="margin-top:16px;">
+      <button class="btn ghost" onclick="document.getElementById('modalDescuadre').style.display='none';">Cancelar generación</button>
+      <button class="btn primary" id="btnContinuarDescuadre" style="background:#c0392b;border-color:#c0392b;">Continuar de todos modos</button>
     </div>
   </div>
 </div>
@@ -5339,7 +5361,35 @@ function renderFolios(){
   actualizarChkSelectAll(filtrados);
   renderStats(filtrados);
   renderFolioSummary();
+  actualizarBotonGenerar();
   recalcularTodo();
+}
+
+// Habilita el botón grande "Generar reporte" de arriba solo cuando hay un
+// cliente y al menos un folio seleccionado. El despacho por tipo de cliente
+// (Andes / PROTECCIÓN / COLFONDOS / genérico) lo resuelve generarReporte().
+function actualizarBotonGenerar(){
+  const btn = document.getElementById('btnGenerarTop');
+  if(!btn) return;
+  const cliente = document.getElementById('filtroCliente').value;
+  const cfg = cliente ? getClienteDB(cliente) : null;
+  // Para clientes con autoPortafolio, mantener la cantidad asignada en sync con
+  // la selección actual (si cambia qué folios están marcados).
+  if(cfg && cfg.autoPortafolio){
+    const totalSel = getFiltrados().filter(f=>selectedFolios.has(f.id)).reduce((s,f)=>s+f.cantidad,0);
+    if(totalSel > 0){
+      allocations = [{ portId: cfg.autoPortafolio, cantidad: totalSel }];
+    } else {
+      allocations = [];
+    }
+    if(typeof renderAllocations === 'function') renderAllocations();
+  }
+  const haySeleccion = selectedFolios.size > 0;
+  const ok = !!cliente && haySeleccion;
+  btn.disabled = !ok;
+  if(!cliente) btn.title = 'Selecciona un cliente para habilitar';
+  else if(!haySeleccion) btn.title = 'Selecciona al menos un folio para habilitar';
+  else btn.title = 'Generar el reporte de ' + ((getClienteDB(cliente)&&getClienteDB(cliente).nombre)||cliente);
 }
 
 function toggleSeleccionarTodos(checked){
@@ -5428,6 +5478,29 @@ function inicializarAllocationsDesdeCliente(){
     if(port){
       const totalSel = getFiltrados().filter(f=>selectedFolios.has(f.id)).reduce((s,f)=>s+f.cantidad,0);
       allocations = [{ portId: port.id, cantidad: totalSel }];
+    }
+  }
+  // Clientes de generación automática (Andes con autoPortafolio, PROTECCIÓN):
+  // el reparto manual no aplica → se ocultan los controles de agregar y se
+  // muestra una nota. PROTECCIÓN igual sigue mostrando TODOS los folios arriba
+  // para marcar cruce/pantalla — eso no se toca aquí.
+  const esAutoGen = !!(cfg && (cfg.autoPortafolio || cfg.formatoReporte === 'proteccion' || normalizarGrupo(cliente) === 'PROTECCION'));
+  const controls = document.getElementById('allocManualControls');
+  const note = document.getElementById('allocAutoNote');
+  const portRow = document.getElementById('allocPortRow');
+  const cantRow = document.getElementById('allocCantRow');
+  const btnAdd = document.getElementById('btnAgregarPort');
+  if(controls){
+    if(esAutoGen){
+      if(note) note.style.display = '';
+      if(portRow) portRow.style.display = 'none';
+      if(cantRow) cantRow.style.display = 'none';
+      if(btnAdd) btnAdd.style.display = 'none';
+    } else {
+      if(note) note.style.display = 'none';
+      if(portRow) portRow.style.display = '';
+      if(cantRow) cantRow.style.display = '';
+      if(btnAdd) btnAdd.style.display = '';
     }
   }
   renderAllocations();
@@ -5577,6 +5650,97 @@ function recalcularTodo(){
 // ----------------------------------------------------------------------
 // Generación de reportes
 // ----------------------------------------------------------------------
+// Muestra la alerta de descuadre con el detalle por especie+lado. onContinuar
+// se llama si Sergio decide seguir (trade raro fuera de Fidessa).
+function mostrarAlertaDescuadre(val, onContinuar){
+  const fmtQ = n => Number(n||0).toLocaleString('es-CO');
+  let html = `<table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+    <thead><tr style="text-align:left;color:#8a94a6;border-bottom:1px solid #e3e7ee;">
+    <th style="padding:6px 8px;">Especie</th><th>Lado</th>
+    <th style="text-align:right;">EMSX</th><th style="text-align:right;">Fidessa Trades</th>
+    <th style="text-align:right;">Fidessa Folios</th></tr></thead><tbody>`;
+  val.descuadres.forEach(d=>{
+    const col = d.lado==='Compra' ? '#1a2b4a' : '#c0392b';
+    const difFT = Math.abs(d.folios - d.trades) > 1;
+    html += `<tr style="border-bottom:1px solid #f0f2f6;">
+      <td style="padding:6px 8px;font-weight:600;">${d.esp}</td>
+      <td style="color:${col};font-weight:600;">${d.lado}</td>
+      <td style="text-align:right;">${fmtQ(d.emsx)}</td>
+      <td style="text-align:right;${difFT?'color:#c0392b;font-weight:700;':''}">${fmtQ(d.trades)}</td>
+      <td style="text-align:right;${difFT?'color:#c0392b;font-weight:700;':''}">${fmtQ(d.folios)}</td></tr>`;
+  });
+  html += `</tbody></table>`;
+  document.getElementById('descuadreBody').innerHTML = html;
+  const btn = document.getElementById('btnContinuarDescuadre');
+  btn.onclick = () => {
+    document.getElementById('modalDescuadre').style.display = 'none';
+    onContinuar && onContinuar();
+  };
+  document.getElementById('modalDescuadre').style.display = 'flex';
+}
+
+// Validación de coincidencia de cantidades para clientes de generación
+// automática (Andes, PROTECCIÓN): la cantidad total por especie+lado debe
+// coincidir entre las 3 fuentes — EMSX, Fidessa Trades y Fidessa Folios. Si no
+// coincide, se devuelve el detalle del descuadre para mostrar una alerta que
+// Sergio pueda cancelar (revisar archivos) o continuar (trades raros fuera de
+// Fidessa). Compara por especie canónica para salvar el distinto formato de
+// ticker Bloomberg vs Fidessa. Tolerancia 1 acción (redondeos).
+function validarCoincidenciaCantidades(cliente){
+  const TOL = 1;
+  const nombreCliente = (getClienteDB(cliente) && getClienteDB(cliente).nombre) || cliente;
+
+  // Acumular por clave "ESPECIE|LADO".
+  const emsx = {}, trades = {}, folios = {};
+  const add = (obj,k,q)=>{ obj[k] = (obj[k]||0) + q; };
+
+  // EMSX: filtrar las órdenes del cliente (por firm) — realmente EMSX es todo
+  // CREDICORP como firm, así que EMSX aquí representa el total ejecutado; se
+  // filtra por especie+lado que correspondan a los folios del cliente.
+  (_emsxCBCache||[]).forEach(r=>{
+    const esp = nemoCanonico(r.ticker,'emsx') || r.nombre_completo || '';
+    const lado = (r.side||'').toUpperCase().startsWith('B') ? 'Compra' : 'Venta';
+    if(!esp) return;
+    add(emsx, `${esp}|${lado}`, Number(r.filled)||0);
+  });
+
+  // Fidessa Trades: filtrar por grupo === cliente.
+  Object.values(_fidessaTradesRaw||{}).forEach(t=>{
+    if(normalizarGrupo(t.grupo) !== normalizarGrupo(cliente)) return;
+    const esp = nemoCanonico(t.security,'fidessa') || t.security || '';
+    if(!esp) return;
+    add(trades, `${esp}|${t.lado}`, Number(t.qtyDone)||0);
+  });
+
+  // Fidessa Folios: los folios conciliados del cliente.
+  (foliosFidessa||[]).filter(f=>f.cliente===cliente).forEach(f=>{
+    add(folios, `${f.especie}|${f.lado}`, Number(f.cantidad)||0);
+  });
+
+  // Solo tiene sentido validar contra Fidessa las especies que el cliente
+  // realmente tiene en folios (EMSX trae TODO el mercado del día). Se toman las
+  // claves de los folios del cliente como universo de comparación.
+  const claves = new Set([...Object.keys(folios), ...Object.keys(trades)]);
+  const descuadres = [];
+  claves.forEach(k=>{
+    const [esp,lado] = k.split('|');
+    const qF = folios[k]||0;
+    const qT = trades[k]||0;
+    const qE = emsx[k]||0;
+    // Folios vs Trades siempre deben coincidir (ambos son Fidessa del cliente).
+    // EMSX se compara como referencia: si EMSX < Trades es raro, pero EMSX puede
+    // tener MÁS (otras cuentas del mismo ticker), así que solo se marca si EMSX
+    // es MENOR que lo de Fidessa (faltaría ejecución) o si Folios≠Trades.
+    const difFT = Math.abs(qF - qT);
+    const emsxCorto = qE + TOL < Math.max(qF, qT);
+    if(difFT > TOL || emsxCorto){
+      descuadres.push({ esp, lado, folios:qF, trades:qT, emsx:qE });
+    }
+  });
+
+  return { ok: descuadres.length === 0, descuadres, nombreCliente };
+}
+
 async function generarReporte(){
   const cliente = document.getElementById('filtroCliente').value;
   const especie = document.getElementById('filtroEspecie').value || getFiltrados()[0]?.especie;
@@ -5584,6 +5748,22 @@ async function generarReporte(){
   const filtrados = getFiltrados();
   const seleccionados = filtrados.filter(f=>selectedFolios.has(f.id));
   if(seleccionados.length===0) return;
+
+  // Validación de coincidencia EMSX = Fidessa Trades = Fidessa Folios para
+  // clientes de generación automática (los que no reparten allocation a mano).
+  // Si hay descuadre, se muestra una alerta que Sergio puede cancelar (para
+  // revisar si subió mal un archivo de Fidessa) o continuar (trade raro fuera
+  // de Fidessa). Si ya confirmó continuar en este intento, no se revalida.
+  const cfgVal = getClienteDB(cliente) || {};
+  const esAutoGen = cfgVal.autoPortafolio || cfgVal.formatoReporte === 'proteccion' || normalizarGrupo(cliente) === 'PROTECCION';
+  if(esAutoGen && !window._andesForzarContinuar){
+    const val = validarCoincidenciaCantidades(cliente);
+    if(!val.ok){
+      mostrarAlertaDescuadre(val, ()=>{ window._andesForzarContinuar = true; generarReporte(); });
+      return;
+    }
+  }
+  window._andesForzarContinuar = false;
 
   const totalQty = seleccionados.reduce((s,f)=>s+f.cantidad,0);
   const ppp = seleccionados.reduce((s,f)=>s+f.cantidad*f.precio,0)/totalQty;
