@@ -1365,6 +1365,18 @@
   </div>
 </div>
 
+<!-- Verificación de operaciones de Andes (Equity + FX) antes de generar el Excel -->
+<div class="edit-overlay" id="modalVerifAndes" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(920px,94vw);margin-top:5vh;max-height:88vh;overflow:auto;">
+    <h3 style="font-size:15px;">Verificar operaciones — ANDES INVESTMENT GROUP INC</h3>
+    <div id="verifAndesBody"></div>
+    <div class="edit-actions" style="margin-top:16px;">
+      <button class="btn ghost" onclick="document.getElementById('modalVerifAndes').style.display='none';">Cancelar</button>
+      <button class="btn primary" id="btnGenerarAndes">Confirmar y generar Excel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Vincular ejecución de afuera (CCSI) con la línea del cliente en RVI -->
 <div class="edit-overlay" id="modalVinculoRVI" style="align-items:flex-start;">
   <div class="edit-modal" style="width:min(760px,94vw);margin-top:5vh;max-height:88vh;overflow:auto;">
@@ -3313,7 +3325,10 @@ async function generarExcelCruce(clienteKey, registrados, trader){
   for(let rr=hIni; rr<=hFin; rr++){ allCols.forEach(col => ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}}); }
   ws.getRow(hIni).height = 8; ws.getRow(hIni+1).height = 30; ws.getRow(hIni+2).height = 20; ws.getRow(hIni+3).height = 10;
   const imgId = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension: 'png' });
-  ws.addImage(imgId, { tl: { col: 9, row: hIni }, ext: { width: 90, height: 48 } });
+  // El logo real es 549×81 (ratio 6.78, muy alargado). Antes estaba en 90×48
+  // (ratio 1.88) y salía aplastado/estrecho. Se usa 165×24 = el ratio correcto,
+  // igual que en los otros reportes.
+  ws.addImage(imgId, { tl: { col: 8.3, row: hIni + 0.4 }, ext: { width: 165, height: 24 } });
   ws.mergeCells(`B${hIni+1}:H${hIni+1}`);
   const tit = ws.getCell(`B${hIni+1}`);
   tit.value = 'CREDICORP CAPITAL COLOMBIA';
@@ -3466,6 +3481,302 @@ async function generarExcelCruce(clienteKey, registrados, trader){
   URL.revokeObjectURL(url);
 }
 
+// =====================================================================
+// ANDES INVESTMENT GROUP — reporte unificado Equity + FX en un solo Excel.
+// Mismo formato del cruce MLI, con tres diferencias que Sergio pidió para
+// Andes: (1) comisión SIEMPRE 0.1% (nunca bloque/pantalla) + una columna IVA
+// = 19% de la comisión; (2) un cuadro resumen arriba de cada segmento (Equity
+// y FX) con cantidad total y precio promedio por lado; (3) el bloque FX no sale
+// del equity (no es un cruce) sino de TODAS las operaciones FX de Andes del día
+// (el array `operaciones`, cliente === 'ANDES'). Nombre del archivo:
+// "Operaciones Andes Investment Group Inc yyyymmdd.xlsx".
+// eqLotes = lista de {ladoAccion:'Compra'|'Venta', tradeDate, settleDate, detalle:[{security,qty,precio}]}
+// fxOps   = operaciones FX del día de Andes (se leen de `operaciones` si no se pasan)
+const ANDES_COMISION = 0.001;   // 0.1% fijo
+const ANDES_IVA = 0.19;         // IVA 19% sobre la comisión
+async function generarExcelAndes(eqLotes, fxOps){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+
+  // FX de Andes del día: si no se pasan, se toman del histórico de operaciones.
+  if(!fxOps){
+    fxOps = (typeof operaciones !== 'undefined' ? operaciones : []).filter(o=> o.cliente === 'ANDES');
+  }
+  eqLotes = eqLotes || [];
+
+  if(eqLotes.length === 0 && fxOps.length === 0){
+    alert('No hay operaciones de Andes (ni acciones ni FX) para generar el reporte.');
+    return;
+  }
+
+  const hoyDate = new Date();
+  const fechaHoyTxt = hoyDate.toLocaleDateString('es-CO', {day:'2-digit', month:'2-digit', year:'numeric'});
+  const C = REPORTE_COLOR;
+  const nombreCliente = 'ANDES INVESTMENT GROUP INC';
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'EQS CC — Credicorp Capital';
+  wb.created = hoyDate;
+  const ws = wb.addWorksheet('Operaciones Andes', {
+    pageSetup: { orientation: 'landscape', fitToPage: true },
+    views: [{ showGridLines: false }],
+  });
+  ws.columns = [
+    { width: 2.5 },  // A margen
+    { width: 12 },   // B Trade Date
+    { width: 12 },   // C Settle Date
+    { width: 8 },    // D Side
+    { width: 12 },   // E Symbol / Pair
+    { width: 15 },   // F ISIN / USD Amount
+    { width: 12 },   // G Quantity / Rate
+    { width: 14 },   // H Price / COP Value
+    { width: 16 },   // I Gross
+    { width: 13 },   // J Commission
+    { width: 12 },   // K IVA
+    { width: 17 },   // L Net
+    { width: 2.5 },  // M margen
+  ];
+  // El bloque EQUITY usa 11 columnas (B..L) — una más que MLI por la columna IVA.
+  const cols = ['B','C','D','E','F','G','H','I','J','K','L'];
+  const allCols = ['A','B','C','D','E','F','G','H','I','J','K','L','M'];
+
+  for(let rr=1; rr<=100; rr++){ allCols.forEach(col => { ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.paper}}; }); }
+
+  let r = 1;
+  // ---------- HEADER DE MARCA ----------
+  const hIni = r, hFin = r+3;
+  for(let rr=hIni; rr<=hFin; rr++){ allCols.forEach(col => ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}}); }
+  ws.getRow(hIni).height = 8; ws.getRow(hIni+1).height = 30; ws.getRow(hIni+2).height = 20; ws.getRow(hIni+3).height = 10;
+  const imgId = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension: 'png' });
+  ws.addImage(imgId, { tl: { col: 9.3, row: hIni + 0.4 }, ext: { width: 165, height: 24 } });
+  ws.mergeCells(`B${hIni+1}:H${hIni+1}`);
+  const tit = ws.getCell(`B${hIni+1}`);
+  tit.value = 'CREDICORP CAPITAL COLOMBIA';
+  tit.font = { name:'Calibri', size:20, bold:true, color:{argb:C.white} };
+  tit.alignment = { horizontal:'left', vertical:'middle' };
+  ws.mergeCells(`B${hIni+2}:H${hIni+2}`);
+  const sub = ws.getCell(`B${hIni+2}`);
+  sub.value = 'EQUITY SALES  ·  EQUITY + FX CONFIRMATION';
+  sub.font = { name:'Calibri', size:10.5, bold:true, color:{argb:C.white} };
+  sub.alignment = { horizontal:'left', vertical:'middle' };
+  r = hFin + 1;
+  allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+  ws.getRow(r).height = 4; r += 2;
+
+  // ---------- FICHA (Cliente / Fecha) ----------
+  [['CLIENT', nombreCliente, 6], ['DATE', fechaHoyTxt, 3]].reduce((cc,[label,value,span])=>{
+    const startCol = cols[cc-1] || cols[0];
+    const endCol = cols[Math.min(cc-1+span-1, cols.length-1)];
+    ws.mergeCells(`${startCol}${r}:${endCol}${r}`);
+    const c = ws.getCell(`${startCol}${r}`); c.value = label; c.font = { name:'Calibri', size:9, bold:true, color:{argb:C.textMuted} };
+    ws.mergeCells(`${startCol}${r+1}:${endCol}${r+1}`);
+    const v = ws.getCell(`${startCol}${r+1}`); v.value = value; v.font = { name:'Calibri', size:14, bold:true, color:{argb:C.navy} };
+    return cc+span;
+  }, 1);
+  r += 3;
+
+  function tituloSeccion(texto){
+    ws.mergeCells(`B${r}:L${r}`);
+    const c = ws.getCell(`B${r}`); c.value = texto; c.font = { name:'Calibri', size:12, bold:true, color:{argb:C.navy} };
+    r++;
+    allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+    ws.getRow(r).height = 2.5; r += 2;
+  }
+  function headerFila(labels, aligns){
+    labels.forEach((t,i)=>{
+      const c = ws.getCell(`${cols[i]}${r}`);
+      c.value = t; c.font = { name:'Calibri', size:9.5, bold:true, color:{argb:C.white} };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
+      c.alignment = { horizontal: aligns[i]||'left', vertical:'middle' };
+    });
+    ws.getRow(r).height = 20; r++;
+  }
+  // Cuadro resumen: una fila por (lado + especie/par) con cantidad total y
+  // precio promedio ponderado. Cada dato va en su propia celda. Ej:
+  //   Venta   ECOPETROL   1,500,000   at   2,685.00
+  function cuadroResumen(titulo, filas){
+    // filas = [{lado, nombre, cantidad, precioProm, fmtCant, fmtPrecio}]
+    // Cabecera del cuadro (título en navy).
+    ws.mergeCells(`B${r}:L${r}`);
+    const t = ws.getCell(`B${r}`);
+    t.value = titulo;
+    t.font = { name:'Calibri', size:9.5, bold:true, color:{argb:C.navy} };
+    t.alignment = { horizontal:'left', vertical:'middle' };
+    ws.getRow(r).height = 16; r++;
+    // Fila de encabezados de columna: SIDE | SYMBOL | QUANTITY | PRICE.
+    [['B','SIDE','left'],['C','SYMBOL','left'],['D','QUANTITY','right'],['E','PRICE','right']].forEach(([col,txt,al])=>{
+      const c = ws.getCell(`${col}${r}`);
+      c.value = txt;
+      c.font = { name:'Calibri', size:8.5, bold:true, color:{argb:C.textMuted} };
+      c.alignment = { horizontal: al, vertical:'middle' };
+    });
+    ws.getRow(r).height = 14; r++;
+    filas.forEach(f=>{
+      ws.getCell(`B${r}`).value = f.lado;                          // Venta / Compra
+      ws.getCell(`C${r}`).value = f.nombre;                        // ECOPETROL / USDCOP
+      const cCant = ws.getCell(`D${r}`); cCant.value = f.cantidad; cCant.numFmt = f.fmtCant || '#,##0';
+      const cPx = ws.getCell(`E${r}`); cPx.value = f.precioProm; cPx.numFmt = f.fmtPrecio || '#,##0.00';
+      [['B','left'],['C','left'],['D','right'],['E','right']].forEach(([col,al])=>{
+        const cc = ws.getCell(`${col}${r}`);
+        cc.font = { name:'Calibri', size:9.5, bold: col==='B', color:{argb: col==='B' ? (f.lado==='Venta'?C.orange:C.navy) : C.textDark} };
+        cc.alignment = { horizontal: al, vertical:'middle' };
+        cc.fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.grayLight}};
+      });
+      ws.getRow(r).height = 16; r++;
+    });
+    r += 1;
+  }
+
+  // ================= BLOQUE 1: EQUITY =================
+  if(eqLotes.length){
+    tituloSeccion('EQUITY');
+
+    // Resumen Equity: agrupar por lado+especie.
+    const eqAgrup = {};
+    eqLotes.forEach(lote=>{
+      lote.detalle.forEach(d=>{
+        const k = `${lote.ladoAccion}|${d.security}`;
+        if(!eqAgrup[k]) eqAgrup[k] = {lado:lote.ladoAccion, nombre:d.security, cant:0, montoPx:0};
+        eqAgrup[k].cant += d.qty;
+        eqAgrup[k].montoPx += d.qty * d.precio;
+      });
+    });
+    const eqResumen = Object.values(eqAgrup).map(g=>({
+      lado: g.lado==='Compra'?'Compra':'Venta',
+      nombre: g.nombre,
+      cantidad: g.cant,
+      precioProm: redondear(g.montoPx / g.cant, 2),
+      fmtCant: '#,##0',
+      fmtPrecio: '"$"#,##0.00',
+    }));
+    cuadroResumen('RESUMEN EQUITY', eqResumen);
+
+    headerFila(['Trade Date','Settle Date','Side','Symbol','ISIN','Quantity','Price','Gross','Commission','IVA','Net'],
+               ['center','center','left','left','left','right','right','right','right','right','right']);
+    const eqIni = r;
+    eqLotes.forEach(lote=>{
+      const tdTxt = fmtFechaCorta((lote.tradeDate instanceof Date ? lote.tradeDate.toISOString().slice(0,10) : lote.tradeDate));
+      const sdTxt = fmtFechaCorta((lote.settleDate instanceof Date ? lote.settleDate.toISOString().slice(0,10) : lote.settleDate));
+      lote.detalle.forEach(d=>{
+        const gross = redondear(d.qty * d.precio, 2);
+        const comision = redondear(gross * ANDES_COMISION, 2);
+        const iva = redondear(comision * ANDES_IVA, 2);
+        // Compra: cliente paga gross + comisión + IVA; Venta: recibe gross − comisión − IVA.
+        const neto = redondear(lote.ladoAccion === 'Compra' ? gross + comision + iva : gross - comision - iva, 2);
+        ws.getCell(`B${r}`).value = tdTxt;
+        ws.getCell(`C${r}`).value = sdTxt;
+        ws.getCell(`D${r}`).value = lote.ladoAccion === 'Compra' ? 'Buy' : 'Sell';
+        ws.getCell(`E${r}`).value = d.security;
+        ws.getCell(`F${r}`).value = isinDeNemo(d.security);
+        ws.getCell(`G${r}`).value = d.qty;
+        ws.getCell(`H${r}`).value = redondear(d.precio, 4);
+        ws.getCell(`I${r}`).value = gross;
+        ws.getCell(`J${r}`).value = comision;
+        ws.getCell(`K${r}`).value = iva;
+        ws.getCell(`L${r}`).value = neto;
+        r++;
+      });
+    });
+    const eqFin = r-1;
+    for(let rr=eqIni; rr<=eqFin; rr++){
+      ['B','C'].forEach(col=> ws.getCell(`${col}${rr}`).alignment = {horizontal:'center'});
+      ws.getCell(`G${rr}`).numFmt = '#,##0';
+      ws.getCell(`H${rr}`).numFmt = '"$"#,##0.0000';
+      ws.getCell(`I${rr}`).numFmt = '"$"#,##0.00';
+      ws.getCell(`J${rr}`).numFmt = '"$"#,##0.00';
+      ws.getCell(`K${rr}`).numFmt = '"$"#,##0.00';
+      ws.getCell(`L${rr}`).numFmt = '"$"#,##0.00';
+      cols.forEach(col=>{
+        ws.getCell(`${col}${rr}`).font = { name:'Calibri', size:9.5, color:{argb:C.textDark} };
+        ws.getCell(`${col}${rr}`).border = { bottom: {style:'hair', color:{argb:C.cardBorder}} };
+        if(['G','H','I','J','K','L'].includes(col)) ws.getCell(`${col}${rr}`).alignment = {horizontal:'right'};
+      });
+      ws.getRow(rr).height = 18;
+      if((rr-eqIni)%2===1){ cols.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}}); }
+    }
+    r += 2;
+  }
+
+  // ================= BLOQUE 2: FX =================
+  if(fxOps.length){
+    tituloSeccion('FX');
+
+    // Resumen FX: agrupar por lado (Compra/Venta USD).
+    const fxAgrup = {};
+    fxOps.forEach(o=>{
+      const rate = (o.params && (o.params.rateUnica || o.params.tasaFinalCliente)) || 0;
+      const ladoUSD = o.side; // 'Compra' o 'Venta' desde Andes
+      if(!fxAgrup[ladoUSD]) fxAgrup[ladoUSD] = {lado:ladoUSD, cant:0, montoPx:0};
+      fxAgrup[ladoUSD].cant += o.amount;
+      fxAgrup[ladoUSD].montoPx += o.amount * rate;
+    });
+    const fxResumen = Object.values(fxAgrup).map(g=>({
+      lado: g.lado==='Compra'?'Compra':'Venta',
+      nombre: 'USDCOP',
+      cantidad: g.cant,
+      precioProm: redondear(g.montoPx / g.cant, 2),
+      fmtCant: '"$"#,##0',
+      fmtPrecio: '#,##0.00',
+    }));
+    cuadroResumen('RESUMEN FX', fxResumen);
+
+    headerFila(['Trade Date','Settle Date','Side','Pair','USD Amount','Rate','COP Value'],
+               ['center','center','left','left','right','right','right']);
+    const fxIni = r;
+    fxOps.forEach(o=>{
+      const rate = (o.params && (o.params.rateUnica || o.params.tasaFinalCliente)) || 0;
+      const usd = o.amount;
+      const cop = redondear(usd * rate, 2);
+      const tdTxt = fmtFechaCorta(o.tradeDate);
+      const sdTxt = fmtFechaCorta(o.settleDate);
+      ws.getCell(`B${r}`).value = tdTxt;
+      ws.getCell(`C${r}`).value = sdTxt;
+      ws.getCell(`D${r}`).value = o.side === 'Compra' ? 'Buy' : 'Sell';
+      ws.getCell(`E${r}`).value = 'USDCOP';
+      ws.getCell(`F${r}`).value = redondear(usd, 2);
+      ws.getCell(`G${r}`).value = redondear(rate, 2);
+      ws.getCell(`H${r}`).value = cop;
+      r++;
+    });
+    const fxFin = r-1;
+    const colsFX = ['B','C','D','E','F','G','H'];
+    for(let rr=fxIni; rr<=fxFin; rr++){
+      ['B','C'].forEach(col=> ws.getCell(`${col}${rr}`).alignment = {horizontal:'center'});
+      ws.getCell(`F${rr}`).numFmt = '"$"#,##0.00';
+      ws.getCell(`G${rr}`).numFmt = '#,##0.00';
+      ws.getCell(`H${rr}`).numFmt = '"$"#,##0.00';
+      colsFX.forEach(col=>{
+        ws.getCell(`${col}${rr}`).font = { name:'Calibri', size:9.5, color:{argb:C.textDark} };
+        ws.getCell(`${col}${rr}`).border = { bottom: {style:'hair', color:{argb:C.cardBorder}} };
+        if(['F','G','H'].includes(col)) ws.getCell(`${col}${rr}`).alignment = {horizontal:'right'};
+      });
+      ws.getRow(rr).height = 18;
+      if((rr-fxIni)%2===1){ colsFX.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}}); }
+    }
+    r += 2;
+  }
+
+  // ---------- FOOTER ----------
+  allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+  ws.getRow(r).height = 4; r++;
+  ws.mergeCells(`B${r}:L${r}`);
+  const foot = ws.getCell(`B${r}`);
+  foot.value = `Generated by EQS CC · Credicorp Capital Colombia · ${eqLotes.reduce((s,l)=>s+l.detalle.length,0)} equity line(s) · ${fxOps.length} FX op(s) · ${fechaHoyTxt}`;
+  foot.font = { name:'Calibri', size:8.5, italic:true, color:{argb:C.textMuted} };
+  ws.getRow(r).height = 18;
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
+  a.href = url;
+  a.download = `Operaciones Andes Investment Group Inc ${fechaSlug}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function initDatesFX(){
   const today = new Date();
   document.getElementById('tradeDate').value = today.toISOString().slice(0,10);
@@ -3504,6 +3815,22 @@ const clientesDB = {
     ],
     comisionCruce: 0.0015,
     comisionPantalla: 0.0008,
+  },
+  'LARRAIN VIAL PP': {
+    nombre: 'ANDES INVESTMENT GROUP INC',
+    formatoReporte: 'andes_fxequity', // reporte unificado Equity + FX en un solo Excel
+    // Andes opera como PP de Larrain Vial. Su portafolio se autoasocia (no se
+    // agrega a mano cada vez). Un solo "portafolio" que recibe toda la
+    // cantidad, con IVA activo (Andes lleva columna IVA = 19% de la comisión).
+    portafolios: [
+      {id:'ANDES', nombre:'ANDES INVESTMENT GROUP INC', nit:'', iva:true, deceval:1833544},
+    ],
+    autoPortafolio: 'ANDES', // el panel de asignación arranca ya con este portafolio
+    // Comisión SIEMPRE 0.1% (ni bloque ni pantalla). Se ponen ambos iguales
+    // para que calcularComisionEfectiva devuelva 0.001 sin importar la marca.
+    comisionBloque: 0.001,
+    comisionPantalla: 0.001,
+    comisionCruce: 0.001,
   },
 };
 
@@ -5081,6 +5408,17 @@ function getDisponible(){
 function inicializarAllocationsDesdeCliente(){
   allocations = [];
   poblarSelectorNuevoPortafolio();
+  // Andes se autoasocia a su único portafolio (Larrain Vial PP): no hay que
+  // agregarlo a mano cada vez. Toda la cantidad seleccionada le corresponde.
+  const cliente = document.getElementById('filtroCliente').value;
+  const cfg = cliente ? getClienteDB(cliente) : null;
+  if(cfg && cfg.autoPortafolio){
+    const port = (cfg.portafolios||[]).find(p=>p.id===cfg.autoPortafolio);
+    if(port){
+      const totalSel = getFiltrados().filter(f=>selectedFolios.has(f.id)).reduce((s,f)=>s+f.cantidad,0);
+      allocations = [{ portId: port.id, cantidad: totalSel }];
+    }
+  }
   renderAllocations();
 }
 
@@ -5311,6 +5649,13 @@ async function generarReporte(){
   const formato = getClienteDB(cliente).formatoReporte;
   if(formato === 'colfondos'){
     await generarReporteColfondos(cliente, loteOps, loteDet);
+  } else if(formato === 'andes_fxequity'){
+    // ANDES: reporte unificado Equity + FX. Se arma el equity de los folios
+    // seleccionados (agrupados por lado+especie con precio promedio) y se
+    // toman las operaciones FX de Andes del día. Antes de generar se muestra
+    // un cuadro de verificación con ambos segmentos; solo genera si Sergio
+    // confirma.
+    mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum);
   } else if(formato === 'proteccion' || normalizarGrupo(cliente) === 'PROTECCION'){
     // PROTECCIÓN es el cliente principal: antes de generar se muestra una
     // pantalla de aprobación con lo que Sergio revisa a ojo — cantidad vs
@@ -5324,6 +5669,127 @@ async function generarReporte(){
 // Pantalla de aprobación de PROTECCIÓN. Muestra, por especie+lado, la cantidad
 // que vamos a reportar contra lo EJECUTADO (QTY DONE de EMSX/Trades), la lista
 // de portafolios con su cantidad, y el precio. Sergio aprueba o cancela.
+// Verificación de Andes: arma el equity de los folios seleccionados y toma las
+// operaciones FX de Andes del día, las muestra para revisión y, al confirmar,
+// genera el Excel unificado.
+function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
+  // Equity: agrupar folios por lado+especie. Cada lote lleva su detalle con la
+  // cantidad y el precio promedio ponderado por especie dentro del lado.
+  const porLado = {};
+  seleccionados.forEach(f=>{
+    const ladoAccion = f.lado; // 'Compra' o 'Venta'
+    if(!porLado[ladoAccion]) porLado[ladoAccion] = {};
+    const esp = f.especie;
+    if(!porLado[ladoAccion][esp]) porLado[ladoAccion][esp] = {qty:0, montoPx:0};
+    porLado[ladoAccion][esp].qty += f.cantidad;
+    porLado[ladoAccion][esp].montoPx += f.cantidad * f.precio;
+  });
+  const eqLotes = Object.keys(porLado).map(ladoAccion=>({
+    ladoAccion,
+    tradeDate: fechaReg,
+    settleDate: fechaCum,
+    detalle: Object.keys(porLado[ladoAccion]).map(esp=>({
+      security: esp,
+      qty: porLado[ladoAccion][esp].qty,
+      precio: porLado[ladoAccion][esp].montoPx / porLado[ladoAccion][esp].qty,
+    })),
+  }));
+
+  // FX de Andes del día.
+  const fxOps = (typeof operaciones !== 'undefined' ? operaciones : []).filter(o=> o.cliente === 'ANDES');
+
+  // Guardar para el botón de confirmar.
+  window._andesReporte = { eqLotes, fxOps };
+
+  // Render de revisión.
+  const fmtQ = n => (n==null?'—':Number(n).toLocaleString('es-CO'));
+  const fmtP = (n,dec=2) => (n==null?'—':Number(n).toLocaleString('es-CO',{minimumFractionDigits:dec, maximumFractionDigits:dec}));
+  let html = '';
+
+  // ----- EQUITY -----
+  const nEq = eqLotes.reduce((s,l)=>s+l.detalle.length,0);
+  html += `<div style="margin-bottom:6px;font-weight:700;color:#1a2b4a;">ACCIONES (${nEq} l&iacute;nea${nEq!==1?'s':''})</div>`;
+  if(nEq === 0){
+    html += `<div style="color:#8a94a6;font-size:13px;margin-bottom:14px;">No hay folios de acciones seleccionados.</div>`;
+  } else {
+    html += `<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:8px;">
+      <thead><tr style="text-align:left;color:#8a94a6;border-bottom:1px solid #e3e7ee;">
+      <th style="padding:5px 8px;">Lado</th><th>Especie</th><th style="text-align:right;">Cantidad</th>
+      <th style="text-align:right;">Precio prom.</th><th style="text-align:right;">Comisi&oacute;n 0.1%</th><th style="text-align:right;">IVA 19%</th></tr></thead><tbody>`;
+    eqLotes.forEach(l=>{
+      l.detalle.forEach(d=>{
+        const gross = d.qty * d.precio;
+        const com = gross * 0.001;
+        const iva = com * 0.19;
+        const ladoTxt = l.ladoAccion === 'Compra' ? 'Compra' : 'Venta';
+        const col = l.ladoAccion === 'Compra' ? '#1a2b4a' : '#c0392b';
+        html += `<tr style="border-bottom:1px solid #f0f2f6;">
+          <td style="padding:5px 8px;font-weight:600;color:${col};">${ladoTxt}</td>
+          <td>${d.security}</td>
+          <td style="text-align:right;">${fmtQ(d.qty)}</td>
+          <td style="text-align:right;">$${fmtP(d.precio)}</td>
+          <td style="text-align:right;">$${fmtP(com)}</td>
+          <td style="text-align:right;">$${fmtP(iva)}</td></tr>`;
+      });
+    });
+    html += `</tbody></table>`;
+    const resumen = {};
+    eqLotes.forEach(l=> l.detalle.forEach(d=>{
+      const k = `${l.ladoAccion}|${d.security}`;
+      if(!resumen[k]) resumen[k]={lado:l.ladoAccion, esp:d.security, q:0, mpx:0};
+      resumen[k].q += d.qty; resumen[k].mpx += d.qty*d.precio;
+    }));
+    html += `<div style="font-size:12px;color:#5a6472;margin-bottom:16px;">`;
+    Object.values(resumen).forEach(g=>{
+      html += `<div>${g.lado} ${g.esp} <b>${fmtQ(g.q)}</b> &middot; <b>${fmtP(g.mpx/g.q)}</b></div>`;
+    });
+    html += `</div>`;
+  }
+
+  // ----- FX -----
+  html += `<div style="margin:10px 0 6px;font-weight:700;color:#1a2b4a;">FX (${fxOps.length} operaci${fxOps.length!==1?'ones':'&oacute;n'})</div>`;
+  if(fxOps.length === 0){
+    html += `<div style="color:#8a94a6;font-size:13px;">No hay operaciones FX de Andes hoy.</div>`;
+  } else {
+    html += `<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:8px;">
+      <thead><tr style="text-align:left;color:#8a94a6;border-bottom:1px solid #e3e7ee;">
+      <th style="padding:5px 8px;">Hora</th><th>Lado</th><th>Par</th><th style="text-align:right;">USD</th>
+      <th style="text-align:right;">Tasa</th><th style="text-align:right;">COP</th></tr></thead><tbody>`;
+    const fxAgrup = {};
+    fxOps.forEach(o=>{
+      const rate = (o.params && (o.params.rateUnica || o.params.tasaFinalCliente)) || 0;
+      const cop = o.amount * rate;
+      const ladoTxt = o.side === 'Compra' ? 'Compra USD' : 'Venta USD';
+      const col = o.side === 'Compra' ? '#1a2b4a' : '#c0392b';
+      html += `<tr style="border-bottom:1px solid #f0f2f6;">
+        <td style="padding:5px 8px;">${o.horaRegistro||'—'}</td>
+        <td style="font-weight:600;color:${col};">${ladoTxt}</td>
+        <td>USDCOP</td>
+        <td style="text-align:right;">$${fmtQ(Math.round(o.amount))}</td>
+        <td style="text-align:right;">${fmtP(rate)}</td>
+        <td style="text-align:right;">$${fmtP(cop)}</td></tr>`;
+      if(!fxAgrup[o.side]) fxAgrup[o.side]={q:0,mpx:0};
+      fxAgrup[o.side].q += o.amount; fxAgrup[o.side].mpx += o.amount*rate;
+    });
+    html += `</tbody></table>`;
+    html += `<div style="font-size:12px;color:#5a6472;">`;
+    Object.keys(fxAgrup).forEach(side=>{
+      const g = fxAgrup[side];
+      html += `<div>${side==='Compra'?'Compra':'Venta'} USDCOP <b>${fmtQ(Math.round(g.q))}</b> &middot; <b>${fmtP(g.mpx/g.q)}</b></div>`;
+    });
+    html += `</div>`;
+  }
+
+  document.getElementById('verifAndesBody').innerHTML = html;
+  const btn = document.getElementById('btnGenerarAndes');
+  btn.onclick = async () => {
+    document.getElementById('modalVerifAndes').style.display = 'none';
+    const rep = window._andesReporte;
+    await generarExcelAndes(rep.eqLotes, rep.fxOps);
+  };
+  document.getElementById('modalVerifAndes').style.display = 'flex';
+}
+
 function mostrarAprobacionProteccion(cliente, loteDet){
   // Ejecutado por especie+lado, tomado de las órdenes reales (Trades).
   const ejecutado = {};
