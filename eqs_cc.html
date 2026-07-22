@@ -1292,8 +1292,7 @@
           </div>
         </div>
 
-        <button class="btn primary" style="width:100%;margin-top:8px;" id="btnGenerar" onclick="generarReporte()">Generar reporte</button>
-        <div class="footer-note">Genera <b>Operaciones_CLIENTE</b> (resumen por portafolio) y agrega al <b>Detalle_operaciones_CLIENTE</b> (folio a folio, acumulado del día).</div>
+        <div class="footer-note">Genera <b>Operaciones_CLIENTE</b> (resumen por portafolio) y agrega al <b>Detalle_operaciones_CLIENTE</b> (folio a folio, acumulado del día). Usa el botón <b>Generar reporte</b> de arriba.</div>
       </div>
 
     </div>
@@ -5374,21 +5373,32 @@ function actualizarBotonGenerar(){
   const cliente = document.getElementById('filtroCliente').value;
   const cfg = cliente ? getClienteDB(cliente) : null;
   // Para clientes con autoPortafolio, mantener la cantidad asignada en sync con
-  // la selección actual (si cambia qué folios están marcados).
+  // la selección actual (si cambia qué folios están marcados). NO se llama
+  // renderAllocations aquí para evitar recursión (renderAllocations→recalcularTodo
+  // →actualizarBotonGenerar); el <div> de la lista se refresca aparte.
   if(cfg && cfg.autoPortafolio){
     const totalSel = getFiltrados().filter(f=>selectedFolios.has(f.id)).reduce((s,f)=>s+f.cantidad,0);
-    if(totalSel > 0){
-      allocations = [{ portId: cfg.autoPortafolio, cantidad: totalSel }];
-    } else {
-      allocations = [];
-    }
-    if(typeof renderAllocations === 'function') renderAllocations();
+    allocations = totalSel > 0 ? [{ portId: cfg.autoPortafolio, cantidad: totalSel }] : [];
+    pintarAllocList();
   }
   const haySeleccion = selectedFolios.size > 0;
-  const ok = !!cliente && haySeleccion;
+  // Para clientes de reparto manual (no autoPortafolio, no PROTECCIÓN), la
+  // asignación a portafolios debe estar COMPLETA (diferencia 0) antes de poder
+  // generar — igual que exigía el botón viejo de abajo. Para clientes de
+  // generación automática la cantidad se asigna sola, así que no aplica.
+  const esAutoGen = !!(cfg && (cfg.autoPortafolio || cfg.formatoReporte === 'proteccion' || normalizarGrupo(cliente) === 'PROTECCION'));
+  let asignacionOk = true;
+  if(!esAutoGen && cliente){
+    const filtrados = getFiltrados();
+    const totalSel = filtrados.filter(f=>selectedFolios.has(f.id)).reduce((s,f)=>s+f.cantidad,0);
+    const totalAsig = allocations.reduce((s,a)=>s+a.cantidad,0);
+    asignacionOk = totalSel>0 && totalAsig>0 && Math.abs(totalSel-totalAsig)<1;
+  }
+  const ok = !!cliente && haySeleccion && asignacionOk;
   btn.disabled = !ok;
   if(!cliente) btn.title = 'Selecciona un cliente para habilitar';
   else if(!haySeleccion) btn.title = 'Selecciona al menos un folio para habilitar';
+  else if(!asignacionOk) btn.title = 'Completa la asignación a portafolios (diferencia debe ser 0)';
   else btn.title = 'Generar el reporte de ' + ((getClienteDB(cliente)&&getClienteDB(cliente).nombre)||cliente);
 }
 
@@ -5551,12 +5561,12 @@ function quitarPortafolio(idx){
   renderAllocations();
 }
 
-function renderAllocations(){
+function pintarAllocList(){
   const cliente = document.getElementById('filtroCliente').value;
   const wrap = document.getElementById('allocList');
+  if(!wrap) return;
   if(!cliente || allocations.length===0){
     wrap.innerHTML = '<div class="field-note">Aún no se ha asignado ningún portafolio.</div>';
-    recalcularTodo();
     return;
   }
   const ports = getClienteDB(cliente).portafolios;
@@ -5569,6 +5579,10 @@ function renderAllocations(){
       <button class="remove-btn" onclick="quitarPortafolio(${idx})">✕</button>
     </div>`;
   }).join('');
+}
+
+function renderAllocations(){
+  pintarAllocList();
   recalcularTodo();
 }
 
@@ -5643,8 +5657,10 @@ function recalcularTodo(){
   difEl.textContent = fmtInt(dif);
   difEl.style.color = dif===0 ? 'var(--buy)' : 'var(--sell)';
 
-  const btn = document.getElementById('btnGenerar');
-  btn.disabled = !(cliente && seleccionados.length>0 && totalAsignado>0 && dif===0);
+  // El botón de generar ahora es solo el de arriba (#btnGenerarTop). Se
+  // actualiza su estado teniendo en cuenta también la asignación: para clientes
+  // de reparto manual la diferencia debe quedar en 0 antes de poder generar.
+  actualizarBotonGenerar();
 }
 
 // ----------------------------------------------------------------------
