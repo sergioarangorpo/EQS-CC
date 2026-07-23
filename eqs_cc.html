@@ -4848,44 +4848,76 @@ function resolverComposites(tradesRaw, composites){
 
     const aplicar = (poidsDelIntento, grupos, mejor, modo)=>{
       let corregidos = 0;
+      // Acumulado de acciones ya asignadas a cada orden dentro de este intento,
+      // para el reparto de prints cortos por déficit restante.
+      const asignadoOrden = new Map();
       // La verificación se hace composite por composite (no sobre la familia
       // entera): cuando un mismo grupo de órdenes se compositea dos veces, cada
       // composite reparte según el tamaño VIVO de las órdenes en ese momento, no
       // según el ejecutado total del día. Comparar contra el total daría todos
       // los prints como sospechosos y los dañaría.
-      poidsDelIntento.forEach(poid=>{
-        const gs = porPoid.get(poid);
-        const recon = totalesPorPosicion(gs);
-        const sumaRecon = recon.reduce((s,x)=>s+x, 0);
-        gs.forEach(({padre, hijas})=>{
-          // La posición dice a qué orden es cada hija, y en la enorme mayoría de
-          // los prints es correcta. Se verifica print por print contra la
-          // proporción del propio composite. En los datos reales del 17-jul el
-          // ruido de redondeo nunca pasó de ~3 acciones, mientras que el único
-          // print realmente invertido (PFGRUPOARG TCN 603691: hijas 156/90 donde
-          // tocaba 90/156) se desvió 66. Con el umbral en 5 se corrige ese sin
-          // tocar los demás — y ese solo print metía 66 acciones de desfase.
-          // No se corrigen los prints "cortos" (menos hijas que órdenes: Fidessa
-          // omite la fila cuando a una orden le tocan 0 acciones): ahí no se sabe
-          // cuál orden se saltó y reasignar haría más daño que bien.
-          const esperado = recon.map(r=> padre.cantidad * r / sumaRecon);
-          const completo = hijas.length === mejor.orden.length;
-          const desvio = Math.max(...hijas.map((h,i)=> i<esperado.length ? Math.abs(h.cantidad - esperado[i]) : 0));
-          const sospechoso = completo && desvio > 5;
-          let destino = mejor.orden;
-          if(sospechoso){
-            corregidos++;
-            const rangoHijas = hijas.map((h,i)=>i).sort((a,b)=> hijas[a].cantidad - hijas[b].cantidad);
-            const rangoOrden = mejor.orden.map((o,i)=>i).sort((a,b)=> mejor.orden[a].qtyDone - mejor.orden[b].qtyDone);
-            destino = [];
-            rangoHijas.forEach((iHija, rango)=>{ destino[iHija] = mejor.orden[rangoOrden[rango]]; });
-          }
+      // Reparto por MOMENTO (confirmado con Sergio, CERO tolerancia). Print
+      // COMPLETO → emparejar por rango (mayor hija con mayor orden). Print CORTO
+      // (menos hijas que órdenes, Fidessa omitió una fila en 0) → cada hija va a
+      // la orden con déficit restante más cercano. Los cortos se procesan AL
+      // FINAL, cuando el déficit ya refleja lo que falta.
+      const asignarPrint = (padre, hijas, esCorto)=>{
+        const destino = new Array(hijas.length);
+        if(!esCorto){
+          // Print COMPLETO: emparejar por rango con desempate ESTABLE por
+          // posición original (para no intercambiar 1 acción entre órdenes casi
+          // iguales, ej. GRUPOARGOS 4822/4823). Mayor hija ↔ mayor orden.
+          const rangoHijas = hijas.map((h,i)=>i).sort((a,b)=> (hijas[a].cantidad - hijas[b].cantidad) || (a-b));
+          const rangoOrden = mejor.orden.map((o,i)=>i).sort((a,b)=> (mejor.orden[a].qtyDone - mejor.orden[b].qtyDone) || (a-b));
+          rangoHijas.forEach((iHija, rango)=>{ destino[iHija] = mejor.orden[rangoOrden[rango]]; });
+          hijas.forEach((h,i)=>{ if(destino[i] !== mejor.orden[i]) corregidos++; });
+        } else {
+          // Print CORTO: cada hija (mayor a menor) va a la orden con déficit
+          // restante más cercano. Se actualiza asignadoOrden DENTRO del bucle
+          // para que dos fracciones iguales (ej. [1,1]) NO caigan ambas en la
+          // misma orden — tras la primera baja el déficit y la segunda va a otra.
+          const hijasDesc = hijas.map((h,i)=>({h,i})).sort((a,b)=> (b.h.cantidad - a.h.cantidad) || (a.i-b.i));
+          hijasDesc.forEach(({h,i})=>{
+            let mejorO = null, mejorDelta = Infinity;
+            mejor.orden.forEach(o=>{
+              const deficit = o.qtyDone - (asignadoOrden.get(o.oid)||0);
+              if(deficit <= 0) return;
+              const delta = Math.abs(deficit - h.cantidad);
+              if(delta < mejorDelta){ mejorDelta = delta; mejorO = o; }
+            });
+            const o = mejorO || mejor.orden.slice().sort((a,b)=>b.qtyDone-a.qtyDone)[0];
+            destino[i] = o;
+            if(o) asignadoOrden.set(o.oid, (asignadoOrden.get(o.oid)||0) + h.cantidad);
+          });
+          corregidos++;
+          // El acumulado ya se actualizó dentro del bucle; aquí solo se registra
+          // el mapa hija→orden y se retorna (para NO volver a sumar abajo).
           hijas.forEach((h,i)=>{
             const o = destino[i];
             if(o) asignacion.set(h.ord, {oid: o.oid, grupo: o.grupo, lado: o.lado, security: o.security});
           });
+          return;
+        }
+        // Registro + acumulado para prints COMPLETOS.
+        hijas.forEach((h,i)=>{
+          const o = destino[i];
+          if(o){
+            asignacion.set(h.ord, {oid: o.oid, grupo: o.grupo, lado: o.lado, security: o.security});
+            asignadoOrden.set(o.oid, (asignadoOrden.get(o.oid)||0) + h.cantidad);
+          }
+        });
+      };
+      const nOrdenMomento = mejor.orden.length;
+      const printsCortos = [];
+      poidsDelIntento.forEach(poid=>{
+        const gs = porPoid.get(poid);
+        gs.forEach(({padre, hijas})=>{
+          if(hijas.length === nOrdenMomento){ asignarPrint(padre, hijas, false); return; }
+          printsCortos.push({padre, hijas});
         });
       });
+      // PASADA 2: prints CORTOS, ya con los deficits reflejando lo que falta.
+      printsCortos.forEach(({padre, hijas})=> asignarPrint(padre, hijas, true));
       mejor.orden.forEach(o=> usados.add(o.oid));
       reportes.push({nemo, lado: ladoLargo, poids: poidsDelIntento, modo, ok: true,
         total: grupos.reduce((s,g)=>s+g.padre.cantidad,0),
@@ -4938,8 +4970,9 @@ function resolverComposites(tradesRaw, composites){
             return n === instrUnico || (!/^\d+$/.test(n) && c.grupo === grpTop);
           });
           const sumaCruce = delCruce.reduce((s,c)=>s+c.qtyDone, 0);
-          // Deben sumar el total del composite (± tolerancia de redondeo).
-          if(Math.abs(sumaCruce - total) <= Math.max(2*grupos.length, 3)){
+          // Las órdenes del cruce deben sumar EXACTO el total del composite
+          // (cero tolerancia). Si no suman exacto, no son este cruce.
+          if(sumaCruce === total){
             // Asignar a TODAS las hijas el ORD_NUM único del cruce. No se empareja
             // orden por orden (imposible con 2 tandas); se marca una "orden
             // sintética" que solo porta el grupo, el lado, la especie y el ORD_NUM.
@@ -5077,10 +5110,12 @@ function procesarFidessa(){
   const filasRecon = Object.keys(_fidessaTradesRaw).map(folioOrden=>{
     const t = _fidessaTradesRaw[folioOrden];
     const sumaFolios = sumaPorOrden[folioOrden] || 0;
-    // Tolerancia de 2 acciones: el reparto proporcional de Fidessa redondea a
-    // acciones enteras en cada print, y esos redondeos se acumulan. No es un
-    // descuadre real.
-    const cuadra = Math.abs(sumaFolios - t.qtyDone) <= 2;
+    // CERO TOLERANCIA: la suma de folios asignados a la orden debe ser EXACTA-
+    // MENTE igual al QTY DONE del trade. En acciones no hay margen — cada acción
+    // viaja a cumplimiento y regulatorio. El algoritmo de reparto por momento
+    // (rango + déficit) asigna exacto, así que cualquier diferencia es un
+    // descuadre real que debe marcarse.
+    const cuadra = sumaFolios === t.qtyDone;
     return { folioOrden, grupo: t.grupo, security: t.security, lado: t.lado, qtyDone: t.qtyDone, sumaFolios, cuadra };
   }).filter(f=> f.qtyDone > 0 || f.sumaFolios > 0);
   // Una orden ejecutada que no trae NI UN folio no es un descuadre: es DMA —
@@ -5136,7 +5171,7 @@ function procesarFidessa(){
     </div>`}
 
     <div class="section-label" style="margin-top:16px;">Cuadre por orden</div>
-    ${diferencias.length===0 ? '<div class="field-note">✓ Todas las órdenes con folios cuadran: suma de folios asignados = QTY DONE reportado por Fidessa (±2 acciones por el redondeo del reparto).</div>' : `
+    ${diferencias.length===0 ? '<div class="field-note">✓ Todas las órdenes con folios cuadran EXACTO: suma de folios asignados = QTY DONE reportado por Fidessa (cero tolerancia).</div>' : `
     <div class="blotter-wrap">
       <table><thead><tr><th>Folio orden</th><th>Grupo</th><th>Especie</th><th>Lado</th><th class="num">Qty Done (Trades)</th><th class="num">Suma folios</th><th class="num">Diferencia</th></tr></thead>
       <tbody>${diferencias.map(d=>`<tr><td class="mono-id">${d.folioOrden}</td><td>${d.grupo}</td><td>${nemoCanonico(d.security,'fidessa')}</td><td>${d.lado}</td><td class="num">${fmtInt(d.qtyDone)}</td><td class="num">${fmtInt(d.sumaFolios)}</td><td class="num" style="color:${Math.abs(d.sumaFolios-d.qtyDone)>20?'var(--sell)':'var(--text-1)'};">${fmtInt(d.sumaFolios-d.qtyDone)}</td></tr>`).join('')}</tbody></table>
@@ -5736,7 +5771,7 @@ function validarCoincidenciaCantidades(cliente){
   // cliente operó directo contra el mercado, no pasa por folios.
   const delCliente = recon.filter(f=> normalizarGrupo(f.grupo) === normalizarGrupo(cliente));
   const descuadres = delCliente
-    .filter(f=> f.sumaFolios > 0 && Math.abs(f.sumaFolios - f.qtyDone) > 2)
+    .filter(f=> f.sumaFolios > 0 && f.sumaFolios !== f.qtyDone)
     .map(f=>({
       esp: nemoCanonico(f.security,'fidessa') || f.security,
       lado: f.lado,
@@ -6029,7 +6064,7 @@ function mostrarAprobacionProteccion(cliente, loteDet){
   const filas = Object.keys(porGrupo).sort().map(k=>{
     const g = porGrupo[k];
     const eje = ejecutado[k] || 0;
-    const cuadra = Math.abs(g.cantidad - eje) <= 2;
+    const cuadra = g.cantidad === eje;
     const faltaPort = g.sinPort > 0;
     if(!cuadra || faltaPort) hayProblemas = true;
     const precioTxt = [...g.precios].map(p=>fmtRate(p)).join(' · ');
