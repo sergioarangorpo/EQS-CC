@@ -1268,6 +1268,7 @@
             </div>
           </div>
           <button class="btn small purple" id="btnAgregarPort" style="width:100%;" onclick="agregarPortafolio()">+ Agregar a la asignación</button>
+          <button class="btn small" id="btnPegarAllocIA" style="width:100%;margin-top:6px;" onclick="abrirPegarAllocIA()">📋 Pegar allocation del trader (IA)</button>
           <div class="field-note" id="errorCantidad" style="color:var(--sell);min-height:14px;margin-top:4px;"></div>
         </div>
 
@@ -1398,7 +1399,24 @@
   </div>
 </div>
 
-<!-- Vincular ejecución de afuera (CCSI) con la línea del cliente en RVI -->
+<!-- Pegar allocation del trader e interpretarlo con IA (COLFONDOS y clientes de reparto manual) -->
+<div class="edit-overlay" id="modalPegarAlloc" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(820px,95vw);margin-top:5vh;max-height:88vh;overflow:auto;">
+    <h3 style="font-size:15px;">📋 Allocation del trader → portafolios</h3>
+    <div class="field-note" style="margin-bottom:10px;">Pega el mensaje tal como lo manda el trader (ej. de Diego). La IA lo interpreta y arma el reparto por portafolio. Tú lo revisas y apruebas antes de aplicarlo. Se asocia a la orden que estás reportando por la cantidad.</div>
+    <textarea id="allocPegarTexto" placeholder="-5.200.000 ECO alloc:&#10;FPO Moderado x 3.900.000&#10;FPO Retiro Programado x 1.300.000" style="width:100%;min-height:120px;font-family:var(--mono);font-size:12px;padding:8px;border:1px solid var(--card-border);border-radius:6px;resize:vertical;"></textarea>
+    <div class="edit-actions" style="margin-top:10px;">
+      <button class="btn primary purple" id="btnInterpretarAlloc" onclick="interpretarAllocIA()">✨ Interpretar con IA</button>
+    </div>
+    <div id="allocInterpretadoBody" style="margin-top:12px;"></div>
+    <div class="edit-actions" style="margin-top:16px;">
+      <button class="btn ghost" onclick="document.getElementById('modalPegarAlloc').style.display='none';">Cerrar</button>
+      <button class="btn primary" id="btnAplicarAllocIA" style="display:none;" onclick="aplicarAllocInterpretado()">Aprobar y aplicar</button>
+    </div>
+  </div>
+</div>
+
+
 <div class="edit-overlay" id="modalVinculoRVI" style="align-items:flex-start;">
   <div class="edit-modal" style="width:min(760px,94vw);margin-top:5vh;max-height:88vh;overflow:auto;">
     <h3 style="font-size:15px;">Vincular nuestra ejecución (afuera)</h3>
@@ -3828,12 +3846,29 @@ const clientesDB = {
   COLFONDOS: {
     nombre: 'COLFONDOS SA',
     formatoReporte: 'colfondos', // formato propio (plano, sin marca) — piden un reporte por cada orden que termina, no acumulado del día
+    reparteManual: true, // el trader del cliente da el reparto por chat; se interpreta con IA y se aprueba
     portafolios: [
-      {id:'CESLP', nombre:'COLFONDOS FONDO DE CESANTÍAS LARGO PLAZO', nit:'800.198.644-5', iva:true},
-      {id:'CONS', nombre:'COLFONDOS - FPO CONSERVADOR', nit:'900.391.896-3', iva:false},
-      {id:'RETPROG', nombre:'COLFONDOS - FPO RETIRO PROGRAMADO', nit:'900.391.901-2', iva:false},
-      {id:'MODER', nombre:'COLFONDOS - FPO MODERADO', nit:'800.227.940-6', iva:false},
-      {id:'MAYORR', nombre:'COLFONDOS - FPO MAYOR RIESGO', nit:'900.391.900-5', iva:false},
+      {id:'CESLP', nombre:'COLFONDOS FONDO DE CESANTÍAS LARGO PLAZO', deceval:1444, nit:'800.198.644-5', iva:false},
+      {id:'FPO_MODERADO', nombre:'COLFONDOS - FPO MODERADO', deceval:1449, nit:'800.227.940-6', iva:false},
+      {id:'FPO_CONSERVADOR', nombre:'COLFONDOS - FPO CONSERVADOR', deceval:1544545, nit:'900.391.896-3', iva:false},
+      {id:'FPO_MAYOR_RIESGO', nombre:'COLFONDOS - FPO MAYOR RIESGO', deceval:1544548, nit:'900.391.900-5', iva:false},
+      {id:'FPO_RETIRO_PROGRAMADO', nombre:'COLFONDOS - FPO RETIRO PROGRAMADO', deceval:1544546, nit:'900.391.901-2', iva:false},
+      {id:'ECOPETROL_FPV', nombre:'COLFONDOS - FPV ECOPETROL', deceval:2310176, nit:'830.070.784-6', iva:false},
+      {id:'FPV_ACCIONCOL', nombre:'COLFONDOS - FPV CLAS ACCION COLOMBIA', deceval:2310174, nit:'830.070.784-6', iva:false},
+      {id:'DINAMICO', nombre:'COLFONDOS - FPV CLAS DINAMICO', deceval:2310175, nit:'830.070.784-6', iva:false},
+      {id:'AV_CONSERVADOR', nombre:'COLFONDOS - FPV CLAS AVANZA CONSERVADOR', deceval:2351751, nit:'830.070.784-6', iva:false},
+      {id:'AV_PRUDENTE', nombre:'COLFONDOS - FPV CLAS AVANZA PRUDENTE', deceval:2351752, nit:'830.070.784-6', iva:false},
+      {id:'AV_MODERADO', nombre:'COLFONDOS - FPV CLAS AVANZA MODERADO', deceval:2351753, nit:'830.070.784-6', iva:false},
+      {id:'AV_DECIDIDO', nombre:'COLFONDOS - FPV CLAS AVANZA DECIDIDO', deceval:2351754, nit:'830.070.784-6', iva:false},
+      {id:'AV_MAYOR_RIESGO', nombre:'COLFONDOS - FPV CLAS AVANZA MAYOR RIESGO', deceval:2351755, nit:'830.070.784-6', iva:false},
+      {id:'INMOB', nombre:'COLFONDOS - FPV INMOBILIARIO', deceval:2404049, nit:'830.070.784-6', iva:false},
+      {id:'ALT_701', nombre:'COLFONDOS - FPV ALTERNATIVA ESPECIAL 701', deceval:3403706, nit:'830.070.784-6', iva:false},
+      {id:'ALT_704', nombre:'COLFONDOS - FPV ALTERNATIVA ESPECIAL 704', deceval:3773164, nit:'830.070.784-6', iva:false},
+      {id:'ALT_705', nombre:'COLFONDOS - FPV ALTERNATIVA ESPECIAL 705', deceval:3986639, nit:'830.070.784-6', iva:false},
+      {id:'ALT_707', nombre:'COLFONDOS - FPV ALTERNATIVA ESPECIAL 707', deceval:4102368, nit:'830.070.784-6', iva:false},
+      {id:'ALT_710', nombre:'COLFONDOS - FPV ALTERNATIVA ESPECIAL 710', deceval:4232532, nit:'830.070.784-6', iva:false},
+      {id:'ALT_712', nombre:'COLFONDOS - FPV ALTERNATIVA ESPECIAL 712', deceval:4278988, nit:'830.070.784-6', iva:false},
+      {id:'ALT_716', nombre:'COLFONDOS - FPV ALTERNATIVA ESPECIAL 716', deceval:4418379, nit:'830.070.784-6', iva:false},
     ],
     comisionBloque: 0.0015,
     comisionPantalla: 0.0008,
@@ -5600,6 +5635,185 @@ function agregarPortafolio(){
 
 function quitarPortafolio(idx){
   allocations.splice(idx,1);
+  renderAllocations();
+}
+
+// ----------------------------------------------------------------------
+// Allocation del trader interpretado con IA (COLFONDOS y clientes de reparto
+// manual). Se pega el mensaje del trader, la IA lo estructura, Sergio aprueba.
+// ----------------------------------------------------------------------
+let _allocInterpretado = null; // { ordenes:[{cantidadTotal, lineas:[{portTexto, portId, portNombre, cantidad, match}]}], sumaSeleccion }
+
+function abrirPegarAllocIA(){
+  const cliente = document.getElementById('filtroCliente').value;
+  if(!cliente){ alert('Selecciona COLFONDOS (u otro cliente de reparto manual) primero.'); return; }
+  document.getElementById('allocPegarTexto').value = '';
+  document.getElementById('allocInterpretadoBody').innerHTML = '';
+  document.getElementById('btnAplicarAllocIA').style.display = 'none';
+  _allocInterpretado = null;
+  document.getElementById('modalPegarAlloc').style.display = 'flex';
+}
+
+// Normaliza un nombre de portafolio para comparar (sin tildes, mayúsculas,
+// sin palabras de relleno). Sirve para el match difuso local.
+function normPort(s){
+  return String(s||'')
+    .toUpperCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // quitar tildes
+    .replace(/COLFONDOS/g,'').replace(/[-–]/g,' ')
+    .replace(/\bFDO\b/g,'FONDO')
+    .replace(/\bAV\b/g,'AVANZA')
+    .replace(/\bPROGR?\b/g,'PROGRAMADO')
+    .replace(/\s+/g,' ').trim();
+}
+
+// Intenta casar el texto de un portafolio con uno de la base del cliente.
+// Devuelve {portId, portNombre} o null. Match por: (1) número de alternativa
+// especial (701/704/...), (2) inclusión de palabras clave, (3) mayor solape.
+function matchPortafolio(portTexto, ports){
+  const t = normPort(portTexto);
+  // (1) alternativa especial por número/código (701, 704, N10, N12...)
+  const codigo = (t.match(/\b(N?\d{2,3})\b/) || [])[1];
+  if(codigo){
+    const porCodigo = ports.find(p=> normPort(p.nombre).includes(codigo));
+    if(porCodigo) return {portId:porCodigo.id, portNombre:porCodigo.nombre};
+  }
+  // (2)/(3) solape de palabras — se exige que las palabras distintivas del
+  // texto estén todas en el nombre del portafolio.
+  const palabras = t.split(' ').filter(w=>w.length>2 && !['FPV','FPO','CLASS','ESPECIAL','ALTERNATIVA','ACC','ACCIONES'].includes(w));
+  let mejor=null, mejorScore=0;
+  ports.forEach(p=>{
+    const np = normPort(p.nombre);
+    let score = 0;
+    palabras.forEach(w=>{ if(np.includes(w)) score++; });
+    // bonus si coincide FPO vs FPV (tipo de fondo)
+    const tipoT = /FPO/.test(portTexto.toUpperCase()) ? 'FPO' : (/FPV/.test(portTexto.toUpperCase()) ? 'FPV' : '');
+    const tipoP = /FPO/.test(p.nombre) ? 'FPO' : (/FPV/.test(p.nombre) ? 'FPV' : '');
+    if(tipoT && tipoT===tipoP) score += 0.5;
+    if(score>mejorScore){ mejorScore=score; mejor=p; }
+  });
+  // exige al menos una palabra distintiva en común
+  if(mejor && mejorScore>=1) return {portId:mejor.id, portNombre:mejor.nombre};
+  return null;
+}
+
+async function interpretarAllocIA(){
+  const cliente = document.getElementById('filtroCliente').value;
+  const texto = document.getElementById('allocPegarTexto').value.trim();
+  const body = document.getElementById('allocInterpretadoBody');
+  if(!texto){ body.innerHTML = '<div class="field-note" style="color:var(--sell);">Pega primero el texto del trader.</div>'; return; }
+  const btn = document.getElementById('btnInterpretarAlloc');
+  btn.disabled = true; btn.textContent = '✨ Interpretando…';
+  body.innerHTML = '<div class="field-note">Interpretando el texto con IA…</div>';
+
+  // Prompt: pedir SOLO JSON con las órdenes y su reparto. La IA separa cada
+  // bloque (una orden por cantidad total) y sus líneas portafolio→cantidad.
+  const prompt = `Eres un parser de mensajes de allocation de un trader de una mesa de acciones en Colombia. Recibes un mensaje con uno o más bloques. Cada bloque empieza con una cantidad total (a veces con signo negativo = venta) y el nombre de una acción (ej. "ECO" = ECOPETROL), seguido de líneas que reparten esa cantidad entre portafolios. El separador entre portafolio y cantidad puede ser "x", "~" u otro. Los números usan punto como separador de miles (363.000 = 363000). A veces el allocation viene en una sola línea (ej. "-442.000 ECO x FDO Accion Colombia" = todo a ese portafolio).
+
+Devuelve SOLO un JSON válido (sin texto adicional, sin markdown) con esta forma exacta:
+{"ordenes":[{"cantidadTotal":NUMERO,"especie":"TEXTO","lineas":[{"portafolio":"TEXTO TAL CUAL","cantidad":NUMERO}]}]}
+
+La cantidadTotal y cada cantidad son enteros positivos (ignora el signo). Copia el nombre del portafolio TAL CUAL aparece en el mensaje. Ignora líneas que no sean allocation (saludos, "Tksss", nombres de personas, horas).
+
+Mensaje:
+"""
+${texto}
+"""`;
+
+  try{
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model:'claude-sonnet-4-6',
+        max_tokens:1000,
+        messages:[{role:'user', content:prompt}],
+      }),
+    });
+    const data = await resp.json();
+    let txt = (data.content||[]).map(i=> i.type==='text'? i.text : '').join('').trim();
+    txt = txt.replace(/```json|```/g,'').trim();
+    const parsed = JSON.parse(txt);
+
+    // Mapear cada línea a un portafolio de la base + validar sumas.
+    const ports = getClienteDB(cliente).portafolios;
+    const ordenes = (parsed.ordenes||[]).map(o=>{
+      const lineas = (o.lineas||[]).map(l=>{
+        const m = matchPortafolio(l.portafolio, ports);
+        return { portTexto:l.portafolio, cantidad:Number(l.cantidad)||0,
+                 portId: m?m.portId:null, portNombre: m?m.portNombre:null, match: !!m };
+      });
+      const sumaLineas = lineas.reduce((s,l)=>s+l.cantidad,0);
+      return { cantidadTotal:Number(o.cantidadTotal)||0, especie:o.especie||'', lineas,
+               sumaLineas, cuadra: sumaLineas===(Number(o.cantidadTotal)||0) };
+    });
+    _allocInterpretado = { ordenes };
+    pintarAllocInterpretado();
+  }catch(e){
+    body.innerHTML = `<div class="field-note" style="color:var(--sell);">No se pudo interpretar el texto (${e.message}). Puedes intentar de nuevo, corregir el texto, o ingresar el reparto a mano.</div>`;
+  }finally{
+    btn.disabled = false; btn.textContent = '✨ Interpretar con IA';
+  }
+}
+
+function pintarAllocInterpretado(){
+  const body = document.getElementById('allocInterpretadoBody');
+  const cliente = document.getElementById('filtroCliente').value;
+  const ports = getClienteDB(cliente).portafolios;
+  if(!_allocInterpretado || _allocInterpretado.ordenes.length===0){
+    body.innerHTML = '<div class="field-note">La IA no encontró órdenes en el texto.</div>';
+    return;
+  }
+  const optsPort = ports.map(p=>`<option value="${p.id}">${p.nombre}</option>`).join('');
+  let html = '<div class="field-note" style="margin-bottom:8px;">Revisa el reparto interpretado. Corrige cualquier portafolio que no haya casado (en rojo) antes de aplicar.</div>';
+  let hayError = false;
+  _allocInterpretado.ordenes.forEach((o,oi)=>{
+    const cuadraColor = o.cuadra ? 'var(--buy)' : 'var(--sell)';
+    if(!o.cuadra) hayError = true;
+    html += `<div style="border:1px solid var(--card-border);border-radius:8px;padding:10px;margin-bottom:10px;">
+      <div style="font-weight:600;margin-bottom:6px;">${o.especie||'—'} · total ${fmtInt(o.cantidadTotal)}
+        <span style="color:${cuadraColor};font-size:12px;font-weight:500;">
+          ${o.cuadra ? '✓ suma cuadra' : `⚠ líneas suman ${fmtInt(o.sumaLineas)} (dif ${fmtInt(o.sumaLineas-o.cantidadTotal)})`}</span></div>`;
+    o.lineas.forEach((l,li)=>{
+      if(!l.match) hayError = true;
+      html += `<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;">
+        <select onchange="_allocInterpretado.ordenes[${oi}].lineas[${li}].portId=this.value;_allocInterpretado.ordenes[${oi}].lineas[${li}].match=!!this.value;pintarAllocInterpretado();" style="flex:1;${l.match?'':'border-color:var(--sell);'}">
+          <option value="">${l.match?'':'⚠ '}${l.portTexto} — elige portafolio…</option>
+          ${ports.map(p=>`<option value="${p.id}" ${l.portId===p.id?'selected':''}>${p.nombre}</option>`).join('')}
+        </select>
+        <span style="font-family:var(--mono);min-width:80px;text-align:right;">${fmtInt(l.cantidad)}</span>
+      </div>`;
+    });
+    html += `</div>`;
+  });
+  body.innerHTML = html;
+  document.getElementById('btnAplicarAllocIA').style.display = hayError ? 'none' : '';
+  if(hayError){
+    body.innerHTML += '<div class="field-note" style="color:var(--sell);">Hay portafolios sin casar o sumas que no cuadran. Corrige para poder aplicar.</div>';
+  }
+}
+
+// Aplica el allocation interpretado. Si el usuario ha seleccionado UNA orden en
+// la tabla de folios, se aplica el bloque de esa orden (por cantidad). Si no,
+// se aplican todas las órdenes cuya cantidad total case con la selección actual.
+function aplicarAllocInterpretado(){
+  if(!_allocInterpretado) return;
+  const totalSel = getTotalSeleccionado();
+  // Elegir la orden interpretada cuya cantidad total = selección actual.
+  let orden = _allocInterpretado.ordenes.find(o=> o.cantidadTotal === totalSel);
+  if(!orden){
+    // Si solo hay una orden interpretada, usarla; si no, avisar.
+    if(_allocInterpretado.ordenes.length===1) orden = _allocInterpretado.ordenes[0];
+    else { alert(`Selecciona en los folios la orden que corresponde a este allocation. La selección actual (${fmtInt(totalSel)}) no coincide con ninguna cantidad total del texto (${_allocInterpretado.ordenes.map(o=>fmtInt(o.cantidadTotal)).join(', ')}).`); return; }
+  }
+  // Volcar las líneas al allocation, sumando por portafolio.
+  orden.lineas.forEach(l=>{
+    if(!l.portId) return;
+    const ex = allocations.find(a=>a.portId===l.portId);
+    if(ex) ex.cantidad += l.cantidad;
+    else allocations.push({portId:l.portId, cantidad:l.cantidad});
+  });
+  document.getElementById('modalPegarAlloc').style.display='none';
   renderAllocations();
 }
 
