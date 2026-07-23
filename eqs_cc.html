@@ -4618,6 +4618,12 @@ async function cargarArchivoFidessa(input, tipo){
           traded: row.getCell(headers['Traded']).value,
           clientBook: row.getCell(headers['Client/Book']).value,
           parentOrderId: row.getCell(headers['Parent order ID']).value,
+          // El Notes del propio folio (Fidessa) — en las fracciones de
+          // distribución de un cruce trae el Instructions = ORD_NUM del cliente
+          // (ej. 11525419). Se conserva para poder etiquetar ORD_NUM y portafolio
+          // aunque la fracción que fue al mercado (con Parent Order ID) no lo
+          // traiga.
+          notes: (()=>{ const h = headers['Notes']; return h ? String(row.getCell(h).value || '').trim() : ''; })(),
           // La POSICIÓN de la fila dentro del archivo importa: en un composite,
           // Fidessa escribe las hijas siempre en el mismo orden (una por orden
           // individual), y ese orden es la única pista de a qué orden pertenece
@@ -4658,7 +4664,7 @@ function renderFidessaTradesPanel(){
     </div>
     <div class="blotter-wrap" style="overflow-x:auto;">
       <table style="min-width:800px;"><thead><tr>
-        <th style="width:34px;"></th>
+        <th style="width:34px;text-align:center;"><input type="checkbox" id="chkTodosTrades" ${filas.length>0 && filas.every(f=>_tradesConsolidar.has(f.folioOrden))?'checked':''} onclick="toggleTodosTrades(this.checked)" title="Seleccionar todas las órdenes"></th>
         ${thOrdenable('fidessaTrades','folioOrden','Parent Order ID')}
         ${thOrdenable('fidessaTrades','grupo','Client/Book')}
         ${thOrdenable('fidessaTrades','lado','Lado')}
@@ -4714,9 +4720,22 @@ function toggleTradeConsolidar(folioOrden){
   renderFolios();
 }
 
-// =====================================================================
-// CRUCE FX (MLI y extranjeros que llegan directo a Fidessa)
-// =====================================================================
+// Seleccionar / deseleccionar TODAS las órdenes de Fidessa Trades visibles
+// (checkbox en la barra de títulos, como en el cuadro de folios). Útil para
+// navegar y marcar cruce/pantalla sobre todas las órdenes de un cliente.
+function toggleTodosTrades(checked){
+  const cliente = document.getElementById('filtroCliente').value;
+  const filas = ordenarArrayGenerico(Object.entries(_fidessaTradesRaw||{}).map(([folioOrden, t]) => ({folioOrden, ...t})), 'fidessaTrades')
+    .filter(f => coincideFiltroRVL({cliente: f.grupo, especie: nemoCanonico(f.security,'fidessa'), lado: f.lado}));
+  if(checked) filas.forEach(f=> _tradesConsolidar.add(f.folioOrden));
+  else _tradesConsolidar.clear();
+  const cfg = cliente ? getClienteDB(cliente) : null;
+  // Con selección múltiple no hay una única orden activa para reparto manual.
+  if(cfg && cfg.reparteManual) _ordenActiva = _tradesConsolidar.size === 1 ? [..._tradesConsolidar][0] : null;
+  renderFidessaTradesPanel();
+  selectedFolios.clear();
+  renderFolios();
+}
 // Comisión ALL IN fija de MLI: 0.1% del bruto. No hay línea de TAX aparte
 // (el impuesto existe pero va incluido en el all-in).
 const MLI_COMISION_ALL_IN = 0.001; // 0.1%
@@ -5412,7 +5431,11 @@ function procesarFidessa(){
     // y ordNum. Se usan esos directamente.
     const ordenSintetica = orden && !t && orden.ordNum ? orden : null;
     const grupo = t ? t.grupo : (ordenSintetica ? ordenSintetica.grupo : normalizarGrupo(f.clientBook || 'SIN_IDENTIFICAR'));
-    const notes = t ? (t.notes || '') : '';
+    // Notes para cruzar con EMSX: el del trade asignado si existe; si no, el del
+    // propio folio (las fracciones de distribución de un cruce traen el
+    // Instructions=ORD_NUM ahí). Así el portafolio (EMSX.account) y el ORD_NUM
+    // se recuperan aunque el trade no traiga Notes.
+    const notes = (t && t.notes) ? t.notes : (f.notes || '');
     // El Notes de Fidessa apunta a la línea de EMSX. Si es numérico, ES el
     // ORD_NUM. Si es texto ("UBS", composite), se busca la línea de EMSX por
     // ese texto para recuperar el número real y el account.
@@ -5424,7 +5447,11 @@ function procesarFidessa(){
     nuevosFolios.push({
       id: nextId++,
       cliente: grupo,
-      especie: nemoCanonico((t ? t.security : (ordenSintetica ? ordenSintetica.security : f.instrument)) || f.instrument, 'fidessa'),
+      // La especie SIEMPRE sale del instrumento del propio folio (dato real y
+      // correcto por TCN). NUNCA de la orden asignada ni de una orden sintética
+      // de cruce — hacer eso mezclaba especies cuando varias acciones comparten
+      // el mismo Instructions en un cruce (bug 23-jul: todo salía PFGRUPOARG).
+      especie: nemoCanonico(f.instrument, 'fidessa'),
       lado: f.side === 'B' ? 'Compra' : 'Venta',
       hora: horaDeTimestampFidessa(f.traded),
       folio: f.tcn,
@@ -7045,7 +7072,7 @@ async function generarReporteProteccion(cliente, loteDet){
   const soloFecha = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('PROTE BO', { views:[{showGridLines:true}] });
+  const ws = wb.addWorksheet('PROTE BO', { views:[{showGridLines:false}] });
 
   const headers = ['Fracción','Liquidación','Cumplimiento','Folio','Instrumento','C/V','Cantidad','Precio',
                    '% Comision','$ Comisión','Iva','Valor Neto','Cta. Deceval','IdOrion','Tipo Doc.',
@@ -7107,6 +7134,14 @@ async function generarReporteProteccion(cliente, loteDet){
     // Liquidación (col 2) y Cumplimiento (col 3): solo fecha, sin hora.
     ws.getCell(r, 2).numFmt = 'dd/mm/yyyy';
     ws.getCell(r, 3).numFmt = 'dd/mm/yyyy';
+    // Formatos: Cantidad (7) número miles sin decimales; Precio (8), $ Comisión
+    // (10), Iva (11), Valor Neto (12) en moneda (pesos). % Comisión (9) queda
+    // como número (0.08 / 0.15) tal como el archivo real.
+    ws.getCell(r, 7).numFmt = '#,##0';
+    ws.getCell(r, 8).numFmt = '"$"#,##0.00';
+    ws.getCell(r, 10).numFmt = '"$"#,##0.00';
+    ws.getCell(r, 11).numFmt = '"$"#,##0.00';
+    ws.getCell(r, 12).numFmt = '"$"#,##0.00';
     r++;
   });
 
@@ -7153,7 +7188,7 @@ async function generarCredicorpProteccion(loteDet){
   const soloFecha = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('PROTE ORDENES', { views:[{showGridLines:true}] });
+  const ws = wb.addWorksheet('PROTE ORDENES', { views:[{showGridLines:false}] });
   const headers = ['TRANSACTION','SECURITY.CLIENT_ID','PRICE','EX_BROKER','EX_DESK_TYPE','TRADE_DATE',
                    'SETTLE_DATE','PORTFOLIO','QUANTITY','TRADER','ORD_NUM','CUSTOM_FIELD.VALUE.PRO FOLIO'];
   headers.forEach((h,i)=>{ const c = ws.getCell(1, i+1); c.value = h; c.font = { bold:true }; });
@@ -7193,6 +7228,9 @@ async function generarCredicorpProteccion(loteDet){
     // el archivo real.
     ws.getCell(r, 6).numFmt = 'dd/mm/yyyy';
     ws.getCell(r, 7).numFmt = 'dd/mm/yyyy';
+    // PRICE (col 3) y QUANTITY (col 9): número con separador de miles.
+    ws.getCell(r, 3).numFmt = '#,##0.00';
+    ws.getCell(r, 9).numFmt = '#,##0';
     r++;
   });
 
