@@ -1480,7 +1480,7 @@
               <th class="num sortable" onclick="aplicarOrdenGenerico('rvi','gross')">Gross USD<span class="sort-arrow" id="arrow-rvi-gross"></span></th>
               <th class="sortable" onclick="aplicarOrdenGenerico('rvi','broker')">Broker<span class="sort-arrow" id="arrow-rvi-broker"></span></th>
               <th class="sortable" onclick="aplicarOrdenGenerico('rvi','account')">Account<span class="sort-arrow" id="arrow-rvi-account"></span></th>
-              <th class="sortable" onclick="aplicarOrdenGenerico('rvi','procesado')">Estado<span class="sort-arrow" id="arrow-rvi-procesado"></span></th>
+              <th class="sortable" onclick="aplicarOrdenGenerico('rvi','status')">Estado<span class="sort-arrow" id="arrow-rvi-status"></span></th>
             </tr>
           </thead>
           <tbody id="emsx-body"></tbody>
@@ -7002,7 +7002,10 @@ function renderEmsx(){
       <td class="num">${fmtMoneyRVI(r.qty*r.avgPr,0)}</td>
       <td class="mono-id">${r.broker}</td>
       <td class="mono-id">${r.account||'—'}</td>
-      <td><span class="status-badge ${r.procesado?'filled':'pending'}">${r.procesado?'Procesado':'Pendiente'}</span></td>
+      <td>
+        <span class="status-badge ${(r.status||'').toUpperCase()==='FILLED' ? 'filled' : 'pending'}" title="Estado en EMSX">${r.status || '—'}</span>
+        ${r.procesado ? ' <span class="status-badge filled" title="Trade Confirmation ya generado">✓ procesado</span>' : ''}
+      </td>
     </tr>`;
   }).join('');
 }
