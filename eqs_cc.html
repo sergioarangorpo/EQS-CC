@@ -5263,7 +5263,7 @@ function renderEmsxCBTable(){
         <td class="mono-id">${row.ticker}</td>
         <td class="num">${fmtInt(row.filled)}</td>
         <td class="num">${fmtRate(row.avgPrice)}</td>
-        <td>${row.status}</td>
+        <td><span class="status-badge ${(row.status||'').toUpperCase()==='FILLED' ? 'filled' : 'pending'}" title="Estado en EMSX">${row.status || '—'}</span></td>
         <td class="mono-id">${row.instructions}</td>
         <td>${fidessaCell}</td>
       </tr>`;}).join('')}</tbody></table>
