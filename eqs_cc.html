@@ -3849,6 +3849,189 @@ async function generarExcelAndes(eqLotes, fxOps){
   URL.revokeObjectURL(url);
 }
 
+// Reporte genérico EQUITY (sin bloque FX). Mismo look de marca que el de Andes,
+// una fila por portafolio asignado. Se usa para clientes tipo FIDUCIARIA
+// BANCOLOMBIA: el reparto a portafolios lo da el cliente, comisión bloque 0.2%.
+// filasEquity = [{lado, especie, portNombre, cantidad, precio, comPct}] ya
+// repartidas por portafolio. nombreCliente + fileSlug se pasan aparte.
+async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  if(!filasEquity || filasEquity.length===0){ alert('No hay operaciones para generar el reporte.'); return; }
+
+  const hoyDate = new Date();
+  const fechaHoyTxt = hoyDate.toLocaleDateString('es-CO', {day:'2-digit', month:'2-digit', year:'numeric'});
+  const C = REPORTE_COLOR;
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'EQS CC — Credicorp Capital';
+  wb.created = hoyDate;
+  const ws = wb.addWorksheet('Operaciones', {
+    pageSetup: { orientation: 'landscape', fitToPage: true },
+    views: [{ showGridLines: false }],
+  });
+  ws.columns = [
+    { width: 2.5 }, { width: 12 }, { width: 12 }, { width: 8 }, { width: 14 },
+    { width: 15 }, { width: 12 }, { width: 14 }, { width: 16 }, { width: 13 },
+    { width: 12 }, { width: 17 }, { width: 2.5 },
+  ];
+  const cols = ['B','C','D','E','F','G','H','I','J','K','L'];
+  const allCols = ['A','B','C','D','E','F','G','H','I','J','K','L','M'];
+  for(let rr=1; rr<=100; rr++){ allCols.forEach(col => { ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.paper}}; }); }
+
+  let r = 1;
+  // ---------- HEADER DE MARCA ----------
+  const hIni = r, hFin = r+3;
+  for(let rr=hIni; rr<=hFin; rr++){ allCols.forEach(col => ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}}); }
+  ws.getRow(hIni).height = 8; ws.getRow(hIni+1).height = 30; ws.getRow(hIni+2).height = 20; ws.getRow(hIni+3).height = 10;
+  const imgId = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension: 'png' });
+  ws.addImage(imgId, { tl: { col: 9.3, row: hIni + 0.4 }, ext: { width: 165, height: 24 } });
+  ws.mergeCells(`B${hIni+1}:H${hIni+1}`);
+  const tit = ws.getCell(`B${hIni+1}`);
+  tit.value = 'CREDICORP CAPITAL COLOMBIA';
+  tit.font = { name:'Calibri', size:20, bold:true, color:{argb:C.white} };
+  tit.alignment = { horizontal:'left', vertical:'middle' };
+  ws.mergeCells(`B${hIni+2}:H${hIni+2}`);
+  const sub = ws.getCell(`B${hIni+2}`);
+  sub.value = 'EQUITY SALES  ·  EQUITY CONFIRMATION';
+  sub.font = { name:'Calibri', size:10.5, bold:true, color:{argb:C.white} };
+  sub.alignment = { horizontal:'left', vertical:'middle' };
+  r = hFin + 1;
+  allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+  ws.getRow(r).height = 4; r += 2;
+
+  // ---------- FICHA (Cliente / Fecha) ----------
+  [['CLIENT', nombreCliente, 6], ['DATE', fechaHoyTxt, 3]].reduce((cc,[label,value,span])=>{
+    const startCol = cols[cc-1] || cols[0];
+    const endCol = cols[Math.min(cc-1+span-1, cols.length-1)];
+    ws.mergeCells(`${startCol}${r}:${endCol}${r}`);
+    const c = ws.getCell(`${startCol}${r}`); c.value = label; c.font = { name:'Calibri', size:9, bold:true, color:{argb:C.textMuted} };
+    ws.mergeCells(`${startCol}${r+1}:${endCol}${r+1}`);
+    const v = ws.getCell(`${startCol}${r+1}`); v.value = value; v.font = { name:'Calibri', size:14, bold:true, color:{argb:C.navy} };
+    return cc+span;
+  }, 1);
+  r += 3;
+
+  function tituloSeccion(texto){
+    ws.mergeCells(`B${r}:L${r}`);
+    const c = ws.getCell(`B${r}`); c.value = texto; c.font = { name:'Calibri', size:12, bold:true, color:{argb:C.navy} };
+    r++;
+    allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+    ws.getRow(r).height = 2.5; r += 2;
+  }
+  function headerFila(labels, aligns){
+    labels.forEach((t,i)=>{
+      const c = ws.getCell(`${cols[i]}${r}`);
+      c.value = t; c.font = { name:'Calibri', size:9.5, bold:true, color:{argb:C.white} };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
+      c.alignment = { horizontal: aligns[i]||'left', vertical:'middle' };
+    });
+    ws.getRow(r).height = 20; r++;
+  }
+  function cuadroResumen(titulo, filas){
+    ws.mergeCells(`B${r}:L${r}`);
+    const t = ws.getCell(`B${r}`);
+    t.value = titulo; t.font = { name:'Calibri', size:9.5, bold:true, color:{argb:C.navy} };
+    t.alignment = { horizontal:'left', vertical:'middle' };
+    ws.getRow(r).height = 16; r++;
+    [['B','SIDE','left'],['C','SYMBOL','left'],['D','QUANTITY','right'],['E','PRICE','right']].forEach(([col,txt,al])=>{
+      const c = ws.getCell(`${col}${r}`);
+      c.value = txt; c.font = { name:'Calibri', size:8.5, bold:true, color:{argb:C.textMuted} };
+      c.alignment = { horizontal: al, vertical:'middle' };
+    });
+    ws.getRow(r).height = 14; r++;
+    filas.forEach(f=>{
+      ws.getCell(`B${r}`).value = f.lado;
+      ws.getCell(`C${r}`).value = f.nombre;
+      const cCant = ws.getCell(`D${r}`); cCant.value = f.cantidad; cCant.numFmt = '#,##0';
+      const cPx = ws.getCell(`E${r}`); cPx.value = f.precioProm; cPx.numFmt = '"$"#,##0.00';
+      [['B','left'],['C','left'],['D','right'],['E','right']].forEach(([col,al])=>{
+        const cc = ws.getCell(`${col}${r}`);
+        cc.font = { name:'Calibri', size:9.5, bold: col==='B', color:{argb: col==='B' ? (f.lado==='Venta'?C.orange:C.navy) : C.textDark} };
+        cc.alignment = { horizontal: al, vertical:'middle' };
+        cc.fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.grayLight}};
+      });
+      ws.getRow(r).height = 16; r++;
+    });
+    r += 1;
+  }
+
+  tituloSeccion('EQUITY');
+
+  // Resumen: agrupar por lado+especie (precio promedio ponderado).
+  const agrup = {};
+  filasEquity.forEach(f=>{
+    const k = `${f.lado}|${f.especie}`;
+    if(!agrup[k]) agrup[k] = {lado:f.lado, nombre:f.especie, cant:0, montoPx:0};
+    agrup[k].cant += f.cantidad;
+    agrup[k].montoPx += f.cantidad * f.precio;
+  });
+  cuadroResumen('RESUMEN EQUITY', Object.values(agrup).map(g=>({
+    lado:g.lado, nombre:g.nombre, cantidad:g.cant, precioProm: redondear(g.montoPx/g.cant, 2),
+  })));
+
+  // Tabla: una fila por portafolio asignado. Portafolio en vez de Symbol-solo:
+  // se muestra PORTAFOLIO + SYMBOL + ISIN.
+  headerFila(['Trade Date','Settle Date','Side','Portafolio','Symbol','Quantity','Price','Gross','Commission','Com %','Net'],
+             ['center','center','left','left','left','right','right','right','right','right','right']);
+  const eqIni = r;
+  const fechaSlug = fileBase.fechaSlug;
+  filasEquity.forEach(f=>{
+    const gross = redondear(f.cantidad * f.precio, 2);
+    const comision = redondear(gross * f.comPct, 2);
+    const neto = redondear(f.lado === 'Compra' ? gross + comision : gross - comision, 2);
+    ws.getCell(`B${r}`).value = fileBase.tdTxt;
+    ws.getCell(`C${r}`).value = fileBase.sdTxt;
+    ws.getCell(`D${r}`).value = f.lado === 'Compra' ? 'Buy' : 'Sell';
+    ws.getCell(`E${r}`).value = f.portNombre;
+    ws.getCell(`F${r}`).value = f.especie;
+    ws.getCell(`G${r}`).value = f.cantidad;
+    ws.getCell(`H${r}`).value = redondear(f.precio, 4);
+    ws.getCell(`I${r}`).value = gross;
+    ws.getCell(`J${r}`).value = comision;
+    ws.getCell(`K${r}`).value = f.comPct;
+    ws.getCell(`L${r}`).value = neto;
+    r++;
+  });
+  const eqFin = r-1;
+  for(let rr=eqIni; rr<=eqFin; rr++){
+    ['B','C'].forEach(col=> ws.getCell(`${col}${rr}`).alignment = {horizontal:'center'});
+    ws.getCell(`G${rr}`).numFmt = '#,##0';
+    ws.getCell(`H${rr}`).numFmt = '"$"#,##0.0000';
+    ws.getCell(`I${rr}`).numFmt = '"$"#,##0.00';
+    ws.getCell(`J${rr}`).numFmt = '"$"#,##0.00';
+    ws.getCell(`K${rr}`).numFmt = '0.0000%';
+    ws.getCell(`L${rr}`).numFmt = '"$"#,##0.00';
+    cols.forEach(col=>{
+      ws.getCell(`${col}${rr}`).font = { name:'Calibri', size:9.5, color:{argb:C.textDark} };
+      ws.getCell(`${col}${rr}`).border = { bottom: {style:'hair', color:{argb:C.cardBorder}} };
+      if(['G','H','I','J','K','L'].includes(col)) ws.getCell(`${col}${rr}`).alignment = {horizontal:'right'};
+    });
+    ws.getRow(rr).height = 18;
+    if((rr-eqIni)%2===1){ cols.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}}); }
+  }
+  r += 2;
+
+  // ---------- FOOTER ----------
+  allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
+  ws.getRow(r).height = 4; r++;
+  ws.mergeCells(`B${r}:L${r}`);
+  const foot = ws.getCell(`B${r}`);
+  foot.value = `Generated by EQS CC · Credicorp Capital Colombia · ${filasEquity.length} equity line(s) · ${fechaHoyTxt}`;
+  foot.font = { name:'Calibri', size:8.5, italic:true, color:{argb:C.textMuted} };
+  ws.getRow(r).height = 18;
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${fileBase.name} ${fechaSlug}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function initDatesFX(){
   const today = new Date();
   document.getElementById('tradeDate').value = today.toISOString().slice(0,10);
@@ -3921,6 +4104,19 @@ const clientesDB = {
     comisionPantalla: 0.001,
     comisionCruce: 0.001,
   },
+  'FIDUCIARIA BANCOLOMBIA': {
+    nombre: 'FIDUCIARIA BANCOLOMBIA SA',
+    formatoReporte: 'generico_equity', // reporte genérico equity (como Andes, sin bloque FX)
+    reparteManual: true, // el reparto a portafolios lo da el cliente por chat
+    // Tiene 121 portafolios en CATEGORIAS_DB — no se listan a mano aquí; se
+    // cargan desde CATEGORIAS_DB por este flag (ver getClienteDB).
+    portafoliosDeCategorias: 'FIDUCIARIA BANCOLOMBIA',
+    portafolios: [], // se llena dinámicamente en getClienteDB
+    // Comisión bloque 0.2% (casi todo lo que operan es bloque). Pantalla se deja
+    // igual salvo que Sergio elija otra en el selector "Comisión del día".
+    comisionBloque: 0.002,
+    comisionPantalla: 0.002,
+  },
 };
 
 // =====================================================================
@@ -3963,7 +4159,10 @@ const PRESUPUESTO_DB = [{"grupo":"ALLIANZ","trader":"SAR","categoria":"INSTITUCI
 // LV_CO (código Bloomberg) = LARRAIN VIAL PP (grupo en CATEGORIAS/RVL) =
 // ANDES INVESTMENT GROUP (nombre del cliente, key "ANDES" en FX) — mismo
 // cliente real, tres nombres distintos según el sistema.
-const ALIAS_GRUPO = { LV_CO: 'LARRAIN VIAL PP' };
+// En EMSX y Fidessa, FIDUCIARIA BANCOLOMBIA llega como "VALORES_AM" (Sergio sube
+// la orden manual a EMSX por instrucción de chat). Se normaliza al grupo real
+// para que el filtro por cliente reconozca esas líneas.
+const ALIAS_GRUPO = { LV_CO: 'LARRAIN VIAL PP', VALORES_AM: 'FIDUCIARIA BANCOLOMBIA' };
 function normalizarGrupo(g){ return ALIAS_GRUPO[g] || g; }
 
 // Filtro compartido RVL + RVI: una orden cancelada con saldo cero no sirve
@@ -4138,7 +4337,16 @@ construirClientesDBDesdeCategorias();
 // CATEGORIAS) no deben tumbar la pantalla — quedan con 0 sub-cuentas hasta
 // que se complementen y aparezcan con su grupo real.
 function getClienteDB(key){
-  return clientesDB[key] || { nombre: key, portafolios: [], comisionBloque: 0, comisionPantalla: 0 };
+  const cfg = clientesDB[key];
+  if(!cfg) return { nombre: key, portafolios: [], comisionBloque: 0, comisionPantalla: 0 };
+  // Clientes con muchos portafolios (ej. FIDUCIARIA BANCOLOMBIA, 121) los cargan
+  // desde CATEGORIAS_DB por su grupo, en vez de listarlos a mano en clientesDB.
+  if(cfg.portafoliosDeCategorias && (!cfg.portafolios || cfg.portafolios.length===0)){
+    cfg.portafolios = (CATEGORIAS_DB||[])
+      .filter(d => d.grupo === cfg.portafoliosDeCategorias)
+      .map(d => ({ id:'DEC_'+d.deceval, nombre:d.nombre, deceval:d.deceval, nit:d.nit||'', iva:false }));
+  }
+  return cfg;
 }
 
 // Folios crudos de Fidessa (simulando lo que vimos hoy en COR para ECOPETROL/COLFONDOS,
@@ -6276,8 +6484,76 @@ function validarCoincidenciaCantidades(cliente){
   return { ok: descuadres.length === 0, descuadres, nombreCliente };
 }
 
+// Arma el reporte genérico equity para clientes de reparto manual (FIDUCIARIA
+// BANCOLOMBIA) desde el store por-orden. Por cada orden con reparto: reparte
+// sus folios proporcionalmente a los portafolios, con precio ponderado y
+// comisión según bloque/pantalla de los folios. Muestra el validador y genera.
+async function generarGenericoEquityDesdeOrdenes(cliente){
+  const cfg = getClienteDB(cliente);
+  const ordenes = getOrdenesConAlloc();
+  const completas = ordenes.filter(o=>o.completa);
+  if(completas.length===0){ alert('Ninguna orden tiene el reparto completo. Asigna los portafolios antes de generar.'); return; }
+
+  const comBloque = leerComisionSeleccionada('Cruce');
+  const comPantalla = leerComisionSeleccionada('Pantalla');
+  const ports = cfg.portafolios || [];
+  const nomPort = id => { const p = ports.find(x=>x.id===id); return p?p.nombre:id; };
+
+  // Fecha de registro/cumplimiento desde el panel (T y T+2).
+  const fechaReg = document.getElementById('fechaRegistro').value;
+  const fechaCum = document.getElementById('fechaCumplimiento').value;
+  const tdTxt = fechaReg ? fmtFechaCorta(fechaReg) : '';
+  const sdTxt = fechaCum ? fmtFechaCorta(fechaCum) : '';
+
+  // Una fila por (orden × portafolio): precio ponderado de la orden, comisión
+  // ponderada por bloque/pantalla, lado y especie de los folios.
+  const filasEquity = [];
+  completas.forEach(o=>{
+    const folios = foliosFidessa.filter(f=>String(f.parentOrderId)===String(o.parentOrderId));
+    if(folios.length===0) return;
+    const qtyOrden = folios.reduce((s,f)=>s+f.cantidad,0);
+    const brutoOrden = folios.reduce((s,f)=>s+f.cantidad*f.precio,0);
+    const precioPond = qtyOrden>0 ? brutoOrden/qtyOrden : 0;
+    const comOrden = qtyOrden>0 ? folios.reduce((s,f)=> s + f.cantidad*(f.marca==='bloque'?comBloque:comPantalla), 0)/qtyOrden : 0;
+    const lado = folios[0].lado;
+    const especie = folios[0].especie;
+    o.allocations.forEach(a=>{
+      if(a.cantidad<=0) return;
+      filasEquity.push({ lado, especie, portNombre: nomPort(a.portId), cantidad:a.cantidad, precio:precioPond, comPct:comOrden });
+    });
+  });
+  if(filasEquity.length===0){ alert('No hay folios para las órdenes con reparto.'); return; }
+
+  const hoyDate = new Date();
+  const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
+  await generarExcelGenericoEquity(cfg.nombre, filasEquity, {
+    name:'Operaciones Fiduciaria Bancolombia', fechaSlug, tdTxt, sdTxt,
+  });
+
+  // Limpiar: quitar los folios reportados y resetear el reparto de esas órdenes.
+  const poidsUsados = new Set(completas.map(o=>String(o.parentOrderId)));
+  foliosFidessa = foliosFidessa.filter(f=>!poidsUsados.has(String(f.parentOrderId)));
+  completas.forEach(o=> { delete _allocPorOrden[o.parentOrderId]; });
+  _tradesConsolidar.clear();
+  _ordenActiva = null;
+  allocations = [];
+  selectedFolios.clear();
+  renderFidessaTradesPanel();
+  renderFolios();
+
+  const toast = document.getElementById('toastRVL');
+  if(toast){ toast.classList.add('show'); setTimeout(()=>toast.classList.remove('show'), 2400); }
+}
+
 async function generarReporte(){
   const cliente = document.getElementById('filtroCliente').value;
+  // Clientes de reparto manual con reporte genérico equity (FIDUCIARIA
+  // BANCOLOMBIA): el reporte se arma desde el store por-orden (_allocPorOrden),
+  // no desde la selección puntual de folios. Se despacha aparte.
+  if(getClienteDB(cliente).formatoReporte === 'generico_equity'){
+    await generarGenericoEquityDesdeOrdenes(cliente);
+    return;
+  }
   const especie = document.getElementById('filtroEspecie').value || getFiltrados()[0]?.especie;
   const lado = document.getElementById('filtroLado').value || getFiltrados()[0]?.lado;
   const filtrados = getFiltrados();
