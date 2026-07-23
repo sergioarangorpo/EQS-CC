@@ -1299,6 +1299,28 @@
     </div>
   </div>
 
+  <!-- Validador ancho: resumen de TODO lo asignado (todas las órdenes con
+       reparto), para revisar antes de generar. Solo para clientes de reparto
+       manual (COLFONDOS). -->
+  <div id="validadorAllocWrap" style="padding:0 24px 8px;display:none;">
+    <div class="section-label">Resumen de lo asignado <span class="hint" id="validadorAllocHint"></span></div>
+    <div class="blotter-wrap">
+      <div class="folios-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Portafolio</th><th>Lado</th><th>Especie</th>
+              <th class="num">Cantidad</th><th class="num">Precio</th>
+              <th class="num">Valor bruto</th><th class="num">Comisión</th>
+              <th class="num">Comisión %</th><th class="num">IVA</th><th class="num">Giro neto</th>
+            </tr>
+          </thead>
+          <tbody id="validadorAllocBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <div style="padding:0 24px;">
     <div class="section-label">Histórico generado hoy <span class="hint" id="historicoHint"></span></div>
     <div class="blotter-wrap">
@@ -4129,6 +4151,14 @@ let selectedFolios = new Set();
 let sortCol = null;
 let sortDir = 1;
 let allocations = [];
+// Reparto por orden (Parent Order ID) para clientes de reparto manual (COLFONDOS).
+// Permite reportar VARIAS órdenes en el mismo correo: cada orden guarda su
+// propio allocation, y al cambiar de orden (zoom) no se pierde el anterior.
+// { [parentOrderId]: [{portId, cantidad}] }
+let _allocPorOrden = {};
+// La orden actualmente enfocada (única en zoom). Si el zoom tiene 0 o varias
+// órdenes, no hay "orden activa" para editar reparto (se pide enfocar una).
+let _ordenActiva = null;
 let operacionesHistorico = [];
 let detalleHistorico = [];
 
@@ -4377,12 +4407,33 @@ registrarTablaOrdenable('fidessaTrades', renderFidessaTradesPanel);
 // tipo MLI, que llegan directo a Fidessa y hay que cerrarles el dólar).
 const _tradesConsolidar = new Set(); // folioOrden seleccionados
 function toggleTradeConsolidar(folioOrden){
+  const cliente = document.getElementById('filtroCliente').value;
+  const cfg = cliente ? getClienteDB(cliente) : null;
+  const esReparteManual = !!(cfg && cfg.reparteManual);
+
+  // Antes de cambiar la selección, guardar el allocation de la orden que estaba
+  // activa (para no perderlo al cambiar de orden).
+  if(esReparteManual && _ordenActiva){
+    _allocPorOrden[_ordenActiva] = allocations.slice();
+  }
+
   if(_tradesConsolidar.has(folioOrden)) _tradesConsolidar.delete(folioOrden);
   else _tradesConsolidar.add(folioOrden);
   renderFidessaTradesPanel();
-  // El segundo filtro (zoom) depende de qué órdenes de Trades estén
-  // seleccionadas: al cambiar la selección, se re-filtran los folios de abajo.
   selectedFolios.clear();
+
+  if(esReparteManual){
+    // La "orden activa" es la única seleccionada; si hay 0 o varias, no hay
+    // orden que editar (el reparto se hace orden por orden).
+    _ordenActiva = _tradesConsolidar.size === 1 ? [..._tradesConsolidar][0] : null;
+    // Cargar el allocation guardado de esa orden (o vacío si es nueva).
+    allocations = _ordenActiva ? (_allocPorOrden[_ordenActiva] ? _allocPorOrden[_ordenActiva].slice() : []) : [];
+    // Autoseleccionar todos los folios de la orden enfocada (son los que se
+    // reparten), para que la "cantidad seleccionada" = qty de la orden.
+    if(_ordenActiva){
+      getFiltrados().forEach(f=> selectedFolios.add(f.id));
+    }
+  }
   renderFolios();
 }
 
@@ -5460,6 +5511,7 @@ function renderFolios(){
   actualizarChkSelectAll(filtrados);
   renderStats(filtrados);
   renderFolioSummary();
+  renderValidadorAlloc();
   actualizarBotonGenerar();
   recalcularTodo();
 }
@@ -5487,17 +5539,31 @@ function actualizarBotonGenerar(){
   // generar — igual que exigía el botón viejo de abajo. Para clientes de
   // generación automática la cantidad se asigna sola, así que no aplica.
   const esAutoGen = !!(cfg && (cfg.autoPortafolio || cfg.formatoReporte === 'proteccion' || normalizarGrupo(cliente) === 'PROTECCION'));
+  const esReparteManual = !!(cfg && cfg.reparteManual);
   let asignacionOk = true;
-  if(!esAutoGen && cliente){
+  if(esReparteManual){
+    // Reparto por orden: se puede generar si hay AL MENOS una orden con reparto
+    // completo, y ninguna orden con reparto pasado o incompleto a medias que
+    // impida el envío. La orden activa se sincroniza primero.
+    const ordenes = getOrdenesConAlloc();
+    const completas = ordenes.filter(o=>o.completa);
+    const sobrepasadas = ordenes.filter(o=>o.sumaAsignada > o.qtyOrden);
+    // Habilita si hay ≥1 orden completa y ninguna sobre-asignada. Las órdenes a
+    // medias no bloquean (Sergio puede enviar el parcial de las completas).
+    asignacionOk = completas.length>0 && sobrepasadas.length===0;
+  } else if(!esAutoGen && cliente){
     const filtrados = getFiltrados();
     const totalSel = filtrados.filter(f=>selectedFolios.has(f.id)).reduce((s,f)=>s+f.cantidad,0);
     const totalAsig = allocations.reduce((s,a)=>s+a.cantidad,0);
     asignacionOk = totalSel>0 && totalAsig>0 && Math.abs(totalSel-totalAsig)<1;
   }
-  const ok = !!cliente && haySeleccion && asignacionOk;
+  // Para reparto manual, la habilitación NO depende de haySeleccion de folios
+  // (se evalúa por las órdenes con reparto completo).
+  const ok = esReparteManual ? (!!cliente && asignacionOk) : (!!cliente && haySeleccion && asignacionOk);
   btn.disabled = !ok;
   if(!cliente) btn.title = 'Selecciona un cliente para habilitar';
-  else if(!haySeleccion) btn.title = 'Selecciona al menos un folio para habilitar';
+  else if(esReparteManual && !asignacionOk) btn.title = 'Completa el reparto de al menos una orden (cantidad asignada = cantidad de la orden)';
+  else if(!esReparteManual && !haySeleccion) btn.title = 'Selecciona al menos un folio para habilitar';
   else if(!asignacionOk) btn.title = 'Completa la asignación a portafolios (diferencia debe ser 0)';
   else btn.title = 'Generar el reporte de ' + ((getClienteDB(cliente)&&getClienteDB(cliente).nombre)||cliente);
 }
@@ -5560,6 +5626,84 @@ function renderFolioSummary(){
   bar.innerHTML = `<span><b>${sel.length}</b> folios seleccionados · <b>${fmtInt(totalQty)}</b> acciones · precio promedio ponderado <b>${fmtRate(ppp)}</b> · <b>${fmtInt(bloqueQty)}</b> en bloque/cruce (${totalQty>0?((bloqueQty/totalQty)*100).toFixed(1):0}%)</span>`;
 }
 
+// Validador ancho: resumen de TODO lo asignado (todas las órdenes con reparto).
+// Por cada orden con allocation: reparte sus folios proporcionalmente a los
+// portafolios (mismo % que el reparto), y de ahí saca por portafolio la
+// cantidad, precio ponderado, bruto, comisión (según bloque/pantalla de los
+// folios de esa orden), IVA y giro neto. Luego agrega por portafolio.
+function renderValidadorAlloc(){
+  const wrap = document.getElementById('validadorAllocWrap');
+  const body = document.getElementById('validadorAllocBody');
+  const hint = document.getElementById('validadorAllocHint');
+  if(!wrap || !body) return;
+  const cliente = document.getElementById('filtroCliente').value;
+  const cfg = cliente ? getClienteDB(cliente) : null;
+  if(!cfg || !cfg.reparteManual){ wrap.style.display='none'; return; }
+
+  const ordenes = getOrdenesConAlloc();
+  if(ordenes.length===0){ wrap.style.display='none'; return; }
+  wrap.style.display='';
+
+  const comBloque = leerComisionSeleccionada('Cruce');
+  const comPantalla = leerComisionSeleccionada('Pantalla');
+  const ports = cfg.portafolios || [];
+  const nomPort = id => { const p = ports.find(x=>x.id===id); return p?p.nombre:id; };
+
+  // Acumulador por portafolio.
+  const acc = {}; // portId -> {cant, bruto, com, lado, especie}
+  ordenes.forEach(o=>{
+    const folios = foliosFidessa.filter(f=>String(f.parentOrderId)===String(o.parentOrderId));
+    if(folios.length===0) return;
+    const qtyOrden = folios.reduce((s,f)=>s+f.cantidad,0);
+    const brutoOrden = folios.reduce((s,f)=>s+f.cantidad*f.precio,0);
+    const precioPond = qtyOrden>0 ? brutoOrden/qtyOrden : 0;
+    // Comisión promedio ponderada de la orden (según bloque/pantalla de folios).
+    const comOrden = qtyOrden>0 ? folios.reduce((s,f)=> s + f.cantidad*(f.marca==='bloque'?comBloque:comPantalla), 0)/qtyOrden : 0;
+    const lado = folios[0].lado;
+    const especie = folios[0].especie;
+    // Repartir a cada portafolio en proporción a su cantidad asignada.
+    o.allocations.forEach(a=>{
+      if(!acc[a.portId]) acc[a.portId] = {cant:0, bruto:0, com:0, lado, especie};
+      const bruto = a.cantidad * precioPond;
+      acc[a.portId].cant += a.cantidad;
+      acc[a.portId].bruto += bruto;
+      acc[a.portId].com += bruto * comOrden;
+    });
+  });
+
+  const filas = Object.keys(acc).map(portId=>{
+    const d = acc[portId];
+    const precio = d.cant>0 ? d.bruto/d.cant : 0;
+    const comPct = d.bruto>0 ? d.com/d.bruto : 0;
+    const iva = 0; // COLFONDOS equity local: IVA 0 (como en los archivos reales)
+    const neto = d.lado==='Venta' ? (d.bruto - d.com - iva) : (d.bruto + d.com + iva);
+    return {portId, nombre:nomPort(portId), lado:d.lado, especie:d.especie, cant:d.cant, precio, bruto:d.bruto, com:d.com, comPct, iva, neto};
+  }).sort((a,b)=> b.cant - a.cant);
+
+  const totCant = filas.reduce((s,f)=>s+f.cant,0);
+  hint.textContent = `${ordenes.length} orden(es) · ${filas.length} portafolio(s) · ${fmtInt(totCant)} acciones`;
+
+  body.innerHTML = filas.map(f=>`<tr>
+    <td>${f.nombre}</td>
+    <td><span class="side-badge ${f.lado==='Compra'?'buy':'sell'}">${f.lado}</span></td>
+    <td class="mono-id">${f.especie}</td>
+    <td class="num">${fmtInt(f.cant)}</td>
+    <td class="num">${fmtRate(f.precio)}</td>
+    <td class="num">${fmtCOP(f.bruto)}</td>
+    <td class="num">${fmtCOP(f.com)}</td>
+    <td class="num">${(f.comPct*100).toFixed(4)}%</td>
+    <td class="num">${fmtCOP(f.iva)}</td>
+    <td class="num">${fmtCOP(f.neto)}</td>
+  </tr>`).join('') + `<tr style="font-weight:700;border-top:2px solid var(--card-border);">
+    <td>TOTAL</td><td></td><td></td>
+    <td class="num">${fmtInt(totCant)}</td><td></td>
+    <td class="num">${fmtCOP(filas.reduce((s,f)=>s+f.bruto,0))}</td>
+    <td class="num">${fmtCOP(filas.reduce((s,f)=>s+f.com,0))}</td>
+    <td></td><td class="num">${fmtCOP(filas.reduce((s,f)=>s+f.iva,0))}</td>
+    <td class="num">${fmtCOP(filas.reduce((s,f)=>s+f.neto,0))}</td>
+  </tr>`;
+}
+
 // ----------------------------------------------------------------------
 // Asignación a portafolios
 // ----------------------------------------------------------------------
@@ -5576,8 +5720,32 @@ function getDisponible(){
   return getTotalSeleccionado() - getTotalAsignado();
 }
 
+// Guarda el allocation de la orden activa en el store por-orden (para no
+// perderlo). Se llama antes de leer el agregado o de generar.
+function sincronizarAllocOrdenActiva(){
+  if(_ordenActiva) _allocPorOrden[_ordenActiva] = allocations.slice();
+}
+
+// Devuelve TODAS las órdenes con reparto guardado + la activa. Cada entrada:
+// { parentOrderId, qtyOrden, allocations:[{portId,cantidad}], sumaAsignada, completa }.
+function getOrdenesConAlloc(){
+  sincronizarAllocOrdenActiva();
+  const out = [];
+  Object.keys(_allocPorOrden).forEach(poid=>{
+    const allocs = _allocPorOrden[poid] || [];
+    if(allocs.length===0) return;
+    const t = _fidessaTradesRaw && _fidessaTradesRaw[poid] ? _fidessaTradesRaw[poid] : null;
+    const qtyOrden = t ? t.qtyDone : (foliosFidessa.filter(f=>String(f.parentOrderId)===String(poid)).reduce((s,f)=>s+f.cantidad,0));
+    const sumaAsignada = allocs.reduce((s,a)=>s+a.cantidad,0);
+    out.push({ parentOrderId:poid, qtyOrden, allocations:allocs, sumaAsignada, completa: sumaAsignada===qtyOrden });
+  });
+  return out;
+}
+
 function inicializarAllocationsDesdeCliente(){
   allocations = [];
+  _allocPorOrden = {};
+  _ordenActiva = null;
   poblarSelectorNuevoPortafolio();
   // Andes se autoasocia a su único portafolio (Larrain Vial PP): no hay que
   // agregarlo a mano cada vez. Toda la cantidad seleccionada le corresponde.
@@ -5757,26 +5925,83 @@ ${texto}
     let txt = (data.content||[]).map(i=> i.type==='text'? i.text : '').join('').trim();
     txt = txt.replace(/```json|```/g,'').trim();
     const parsed = JSON.parse(txt);
-
-    // Mapear cada línea a un portafolio de la base + validar sumas.
-    const ports = getClienteDB(cliente).portafolios;
-    const ordenes = (parsed.ordenes||[]).map(o=>{
-      const lineas = (o.lineas||[]).map(l=>{
-        const m = matchPortafolio(l.portafolio, ports);
-        return { portTexto:l.portafolio, cantidad:Number(l.cantidad)||0,
-                 portId: m?m.portId:null, portNombre: m?m.portNombre:null, match: !!m };
-      });
-      const sumaLineas = lineas.reduce((s,l)=>s+l.cantidad,0);
-      return { cantidadTotal:Number(o.cantidadTotal)||0, especie:o.especie||'', lineas,
-               sumaLineas, cuadra: sumaLineas===(Number(o.cantidadTotal)||0) };
-    });
-    _allocInterpretado = { ordenes };
+    _allocInterpretado = { ordenes: mapearOrdenesAlloc(parsed.ordenes||[], cliente) };
     pintarAllocInterpretado();
   }catch(e){
-    body.innerHTML = `<div class="field-note" style="color:var(--sell);">No se pudo interpretar el texto (${e.message}). Puedes intentar de nuevo, corregir el texto, o ingresar el reparto a mano.</div>`;
+    // Si la API no está disponible (p.ej. corriendo en Vercel sin proxy), se usa
+    // un parser LOCAL que entiende el formato de los traders (Diego): bloques
+    // "-CANT ECO alloc:" con líneas "Portafolio x/~ CANT". Así la función sirve
+    // aunque no haya API. Se avisa que fue local.
+    try{
+      const ordenesLocal = parsearAllocLocal(texto);
+      if(ordenesLocal.length===0) throw new Error('no se reconocieron órdenes');
+      _allocInterpretado = { ordenes: mapearOrdenesAlloc(ordenesLocal, cliente) };
+      pintarAllocInterpretado();
+      const aviso = document.createElement('div');
+      aviso.className='field-note'; aviso.style.cssText='color:var(--muted);margin-top:6px;';
+      aviso.textContent='(Interpretado localmente — la IA por API no estaba disponible.)';
+      document.getElementById('allocInterpretadoBody').prepend(aviso);
+    }catch(e2){
+      body.innerHTML = `<div class="field-note" style="color:var(--sell);">No se pudo interpretar el texto (${e2.message}). Revisa el formato o ingresa el reparto a mano.</div>`;
+    }
   }finally{
     btn.disabled = false; btn.textContent = '✨ Interpretar con IA';
   }
+}
+
+// Convierte una lista de órdenes crudas {cantidadTotal, especie, lineas:[{portafolio,cantidad}]}
+// en la estructura con match de portafolio + validación de sumas.
+function mapearOrdenesAlloc(ordenesRaw, cliente){
+  const ports = getClienteDB(cliente).portafolios;
+  return (ordenesRaw||[]).map(o=>{
+    const lineas = (o.lineas||[]).map(l=>{
+      const m = matchPortafolio(l.portafolio, ports);
+      return { portTexto:l.portafolio, cantidad:Number(l.cantidad)||0,
+               portId: m?m.portId:null, portNombre: m?m.portNombre:null, match: !!m };
+    });
+    const sumaLineas = lineas.reduce((s,l)=>s+l.cantidad,0);
+    return { cantidadTotal:Number(o.cantidadTotal)||0, especie:o.especie||'', lineas,
+             sumaLineas, cuadra: sumaLineas===(Number(o.cantidadTotal)||0) };
+  });
+}
+
+// Parser local del formato de los traders (sin IA). Reconoce:
+//  - Cabecera de bloque: una línea con "-1.449.000 ECO" (cantidad con puntos de
+//    miles y signo opcional + ticker). Puede terminar en "alloc:" o traer el
+//    reparto en la misma línea ("-442.000 ECO x FDO Accion Colombia").
+//  - Líneas de reparto: "Portafolio x 363.000" o "Portafolio ~ 363.000".
+// Ignora saludos, horas y nombres.
+function parsearAllocLocal(texto){
+  const num = s => parseInt(String(s).replace(/[.\s]/g,''),10);
+  const lineas = texto.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  const ordenes = [];
+  let actual = null;
+  // Cabecera: opcional hora (HH:MM:SS) + cantidad con signo/puntos + ticker.
+  // Ej: "08:50:10 -1.449.000 ECO alloc:" o "-442.000 ECO x FDO Accion Colombia".
+  const reCab = /(?:^|\s)-\s*([\d.]{3,})\s+([A-Za-zÁÉÍÓÚÑ]{2,})\b(.*)$/;
+  // Línea de reparto: "<nombre> x|~|= <cantidad>". El nombre no empieza con dígito.
+  const reLinea = /^([A-Za-zÁÉÍÓÚÑ].*?)\s*[x~=]\s*([\d.]{2,})\s*$/i;
+  lineas.forEach(l=>{
+    const mL = l.match(reLinea);
+    const mC = l.match(reCab);
+    // Es cabecera si trae un "-CANT TICKER" (con el guion de venta). Tiene
+    // prioridad sobre reparto porque el guion + ticker es inequívoco.
+    if(mC){
+      const cant = num(mC[1]);
+      const tk = mC[2].toUpperCase();
+      const especie = tk==='ECO' ? 'ECOPETROL' : tk;
+      actual = { cantidadTotal:cant, especie, lineas:[] };
+      ordenes.push(actual);
+      const resto = (mC[3]||'').trim();
+      const mInline = resto.match(/^x\s+(.+)$/i);
+      if(mInline){ actual.lineas.push({portafolio:mInline[1].trim(), cantidad:cant}); }
+      return;
+    }
+    if(mL && actual){
+      actual.lineas.push({portafolio:mL[1].trim(), cantidad:num(mL[2])});
+    }
+  });
+  return ordenes.filter(o=>o.lineas.length>0);
 }
 
 function pintarAllocInterpretado(){
@@ -5821,15 +6046,45 @@ function pintarAllocInterpretado(){
 // se aplican todas las órdenes cuya cantidad total case con la selección actual.
 function aplicarAllocInterpretado(){
   if(!_allocInterpretado) return;
+  const cliente = document.getElementById('filtroCliente').value;
+  const cfg = cliente ? getClienteDB(cliente) : null;
+  const esReparteManual = !!(cfg && cfg.reparteManual);
+
+  if(esReparteManual){
+    // Cada orden interpretada se asocia a la orden de Fidessa Trades cuya
+    // qtyDone coincida con su cantidadTotal, y se guarda en el store por orden.
+    // Así se puede pegar el texto COMPLETO de Diego (todas las órdenes del día)
+    // y quedan todas repartidas de una vez.
+    sincronizarAllocOrdenActiva();
+    let aplicadas = 0; const sinMatch = [];
+    _allocInterpretado.ordenes.forEach(orden=>{
+      // Buscar la orden de Trades con esa cantidad (qtyDone) del cliente.
+      const poid = Object.keys(_fidessaTradesRaw||{}).find(k=>{
+        const t = _fidessaTradesRaw[k];
+        return normalizarGrupo(t.grupo)===normalizarGrupo(cliente) && t.qtyDone === orden.cantidadTotal;
+      });
+      if(!poid){ sinMatch.push(orden.cantidadTotal); return; }
+      const allocs = orden.lineas.filter(l=>l.portId).map(l=>({portId:l.portId, cantidad:l.cantidad}));
+      _allocPorOrden[poid] = allocs;
+      aplicadas++;
+    });
+    // Si la orden activa quedó con reparto, recargar su vista.
+    if(_ordenActiva && _allocPorOrden[_ordenActiva]) allocations = _allocPorOrden[_ordenActiva].slice();
+    document.getElementById('modalPegarAlloc').style.display='none';
+    renderFolios();
+    if(sinMatch.length){
+      alert(`Se aplicaron ${aplicadas} orden(es). No encontré en Fidessa Trades una orden de ${cliente} con estas cantidades: ${sinMatch.map(fmtInt).join(', ')}. Verifica que esas órdenes ya estén cargadas.`);
+    }
+    return;
+  }
+
+  // Camino no-manual (compatibilidad): volcar la orden que case con la selección.
   const totalSel = getTotalSeleccionado();
-  // Elegir la orden interpretada cuya cantidad total = selección actual.
   let orden = _allocInterpretado.ordenes.find(o=> o.cantidadTotal === totalSel);
   if(!orden){
-    // Si solo hay una orden interpretada, usarla; si no, avisar.
     if(_allocInterpretado.ordenes.length===1) orden = _allocInterpretado.ordenes[0];
     else { alert(`Selecciona en los folios la orden que corresponde a este allocation. La selección actual (${fmtInt(totalSel)}) no coincide con ninguna cantidad total del texto (${_allocInterpretado.ordenes.map(o=>fmtInt(o.cantidadTotal)).join(', ')}).`); return; }
   }
-  // Volcar las líneas al allocation, sumando por portafolio.
   orden.lineas.forEach(l=>{
     if(!l.portId) return;
     const ex = allocations.find(a=>a.portId===l.portId);
@@ -5862,6 +6117,7 @@ function pintarAllocList(){
 
 function renderAllocations(){
   pintarAllocList();
+  renderValidadorAlloc();
   recalcularTodo();
 }
 
