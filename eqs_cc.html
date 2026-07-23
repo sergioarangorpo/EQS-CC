@@ -4188,10 +4188,17 @@ function getFiltrados(){
   const cliente = document.getElementById('filtroCliente').value;
   const especie = document.getElementById('filtroEspecie').value;
   const lado = document.getElementById('filtroLado').value;
+  // Segundo filtro (zoom): si hay líneas de Fidessa Trades seleccionadas, se
+  // muestran SOLO los folios cuyo Parent Order ID esté entre las seleccionadas.
+  // Es un filtro adicional al de cliente/especie/lado, para todos los clientes:
+  // seleccionas la orden en Trades y abajo quedan solo sus folios (para marcar
+  // cruce/pantalla y repartir a portafolios sobre esa orden).
+  const zoomParents = _tradesConsolidar.size > 0 ? _tradesConsolidar : null;
   let res = foliosFidessa.filter(f=>
     (!cliente || f.cliente===cliente) &&
     (!especie || f.especie===especie) &&
-    (!lado || f.lado===lado)
+    (!lado || f.lado===lado) &&
+    (!zoomParents || zoomParents.has(String(f.parentOrderId)))
   );
   if(sortCol){
     res = [...res].sort((a,b)=>{
@@ -4373,6 +4380,10 @@ function toggleTradeConsolidar(folioOrden){
   if(_tradesConsolidar.has(folioOrden)) _tradesConsolidar.delete(folioOrden);
   else _tradesConsolidar.add(folioOrden);
   renderFidessaTradesPanel();
+  // El segundo filtro (zoom) depende de qué órdenes de Trades estén
+  // seleccionadas: al cambiar la selección, se re-filtran los folios de abajo.
+  selectedFolios.clear();
+  renderFolios();
 }
 
 // =====================================================================
@@ -5434,6 +5445,18 @@ function renderFolios(){
   }
 
   document.getElementById('selCountLabelRVL').textContent = selectedFolios.size + ' seleccionados';
+  // Indicador del segundo filtro (zoom por orden de Trades).
+  const ctxLabel = document.getElementById('folioContextLabel');
+  if(ctxLabel){
+    const cliente = document.getElementById('filtroCliente').value;
+    const base = cliente ? '— ' + getClienteDB(cliente).nombre : '— selecciona cliente';
+    if(_tradesConsolidar.size > 0){
+      const ords = [...(_tradesConsolidar)].map(o=>String(o)).join(', ');
+      ctxLabel.innerHTML = `${base} · <span style="color:var(--accent);">🔍 filtrado a ${_tradesConsolidar.size} orden(es): ${ords}</span>`;
+    } else {
+      ctxLabel.textContent = base;
+    }
+  }
   actualizarChkSelectAll(filtrados);
   renderStats(filtrados);
   renderFolioSummary();
