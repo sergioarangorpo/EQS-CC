@@ -1462,6 +1462,37 @@
   </div>
 </div>
 
+<!-- Menú: ¿cómo se cerró este FX? VWAP del día vs WMCO (previo ya registrado) -->
+<div class="edit-overlay" id="modalTipoCierreFX" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(560px,94vw);margin-top:8vh;">
+    <h3 style="font-size:15px;">¿Cómo se cerró este FX?</h3>
+    <div id="tipoCierreBody" class="field-note" style="margin-bottom:14px;"></div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button class="btn primary" style="text-align:left;padding:12px 14px;" onclick="elegirModoCierreFX('vwap')">
+        <b>VWAP del día</b><br><span style="font-weight:400;opacity:.85;font-size:12px;">El FX se cierra ahora: metés las tasas en la calculadora y registro las operaciones.</span>
+      </button>
+      <button class="btn purple" style="text-align:left;padding:12px 14px;" onclick="elegirModoCierreFX('wmco')">
+        <b>WMCO (previo ya registrado)</b><br><span style="font-weight:400;opacity:.85;font-size:12px;">El FX ya se registró antes; solo corrijo el monto USD con el giro exacto en pesos del cruce.</span>
+      </button>
+    </div>
+    <div class="edit-actions" style="margin-top:16px;">
+      <button class="btn ghost" onclick="cancelarCruce();document.getElementById('modalTipoCierreFX').style.display='none';">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Selector de la operación FX previa (WMCO) por lado del cruce -->
+<div class="edit-overlay" id="modalPreviosWMCO" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(820px,94vw);margin-top:5vh;max-height:88vh;overflow:auto;">
+    <h3 style="font-size:15px;">Corregir montos — WMCO ya registrado</h3>
+    <div id="previosWMCOBody"></div>
+    <div class="edit-actions" style="margin-top:16px;">
+      <button class="btn ghost" onclick="cancelarCruce();document.getElementById('modalPreviosWMCO').style.display='none';">Cancelar</button>
+      <button class="btn primary" id="btnAplicarWMCO" onclick="aplicarCorreccionWMCO()">Corregir montos USD →</button>
+    </div>
+  </div>
+</div>
+
   <!-- ===== RVI MODULE ===== -->
   <div id="mod-RVI" class="mod-section">
 <!-- TOOLBAR -->
@@ -2598,9 +2629,7 @@ function registrar(){
       _tradesConsolidar.clear();
       renderFidessaTradesPanel();
       _cruceFXPendiente = null;
-      if(confirm(`Cruce FX completo: ${reg.length} lado(s) registrado(s). ¿Generar el Excel con los 2 bloques (EQUITY + FX)?`)){
-        generarExcelCruce(cli, reg, trader);
-      }
+      mostrarPanelExcelCruce(cli, reg, trader);
     }
   }
 
@@ -4423,6 +4452,7 @@ function getClienteDB(key){
 let foliosFidessa = []; // Se llena al "Conciliar y cargar folios" con datos reales de Fidessa Trades+Folios — antes tenía filas de ejemplo hardcodeadas.
 let _cruceFXPendiente = null; // cruce FX en curso: { cliente, bloques:[...], idx, registrados }
 let _cruceActivo = null;      // el lado del cruce que se está cerrando en la calculadora
+let _cruceExcelPendiente = null; // { cli, reg, trader } — datos listos para generar el Excel de cruce con el botón
 
 let selectedFolios = new Set();
 let sortCol = null;
@@ -4832,8 +4862,207 @@ function continuarConsolidarFX(){
     bloques: bloques.map(b => ({ ...b, tradeDate: hoy, settleDate: settleDateCruce(hoy, b.ladoAccion) })),
     idx: 0,
     registrados: [],
+    modoCierre: null,
   };
-  mostrarResumenCruceFX();
+  mostrarMenuTipoCierreFX();
+}
+
+// Menú posterior a la selección de trades: ¿el FX se cierra ahora (VWAP del día)
+// o ya se registró antes (WMCO previo)? Aplica igual a MLI y CITI_NY (ambos por
+// la mesa de swaps). Los dos lados del cruce se tratan con el mismo modo.
+function mostrarMenuTipoCierreFX(){
+  const p = _cruceFXPendiente;
+  if(!p){ return; }
+  const nombreCliente = (getClienteDB(p.cliente) && getClienteDB(p.cliente).nombre) || p.cliente;
+  const nLados = p.bloques.length;
+  document.getElementById('tipoCierreBody').innerHTML =
+    `Cliente <b>${nombreCliente}</b> · ${nLados} lado(s) a cerrar. Elegí cómo se cerró el FX de este cruce.`;
+  document.getElementById('modalTipoCierreFX').style.display = 'flex';
+}
+
+function elegirModoCierreFX(modo){
+  const p = _cruceFXPendiente;
+  if(!p){ return; }
+  p.modoCierre = modo;
+  document.getElementById('modalTipoCierreFX').style.display = 'none';
+  if(modo === 'vwap'){
+    mostrarResumenCruceFX();
+  } else {
+    mostrarSelectorPreviosWMCO();
+  }
+}
+
+// Candidatas para el "previo WMCO" de un lado: operaciones FX manuales del mismo
+// cliente y mismo lado FX. Se ordenan WMCO-primero, hoy-primero, para que la de
+// arriba sea casi siempre la correcta; igual Sergio confirma en el dropdown.
+function candidatosPrevioWMCO(cliente, ladoFX){
+  const hoyStr = new Date().toLocaleDateString('en-CA', {timeZone:'America/Bogota'});
+  return (operaciones || [])
+    .filter(o => o.cliente === cliente && o.side === ladoFX && o.origen === 'manual')
+    .filter(o => (o.params && (o.params.rateUnica != null || o.params.rate != null)))
+    .sort((a,b)=>{
+      const aw = a.tipoOperacion === 'WMCO' ? 0 : 1;
+      const bw = b.tipoOperacion === 'WMCO' ? 0 : 1;
+      if(aw !== bw) return aw - bw;
+      const ah = a.tradeDate === hoyStr ? 0 : 1;
+      const bh = b.tradeDate === hoyStr ? 0 : 1;
+      if(ah !== bh) return ah - bh;
+      return (b.id || 0) - (a.id || 0);
+    });
+}
+
+function tasaPrevioOp(op){
+  return (op.params && (op.params.rateUnica != null ? op.params.rateUnica : op.params.rate)) || 0;
+}
+
+// Muestra, por cada lado del cruce, un dropdown con la op FX previa a corregir.
+// Como el giro exacto en pesos ya lo tenemos (netoCOP del cruce), solo hay que
+// corregir el USD = netoCOP ÷ tasa ya registrada.
+function mostrarSelectorPreviosWMCO(){
+  const p = _cruceFXPendiente;
+  if(!p){ return; }
+  const nombreCliente = (getClienteDB(p.cliente) && getClienteDB(p.cliente).nombre) || p.cliente;
+  const traders = tradersDeCliente(p.cliente);
+  const opcionesTrader = traders.length
+    ? `<option value="">— selecciona el trader —</option>` + traders.map(t=>`<option value="${t}"${p.trader===t?' selected':''}>${t}</option>`).join('')
+    : `<option value="">(sin lista de traders para este cliente)</option>`;
+  const selectorTrader = `
+    <div class="field" style="margin:12px 0;max-width:340px;">
+      <label>Trader de ${nombreCliente}</label>
+      <select id="cruceTraderSel" onchange="_cruceFXPendiente.trader=this.value;">${opcionesTrader}</select>
+      <div class="field-note">Nombra el archivo (Trade_Confirmation_&lt;broker&gt;_&lt;TRADER&gt;_fecha) si generás el Excel.</div>
+    </div>`;
+
+  let hayFaltantes = false;
+  const filas = p.bloques.map((b,i)=>{
+    const cands = candidatosPrevioWMCO(p.cliente, b.ladoFX);
+    const accTxt = b.detalle.map(d=>`${d.security} ${b.ladoAccion==='Compra'?'C':'V'} ${fmtInt(d.qty)}`).join(', ');
+    const ladoFXtxt = b.ladoFX === 'SELL' ? 'VENDE USD' : 'COMPRA USD';
+    let selOpts;
+    if(cands.length === 0){
+      hayFaltantes = true;
+      selOpts = `<option value="">⚠ No hay op FX ${ladoFXtxt} registrada para este cliente</option>`;
+    } else {
+      selOpts = `<option value="">— elegí la op previa —</option>` + cands.map(o=>{
+        const rate = tasaPrevioOp(o);
+        const usdPrev = redondear(b.netoCOP / (rate || 1), 2);
+        const et = o.tipoOperacion ? o.tipoOperacion+' · ' : '';
+        return `<option value="${o.id}" data-rate="${rate}">${et}${fmtUSD(o.amount)} @ ${fmtRate(rate)} · ${o.tradeDate||''} · ${o.trader||''}  →  quedaría ${fmtUSD(usdPrev)}</option>`;
+      }).join('');
+    }
+    return `<tr>
+      <td>${accTxt}</td>
+      <td style="text-align:center;font-weight:700;color:${b.ladoFX==='SELL'?'var(--sell)':'var(--buy)'};">${ladoFXtxt}</td>
+      <td class="num" style="font-weight:700;">${fmtCOP(b.netoCOP)}</td>
+      <td><select id="previoSel_${i}" style="min-width:320px;">${selOpts}</select></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('previosWMCOBody').innerHTML = `
+    <div class="field-note" style="margin-bottom:12px;">
+      Cliente <b>${nombreCliente}</b>. El giro en pesos ya es exacto (sale de las acciones). Por cada lado, elegí la operación FX que ya registraste; le corrijo el <b>monto USD = giro COP ÷ tasa ya registrada</b>. La tasa no cambia.
+    </div>
+    ${selectorTrader}
+    <div class="blotter-wrap"><table>
+      <thead><tr><th>Acciones</th><th style="text-align:center;">FX</th><th class="num">Giro COP (exacto)</th><th>Op FX previa a corregir</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table></div>
+    ${hayFaltantes ? '<div class="field-note" style="color:var(--sell);margin-top:10px;">⚠ Falta una op FX registrada para al menos un lado. Registrala primero como WMCO, o volvé y elegí VWAP.</div>' : ''}
+  `;
+  document.getElementById('modalPreviosWMCO').style.display = 'flex';
+}
+
+// Aplica la corrección: por cada lado, USD = netoCOP ÷ tasa de la op elegida.
+// Actualiza la op (local + Supabase) y arma los "registrados" para el Excel.
+function aplicarCorreccionWMCO(){
+  const p = _cruceFXPendiente;
+  if(!p){ return; }
+  const traders = tradersDeCliente(p.cliente);
+  if(traders.length > 0 && !p.trader){
+    alert('Selecciona el trader de '+((getClienteDB(p.cliente)&&getClienteDB(p.cliente).nombre)||p.cliente)+' antes de continuar.');
+    return;
+  }
+  // Validar que cada lado tenga una op elegida y no repetir la misma op en dos lados.
+  const elegidas = [];
+  for(let i=0;i<p.bloques.length;i++){
+    const sel = document.getElementById('previoSel_'+i);
+    const opId = sel ? Number(sel.value) : 0;
+    if(!opId){ alert('Falta elegir la op previa del lado '+(i+1)+'.'); return; }
+    if(elegidas.includes(opId)){ alert('Elegiste la misma op previa para dos lados. Cada lado debe corregir una op distinta.'); return; }
+    elegidas.push(opId);
+  }
+
+  const registrados = [];
+  const resumenTxt = [];
+  for(let i=0;i<p.bloques.length;i++){
+    const b = p.bloques[i];
+    const opId = elegidas[i];
+    const op = (operaciones || []).find(o=>o.id===opId);
+    if(!op){ alert('No se encontró la op previa seleccionada (id '+opId+').'); return; }
+    const rate = tasaPrevioOp(op);
+    if(!rate){ alert('La op previa del lado '+(i+1)+' no tiene tasa registrada; no se puede corregir el USD.'); return; }
+    const usd = redondear(b.netoCOP / rate, 2);
+    const usdAnterior = op.amount;
+    op.amount = usd;
+    renderHistory();
+    actualizarOperacionSupabase(op.id, { amount: usd });
+    resumenTxt.push(`${b.ladoFX==='SELL'?'VENDE':'COMPRA'} USD: ${fmtUSD(usdAnterior)} → ${fmtUSD(usd)}`);
+    registrados.push({
+      ...b,
+      opId: op.id,
+      tasaFinalCliente: rate,
+      tasaMercado: (op.params && op.params.spotReal) || rate,
+      usd: usd,
+    });
+  }
+
+  document.getElementById('modalPreviosWMCO').style.display = 'none';
+  _tradesConsolidar.clear();
+  renderFidessaTradesPanel();
+  const cli = p.cliente, trader = p.trader || '';
+  _cruceFXPendiente = null;
+  _cruceActivo = null;
+
+  const toast = document.getElementById('toast');
+  toast.textContent = '✓ Montos USD corregidos ('+registrados.length+' lado(s))';
+  toast.classList.add('show');
+  setTimeout(()=>{toast.classList.remove('show'); toast.textContent='✓ Operación registrada correctamente';}, 2600);
+
+  // Panel con el botón para generar el Excel de cruce (solo si Sergio lo pide).
+  mostrarPanelExcelCruce(cli, registrados, trader);
+}
+
+// Panel persistente con el botón "Generar Excel de cruce". Lo usan las dos rutas
+// (VWAP y WMCO): guarda los datos y muestra el botón; el Excel se genera al click.
+function mostrarPanelExcelCruce(cli, reg, trader){
+  _cruceExcelPendiente = { cli, reg, trader };
+  switchModule('FX'); // el blotter corregido y el botón del Excel viven en FX
+  let panel = document.getElementById('cruceExcelPanel');
+  if(!panel){
+    panel = document.createElement('div');
+    panel.id = 'cruceExcelPanel';
+    panel.style.cssText = 'background:var(--accent-dim,#1e2a1e);border:1px solid var(--buy,#2ecc71);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12.5px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;';
+    const form = document.getElementById('cliente').closest('div');
+    if(form && form.parentNode){ form.parentNode.insertBefore(panel, form); }
+    else { switchModule('FX'); document.body.insertBefore(panel, document.body.firstChild); }
+  }
+  const nombreCliente = (getClienteDB(cli) && getClienteDB(cli).nombre) || cli;
+  panel.innerHTML = `✅ <b>Cruce FX listo</b> — ${nombreCliente} · ${reg.length} lado(s).
+    <button class="btn small purple" onclick="generarExcelCrucePendiente()" style="margin-left:4px;">📄 Generar Excel de cruce</button>
+    <button class="btn small ghost" onclick="cerrarPanelExcelCruce()">Cerrar</button>`;
+  panel.style.display = 'flex';
+}
+
+function generarExcelCrucePendiente(){
+  if(!_cruceExcelPendiente){ alert('No hay un cruce pendiente para generar.'); return; }
+  const {cli, reg, trader} = _cruceExcelPendiente;
+  generarExcelCruce(cli, reg, trader);
+}
+
+function cerrarPanelExcelCruce(){
+  _cruceExcelPendiente = null;
+  const panel = document.getElementById('cruceExcelPanel');
+  if(panel) panel.style.display = 'none';
 }
 
 // Resumen del cruce antes de mandar a la calculadora: muestra por lado el neto
