@@ -904,7 +904,8 @@
           <div class="field">
             <label>Tipo de operación</label>
             <select id="tipoOperacion" onchange="cambiarTipoOperacion()">
-              <option value="SPOT">SPOT</option>
+              <option value="">— selecciona el tipo —</option>
+              <option value="SPOT" selected>SPOT</option>
               <option value="NEXT_DAY">NEXT DAY</option>
               <option value="WMCO">WMCO</option>
             </select>
@@ -2520,6 +2521,11 @@ function registrar(){
   const trader = document.getElementById('trader').value;
   const cliente = document.getElementById('cliente').value;
   const tipoOperacion = document.getElementById('tipoOperacion').value;
+  if(!tipoOperacion){
+    alert('Selecciona el tipo de operación (SPOT / NEXT DAY / WMCO) antes de registrar.');
+    document.getElementById('tipoOperacion').focus();
+    return;
+  }
   const esInbox = c.modelo === 'ANDES' && selectedRows.size > 0;
   // Si viene de correo, la "hora" que reporta la mesa debe ser la del primer
   // correo que llegó (o el único, si se registra sin consolidar varios) —
@@ -4895,10 +4901,16 @@ function elegirModoCierreFX(modo){
 // Candidatas para el "previo WMCO" de un lado: operaciones FX manuales del mismo
 // cliente y mismo lado FX. Se ordenan WMCO-primero, hoy-primero, para que la de
 // arriba sea casi siempre la correcta; igual Sergio confirma en el dropdown.
+// El grupo de Fidessa (cruce) no siempre coincide con el key del cliente FX:
+// CITI_NY (Fidessa) = CITI 'Citigroup Global Markets Ltd' en la calculadora FX.
+// MLI coincide (MLI=MLI). Si aparecen más desalineados, se agregan aquí.
+const FX_CLIENTE_POR_CRUCE = { CITI_NY: 'CITI' };
+
 function candidatosPrevioWMCO(cliente, ladoFX){
+  const fxCliente = FX_CLIENTE_POR_CRUCE[cliente] || cliente;
   const hoyStr = new Date().toLocaleDateString('en-CA', {timeZone:'America/Bogota'});
   return (operaciones || [])
-    .filter(o => o.cliente === cliente && o.side === ladoFX && o.origen === 'manual')
+    .filter(o => o.cliente === fxCliente && o.side === ladoFX && o.origen === 'manual')
     .filter(o => (o.params && (o.params.rateUnica != null || o.params.rate != null)))
     .sort((a,b)=>{
       const aw = a.tipoOperacion === 'WMCO' ? 0 : 1;
@@ -5129,6 +5141,12 @@ function irACalculadoraCruce(){
   const opt = [...selCliente.options].find(o => o.value === p.cliente);
   if(opt){ selCliente.value = p.cliente; }
   cambiarCliente();
+
+  // VWAP: NO heredar el tipo de operación pegado de una op anterior (fue lo que
+  // dejó un VWAP marcado como WMCO). Se pone en blanco para forzar a Sergio a
+  // elegir SPOT / NEXT DAY / WMCO; el registrar no deja grabar sin tipo. Se fija
+  // directo (sin disparar onchange) para no recalcular las fechas del cruce.
+  document.getElementById('tipoOperacion').value = '';
 
   document.getElementById('side').value = b.ladoFX;
   document.getElementById('tradeDate').value = b.tradeDate.toISOString().slice(0,10);
