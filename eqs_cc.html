@@ -5725,12 +5725,14 @@ function procesarFidessa(){
     // "orden" es sintética: no está en _fidessaTradesRaw pero trae grupo, especie
     // y ordNum. Se usan esos directamente.
     const ordenSintetica = orden && !t && orden.ordNum ? orden : null;
-    const grupo = t ? t.grupo : (ordenSintetica ? ordenSintetica.grupo : normalizarGrupo(f.clientBook || 'SIN_IDENTIFICAR'));
-    // Notes para cruzar con EMSX: el del trade asignado si existe; si no, el del
-    // propio folio (las fracciones de distribución de un cruce traen el
-    // Instructions=ORD_NUM ahí). Así el portafolio (EMSX.account) y el ORD_NUM
-    // se recuperan aunque el trade no traiga Notes.
-    const notes = (t && t.notes) ? t.notes : (f.notes || '');
+    // Notes del folio (el del trade asignado si existe; si no, el del propio
+    // folio). Con el nuevo export de PROTECCIÓN, el Notes YA es el portafolio
+    // (OBL-MODER, CES-LP...): se usa directo como sub-cuenta y clasifica el
+    // folio como PROTECCIÓN sin importar el Client/Book (COLCCP u otro).
+    const notes = String((t && t.notes) ? t.notes : (f.notes || '')).trim();
+    const esPortProteccion = !!(typeof PROTECCION_SUBCUENTAS !== 'undefined' && PROTECCION_SUBCUENTAS[notes]);
+    const grupo = esPortProteccion ? 'PROTECCION'
+      : (t ? t.grupo : (ordenSintetica ? ordenSintetica.grupo : normalizarGrupo(f.clientBook || 'SIN_IDENTIFICAR')));
     // El Notes de Fidessa apunta a la línea de EMSX. Si es numérico, ES el
     // ORD_NUM. Si es texto ("UBS", composite), se busca la línea de EMSX por
     // ese texto para recuperar el número real y el account.
@@ -5760,7 +5762,7 @@ function procesarFidessa(){
       ordNum: ordNumFinal,
       // Portafolio: EMSX.account por Notes; si no se pudo, la sub-cuenta queda
       // vacía y la pantalla de aprobación la marca en rojo (no se inventa).
-      portafolio: (emsx && emsx.account) || '',
+      portafolio: esPortProteccion ? notes : ((emsx && emsx.account) || ''),
       // Trader = quien EJECUTÓ la orden (Originating Trader de Bloomberg), que
       // llega en la línea de EMSX. NO es el gestor asignado al portafolio (ese
       // dato de la base resultó ser otra cosa: el 17-jul los ejecutó todos
@@ -5823,6 +5825,10 @@ function procesarFidessa(){
   const diferencias = filasRecon.filter(f=> !f.cuadra && f.sumaFolios > 0);
 
   foliosFidessa = nuevosFolios;
+  // Fracción por TCN para PROTECCIÓN: posición del folio dentro de su print.
+  // (En el export nuevo cada folio ya trae su portafolio en Notes, así que la
+  // fracción se numera aquí por TCN, en orden de aparición.)
+  { const _fr = {}; foliosFidessa.forEach(f=>{ if(typeof PROTECCION_SUBCUENTAS!=='undefined' && PROTECCION_SUBCUENTAS[String(f.portafolio||'').trim()]){ _fr[f.folio]=(_fr[f.folio]||0)+1; f.fraccion=_fr[f.folio]; } }); }
   // Guardar el resultado de la conciliación (por orden) para que la validación
   // del botón "Generar reporte" se apoye en él — ya maneja composites, cruces
   // de doble representación y DMA correctamente, a diferencia de una suma cruda
@@ -7470,6 +7476,7 @@ async function generarReporteProteccion(cliente, loteDet){
     const c = ws.getCell(1, i+1);
     c.value = h;
     c.font = { bold:true };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FFD9D9D9'} }; // título fondo gris
   });
 
   // Fraccion: la posicion de la hija dentro de su TCN. NO se recuenta aca —
@@ -7479,8 +7486,11 @@ async function generarReporteProteccion(cliente, loteDet){
   // de 1.261 filas quedaban con la fraccion equivocada.
   const desconocidos = new Set();
 
+  // Orden del reporte: por especie, luego por portafolio (más limpio de leer).
+  const loteOrd = [...loteDet].sort((a,b)=> String(a.especie).localeCompare(String(b.especie)) || String(a.portafolio||'').localeCompare(String(b.portafolio||'')));
+
   let r = 2;
-  loteDet.forEach(f=>{
+  loteOrd.forEach(f=>{
     const tcn = f.folio;
 
     // La sub-cuenta se busca por su codigo (OBL-MODER, CES-LP...). Si el
@@ -7580,11 +7590,12 @@ async function generarCredicorpProteccion(loteDet){
   const ws = wb.addWorksheet('PROTE ORDENES', { views:[{showGridLines:false}] });
   const headers = ['TRANSACTION','SECURITY.CLIENT_ID','PRICE','EX_BROKER','EX_DESK_TYPE','TRADE_DATE',
                    'SETTLE_DATE','PORTFOLIO','QUANTITY','TRADER','ORD_NUM','CUSTOM_FIELD.VALUE.PRO FOLIO'];
-  headers.forEach((h,i)=>{ const c = ws.getCell(1, i+1); c.value = h; c.font = { bold:true }; });
+  headers.forEach((h,i)=>{ const c = ws.getCell(1, i+1); c.value = h; c.font = { bold:true }; c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FFD9D9D9'} }; });
 
+  const loteOrd = [...loteDet].sort((a,b)=> String(a.especie).localeCompare(String(b.especie)) || String(a.portafolio||'').localeCompare(String(b.portafolio||'')));
   let r = 2;
   let sinOrdNum = 0;
-  loteDet.forEach(f=>{
+  loteOrd.forEach(f=>{
     // PRO FOLIO = los dígitos del folio del cliente (TCN − 600000). Es la
     // misma llave con la que cruzamos su sistema y el nuestro.
     const proFolio = Number(f.folio) - PROTECCION_TCN_OFFSET;
