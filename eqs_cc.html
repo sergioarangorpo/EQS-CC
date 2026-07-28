@@ -1116,9 +1116,9 @@
     </div>
     <div class="tb-field">
       <label>&nbsp;</label>
-      <button class="btn primary" id="btnGenerarTop" onclick="generarReporte()" disabled
+      <button class="btn primary reporte-btn" id="btnGenerarTop" onclick="generarReporte()" disabled
         style="font-size:14px;font-weight:700;padding:11px 22px;white-space:nowrap;"
-        title="Selecciona un cliente y sus folios para habilitar">Generar reporte</button>
+        title="Selecciona un cliente y sus folios para habilitar">📄 Generar reporte</button>
     </div>
   </div>
 
@@ -1596,10 +1596,17 @@
         <div class="blotter-wrap">
           <div class="blotter-toolbar">
             <div class="title">Trade Confirmations enviadas</div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="hint" style="font-size:11px;">Cliente:</span>
+              <select id="hist-cliente-filtro" onchange="renderHistorial()" style="min-width:180px;font-size:12px;">
+                <option value="">Todos los clientes</option>
+              </select>
+            </div>
           </div>
           <table>
             <thead>
               <tr>
+                <th style="width:28px;text-align:center;"><input type="checkbox" checked onclick="toggleTodosHist(this)" title="Marcar/desmarcar todas"></th>
                 <th>Hora</th>
                 <th>Cliente</th>
                 <th>Account</th>
@@ -1617,7 +1624,7 @@
               </tr>
             </thead>
             <tbody id="hist-body">
-              <tr><td colspan="14" class="empty-state">Aún no hay confirmaciones generadas.</td></tr>
+              <tr><td colspan="15" class="empty-state">Aún no hay confirmaciones generadas.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1782,8 +1789,8 @@
         <div class="result-row total"><span class="label">Utilidad bruta</span><span class="value" id="rc-utilidad">—</span></div>
       </div>
 
-      <button class="btn primary" style="width:100%;" id="btn-generar" onclick="generarTC()" disabled>Generar Trade Confirmation</button>
-      <div class="footer-note">Genera la <b>Trade Confirmation</b> en el formato estándar (mismo para todos los clientes excepto PORVENIR). Para PORVENIR activa el modo extendido.</div>
+      <button class="btn primary" style="width:100%;" id="btn-generar" onclick="generarTC()" disabled>💾 Guardar operación</button>
+      <div class="footer-note">Guarda la operación en el <b>histórico de hoy</b>. Luego filtra por cliente en el histórico, marca las que vas a enviar y usa <b>Exportar Trade Confirmation</b> arriba. (PORVENIR usa proforma extendida.)</div>
     </div>
   </div>
 
@@ -8610,13 +8617,30 @@ function generarTC(){
   setTimeout(()=>t.classList.remove('show'),2400);
 }
 
+function toggleTodosHist(cb){
+  document.querySelectorAll('.hist-check').forEach(c=> c.checked = cb.checked);
+}
 function renderHistorial(){
   const tbody=document.getElementById('hist-body');
-  if(!historial.length){
-    tbody.innerHTML='<tr><td colspan="14" class="empty-state">Aún no hay confirmaciones generadas.</td></tr>';
+  // Selector de cliente PROPIO del histórico: usa los clientes REALES del
+  // reporte (h.cliente). No se ata al filtro de arriba porque ese es por firm
+  // de EMSX (para trades vía CCSI la firm es CREDICORP, no el cliente).
+  const sel=document.getElementById('hist-cliente-filtro');
+  const clientesHist=[...new Set(historial.map(h=>h.cliente))];
+  if(sel){
+    const prev=sel.value;
+    sel.innerHTML='<option value="">Todos los clientes</option>'+clientesHist.map(c=>`<option value="${c}">${c}</option>`).join('');
+    sel.value = clientesHist.includes(prev)? prev : '';
+  }
+  const filtroCli=(sel&&sel.value)||'';
+  const filas=filtroCli? historial.filter(h=>h.cliente===filtroCli) : historial;
+  if(!filas.length){
+    tbody.innerHTML='<tr><td colspan="15" class="empty-state">'+(historial.length?'No hay confirmaciones de este cliente.':'Aún no hay confirmaciones generadas.')+'</td></tr>';
+    document.getElementById('histHint').textContent = historial.length?`(${historial.length} en total)`:'';
     return;
   }
-  tbody.innerHTML=historial.map(h=>`<tr>
+  tbody.innerHTML=filas.map(h=>`<tr>
+    <td style="text-align:center;"><input type="checkbox" class="hist-check" data-id="${h.id}" checked></td>
     <td class="mono-id">${h.hora}</td>
     <td>${h.cliente}</td>
     <td>${h.account}</td>
@@ -8632,7 +8656,7 @@ function renderHistorial(){
     <td class="num">${fmtMoneyRVI(h.ccsi,2)}</td>
     <td><button class="icon-btn" title="Corregir" onclick="abrirEdicionRVI(${h.id})">✎</button></td>
   </tr>`).join('');
-  document.getElementById('histHint').textContent=`(${historial.length} líneas)`;
+  document.getElementById('histHint').textContent=`(${filas.length}${filtroCli?' de '+historial.length:''} línea${filas.length!==1?'s':''}${filtroCli?' · '+filtroCli:''})`;
 }
 
 // =====================================================================
@@ -8659,19 +8683,17 @@ const RVI_EMISOR = ['Credicorp Capital Colombia', 'Cra 7 #71 -52 Torre A Piso 3'
 async function exportarPDF(){
   if(!historial.length){ alert('Todavía no hay Trade Confirmations generadas hoy.'); return; }
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar la librería de Excel (ExcelJS). Revisa tu conexión e intenta de nuevo.'); return; }
-
-  // Una TC por cliente: es lo que se le envía a cada uno. Si hoy operaron
-  // tres clientes, salen tres archivos — nadie debe ver los trades de otro.
-  const porCliente = {};
-  historial.forEach(h=>{ (porCliente[h.cliente] = porCliente[h.cliente] || []).push(h); });
-
-  const nombres = Object.keys(porCliente);
-  for(const cliente of nombres){
-    await generarTradeConfirmationRVI(cliente, porCliente[cliente]);
-  }
-
-  const hayPorvenir = nombres.some(n=> /PORVENIR/i.test(n));
-  if(hayPorvenir){
+  // Solo las operaciones MARCADAS en el histórico, y de UN solo cliente: la TC
+  // es por cliente (nadie ve los trades de otro). Así puedes filtrar por cliente,
+  // dejar todas o solo algunas (p.ej. las que aún no has enviado — caso Colfondos).
+  const marcadas=[...document.querySelectorAll('.hist-check:checked')].map(c=>Number(c.dataset.id));
+  const filas=historial.filter(h=>marcadas.includes(h.id));
+  if(!filas.length){ alert('Marca al menos una operación en el histórico (casillas) para exportar.'); return; }
+  const clientes=[...new Set(filas.map(h=>h.cliente))];
+  if(clientes.length>1){ alert('Marcaste operaciones de varios clientes ('+clientes.join(', ')+'). La Trade Confirmation es por cliente — filtra por un cliente en el histórico y exporta solo esas.'); return; }
+  const cliente=clientes[0];
+  await generarTradeConfirmationRVI(cliente, filas);
+  if(/PORVENIR/i.test(cliente)){
     alert('Ojo: PORVENIR usa una proforma propia que todavía no tenemos. Su archivo salió en el formato estándar — revísalo antes de enviarlo.');
   }
 }
