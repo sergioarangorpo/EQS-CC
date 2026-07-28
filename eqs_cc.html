@@ -80,6 +80,10 @@
   .grid{display:grid;grid-template-columns:1fr 380px;gap:0;}
   .col-main{padding:20px 24px;border-right:1px solid var(--border-soft);}
   .col-side{padding:20px 20px;}
+  .rvi-body{padding:20px 24px;}
+  .rvi-alloc-trio{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;align-items:start;margin:16px 0 20px;}
+  .rvi-alloc-col .panel{margin-bottom:14px;}
+  @media(max-width:1180px){ .rvi-alloc-trio{grid-template-columns:1fr;} }
 
   .section-label{
     font-size:11px;font-weight:600;color:var(--text-1);
@@ -1555,10 +1559,9 @@
     </div>
   </div>
 
-  <div class="grid">
-    <div class="col-main">
+  <div class="rvi-body">
 
-      <!-- BLOTTER EMSX -->
+            <!-- BLOTTER EMSX -->
       <div class="section-label">
         <span>Blotter EMSX — RVI <span class="hint" id="contextLabel">— selecciona una línea para procesar</span></span>
       </div>
@@ -1587,54 +1590,9 @@
         </table>
       </div>
 
-      <!-- HISTÓRICO -->
-      <div style="margin-top:4px;">
-        <div class="section-label">
-          Histórico generado hoy
-          <span class="hint" id="histHint"></span>
-        </div>
-        <div class="blotter-wrap">
-          <div class="blotter-toolbar">
-            <div class="title">Trade Confirmations enviadas</div>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <span class="hint" style="font-size:11px;">Cliente:</span>
-              <select id="hist-cliente-filtro" onchange="renderHistorial()" style="min-width:180px;font-size:12px;">
-                <option value="">Todos los clientes</option>
-              </select>
-            </div>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th style="width:28px;text-align:center;"><input type="checkbox" checked onclick="toggleTodosHist(this)" title="Marcar/desmarcar todas"></th>
-                <th>Hora</th>
-                <th>Cliente</th>
-                <th>Account</th>
-                <th>Side</th>
-                <th>Symbol</th>
-                <th>ISIN</th>
-                <th class="num">Qty</th>
-                <th class="num">Price</th>
-                <th class="num">Gross</th>
-                <th class="num">Cost</th>
-                <th class="num">Sec Fee</th>
-                <th class="num">Net</th>
-                <th class="num">Com CCSI</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="hist-body">
-              <tr><td colspan="15" class="empty-state">Aún no hay confirmaciones generadas.</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- PANEL DERECHO -->
-    <div class="col-side">
-      <div class="section-label">Trade Confirmation</div>
+      <div class="rvi-alloc-trio">
+        <div class="rvi-alloc-col">
+          <div class="section-label">Trade Confirmation</div>
 
       <!-- IDENTIFICACIÓN -->
       <div class="panel">
@@ -1694,8 +1652,9 @@
           </div>
         </div>
       </div>
-
-      <!-- NUESTRA EJECUCIÓN (afuera, broker CCSI) — para el margen -->
+        </div>
+        <div class="rvi-alloc-col">
+          <!-- NUESTRA EJECUCIÓN (afuera, broker CCSI) — para el margen -->
       <div class="panel">
         <div class="section-label" style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
           <span>Nuestra ejecución (afuera)</span>
@@ -1753,8 +1712,9 @@
         <div id="dist-list"></div>
         <div class="result-row total"><span class="label">Diferencia</span><span class="value" id="res-diferencia">0</span></div>
       </div>
-
-      <!-- COMISIONES -->
+        </div>
+        <div class="rvi-alloc-col">
+          <!-- COMISIONES -->
       <div class="panel">
         <div class="section-label" style="margin-bottom:10px;">Comisiones calculadas</div>
 
@@ -1791,7 +1751,47 @@
 
       <button class="btn primary" style="width:100%;" id="btn-generar" onclick="generarTC()" disabled>💾 Guardar operación</button>
       <div class="footer-note">Guarda la operación en el <b>histórico de hoy</b>. Luego filtra por cliente en el histórico, marca las que vas a enviar y usa <b>Exportar Trade Confirmation</b> arriba. (PORVENIR usa proforma extendida.)</div>
-    </div>
+        </div>
+      </div>
+
+            <!-- HISTÓRICO -->
+      <div style="margin-top:4px;">
+        <div class="section-label">
+          Histórico generado hoy
+          <span class="hint" id="histHint"></span>
+        </div>
+        <div class="blotter-wrap">
+          <div class="blotter-toolbar">
+            <div class="title">Trade Confirmations enviadas</div>
+            <span class="hint" style="font-size:11px;">Filtra por Cliente arriba · marca las que vas a enviar</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width:28px;text-align:center;"><input type="checkbox" checked onclick="toggleTodosHist(this)" title="Marcar/desmarcar todas"></th>
+                <th>Hora</th>
+                <th>Cliente</th>
+                <th>Account</th>
+                <th>Side</th>
+                <th>Symbol</th>
+                <th>ISIN</th>
+                <th class="num">Qty</th>
+                <th class="num">Price</th>
+                <th class="num">Gross</th>
+                <th class="num">Cost</th>
+                <th class="num">Sec Fee</th>
+                <th class="num">Net</th>
+                <th class="num">Com CCSI</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="hist-body">
+              <tr><td colspan="15" class="empty-state">Aún no hay confirmaciones generadas.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
   </div>
 
 </div>
@@ -8161,9 +8161,11 @@ function fmtInput(el,d){ el.value=fmtRateRVI(parseNum(el.value),d); }
 // FILTROS
 // =====================================================================
 function poblarFiltrosRVI(){
-  const clientes = [...new Set(emsxData.map(r=>r.firm))];
+  const clientes = [...new Set([...emsxData.map(r=>r.firm), ...emsxData.map(r=>r.clienteReporte), ...(typeof historial!=='undefined'?historial.map(h=>h.cliente):[])].filter(Boolean))];
   const especies = [...new Set(emsxData.map(r=>r.especie))];
-  document.getElementById('filtroClienteRVI').innerHTML = '<option value="">Todos</option>'+clientes.map(c=>`<option value="${c}">${c}</option>`).join('');
+  const _selCli=document.getElementById('filtroClienteRVI'); const _prevCli=_selCli.value;
+  _selCli.innerHTML = '<option value="">Todos</option>'+clientes.map(c=>`<option value="${c}">${c}</option>`).join('');
+  if(clientes.includes(_prevCli)) _selCli.value=_prevCli;
   document.getElementById('filtroEspecieRVI').innerHTML = '<option value="">Todas</option>'+especies.map(e=>`<option value="${e}">${e}</option>`).join('');
   poblarClienteSelector();
 }
@@ -8173,13 +8175,13 @@ function getFiltradas(){
   const esp = document.getElementById('filtroEspecieRVI').value;
   const lado = document.getElementById('filtroLadoRVI').value;
   return emsxData.filter(r=>
-    (!firm || r.firm===firm) &&
+    (!firm || r.firm===firm || r.clienteReporte===firm) &&
     (!esp  || r.especie===esp) &&
     (!lado || r.lado===lado)
   );
 }
 
-function filtrar(){ renderEmsx(); }
+function filtrar(){ renderEmsx(); renderHistorial(); }
 function borrarFiltrosRVI(){
   document.getElementById('filtroClienteRVI').value='';
   document.getElementById('filtroEspecieRVI').value='';
@@ -8601,8 +8603,9 @@ function generarTC(){
 
   // Marcar línea como procesada
   const linea = emsxData.find(r=>r.id===lineaActiva);
-  if(linea){ linea.procesado=true; linea.account=distribuciones.map(d=>d.account).join(' / '); }
+  if(linea){ linea.procesado=true; linea.account=distribuciones.map(d=>d.account).join(' / '); linea.clienteReporte=(historial[historial.length-1]||{}).cliente||''; }
 
+  poblarFiltrosRVI();
   renderHistorial();
   renderEmsx();
 
@@ -8622,18 +8625,13 @@ function toggleTodosHist(cb){
 }
 function renderHistorial(){
   const tbody=document.getElementById('hist-body');
-  // Selector de cliente PROPIO del histórico: usa los clientes REALES del
-  // reporte (h.cliente). No se ata al filtro de arriba porque ese es por firm
-  // de EMSX (para trades vía CCSI la firm es CREDICORP, no el cliente).
-  const sel=document.getElementById('hist-cliente-filtro');
-  const clientesHist=[...new Set(historial.map(h=>h.cliente))];
-  if(sel){
-    const prev=sel.value;
-    sel.innerHTML='<option value="">Todos los clientes</option>'+clientesHist.map(c=>`<option value="${c}">${c}</option>`).join('');
-    sel.value = clientesHist.includes(prev)? prev : '';
-  }
-  const filtroCli=(sel&&sel.value)||'';
-  const filas=filtroCli? historial.filter(h=>h.cliente===filtroCli) : historial;
+  // Filtra por el MISMO filtro Cliente de arriba (vincula blotter + histórico).
+  // Match flexible (ignora "SA"/tildes) para que "SKANDIA SEGUROS SA" case bien.
+  const filtro=(document.getElementById('filtroClienteRVI')||{}).value||'';
+  const norm=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\bS\.?A\.?\b/g,'').replace(/\s+/g,' ').trim();
+  const fN=norm(filtro);
+  const coincide=h=>{ if(!fN) return true; const hN=norm(h.cliente); return hN.includes(fN)||fN.includes(hN); };
+  const filas=historial.filter(coincide);
   if(!filas.length){
     tbody.innerHTML='<tr><td colspan="15" class="empty-state">'+(historial.length?'No hay confirmaciones de este cliente.':'Aún no hay confirmaciones generadas.')+'</td></tr>';
     document.getElementById('histHint').textContent = historial.length?`(${historial.length} en total)`:'';
@@ -8656,7 +8654,7 @@ function renderHistorial(){
     <td class="num">${fmtMoneyRVI(h.ccsi,2)}</td>
     <td><button class="icon-btn" title="Corregir" onclick="abrirEdicionRVI(${h.id})">✎</button></td>
   </tr>`).join('');
-  document.getElementById('histHint').textContent=`(${filas.length}${filtroCli?' de '+historial.length:''} línea${filas.length!==1?'s':''}${filtroCli?' · '+filtroCli:''})`;
+  document.getElementById('histHint').textContent=`(${filas.length}${filtro?' de '+historial.length:''} línea${filas.length!==1?'s':''}${filtro?' · '+filtro:''})`;
 }
 
 // =====================================================================
