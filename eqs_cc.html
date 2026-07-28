@@ -5697,10 +5697,27 @@ function procesarFidessa(){
   if(!_fidessaTradesRaw || !_fidessaFoliosRaw) return;
 
   _fidessaFoliosRaw.sort((a,b)=>(a.ord||0)-(b.ord||0));
-  // PROTECCIÓN (modelo nuevo): el folio YA trae su portafolio en Notes, así que
-  // se arma DIRECTO (uno por folio) y NO pasa por la conciliación de composites
-  // (que asume portafolio de EMSX y duplicaba/inflaba los folios).
-  const _esFolioProt = f => typeof PROTECCION_SUBCUENTAS!=='undefined' && !!PROTECCION_SUBCUENTAS[String(f.notes||'').trim()];
+  // Índice EMSX por Instructions (=ORD_NUM): da account (portafolio) y trader.
+  // Se construye ANTES de segregar para poder resolver folios cuyo Notes sea un
+  // ORD_NUM numérico (ej. PFAVAL 12225008 → account VOL-AVAL) — Sergio lo subió
+  // sin alloc esa vez, así que el portafolio hay que sacarlo de EMSX.
+  const emsxPorNotes = {};
+  (_emsxCBCache || []).forEach(r=>{
+    const instr = String(r.instructions || '').trim();
+    if(!instr || instr === '—') return;
+    emsxPorNotes[instr] = { account: r.account && r.account !== '—' ? r.account : '', instructions: instr, trader: (r.originate_trader || r.originating_trader || '').trim() };
+  });
+  // PROTECCIÓN (modelo nuevo): el folio arma DIRECTO (uno por folio), sin pasar
+  // por la conciliación de composites (que duplicaba). El portafolio sale del
+  // Notes si ya es sub-cuenta; si el Notes es un ORD_NUM numérico, del account
+  // de EMSX de ese ORD_NUM.
+  const _portProtDeFolio = f => {
+    const n = String(f.notes||'').trim();
+    if(typeof PROTECCION_SUBCUENTAS!=='undefined' && PROTECCION_SUBCUENTAS[n]) return n;
+    const em = /^\d+$/.test(n) ? emsxPorNotes[n] : null;
+    return (em && typeof PROTECCION_SUBCUENTAS!=='undefined' && PROTECCION_SUBCUENTAS[em.account]) ? em.account : '';
+  };
+  const _esFolioProt = f => !!_portProtDeFolio(f);
   const foliosProtRaw = _fidessaFoliosRaw.filter(_esFolioProt);
   const foliosRestoRaw = _fidessaFoliosRaw.filter(f=>!_esFolioProt(f));
   const {directos, composites, huerfanos} = agruparFoliosPorTcnLado(foliosRestoRaw);
@@ -5716,18 +5733,7 @@ function procesarFidessa(){
   // para las órdenes simples viene numérico en el Notes de Fidessa; para los
   // composites Fidessa deja "UBS", pero EMSX sí trae el número, así que se
   // toma de aquí (Sergio confirmó que el ORD_NUM llega de EMSX en Instruction).
-  const emsxPorNotes = {};
-  (_emsxCBCache || []).forEach(r=>{
-    const instr = String(r.instructions || '').trim();
-    if(!instr || instr === '—') return;
-    emsxPorNotes[instr] = {
-      account: r.account && r.account !== '—' ? r.account : '',
-      instructions: instr,
-      // Originating Trader de Bloomberg → el TRADER del archivo credicorp.
-      // Iniciales si vienen; si no, se deja para caer al default ASGA.
-      trader: (r.originate_trader || r.originating_trader || '').trim(),
-    };
-  });
+  // (emsxPorNotes ya se construyó arriba, antes de segregar PROTECCIÓN.)
   // Lado de la ORDEN por especie (Trades) para PROTECCIÓN: el folio de
   // distribución trae la pata de BOOKING (opuesta al mercado), así que el C/V
   // del reporte debe salir del lado de la orden, no del lado del folio.
@@ -5846,7 +5852,8 @@ function procesarFidessa(){
   const _fracProt = {};
   const foliosProtDirectos = foliosProtRaw.map(f=>{
     const especie = nemoCanonico(f.instrument,'fidessa');
-    const portafolio = String(f.notes||'').trim();
+    const portafolio = _portProtDeFolio(f);
+    const notesNum = /^\d+$/.test(String(f.notes||'').trim()) ? String(f.notes).trim() : '';
     const em = emsxProt[especie+'|'+portafolio] || null;
     _fracProt[f.tcn] = (_fracProt[f.tcn]||0)+1;
     return {
@@ -5856,7 +5863,7 @@ function procesarFidessa(){
       hora: horaDeTimestampFidessa(f.traded), folio: f.tcn, clientBook: f.clientBook,
       parentOrderId: f.parentOrderId, cantidad: f.cantidad, precio: f.precio,
       origen:'proteccion-directo', ordenAsignada:null, fraccion:_fracProt[f.tcn],
-      ordNum: em ? em.instructions : '', portafolio,
+      ordNum: notesNum || (em ? em.instructions : ''), portafolio,
       trader: (em && em.trader) ? em.trader : PROTECCION_TRADER_DEFAULT,
       marca:'pantalla',
     };
