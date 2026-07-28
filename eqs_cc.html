@@ -4592,7 +4592,7 @@ function getFiltrados(){
     (!cliente || f.cliente===cliente) &&
     (!especie || f.especie===especie) &&
     (!lado || f.lado===lado) &&
-    (!zoomParents || zoomParents.has(String(f.parentOrderId)) || (zoomKeys && zoomKeys.has(String(f.especie)+'|'+String(f.portafolio||'').trim())))
+    (f.origen==='proteccion-directo' || !zoomParents || zoomParents.has(String(f.parentOrderId)) || (zoomKeys && zoomKeys.has(String(f.especie)+'|'+String(f.portafolio||'').trim())))
   );
   if(sortCol){
     res = [...res].sort((a,b)=>{
@@ -7094,8 +7094,11 @@ async function generarReporte(){
   const especie = document.getElementById('filtroEspecie').value || getFiltrados()[0]?.especie;
   const lado = document.getElementById('filtroLado').value || getFiltrados()[0]?.lado;
   const filtrados = getFiltrados();
-  const seleccionados = filtrados.filter(f=>selectedFolios.has(f.id));
-  if(seleccionados.length===0){ alert('Selecciona al menos un folio para generar el reporte (marca las líneas en la tabla de folios).'); return; }
+  // PROTECCIÓN reporta TODOS sus folios (los marcados como bloque van a 0.15%);
+  // no depende de la selección puntual. Los demás clientes sí usan la selección.
+  const esProteccionRep = normalizarGrupo(cliente)==='PROTECCION' || (getClienteDB(cliente)||{}).formatoReporte==='proteccion';
+  const seleccionados = esProteccionRep ? filtrados.filter(f=>f.origen==='proteccion-directo') : filtrados.filter(f=>selectedFolios.has(f.id));
+  if(seleccionados.length===0){ alert(esProteccionRep ? 'No hay folios de PROTECCIÓN para reportar. Carga Fidessa Trades + Folios y filtra AFP PROTECCIÓN.' : 'Selecciona al menos un folio para generar el reporte (marca las líneas en la tabla de folios).'); return; }
 
   // Validación de coincidencia EMSX = Fidessa Trades = Fidessa Folios para
   // clientes de generación automática (los que no reparten allocation a mano).
@@ -7379,7 +7382,7 @@ function mostrarAprobacionProteccion(cliente, loteDet){
     const precioTxt = [...g.precios].map(p=>fmtRate(p)).join(' · ');
     const opcionesTrader = Object.keys(PROTECCION_TRADERS).map(ini=>`<option value="${ini}">${ini} — ${PROTECCION_TRADERS[ini]}</option>`).join('');
     const portsTxt = Object.entries(g.ports).map(([p,q])=>{
-      const trSel = `<select data-port="${p}" class="prot-trader-sel" style="font-size:11px;padding:1px 4px;">${opcionesTrader}</select>`;
+      const trSel = `<select data-port="${p}" class="prot-trader-sel" style="background:var(--bg-3);border:1px solid var(--border-strong);border-radius:6px;color:var(--text-0);font-family:var(--mono);font-size:11.5px;padding:5px 8px;">${opcionesTrader}</select>`;
       return `<div style="display:flex;align-items:center;gap:6px;margin:2px 0;"><span style="min-width:96px;">${p} <b>${fmtInt(q)}</b></span>${trSel}</div>`;
     }).join('') +
       (faltaPort ? `<div style="color:var(--sell);">⚠️ ${fmtInt(g.sinPort)} sin portafolio</div>` : '');
