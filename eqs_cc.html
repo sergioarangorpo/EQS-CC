@@ -5697,7 +5697,13 @@ function procesarFidessa(){
   if(!_fidessaTradesRaw || !_fidessaFoliosRaw) return;
 
   _fidessaFoliosRaw.sort((a,b)=>(a.ord||0)-(b.ord||0));
-  const {directos, composites, huerfanos} = agruparFoliosPorTcnLado(_fidessaFoliosRaw);
+  // PROTECCIÓN (modelo nuevo): el folio YA trae su portafolio en Notes, así que
+  // se arma DIRECTO (uno por folio) y NO pasa por la conciliación de composites
+  // (que asume portafolio de EMSX y duplicaba/inflaba los folios).
+  const _esFolioProt = f => typeof PROTECCION_SUBCUENTAS!=='undefined' && !!PROTECCION_SUBCUENTAS[String(f.notes||'').trim()];
+  const foliosProtRaw = _fidessaFoliosRaw.filter(_esFolioProt);
+  const foliosRestoRaw = _fidessaFoliosRaw.filter(f=>!_esFolioProt(f));
+  const {directos, composites, huerfanos} = agruparFoliosPorTcnLado(foliosRestoRaw);
   const {asignacion, reportes} = resolverComposites(_fidessaTradesRaw, composites);
 
   const nuevosFolios = [];
@@ -5833,14 +5839,31 @@ function procesarFidessa(){
   const sinFolios = filasRecon.filter(f=> f.sumaFolios === 0 && f.qtyDone > 0);
   const diferencias = filasRecon.filter(f=> !f.cuadra && f.sumaFolios > 0);
 
-  foliosFidessa = nuevosFolios;
-  // Fracción por TCN para PROTECCIÓN: posición del folio dentro de su print.
-  // (En el export nuevo cada folio ya trae su portafolio en Notes, así que la
-  // fracción se numera aquí por TCN, en orden de aparición.)
-  { const _fr = {}; foliosFidessa.forEach(f=>{ if(typeof PROTECCION_SUBCUENTAS!=='undefined' && PROTECCION_SUBCUENTAS[String(f.portafolio||'').trim()]){ _fr[f.folio]=(_fr[f.folio]||0)+1; f.fraccion=_fr[f.folio]; } }); }
+  // ---- PROTECCIÓN directo: un folio por fracción; portafolio = Notes ----
+  // ORD_NUM y trader se recuperan de EMSX por (especie, account=portafolio).
+  const emsxProt = {};
+  (_emsxCBCache||[]).forEach(r=>{ const k = nemoCanonico(r.ticker||r.nombre_completo||'','emsx')+'|'+String(r.account||'').trim(); if(!emsxProt[k]) emsxProt[k]={instructions:String(r.instructions||'').trim(), trader:(r.originate_trader||r.originating_trader||'').trim()}; });
+  const _fracProt = {};
+  const foliosProtDirectos = foliosProtRaw.map(f=>{
+    const especie = nemoCanonico(f.instrument,'fidessa');
+    const portafolio = String(f.notes||'').trim();
+    const em = emsxProt[especie+'|'+portafolio] || null;
+    _fracProt[f.tcn] = (_fracProt[f.tcn]||0)+1;
+    return {
+      id: nextId++, cliente:'PROTECCION', especie,
+      // Lado de la ORDEN (el folio trae la pata de booking, opuesta).
+      lado: _ladoOrdenProt[especie] || (f.side==='B'?'Compra':'Venta'),
+      hora: horaDeTimestampFidessa(f.traded), folio: f.tcn, clientBook: f.clientBook,
+      parentOrderId: f.parentOrderId, cantidad: f.cantidad, precio: f.precio,
+      origen:'proteccion-directo', ordenAsignada:null, fraccion:_fracProt[f.tcn],
+      ordNum: em ? em.instructions : '', portafolio,
+      trader: (em && em.trader) ? em.trader : PROTECCION_TRADER_DEFAULT,
+      marca:'pantalla',
+    };
+  });
+  foliosFidessa = [...foliosProtDirectos, ...nuevosFolios];
   // Por defecto TODAS las órdenes de Trades quedan seleccionadas → se ven todos
   // los folios. Si Sergio quiere enviar solo una línea, deselecciona el resto.
-  // (El cruce FX solo se dispara con su propio botón, no por esta selección.)
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>_tradesConsolidar.add(oid));
   // Guardar el resultado de la conciliación (por orden) para que la validación
   // del botón "Generar reporte" se apoye en él — ya maneja composites, cruces
@@ -7119,7 +7142,10 @@ async function generarReporte(){
 
   seleccionados.forEach(f=>{
     const fila = {
-      folio: f.folio || f.id, cliente: getClienteDB(cliente).nombre, especie, lado,
+      folio: f.folio || f.id, cliente: getClienteDB(cliente).nombre,
+      // Especie y lado POR FOLIO (PROTECCIÓN reporta varias especies en un lote);
+      // cae a la especie/lado del filtro solo si el folio no la trae.
+      especie: f.especie || especie, lado: f.lado || lado,
       cantidad: f.cantidad, precio: f.precio, marca: f.marca, fechaReg, fechaCum,
       clientBook: f.clientBook, parentOrderId: f.parentOrderId,
       // Campos que PROTECCIÓN necesita: el portafolio del propio folio (no hay
