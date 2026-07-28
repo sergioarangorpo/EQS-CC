@@ -1120,7 +1120,7 @@
     </div>
     <div class="tb-field">
       <label>&nbsp;</label>
-      <button class="btn primary reporte-btn" id="btnGenerarTop" onclick="generarReporte()" disabled
+      <button class="btn primary reporte-btn" id="btnGenerarTop" onclick="generarReporte()"
         style="font-size:14px;font-weight:700;padding:11px 22px;white-space:nowrap;"
         title="Selecciona un cliente y sus folios para habilitar">📄 Generar reporte</button>
     </div>
@@ -4585,11 +4585,14 @@ function getFiltrados(){
   // seleccionas la orden en Trades y abajo quedan solo sus folios (para marcar
   // cruce/pantalla y repartir a portafolios sobre esa orden).
   const zoomParents = _tradesConsolidar.size > 0 ? _tradesConsolidar : null;
+  // Folios de distribución (sin parentOrderId, ej. PROTECCIÓN) NO enlazan por
+  // parentOrderId; se enlazan a la orden seleccionada por (especie, portafolio).
+  const zoomKeys = zoomParents ? new Set([..._tradesConsolidar].map(oid=>{ const t=_fidessaTradesRaw&&_fidessaTradesRaw[oid]; return t ? nemoCanonico(t.security,'fidessa')+'|'+String(t.notes||'').trim() : ''; }).filter(Boolean)) : null;
   let res = foliosFidessa.filter(f=>
     (!cliente || f.cliente===cliente) &&
     (!especie || f.especie===especie) &&
     (!lado || f.lado===lado) &&
-    (!zoomParents || zoomParents.has(String(f.parentOrderId)))
+    (!zoomParents || zoomParents.has(String(f.parentOrderId)) || (zoomKeys && zoomKeys.has(String(f.especie)+'|'+String(f.portafolio||'').trim())))
   );
   if(sortCol){
     res = [...res].sort((a,b)=>{
@@ -5719,6 +5722,11 @@ function procesarFidessa(){
       trader: (r.originate_trader || r.originating_trader || '').trim(),
     };
   });
+  // Lado de la ORDEN por especie (Trades) para PROTECCIÓN: el folio de
+  // distribución trae la pata de BOOKING (opuesta al mercado), así que el C/V
+  // del reporte debe salir del lado de la orden, no del lado del folio.
+  const _ladoOrdenProt = {};
+  Object.values(_fidessaTradesRaw||{}).forEach(t=>{ if(normalizarGrupo(t.grupo)==='PROTECCION' && t.security){ _ladoOrdenProt[nemoCanonico(t.security,'fidessa')] = t.lado; } });
   const armar = (f, orden, origen, fraccion)=>{
     const t = orden && _fidessaTradesRaw[orden.oid] ? _fidessaTradesRaw[orden.oid] : null;
     // Para composites resueltos por PASO C (cruce con Instructions único), la
@@ -5749,7 +5757,8 @@ function procesarFidessa(){
       // de cruce — hacer eso mezclaba especies cuando varias acciones comparten
       // el mismo Instructions en un cruce (bug 23-jul: todo salía PFGRUPOARG).
       especie: nemoCanonico(f.instrument, 'fidessa'),
-      lado: f.side === 'B' ? 'Compra' : 'Venta',
+      // Para PROTECCIÓN el lado sale de la orden (Trades); para el resto, del folio.
+      lado: esPortProteccion ? (_ladoOrdenProt[nemoCanonico(f.instrument, 'fidessa')] || (f.side === 'B' ? 'Compra' : 'Venta')) : (f.side === 'B' ? 'Compra' : 'Venta'),
       hora: horaDeTimestampFidessa(f.traded),
       folio: f.tcn,
       clientBook: f.clientBook,
@@ -5829,6 +5838,10 @@ function procesarFidessa(){
   // (En el export nuevo cada folio ya trae su portafolio en Notes, así que la
   // fracción se numera aquí por TCN, en orden de aparición.)
   { const _fr = {}; foliosFidessa.forEach(f=>{ if(typeof PROTECCION_SUBCUENTAS!=='undefined' && PROTECCION_SUBCUENTAS[String(f.portafolio||'').trim()]){ _fr[f.folio]=(_fr[f.folio]||0)+1; f.fraccion=_fr[f.folio]; } }); }
+  // Por defecto TODAS las órdenes de Trades quedan seleccionadas → se ven todos
+  // los folios. Si Sergio quiere enviar solo una línea, deselecciona el resto.
+  // (El cruce FX solo se dispara con su propio botón, no por esta selección.)
+  Object.keys(_fidessaTradesRaw||{}).forEach(oid=>_tradesConsolidar.add(oid));
   // Guardar el resultado de la conciliación (por orden) para que la validación
   // del botón "Generar reporte" se apoye en él — ya maneja composites, cruces
   // de doble representación y DMA correctamente, a diferencia de una suma cruda
@@ -6165,7 +6178,7 @@ function actualizarBotonGenerar(){
   // Para reparto manual, la habilitación NO depende de haySeleccion de folios
   // (se evalúa por las órdenes con reparto completo).
   const ok = esReparteManual ? (!!cliente && asignacionOk) : (!!cliente && haySeleccion && asignacionOk);
-  btn.disabled = !ok;
+  btn.disabled = false; // Siempre activo (Sergio): la validación se hace al hacer clic en generarReporte()
   if(!cliente) btn.title = 'Selecciona un cliente para habilitar';
   else if(esReparteManual && !asignacionOk) btn.title = 'Completa el reparto de al menos una orden (cantidad asignada = cantidad de la orden)';
   else if(!esReparteManual && !haySeleccion) btn.title = 'Selecciona al menos un folio para habilitar';
@@ -7052,7 +7065,7 @@ async function generarReporte(){
   const lado = document.getElementById('filtroLado').value || getFiltrados()[0]?.lado;
   const filtrados = getFiltrados();
   const seleccionados = filtrados.filter(f=>selectedFolios.has(f.id));
-  if(seleccionados.length===0) return;
+  if(seleccionados.length===0){ alert('Selecciona al menos un folio para generar el reporte (marca las líneas en la tabla de folios).'); return; }
 
   // Validación de coincidencia EMSX = Fidessa Trades = Fidessa Folios para
   // clientes de generación automática (los que no reparten allocation a mano).
