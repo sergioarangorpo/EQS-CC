@@ -4381,7 +4381,7 @@ function coincideFiltroRVL({cliente, cuenta, especie, lado}){
   if(fl && lado !== fl) return false;
   if(fe && especie !== fe) return false;
   if(fc){
-    const nombreCompleto = (getClienteDB(fc).nombre||'').toUpperCase().trim();
+    const nombreCompleto = ((getClienteDB(fc)||{}).nombre||'').toUpperCase().trim();
     const a = String(cliente||'').toUpperCase().trim();
     const b = fc.toUpperCase().trim();
     const matchFirm = a.includes(b) || b.includes(a) || (nombreCompleto && a.includes(nombreCompleto));
@@ -4589,9 +4589,9 @@ function getFiltrados(){
   // parentOrderId; se enlazan a la orden seleccionada por (especie, portafolio).
   const zoomKeys = zoomParents ? new Set([..._tradesConsolidar].map(oid=>{ const t=_fidessaTradesRaw&&_fidessaTradesRaw[oid]; return t ? nemoCanonico(t.security,'fidessa')+'|'+String(t.notes||'').trim() : ''; }).filter(Boolean)) : null;
   let res = foliosFidessa.filter(f=>
-    (!cliente || f.cliente===cliente) &&
-    (!especie || f.especie===especie) &&
-    (!lado || f.lado===lado) &&
+    // Coincidencia FLEXIBLE de cliente (ej. filtro "COLFONDOS SA" calza con el
+    // grupo "COLFONDOS"); antes usaba === exacto y por eso salía 0 folios.
+    coincideFiltroRVL({cliente: f.cliente, especie: f.especie, lado: f.lado}) &&
     (f.origen==='proteccion-directo' || !zoomParents || zoomParents.has(String(f.parentOrderId)) || (zoomKeys && zoomKeys.has(String(f.especie)+'|'+String(f.portafolio||'').trim())))
   );
   if(sortCol){
