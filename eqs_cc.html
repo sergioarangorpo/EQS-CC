@@ -4592,7 +4592,7 @@ function getFiltrados(){
     // Coincidencia FLEXIBLE de cliente (ej. filtro "COLFONDOS SA" calza con el
     // grupo "COLFONDOS"); antes usaba === exacto y por eso salía 0 folios.
     coincideFiltroRVL({cliente: f.cliente, especie: f.especie, lado: f.lado}) &&
-    (f.origen==='proteccion-directo' || !zoomParents || zoomParents.has(String(f.parentOrderId)) || (zoomKeys && zoomKeys.has(String(f.especie)+'|'+String(f.portafolio||'').trim())))
+    (f.origen==='proteccion-directo' || f.grupoColfondos || !zoomParents || zoomParents.has(String(f.parentOrderId)) || (zoomKeys && zoomKeys.has(String(f.especie)+'|'+String(f.portafolio||'').trim())))
   );
   if(sortCol){
     res = [...res].sort((a,b)=>{
@@ -5869,6 +5869,36 @@ function procesarFidessa(){
     };
   });
   foliosFidessa = [...foliosProtDirectos, ...nuevosFolios];
+
+  // ---- COLFONDOS: asociación de folios (prioridad de Sergio) ----
+  // 1) El POID ya asoció lo directo en la conciliación. 2) Aquí se recuperan
+  // los folios HUÉRFANOS (COLCCP sin orden emparejada — típicamente la tanda
+  // VWAP que el robot dejó con Parent Order ID fuera del active/trades) que
+  // pertenezcan a una especie+lado que COLFONDOS operó, EXCLUYENDO PROTECCIÓN
+  // (hijas por Notes ∈ SUBCUENTAS y mamás por TCN). Es la "última opción"
+  // (eliminación) solo para lo huérfano; no toca folios ya emparejados a otro
+  // cliente por POID. El día robusto es con Notes=COLFONDOS en el folio.
+  {
+    const colfOrders = new Set();
+    const _addColf = (esp,lado)=>{ if(esp) colfOrders.add(String(esp)+'|'+(String(lado||'').toLowerCase().startsWith('c')?'Compra':'Venta')); };
+    // Las órdenes COLFONDOS salen del EMSX (data mamá) — a mitad de día viven en
+    // el blotter de Bloomberg antes de bajar a Fidessa Trades; también se leen
+    // de Trades por si ya bajaron.
+    Object.values(_fidessaTradesRaw||{}).forEach(t=>{ if(normalizarGrupo(t.grupo)==='COLFONDOS' && t.security) _addColf(nemoCanonico(t.security,'fidessa'), t.lado); });
+    (_emsxCBCache||[]).forEach(r=>{ if(normalizarGrupo(String(r.firm||r.grupo||''))==='COLFONDOS'){ const _tk=r.ticker||r.nombre_completo||''; _addColf(nemoCanonico(_tk,'emsx'), r.lado); _addColf(nemoCanonico(_tk,'fidessa'), r.lado); } });
+    if(colfOrders.size){
+      const tcnProt = new Set();
+      foliosFidessa.forEach(f=>{ if(f.origen==='proteccion-directo') tcnProt.add(f.folio); });
+      const esSubProt = p => typeof PROTECCION_SUBCUENTAS!=='undefined' && !!PROTECCION_SUBCUENTAS[String(p||'').trim()];
+      foliosFidessa.forEach(f=>{
+        if(f.origen==='proteccion-directo' || f.cliente==='PROTECCION') return; // nunca tocar PROTECCIÓN
+        if(f.cliente!=='COLCCP' && f.cliente!=='COLFONDOS') return;              // solo huérfanos/COLCCP (no otros clientes ya emparejados)
+        if(!colfOrders.has(String(f.especie)+'|'+String(f.lado))) return;       // debe ser una especie+lado que COLFONDOS operó
+        if(esSubProt(f.portafolio) || tcnProt.has(f.folio)) return;             // excluir PROTECCIÓN (hija por Notes o mamá por TCN)
+        f.cliente='COLFONDOS'; f.grupoColfondos=true;
+      });
+    }
+  }
   // Por defecto TODAS las órdenes de Trades quedan seleccionadas → se ven todos
   // los folios. Si Sergio quiere enviar solo una línea, deselecciona el resto.
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>_tradesConsolidar.add(oid));
