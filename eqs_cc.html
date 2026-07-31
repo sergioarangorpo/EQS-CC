@@ -7615,11 +7615,12 @@ async function generarReporteProteccion(cliente, loteDet){
     // Formatos: Cantidad (7) número miles sin decimales; Precio (8), $ Comisión
     // (10), Iva (11), Valor Neto (12) en moneda (pesos). % Comisión (9) queda
     // como número (0.08 / 0.15) tal como el archivo real.
-    ws.getCell(r, 7).numFmt = '#,##0';
-    ws.getCell(r, 8).numFmt = '"$"#,##0.00';
-    ws.getCell(r, 10).numFmt = '"$"#,##0.00';
-    ws.getCell(r, 11).numFmt = '"$"#,##0.00';
-    ws.getCell(r, 12).numFmt = '"$"#,##0.00';
+    // Formato CONTABLE como el archivo enviado: Cantidad entera, pesos con $.
+    ws.getCell(r, 7).numFmt = '_(* #,##0_);_(* (#,##0);_(* "-"_);_(@_)';
+    ws.getCell(r, 8).numFmt = '_("$"* #,##0.00_);_("$"* (#,##0.00);_("$"* "-"??_);_(@_)';
+    ws.getCell(r, 10).numFmt = '_("$"* #,##0.00_);_("$"* (#,##0.00);_("$"* "-"??_);_(@_)';
+    ws.getCell(r, 11).numFmt = '_("$"* #,##0.00_);_("$"* (#,##0.00);_("$"* "-"??_);_(@_)';
+    ws.getCell(r, 12).numFmt = '_("$"* #,##0.00_);_("$"* (#,##0.00);_("$"* "-"??_);_(@_)';
     r++;
   });
 
@@ -7677,7 +7678,7 @@ async function generarCredicorpProteccion(loteDet){
   loteOrd.forEach(f=>{
     // PRO FOLIO = los dígitos del folio del cliente (TCN − 600000). Es la
     // misma llave con la que cruzamos su sistema y el nuestro.
-    const proFolio = Number(f.folio) - PROTECCION_TCN_OFFSET;
+    const proFolio = Number(f.folio); // 6 dígitos = TCN completo (fix NUAM)
     // Bloque → CRUCE, Pantalla → PANTALLA (así lo marca el archivo real).
     const deskType = f.marca === 'bloque' ? 'CRUCE' : 'PANTALLA';
     // ORD_NUM: es el número con el que PROTECCION identifica la orden en SU
