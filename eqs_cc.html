@@ -7600,10 +7600,10 @@ async function generarReporteProteccion(cliente, loteDet){
       ivaMon,
       neto,
       sub ? sub.deceval : '',
-      sub ? sub.idOrion : '',
+      sub && sub.idOrion != null && sub.idOrion !== '' ? Number(sub.idOrion) : '',
       sub ? sub.tipoDoc : '',
-      sub ? sub.documento : '',
-      sub ? sub.digito : '',
+      sub && sub.documento != null && sub.documento !== '' ? Number(sub.documento) : '',
+      sub && sub.digito != null && sub.digito !== '' ? Number(sub.digito) : '',
       f.portafolio || '',
       sub ? sub.nombre : '',
       'SAR',
@@ -7686,7 +7686,7 @@ async function generarCredicorpProteccion(loteDet){
     // hijas y el número real del composite llega por otra vía que no está en
     // el export de Trades. Solo se escribe si es un número; si no, se deja en
     // blanco y se avisa — NO se inventa.
-    const ordNumLimpio = /^\d+$/.test(String(f.ordNum||'').trim()) ? String(f.ordNum).trim() : '';
+    const ordNumLimpio = /^\d+$/.test(String(f.ordNum||'').trim()) ? Number(String(f.ordNum).trim()) : '';
     if(!ordNumLimpio) sinOrdNum++;
     const fila = [
       f.lado === 'Compra' ? 'BUY' : 'SELL',
