@@ -5739,6 +5739,10 @@ function procesarFidessa(){
   // del reporte debe salir del lado de la orden, no del lado del folio.
   const _ladoOrdenProt = {};
   Object.values(_fidessaTradesRaw||{}).forEach(t=>{ if(normalizarGrupo(t.grupo)==='PROTECCION' && t.security){ _ladoOrdenProt[nemoCanonico(t.security,'fidessa')] = t.lado; } });
+  // Lado por (especie+portafolio) desde EMSX — una especie puede tener Compra Y Venta
+  // a distintos portafolios (ej. CEMARGOS PI-SOLLA es Compra y el resto Venta).
+  const _ladoOrdenProtPP = {};
+  (_emsxCBCache||[]).forEach(r=>{ if(normalizarGrupo(String(r.firm||''))==='PROTECCION' && (r.ticker||r.nombre_completo)){ _ladoOrdenProtPP[nemoCanonico(r.ticker||r.nombre_completo,'emsx')+'|'+String(r.account||'').trim()] = r.lado; } });
   const armar = (f, orden, origen, fraccion)=>{
     const t = orden && _fidessaTradesRaw[orden.oid] ? _fidessaTradesRaw[orden.oid] : null;
     // Para composites resueltos por PASO C (cruce con Instructions único), la
@@ -5770,7 +5774,7 @@ function procesarFidessa(){
       // el mismo Instructions en un cruce (bug 23-jul: todo salía PFGRUPOARG).
       especie: nemoCanonico(f.instrument, 'fidessa'),
       // Para PROTECCIÓN el lado sale de la orden (Trades); para el resto, del folio.
-      lado: esPortProteccion ? (_ladoOrdenProt[nemoCanonico(f.instrument, 'fidessa')] || (f.side === 'B' ? 'Compra' : 'Venta')) : (f.side === 'B' ? 'Compra' : 'Venta'),
+      lado: esPortProteccion ? (_ladoOrdenProtPP[nemoCanonico(f.instrument, 'fidessa')+'|'+String(f.notes||'').trim()] || _ladoOrdenProt[nemoCanonico(f.instrument, 'fidessa')] || (f.side === 'B' ? 'Compra' : 'Venta')) : (f.side === 'B' ? 'Compra' : 'Venta'),
       hora: horaDeTimestampFidessa(f.traded),
       folio: f.tcn,
       clientBook: f.clientBook,
@@ -5859,7 +5863,7 @@ function procesarFidessa(){
     return {
       id: nextId++, cliente:'PROTECCION', especie,
       // Lado de la ORDEN (el folio trae la pata de booking, opuesta).
-      lado: _ladoOrdenProt[especie] || (f.side==='B'?'Compra':'Venta'),
+      lado: _ladoOrdenProtPP[especie+'|'+portafolio] || _ladoOrdenProt[especie] || (f.side==='B'?'Compra':'Venta'),
       hora: horaDeTimestampFidessa(f.traded), folio: f.tcn, clientBook: f.clientBook,
       parentOrderId: f.parentOrderId, cantidad: f.cantidad, precio: f.precio,
       origen:'proteccion-directo', ordenAsignada:null, fraccion:_fracProt[f.tcn],
@@ -7194,7 +7198,8 @@ async function generarReporte(){
       portafolio: f.portafolio || portafolioDeFolio(f),
       fraccion: f.fraccion, ordNum: f.ordNum,
       trader: f.trader || PROTECCION_TRADER_DEFAULT,
-      comisionPct: f.marca === 'bloque' ? comisionCrucePct() : comisionPantallaPct(),
+      // Override: ECOPETROL y PFCIBEST SIEMPRE 0,08% en PROTECCIÓN, aunque estén marcados bloque.
+      comisionPct: (f.especie==='ECOPETROL'||f.especie==='PFCIBEST') ? comisionPantallaPct() : (f.marca === 'bloque' ? comisionCrucePct() : comisionPantallaPct()),
     };
     detalleHistorico.push(fila);
     loteDet.push(fila);
@@ -7680,7 +7685,7 @@ async function generarCredicorpProteccion(loteDet){
     // misma llave con la que cruzamos su sistema y el nuestro.
     const proFolio = Number(f.folio); // 6 dígitos = TCN completo (fix NUAM)
     // Bloque → CRUCE, Pantalla → PANTALLA (así lo marca el archivo real).
-    const deskType = f.marca === 'bloque' ? 'CRUCE' : 'PANTALLA';
+    const deskType = (f.especie==='ECOPETROL'||f.especie==='PFCIBEST') ? 'PANTALLA' : (f.marca === 'bloque' ? 'CRUCE' : 'PANTALLA');
     // ORD_NUM: es el número con el que PROTECCION identifica la orden en SU
     // sistema. Llega como EMSX_NOTES (Instructions). Para órdenes simples
     // suele venir; para composites, Fidessa deja "UBS" u otro texto en las
