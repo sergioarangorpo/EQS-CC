@@ -5756,10 +5756,51 @@ function procesarFidessa(){
   // del reporte debe salir del lado de la orden, no del lado del folio.
   const _ladoOrdenProt = {};
   Object.values(_fidessaTradesRaw||{}).forEach(t=>{ if(normalizarGrupo(t.grupo)==='PROTECCION' && t.security){ _ladoOrdenProt[nemoCanonico(t.security,'fidessa')] = t.lado; } });
-  // Lado por (especie+portafolio) desde EMSX — una especie puede tener Compra Y Venta
-  // a distintos portafolios (ej. CEMARGOS PI-SOLLA es Compra y el resto Venta).
-  const _ladoOrdenProtPP = {};
-  (_emsxCBCache||[]).forEach(r=>{ if(r.ticker||r.nombre_completo){ _ladoOrdenProtPP[nemoCanonico(r.ticker||r.nombre_completo,'emsx')+'|'+String(r.account||'').trim()] = r.lado; } });
+  // Índice EMSX por (especie|account) -> ORD_NUM, trader Y LADO de la orden.
+  // El lado tiene que salir por PORTAFOLIO, no solo por especie: una misma
+  // especie puede ir Compra a un portafolio y Venta a otro el mismo día
+  // (04-ago: GEB va Venta a OBL-MODER/OBL-CONSER y Compra a VOL-EQCOL). Con
+  // el índice por especie sola, los dos lados colapsaban en uno y el C/V del
+  // reporte salía mal para la mitad del volumen.
+  // OJO: _emsxCBCache guarda las filas CRUDAS de Supabase (emsx_orders), que
+  // traen `side` ('BUY'/'SELL'), NO `lado` — el `lado` se calcula solo al
+  // pintar la tabla. Leer r.lado aquí daba undefined SIEMPRE: ese era el bug
+  // del viejo _ladoOrdenProtPP (nunca aportó nada y caía al fallback).
+  const _ladoEmsx = r => { const s = String(r.side||'').trim().toUpperCase(); return s ? (s.startsWith('B') ? 'Compra' : 'Venta') : ''; };
+  const emsxProt = {};
+  (_emsxCBCache||[]).forEach(r=>{
+    const k = nemoCanonico(r.ticker||r.nombre_completo||'','emsx')+'|'+String(r.account||'').trim();
+    if(!emsxProt[k]) emsxProt[k]={instructions:String(r.instructions||'').trim(), trader:(r.originate_trader||r.originating_trader||'').trim(), lado:_ladoEmsx(r)};
+  });
+  // Respaldo sin EMSX, sacado del PROPIO archivo de folios (no de Trades: el
+  // Trades puede no traer la orden — es lo ejecutado, y una orden puede haber
+  // quedado fuera del export — y su Notes para PROTECCIÓN es el ORD_NUM
+  // numérico, no la sub-cuenta). La estructura del folio ya dice el lado:
+  //   (1) folio CON Parent Order ID  -> es la pata que fue AL MERCADO, y su
+  //       lado ES el lado de la orden (ej. GEB VOL-EQCOL: B con POID = Compra).
+  //   (2) folio de distribución (Client/Book = PROTECCION, SIN Parent Order ID)
+  //       -> trae la pata de BOOKING, opuesta. El lado bueno es el de la fila
+  //       hermana del MISMO TCN que sí tiene Parent Order ID.
+  // Si un TCN tiene varias filas con POID y no coinciden (cruce entre dos
+  // clientes en el mismo TCN), se descarta y se cae al siguiente respaldo:
+  // preferimos no adivinar antes que poner un C/V mal.
+  const _ladoMercadoPorTcn = {};
+  (_fidessaFoliosRaw||[]).forEach(f=>{
+    if(!f.parentOrderId || !f.tcn) return;
+    const k = String(f.tcn);
+    const lado = f.side==='B' ? 'Compra' : 'Venta';
+    if(_ladoMercadoPorTcn[k] === undefined) _ladoMercadoPorTcn[k] = lado;
+    else if(_ladoMercadoPorTcn[k] !== lado) _ladoMercadoPorTcn[k] = null; // ambiguo
+  });
+  const _ladoProtDeFolio = f => {
+    if(f.parentOrderId) return f.side==='B' ? 'Compra' : 'Venta';   // caso (1)
+    return _ladoMercadoPorTcn[String(f.tcn)] || '';                  // caso (2)
+  };
+  const _ladoProtDe = (especie, portafolio, folio)=>{
+    const em = emsxProt[especie+'|'+String(portafolio||'').trim()];
+    return (em && em.lado) || _ladoProtDeFolio(folio) || _ladoOrdenProt[especie]
+      || (folio.side==='B'?'Compra':'Venta');
+  };
   const armar = (f, orden, origen, fraccion)=>{
     const t = orden && _fidessaTradesRaw[orden.oid] ? _fidessaTradesRaw[orden.oid] : null;
     // Para composites resueltos por PASO C (cruce con Instructions único), la
@@ -5791,7 +5832,7 @@ function procesarFidessa(){
       // el mismo Instructions en un cruce (bug 23-jul: todo salía PFGRUPOARG).
       especie: nemoCanonico(f.instrument, 'fidessa'),
       // Para PROTECCIÓN el lado sale de la orden (Trades); para el resto, del folio.
-      lado: esPortProteccion ? (_ladoOrdenProtPP[nemoCanonico(f.instrument, 'fidessa')+'|'+String(f.notes||'').trim()] || _ladoOrdenProt[nemoCanonico(f.instrument, 'fidessa')] || (f.side === 'B' ? 'Compra' : 'Venta')) : (f.side === 'B' ? 'Compra' : 'Venta'),
+      lado: esPortProteccion ? _ladoProtDe(nemoCanonico(f.instrument, 'fidessa'), notes, f) : (f.side === 'B' ? 'Compra' : 'Venta'),
       hora: horaDeTimestampFidessa(f.traded),
       folio: f.tcn,
       clientBook: f.clientBook,
@@ -5868,8 +5909,6 @@ function procesarFidessa(){
 
   // ---- PROTECCIÓN directo: un folio por fracción; portafolio = Notes ----
   // ORD_NUM y trader se recuperan de EMSX por (especie, account=portafolio).
-  const emsxProt = {};
-  (_emsxCBCache||[]).forEach(r=>{ const k = nemoCanonico(r.ticker||r.nombre_completo||'','emsx')+'|'+String(r.account||'').trim(); if(!emsxProt[k]) emsxProt[k]={instructions:String(r.instructions||'').trim(), trader:(r.originate_trader||r.originating_trader||'').trim()}; });
   const _fracProt = {};
   const foliosProtDirectos = foliosProtRaw.map(f=>{
     const especie = nemoCanonico(f.instrument,'fidessa');
@@ -5880,7 +5919,7 @@ function procesarFidessa(){
     return {
       id: nextId++, cliente:'PROTECCION', especie,
       // Lado de la ORDEN (el folio trae la pata de booking, opuesta).
-      lado: _ladoOrdenProtPP[especie+'|'+portafolio] || _ladoOrdenProt[especie] || (f.side==='B'?'Compra':'Venta'),
+      lado: _ladoProtDe(especie, portafolio, f),
       hora: horaDeTimestampFidessa(f.traded), folio: f.tcn, clientBook: f.clientBook,
       parentOrderId: f.parentOrderId, cantidad: f.cantidad, precio: f.precio,
       origen:'proteccion-directo', ordenAsignada:null, fraccion:_fracProt[f.tcn],
