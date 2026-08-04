@@ -4303,6 +4303,11 @@ const ALIAS_GRUPO = {
   ALLIANZ_SEG_CO: 'ALLIANZ SEGUROS DE VIDA S.A.',
   METLIFE: 'METLIFE SEGUROS DE VIDA S.A.',
   BTG: 'BANCO BTG PACTUAL CAYMAN BRANCH',
+  // El CLIENT de Fidessa no siempre es el nombre del grupo: sin estos alias el
+  // cliente tenía folios pero NO aparecía en el desplegable (no se podía filtrar
+  // ni reportar). Detectado en la auditoría de cierre del 04-ago.
+  BRSE: 'BRADESCO',
+  ITAU: 'ITAU_NY',
   // En EMSX el account llega como 'BTG PACTUAL PP'; en Fidessa el CLIENT es 'BTG'.
   'BTG PACTUAL PP': 'BANCO BTG PACTUAL CAYMAN BRANCH',
   BTG_PACTUAL_PP: 'BANCO BTG PACTUAL CAYMAN BRANCH',
@@ -4685,7 +4690,8 @@ function aplicarFiltros(){
 // Folios no siempre es el cliente final, el dato confiable está en Trades.
 // =====================================================================
 let _fidessaTradesRaw = null; // Map: folioOrden -> {grupo, lado, security, qtyDone, avgPx}
-let _fidessaFoliosRaw = null; // Array de folios crudos leídos del archivo
+let _fidessaFoliosRaw = null;
+let _sinNotesEnSupabase = false; // folios traídos de Supabase sin la columna notes // Array de folios crudos leídos del archivo
 
 async function cargarArchivoFidessa(input, tipo){
   const file = input.files[0];
@@ -5397,9 +5403,23 @@ async function guardarFidessaFoliosSupabase(filas){
     id: `${f.tcn}_${f.parentOrderId||''}_${f.cantidad}_${f.precio}_${f.traded||''}_${i}`,
     tcn: Number(f.tcn), side: f.side, instrument: f.instrument, cantidad: f.cantidad,
     precio: f.precio, traded: String(f.traded||''), client_book: f.clientBook, parent_order_id: f.parentOrderId,
+    // El Notes del folio ES el dato del que cuelga PROTECCIÓN entera (el Notes
+    // es la sub-cuenta: OBL-MODER, VOL-EQCOL...). No guardarlo hacía que al
+    // recargar la página desde Supabase TODOS los folios de PROTECCIÓN
+    // perdieran su portafolio y se fueran a COLCCP, en silencio.
+    notes: String(f.notes||''),
   }));
   if(rows.length===0) return;
-  await guardarEnLotesSupabase('fidessa_folios', rows);
+  const ok = await guardarEnLotesSupabase('fidessa_folios', rows);
+  if(!ok){
+    // Si la tabla todavía no tiene la columna `notes`, PostgREST rechaza el
+    // lote entero. Antes que perder los folios, se reintenta sin ese campo y
+    // se avisa: hay que correr
+    //    alter table fidessa_folios add column notes text;
+    console.warn('Reintentando guardar folios SIN la columna notes. Si es por eso, corre: alter table fidessa_folios add column notes text;');
+    const sinNotes = rows.map(r=>{ const {notes, ...resto} = r; return resto; });
+    await guardarEnLotesSupabase('fidessa_folios', sinNotes);
+  }
 }
 
 async function cargarFidessaDesdeSupabase(){
@@ -5421,7 +5441,8 @@ async function cargarFidessaDesdeSupabase(){
       // (`..._${i}` — ver guardarFidessaFoliosSupabase). Se recupera de ahí
       // porque PostgREST no garantiza el orden de retorno y las hijas de un
       // composite DEBEN quedar en el orden del archivo para poder asignarlas.
-      _fidessaFoliosRaw = folios.map(f => ({ side: f.side, tcn: f.tcn, instrument: f.instrument, cantidad: Number(f.cantidad)||0, precio: Number(f.precio)||0, traded: f.traded, clientBook: f.client_book, parentOrderId: f.parent_order_id, ord: Number(String(f.id||'').split('_').pop()) || 0 }));
+      _fidessaFoliosRaw = folios.map(f => ({ side: f.side, tcn: f.tcn, instrument: f.instrument, cantidad: Number(f.cantidad)||0, precio: Number(f.precio)||0, traded: f.traded, clientBook: f.client_book, parentOrderId: f.parent_order_id, notes: String(f.notes||''), ord: Number(String(f.id||'').split('_').pop()) || 0 }));
+      _sinNotesEnSupabase = folios.length > 0 && folios.every(f => !f.notes);
       _fidessaFoliosRaw.sort((a,b)=> a.ord - b.ord);
       renderFidessaFoliosPanelRaw();
     }
@@ -5429,6 +5450,20 @@ async function cargarFidessaDesdeSupabase(){
     if(trades.length > 0 || folios.length > 0){
       poblarFiltros();
       document.getElementById('fidessaStatus').textContent = `Trades: ${Object.keys(_fidessaTradesRaw||{}).length} órdenes cargadas. Folios: ${(_fidessaFoliosRaw||[]).length} filas cargadas (de sesiones anteriores hoy).`;
+      // CONCILIAR SOLO. Antes esto dejaba la data cruda cargada pero NO corría
+      // procesarFidessa(), así que `foliosFidessa` quedaba vacío y el panel de
+      // folios salía en cero aunque arriba dijera "554 filas cargadas". Había
+      // que acordarse de apretar "Conciliar y cargar folios" a mano.
+      // Solo se concilia si todavía no hay folios armados: si Sergio ya está
+      // trabajando (marcas bloque/pantalla, selección, allocations), el
+      // refresco de cada 20s NO le puede pisar el trabajo.
+      if(_fidessaTradesRaw && _fidessaFoliosRaw && (!foliosFidessa || foliosFidessa.length === 0)){
+        procesarFidessa();
+      }
+      if(_sinNotesEnSupabase){
+        const el = document.getElementById('fidessaStatus');
+        if(el) el.innerHTML += ` <span style="color:var(--sell);">⚠ Los folios guardados no traen Notes: PROTECCIÓN no podrá resolver sus sub-cuentas. Vuelve a subir el archivo de Folios.</span>`;
+      }
     }
     document.getElementById('btnProcesarFidessa').disabled = !(_fidessaTradesRaw && _fidessaFoliosRaw);
   }catch(e){
@@ -5742,6 +5777,131 @@ function procesarFidessa(){
   if(!_fidessaTradesRaw || !_fidessaFoliosRaw) return;
 
   _fidessaFoliosRaw.sort((a,b)=>(a.ord||0)-(b.ord||0));
+
+  // ===================================================================
+  // PASO 0 — SANEAR LOS FOLIOS ANTES DE CONCILIAR (04-ago)
+  // Auditoría de cierre: 2.285.901 acciones quedaban huérfanas (cliente
+  // COLCCP, sin dueño) con el mercado ya cerrado. Dos causas, ninguna era
+  // "falta data": la data estaba completa.
+  // ===================================================================
+
+  // --- 0.a) PATA DE MERCADO DE PROTECCIÓN: se descarta, es doble conteo ---
+  // Un TCN de PROTECCIÓN trae DOS cosas: la fila que fue al mercado
+  // (Client/Book COLCCP, con Parent Order ID) y las filas de distribución a
+  // las sub-cuentas (Client/Book PROTECCION, sin POID, Notes = OBL-MODER...).
+  // Son LAS MISMAS acciones. Verificado al cierre: GEB pata de mercado 91.524
+  // = distribución 91.524 (OBL-CONSER 12.375 + OBL-MODER 79.149) = suma de las
+  // dos órdenes de Trades 91.524. Contar las dos infla el volumen al doble.
+  // El folio bueno del cliente es el de DISTRIBUCIÓN (trae la sub-cuenta).
+  const _distProtPorTcn = {};
+  _fidessaFoliosRaw.forEach(f=>{
+    const n = String(f.notes||'').trim();
+    if(String(f.clientBook||'').trim()==='PROTECCION' && typeof PROTECCION_SUBCUENTAS!=='undefined' && PROTECCION_SUBCUENTAS[n]){
+      const k = String(f.tcn);
+      _distProtPorTcn[k] = (_distProtPorTcn[k]||0) + f.cantidad;
+    }
+  });
+  // ANTES de descartarlas, se guarda el lado de la pata de mercado por TCN: es
+  // la fuente del C/V de las filas de distribución (que traen la pata de
+  // booking, opuesta). Si se calculara después del filtro, el mapa saldría
+  // vacío y el lado se caería al índice por especie — que es justo el bug que
+  // arreglamos: GEB va Venta a OBL-* y Compra a VOL-EQCOL el mismo día.
+  const _ladoMercadoPorTcn = {};
+  _fidessaFoliosRaw.forEach(f=>{
+    if(!f.parentOrderId || !f.tcn) return;
+    const k = String(f.tcn);
+    const lado = f.side==='B' ? 'Compra' : 'Venta';
+    if(_ladoMercadoPorTcn[k] === undefined) _ladoMercadoPorTcn[k] = lado;
+    else if(_ladoMercadoPorTcn[k] !== lado) _ladoMercadoPorTcn[k] = null; // ambiguo
+  });
+  let _patasMercadoProt = 0;
+  _fidessaFoliosRaw = _fidessaFoliosRaw.filter(f=>{
+    const n = String(f.notes||'').trim();
+    const esDist = String(f.clientBook||'').trim()==='PROTECCION' && typeof PROTECCION_SUBCUENTAS!=='undefined' && PROTECCION_SUBCUENTAS[n];
+    if(esDist) return true;                                   // la distribución se queda
+    const dist = _distProtPorTcn[String(f.tcn)];
+    // Solo se descarta si: ese TCN tiene distribución de PROTECCIÓN, esta fila
+    // cubre EXACTAMENTE esa misma cantidad, y su Parent Order ID no corresponde
+    // a ninguna orden de Trades (si correspondiera, sería el folio real de otro
+    // cliente que cruzó en el mismo TCN y no se puede tocar).
+    if(!dist || f.cantidad !== dist) return true;
+    if(f.parentOrderId && _fidessaTradesRaw[String(f.parentOrderId)]) return true;
+    _patasMercadoProt++;
+    return false;
+  });
+
+  // --- 0.b) EL PARENT ORDER ID DEL FOLIO NO ES EL ID DE LA ORDEN ---
+  // Fidessa numera la orden de MERCADO distinto a la orden del CLIENTE. Ej.
+  // cierre 04-ago: los 40 folios de ECOPETROL con POID 00009061485 suman
+  // 997.787, y la orden MLI en Trades tiene QTY DONE 997.787 pero su Folio
+  // Registro Orden es 00009061354. Cruzar por POID daba 0 y el volumen entero
+  // se iba a huérfanos. Se reasignan por (especie + lado + cantidad):
+  //   (1) coincidencia EXACTA con una orden que aún no tiene folios, o
+  //   (2) el POID completa EXACTAMENTE el déficit de una orden ya parcialmente
+  //       cubierta (una misma orden puede salir al mercado en dos tandas con
+  //       dos POID distintos — pasó con CORFICOLCF 38.279 + 10.003 = 48.282).
+  // Cero tolerancia: si no calza exacto, NO se asigna y queda huérfano visible.
+  const _aliasPoid = {};
+  {
+    const yaAsignado = {};
+    Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{ yaAsignado[oid] = 0; });
+    const huerfanos = {};
+    _fidessaFoliosRaw.forEach(f=>{
+      const p = f.parentOrderId ? String(f.parentOrderId) : '';
+      if(!p) return;
+      if(_fidessaTradesRaw[p]){ yaAsignado[p] += f.cantidad; return; }
+      if(!huerfanos[p]) huerfanos[p] = { cantidad:0, especie:nemoCanonico(f.instrument,'fidessa'), lado:(f.side==='B'?'Compra':'Venta') };
+      huerfanos[p].cantidad += f.cantidad;
+    });
+    // De mayor a menor: los bloques grandes se casan primero y no se los roba
+    // un déficit chico de otra orden.
+    Object.keys(huerfanos).sort((a,b)=>huerfanos[b].cantidad-huerfanos[a].cantidad).forEach(poid=>{
+      const h = huerfanos[poid];
+      const mismos = Object.keys(_fidessaTradesRaw).filter(oid=>{
+        const t = _fidessaTradesRaw[oid];
+        return nemoCanonico(t.security,'fidessa')===h.especie && t.lado===h.lado;
+      });
+      let elegido = mismos.find(oid=> yaAsignado[oid]===0 && _fidessaTradesRaw[oid].qtyDone===h.cantidad);
+      if(!elegido) elegido = mismos.find(oid=> (_fidessaTradesRaw[oid].qtyDone - yaAsignado[oid])===h.cantidad && yaAsignado[oid]>0);
+      if(elegido){ _aliasPoid[poid] = elegido; yaAsignado[elegido] += h.cantidad; }
+    });
+    if(Object.keys(_aliasPoid).length){
+      _fidessaFoliosRaw.forEach(f=>{
+        const p = f.parentOrderId ? String(f.parentOrderId) : '';
+        if(p && _aliasPoid[p]) f.parentOrderId = _aliasPoid[p];
+      });
+    }
+  }
+
+  // --- 0.c) FOLIOS SIN PARENT ORDER ID: se casan por el NOTES ---
+  // Clientes como HSBC traen sus folios SIN Parent Order ID, pero el Notes del
+  // folio ES la referencia de la orden (ej. folio 'UBRSRH5VSF80' -> orden
+  // 'UBRSRH5VSF8000'; Fidessa trunca el Notes en el archivo de folios). Sin
+  // esto, al cierre del 04-ago quedaban 1.152.143 acciones de ECOPETROL
+  // huérfanas: las 52 órdenes de HSBC completas.
+  // Se exige especie + lado además del Notes, porque el Notes solo no
+  // desambigua (las sub-cuentas de PROTECCIÓN se repiten entre especies), y se
+  // exige UN ÚNICO candidato: ante duda, no se asigna.
+  let _casadosPorNotes = 0;
+  {
+    const ordenes = Object.keys(_fidessaTradesRaw||{}).map(oid=>({
+      oid, notes:String(_fidessaTradesRaw[oid].notes||'').trim(),
+      especie:nemoCanonico(_fidessaTradesRaw[oid].security,'fidessa'), lado:_fidessaTradesRaw[oid].lado,
+    })).filter(o=>o.notes);
+    _fidessaFoliosRaw.forEach(f=>{
+      if(f.parentOrderId) return;
+      const n = String(f.notes||'').trim();
+      if(!n) return;
+      // Los folios de PROTECCIÓN llevan la sub-cuenta en el Notes y tienen su
+      // propio camino (foliosProtDirectos): no se tocan aquí.
+      if(typeof PROTECCION_SUBCUENTAS!=='undefined' && PROTECCION_SUBCUENTAS[n]) return;
+      const esp = nemoCanonico(f.instrument,'fidessa');
+      const lado = f.side==='B' ? 'Compra' : 'Venta';
+      const cand = ordenes.filter(o=> o.especie===esp && o.lado===lado && o.notes.startsWith(n));
+      if(cand.length===1){ f.parentOrderId = cand[0].oid; _casadosPorNotes++; }
+    });
+  }
+  window._diagFidessa = { patasMercadoProt:_patasMercadoProt, poidsReasignados:Object.keys(_aliasPoid).length, casadosPorNotes:_casadosPorNotes };
   // Índice EMSX por Instructions (=ORD_NUM): da account (portafolio) y trader.
   // Se construye ANTES de segregar para poder resolver folios cuyo Notes sea un
   // ORD_NUM numérico (ej. PFAVAL 12225008 → account VOL-AVAL) — Sergio lo subió
@@ -5812,14 +5972,7 @@ function procesarFidessa(){
   // Si un TCN tiene varias filas con POID y no coinciden (cruce entre dos
   // clientes en el mismo TCN), se descarta y se cae al siguiente respaldo:
   // preferimos no adivinar antes que poner un C/V mal.
-  const _ladoMercadoPorTcn = {};
-  (_fidessaFoliosRaw||[]).forEach(f=>{
-    if(!f.parentOrderId || !f.tcn) return;
-    const k = String(f.tcn);
-    const lado = f.side==='B' ? 'Compra' : 'Venta';
-    if(_ladoMercadoPorTcn[k] === undefined) _ladoMercadoPorTcn[k] = lado;
-    else if(_ladoMercadoPorTcn[k] !== lado) _ladoMercadoPorTcn[k] = null; // ambiguo
-  });
+  // (_ladoMercadoPorTcn se construyó en el PASO 0.a, antes de descartar las patas de mercado.)
   const _ladoProtDeFolio = f => {
     if(f.parentOrderId) return f.side==='B' ? 'Compra' : 'Venta';   // caso (1)
     return _ladoMercadoPorTcn[String(f.tcn)] || '';                  // caso (2)
@@ -5944,13 +6097,30 @@ function procesarFidessa(){
     const notesNum = /^\d+$/.test(String(f.notes||'').trim()) ? String(f.notes).trim() : '';
     const em = emsxProt[especie+'|'+portafolio] || null;
     _fracProt[f.tcn] = (_fracProt[f.tcn]||0)+1;
+    // Enlace con la orden de Fidessa Trades. Las filas de distribución no traen
+    // Parent Order ID, así que la conciliación las daba por inexistentes y
+    // marcaba la orden como DMA ("sin folios") aunque estuviera completa. La
+    // orden se identifica por especie + sub-cuenta (su Notes) + el lado de la
+    // orden. Solo se enlaza si hay UN único candidato.
+    const _ladoOrden = _ladoProtDe(especie, portafolio, f);
+    let _poidProt = f.parentOrderId || null;
+    if(!_poidProt && portafolio){
+      const cand = Object.keys(_fidessaTradesRaw||{}).filter(oid=>{
+        const t = _fidessaTradesRaw[oid];
+        return normalizarGrupo(t.grupo)==='PROTECCION'
+          && nemoCanonico(t.security,'fidessa')===especie
+          && String(t.notes||'').trim()===portafolio
+          && t.lado===_ladoOrden;
+      });
+      if(cand.length===1) _poidProt = cand[0];
+    }
     return {
       id: nextId++, cliente:'PROTECCION', especie,
       // Lado de la ORDEN (el folio trae la pata de booking, opuesta).
-      lado: _ladoProtDe(especie, portafolio, f),
+      lado: _ladoOrden,
       hora: horaDeTimestampFidessa(f.traded), folio: f.tcn, clientBook: f.clientBook,
-      parentOrderId: f.parentOrderId, cantidad: f.cantidad, precio: f.precio,
-      origen:'proteccion-directo', ordenAsignada:null, fraccion:_fracProt[f.tcn],
+      parentOrderId: _poidProt, cantidad: f.cantidad, precio: f.precio,
+      origen:'proteccion-directo', ordenAsignada:_poidProt, fraccion:_fracProt[f.tcn],
       ordNum: notesNum || (em ? em.instructions : ''), portafolio,
       trader: (em && em.trader) ? em.trader : PROTECCION_TRADER_DEFAULT,
       marca:'pantalla',
