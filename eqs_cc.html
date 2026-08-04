@@ -7527,18 +7527,23 @@ function mostrarAprobacionProteccion(cliente, loteDet){
 //
 //  1. La tabla de sub-cuentas (IdOrion / Tipo Doc. / # Documento / Digito
 //     Chequeo). Esta en PROTECCION_SUBCUENTAS, arriba.
-//  2. El numero de Folio que ellos esperan: es el TCN de Fidessa SIN el
-//     prefijo 600000. Verificado sobre los 431 folios del dia: 431/431.
-//     El formato completo es '0292026-01006' + folio a 5 digitos
-//     (ej. TCN 602281 -> '0292026-0100602281'), prefijo constante en las
-//     1.261 filas del archivo real.
+//  2. El numero de Folio que ellos esperan. CORREGIDO 04-ago (fix NUAM): el
+//     FOLIO es el TCN COMPLETO de 6 digitos, en CUALQUIER reporte y sin
+//     excepcion. El viejo "TCN - 600000" de 4 digitos era EL ERROR: partia
+//     mal la cadena. El string final es EXACTAMENTE el mismo, solo que el
+//     corte va en otro lado:
+//        antes:  '0292026-01006' + (602281-600000 a 5 dig '02281')
+//        ahora:  '0292026-0100'  + TCN completo '602281'
+//        ambos:  '0292026-0100602281'
+//     Es decir, el '6' que se creia parte del prefijo era el primer digito
+//     del TCN. Byte-identico para los TCN 6xxxxx y ademas correcto el dia que
+//     NUAM pase de rango.
 //
 // Y una confirmacion linda: la columna "Fraccion" de su reporte es la
 // POSICION de la hija dentro del TCN — exactamente el modelo de composites
 // que ya habiamos construido. Su archivo y el nuestro hablan el mismo idioma.
 // =====================================================================
-const PROTECCION_FOLIO_PREFIJO = '0292026-01006';
-const PROTECCION_TCN_OFFSET = 600000;   // TCN 602281 -> folio 2281
+const PROTECCION_FOLIO_PREFIJO = '0292026-0100';   // TCN 602281 -> '0292026-0100602281'
 
 // Autofit de columnas: ExcelJS no lo trae nativo, así que se recorre cada
 // columna y se ajusta el ancho al contenido más largo (con un tope, para que
@@ -7590,9 +7595,10 @@ function autofitColumnasRango(ws, filaIni, filaFin, columnas, {min=8, max=52, pa
 }
 
 function folioProteccion(tcn){
-  const n = Number(tcn) - PROTECCION_TCN_OFFSET;
-  if(!isFinite(n) || n <= 0) return String(tcn||'');
-  return PROTECCION_FOLIO_PREFIJO + String(n).padStart(5, '0');
+  // FOLIO = TCN COMPLETO a 6 digitos. Nunca restar offset.
+  const s = String(tcn == null ? '' : tcn).trim();
+  if(!/^\d+$/.test(s)) return s;
+  return PROTECCION_FOLIO_PREFIJO + s.padStart(6, '0');
 }
 
 async function generarReporteProteccion(cliente, loteDet){
@@ -7716,8 +7722,8 @@ async function generarReporteProteccion(cliente, loteDet){
 
 // Segundo archivo de PROTECCION: credicorp_YYYYMMDD.xlsx, hoja "PROTE ORDENES".
 // Es el crudo "de máquina": una fila por fracción, con el ORD_NUM (= EMSX_NOTES,
-// el número con el que ELLOS identifican la orden) y el PRO FOLIO (los últimos
-// dígitos del folio nuestro). Calcado de credicorp_20260717.xlsx.
+// el número con el que ELLOS identifican la orden) y el PRO FOLIO (el TCN
+// completo de 6 dígitos). Calcado de credicorp_20260717.xlsx.
 async function generarCredicorpProteccion(loteDet){
   if(typeof ExcelJS === 'undefined') return;
   if(!loteDet || loteDet.length === 0) return;
@@ -7737,7 +7743,7 @@ async function generarCredicorpProteccion(loteDet){
   let r = 2;
   let sinOrdNum = 0;
   loteOrd.forEach(f=>{
-    // PRO FOLIO = los dígitos del folio del cliente (TCN − 600000). Es la
+    // PRO FOLIO = el folio del cliente = TCN COMPLETO de 6 dígitos. Es la
     // misma llave con la que cruzamos su sistema y el nuestro.
     const proFolio = Number(f.folio); // 6 dígitos = TCN completo (fix NUAM)
     // Bloque → CRUCE, Pantalla → PANTALLA (así lo marca el archivo real).
