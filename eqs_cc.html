@@ -4492,8 +4492,22 @@ function construirClientesDBDesdeCategorias(){
     const patronExento = /\bFPV\b|\bFPO\b|VOLUNTARI[OA]S?\s+DE\s+PENSIONES|PENSIONES\s+VOLUNTARI[OA]S?|OBLIGATORI[OA]S?\s+DE\s+PENSIONES/i;
     return !patronExento.test(c.nombre);
   }
+  // Grupos de CATEGORIAS que YA tiene un cliente curado a mano, aunque su
+  // clave sea distinta: los que se declaran con portafoliosDeCategorias (ej.
+  // 'BANCO BTG PACTUAL CAYMAN BRANCH' usa el grupo 'BTG PACTUAL PP') y los que
+  // son alias de otro cliente. Sin esto se creaba un cliente FANTASMA con el
+  // nombre del grupo, que aparecía duplicado en el desplegable y NO filtraba
+  // nada: las líneas de Fidessa/EMSX se normalizan al cliente real, no al
+  // nombre del grupo. Pasaba con BTG PACTUAL PP, ALLIANZ y METLIFE.
+  const gruposReclamados = new Set();
+  Object.keys(clientesDB).forEach(k=>{
+    const c = clientesDB[k];
+    if(c && c.portafoliosDeCategorias) gruposReclamados.add(c.portafoliosDeCategorias);
+  });
+  Object.keys(ALIAS_GRUPO||{}).forEach(a=>gruposReclamados.add(a));
   Object.keys(porGrupo).forEach(grupo=>{
-    if(clientesDB[grupo]) return; // ya está curado a mano, no lo pisamos
+    if(clientesDB[grupo]) return;        // ya está curado a mano, no lo pisamos
+    if(gruposReclamados.has(grupo)) return; // lo cubre un cliente real
     clientesDB[grupo] = {
       nombre: grupo,
       portafolios: porGrupo[grupo].map(c=>({
@@ -6092,7 +6106,7 @@ function renderEmsxCBTable(){
   panel.innerHTML = `
     <div class="section-label" style="margin-top:16px;">Bloomberg EMSX — Bolsa de Colombia (exchange CB)</div>
     <div class="field-note" style="margin-bottom:10px;">
-      Todavía sin cruce automático contra Fidessa (los tickers vienen en formatos distintos entre Bloomberg y Fidessa) — usa "Vincular" para asociar manualmente una orden con su Fidessa Trade y ver los folios que le corresponden. Clic en un Client/Book filtra los 3 cuadros de abajo por ese cliente.
+      Clic en un Client/Book filtra los 3 cuadros de abajo por ese cliente.
     </div>
     ${(document.getElementById('filtroCliente').value || document.getElementById('filtroEspecie').value || document.getElementById('filtroLado').value) ? `<div style="margin-bottom:12px;padding:8px 12px;background:rgba(168,85,247,0.12);border-radius:6px;color:var(--purple);font-size:15px;font-weight:700;">Filtro activo (Client/Book, Security y/o Lado arriba) — <a href="#" onclick="borrarFiltros();return false;" style="color:var(--purple);text-decoration:underline;">quitar filtros</a></div>` : ''}
     <div class="blotter-wrap" style="overflow-x:auto;">
@@ -6106,13 +6120,8 @@ function renderEmsxCBTable(){
         ${thOrdenable('emsxCB','avgPrice','Precio prom.','num')}
         ${thOrdenable('emsxCB','status','Estado')}
         ${thOrdenable('emsxCB','instructions','Instructions')}
-        <th>Fidessa</th>
       </tr></thead>
       <tbody>${filas.map(row=>{
-        const vinculo = _vinculosEmsxFidessa[row.id];
-        const fidessaCell = vinculo
-          ? `<button class="btn small ghost" onclick="verFoliosVinculadosRVL(${row.id})" title="Ver folios de ${vinculo}">✓ ${vinculo}</button>`
-          : `<button class="btn small" onclick="abrirMatchModalRVL(${row.id})">🔗 Vincular</button>`;
         return `<tr>
         <td class="mono-id">${row.horaTxt}</td>
         <td class="clickable" style="cursor:pointer;text-decoration:underline dotted;" onclick="filtrarPorClienteRVL('${row.firm.replace(/'/g,"\\'")}')" title="Filtrar por este cliente">${row.firm}</td>
@@ -6123,7 +6132,6 @@ function renderEmsxCBTable(){
         <td class="num">${fmtRate(row.avgPrice)}</td>
         <td><span class="status-badge ${(row.status||'').toUpperCase()==='FILLED' ? 'filled' : 'pending'}" title="Estado en EMSX">${row.status || '—'}</span></td>
         <td class="mono-id">${row.instructions}</td>
-        <td>${fidessaCell}</td>
       </tr>`;}).join('')}</tbody></table>
     </div>
     <div id="foliosVinculadosRVL"></div>
