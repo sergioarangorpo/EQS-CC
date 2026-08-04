@@ -5945,7 +5945,16 @@ function procesarFidessa(){
     // el blotter de Bloomberg antes de bajar a Fidessa Trades; también se leen
     // de Trades por si ya bajaron.
     Object.values(_fidessaTradesRaw||{}).forEach(t=>{ if(normalizarGrupo(t.grupo)==='COLFONDOS' && t.security) _addColf(nemoCanonico(t.security,'fidessa'), t.lado); });
-    (_emsxCBCache||[]).forEach(r=>{ if(normalizarGrupo(String(r.firm||r.grupo||''))==='COLFONDOS'){ const _tk=r.ticker||r.nombre_completo||''; _addColf(nemoCanonico(_tk,'emsx'), r.lado); _addColf(nemoCanonico(_tk,'fidessa'), r.lado); } });
+    // OJO: _emsxCBCache trae las filas CRUDAS de Supabase. La columna del
+    // cliente es `originate_trader_firm` (NO `firm`, que solo existe en el
+    // objeto que arma la tabla) y el lado es `side` (NO `lado`). Antes se leía
+    // r.firm y r.lado → ambos undefined → esta rama NUNCA aportaba nada y,
+    // cuando llegaba a correr, _addColf convertía el undefined en 'Venta'
+    // siempre. Mismo bug que tenía _ladoOrdenProtPP en PROTECCIÓN.
+    // Además el firm real no siempre normaliza al grupo (en PROTECCIÓN llega
+    // como 'AFP PROTECCION SA'), así que se acepta también por contenido.
+    const _esFirmColf = r => { const f = String(r.originate_trader_firm||r.firm||r.grupo||'').toUpperCase(); return !!f && (normalizarGrupo(f)==='COLFONDOS' || f.includes('COLFONDOS')); };
+    (_emsxCBCache||[]).forEach(r=>{ if(_esFirmColf(r)){ const _tk=r.ticker||r.nombre_completo||''; const _l=_ladoEmsx(r); if(!_l) return; _addColf(nemoCanonico(_tk,'emsx'), _l); _addColf(nemoCanonico(_tk,'fidessa'), _l); } });
     if(colfOrders.size){
       const tcnProt = new Set();
       foliosFidessa.forEach(f=>{ if(f.origen==='proteccion-directo') tcnProt.add(f.folio); });
@@ -7800,6 +7809,67 @@ async function generarCredicorpProteccion(loteDet){
 // piden un reporte cada vez que termina una orden, así que trabaja solo con
 // el lote de ESTE "Generar reporte", no con todo el histórico.
 // =====================================================================
+// =====================================================================
+// COLFONDOS — reparto proporcional de CADA folio entre los portafolios.
+// El cliente NO reparte en Fidessa: cada folio que se ejecutó pertenece a
+// TODOS los portafolios de la allocation, en la misma proporción que la
+// allocation total. (Validado contra el Detalle real del 23-jul: alloc
+// 3.9M MODER / 1.3M RETIRO de 5.2M = 75%/25% → folio de 63.000 se parte
+// 47.250 / 15.750; folio de 4.333.605 → 3.250.204 / 1.083.401.)
+//
+// CERO TOLERANCIA, dos invariantes que deben cumplirse a la vez:
+//   (a) por folio:      suma de los pedazos = cantidad del folio
+//   (b) por portafolio: suma de sus pedazos = su allocation exacta
+// Redondear cada folio por separado NO garantiza (b) — los residuos se
+// acumulan. Por eso se reparte sobre el ACUMULADO: para cada folio k se
+// calcula cuánto le corresponde a cada portafolio de los primeros k folios
+// (entero, por resto mayor) y el pedazo del folio k es la diferencia contra
+// el folio k-1. Como en el último folio el acumulado objetivo ES la
+// allocation exacta, (b) se cumple por construcción.
+function repartirFoliosColfondos(alocaciones, folios){
+  const total = alocaciones.reduce((s,a)=>s+a.cantidad, 0);
+  if(total <= 0 || !folios.length) return [];
+  // Saldo pendiente de cada portafolio. Es la red de seguridad del invariante
+  // (b): un portafolio nunca puede recibir más de su allocation, y el último
+  // folio entrega exactamente lo que quede pendiente.
+  const saldo = alocaciones.map(a=>a.cantidad);
+  const salida = [];
+  folios.forEach((f, k)=>{
+    const ultimo = (k === folios.length - 1);
+    let pedazos;
+    if(ultimo){
+      // Último folio: se entrega el saldo tal cual. Como la allocation total
+      // y la suma de folios son iguales (lo exige la guarda del botón), el
+      // saldo suma exactamente la cantidad de este folio.
+      pedazos = saldo.slice();
+    }else{
+      // Proporcional a la allocation, piso + resto mayor, topado al saldo.
+      const exactos = alocaciones.map((a,i)=> Math.min(a.cantidad * f.cantidad / total, saldo[i]));
+      pedazos = exactos.map(Math.floor);
+      let faltan = f.cantidad - pedazos.reduce((s,x)=>s+x, 0);
+      const orden = exactos.map((x,i)=>({i, resto: x - Math.floor(x)}))
+                           .sort((p,q)=> q.resto - p.resto || p.i - q.i);
+      // Se reparten las unidades sueltas por resto mayor, saltando los
+      // portafolios que ya llegaron a su tope. Se dan varias vueltas por si
+      // los topes obligan a concentrar el sobrante en pocos portafolios.
+      while(faltan > 0){
+        let movio = false;
+        for(const o of orden){
+          if(faltan === 0) break;
+          if(pedazos[o.i] < saldo[o.i]){ pedazos[o.i]++; faltan--; movio = true; }
+        }
+        if(!movio) break; // no hay dónde poner: allocation y folios no cuadran
+      }
+    }
+    pedazos.forEach((cant,i)=>{
+      if(cant <= 0) return;
+      saldo[i] -= cant;
+      salida.push({folio:f, alloc:alocaciones[i], cantidad:cant});
+    });
+  });
+  return salida;
+}
+
 async function generarReporteColfondos(cliente, loteOps, loteDet){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar la librería de Excel (ExcelJS). Revisa tu conexión e intenta de nuevo.'); return; }
   if(loteOps.length===0) return;
@@ -7826,6 +7896,17 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
     filas.forEach((f, filaIdx) => {
       f.forEach((valor, col) => { ws.getCell(filaIdx+2, col+1).value = valor; });
     });
+    // Formatos que pide COLFONDOS: fechas dd/mm/yyyy, montos en contable y
+    // los dos porcentajes como porcentaje de verdad (no como 0,0015 pelado).
+    const idx = h => todosHeaders.indexOf(h) + 1;   // 1-based; 0 si no está
+    const CONTABLE = '_-* #,##0.00_-;-* #,##0.00_-;_-* "-"??_-;_-@_-';
+    const fmt = (nombre, formato)=>{ const c = idx(nombre); if(c > 0) ws.getColumn(c).numFmt = formato; };
+    fmt('REGISTRO', 'dd/mm/yyyy');
+    fmt('CUMPLIMIENTO', 'dd/mm/yyyy');
+    fmt('CANTIDAD', '#,##0');
+    ['PRECIO','MONTO BRUTO','COM$$','IVA$$','MONTO NETO','MONTO NETO Planilla','dif'].forEach(n=> fmt(n, CONTABLE));
+    fmt('COM%', '0.0000%');
+    fmt('IVA%', '0%');
     for(let i=1; i<=todosHeaders.length; i++){ ws.getColumn(i).width = 16; }
     autofitColumnas(ws);
     const buffer = await wb.xlsx.writeBuffer();
@@ -7853,22 +7934,26 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
   // reparten aquí en el mismo orden de la asignación, consumiendo folios
   // hasta completar la cantidad de cada portafolio. Si esto no calza con
   // cómo se debe repartir de verdad, avísame y lo ajustamos.
-  let opIdx = 0, restanteEnOp = loteOps[0]?.cantidad || 0;
+  // Cada folio se reparte ENTRE TODOS los portafolios en la proporción de la
+  // allocation (no se consumen folios en orden hasta llenar cada portafolio —
+  // eso era el error: daba folios enteros a un solo portafolio cuando en la
+  // realidad todos participan de cada folio). Cero tolerancia en los dos
+  // sentidos: cada folio suma su cantidad y cada portafolio suma su allocation.
   const filasDet = [];
-  for(const f of loteDet){
-    let pendiente = f.cantidad;
-    while(pendiente > 0 && opIdx < loteOps.length){
-      const usar = Math.min(pendiente, restanteEnOp);
-      const op = loteOps[opIdx];
-      filasDet.push([
-        f.folio,
-        ...construirFilaBase(op.portafolio, f.especie, f.lado, usar, f.precio, op.comPct, usar*f.precio*op.comPct, op.portafolio.iva ? usar*f.precio*op.comPct*0.19 : 0, 0, f.fechaReg, f.fechaCum),
-      ]);
-      pendiente -= usar;
-      restanteEnOp -= usar;
-      if(restanteEnOp <= 0){ opIdx++; restanteEnOp = loteOps[opIdx]?.cantidad || 0; }
-    }
-  }
+  repartirFoliosColfondos(loteOps, loteDet).forEach(({folio:f, alloc:op, cantidad})=>{
+    // La comisión del pedazo sale de la MARCA DEL PROPIO FOLIO (bloque o
+    // pantalla), no de la comisión ponderada del portafolio: dentro de una
+    // misma orden puede haber folios marcados distinto.
+    const comPct  = (f.comisionPct != null) ? f.comisionPct : op.comPct;
+    const bruto   = cantidad * f.precio;
+    const comMon  = bruto * comPct;
+    const ivaMon  = op.portafolio.iva ? comMon * 0.19 : 0;
+    const neto    = f.lado === 'Venta' ? bruto - comMon - ivaMon : bruto + comMon + ivaMon;
+    filasDet.push([
+      f.folio,
+      ...construirFilaBase(op.portafolio, f.especie, f.lado, cantidad, f.precio, comPct, comMon, ivaMon, neto, f.fechaReg, f.fechaCum),
+    ]);
+  });
   await descargarPlano(`Detalle_operaciones_COLFONDOS_${fechaSlug}.xlsx`, 'FOLIO', filasDet);
 }
 
