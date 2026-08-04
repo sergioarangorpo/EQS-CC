@@ -6457,11 +6457,24 @@ function renderFolios(){
   if(ctxLabel){
     const cliente = document.getElementById('filtroCliente').value;
     const base = cliente ? '— ' + getClienteDB(cliente).nombre : '— selecciona cliente';
-    if(_tradesConsolidar.size > 0){
-      const ords = [...(_tradesConsolidar)].map(o=>String(o)).join(', ');
-      ctxLabel.innerHTML = `${base} · <span style="color:var(--accent);">🔍 filtrado a ${_tradesConsolidar.size} orden(es): ${ords}</span>`;
+    // El zoom por orden solo tiene sentido respecto a las órdenes DEL CLIENTE
+    // filtrado. Antes se listaban los Parent Order ID de _tradesConsolidar tal
+    // cual — y al conciliar quedan TODAS las órdenes del día seleccionadas, así
+    // que al filtrar por un cliente con una sola línea igual salía un chorro de
+    // POIDs de todos los demás clientes. Además, si están todas seleccionadas
+    // no se está filtrando nada: anunciarlo como filtro confunde.
+    const ordsCliente = Object.keys(_fidessaTradesRaw||{}).filter(oid=>{
+      const t = _fidessaTradesRaw[oid];
+      return !cliente || normalizarGrupo(t.grupo) === cliente;
+    });
+    const zoom = ordsCliente.filter(oid=>_tradesConsolidar.has(oid));
+    const esFiltroReal = zoom.length > 0 && zoom.length < ordsCliente.length;
+    if(esFiltroReal){
+      // La lista de POIDs solo se muestra si es corta; si no, estorba más de lo que ayuda.
+      const detalle = zoom.length <= 3 ? ': ' + zoom.join(', ') : '';
+      ctxLabel.innerHTML = `${base} · <span style="color:var(--accent);">🔍 ${zoom.length} de ${ordsCliente.length} orden(es)${detalle}</span>`;
     } else {
-      ctxLabel.textContent = base;
+      ctxLabel.textContent = base + (ordsCliente.length ? ` · ${ordsCliente.length} orden(es)` : '');
     }
   }
   actualizarChkSelectAll(filtrados);
