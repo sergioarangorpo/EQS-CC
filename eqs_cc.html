@@ -5759,7 +5759,7 @@ function procesarFidessa(){
   // Lado por (especie+portafolio) desde EMSX — una especie puede tener Compra Y Venta
   // a distintos portafolios (ej. CEMARGOS PI-SOLLA es Compra y el resto Venta).
   const _ladoOrdenProtPP = {};
-  (_emsxCBCache||[]).forEach(r=>{ if(normalizarGrupo(String(r.firm||''))==='PROTECCION' && (r.ticker||r.nombre_completo)){ _ladoOrdenProtPP[nemoCanonico(r.ticker||r.nombre_completo,'emsx')+'|'+String(r.account||'').trim()] = r.lado; } });
+  (_emsxCBCache||[]).forEach(r=>{ if(r.ticker||r.nombre_completo){ _ladoOrdenProtPP[nemoCanonico(r.ticker||r.nombre_completo,'emsx')+'|'+String(r.account||'').trim()] = r.lado; } });
   const armar = (f, orden, origen, fraccion)=>{
     const t = orden && _fidessaTradesRaw[orden.oid] ? _fidessaTradesRaw[orden.oid] : null;
     // Para composites resueltos por PASO C (cruce con Instructions único), la
