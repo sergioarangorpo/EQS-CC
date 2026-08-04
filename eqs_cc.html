@@ -4318,6 +4318,22 @@ const ALIAS_GRUPO = {
 };
 function normalizarGrupo(g){ return ALIAS_GRUPO[g] || g; }
 
+// El CLIENT de Fidessa a veces NO es el cliente real: cuando la cuenta todavía
+// no existe en Fidessa, la mesa opera contra una cuenta provisional (hoy
+// 'TEST') y escribe el cliente verdadero en el Notes/INSTX de la orden
+// (ej. CLIENT='TEST', Notes='AVAL_FIDU' = AVAL FIDUCIARIA). Sin esto la orden
+// no se puede filtrar ni reportar: queda bajo un cliente que no existe.
+// Solo se usa el Notes cuando el CLIENT NO corresponde a ningún cliente
+// conocido Y el Notes SÍ. Así, el día que los admins creen la cuenta real,
+// esta regla deja de dispararse sola — no hay que acordarse de quitarla.
+function grupoDeTrade(clientRaw, notes){
+  const g = normalizarGrupo(String(clientRaw||'').trim());
+  if(typeof clientesDB !== 'undefined' && clientesDB[g]) return g;
+  const porNotes = normalizarGrupo(String(notes||'').trim());
+  if(porNotes && typeof clientesDB !== 'undefined' && clientesDB[porNotes]) return porNotes;
+  return g;
+}
+
 // Filtro compartido RVL + RVI: una orden cancelada con saldo cero no sirve
 // de nada en el blotter — solo nos interesa lo que sigue vivo o se ejecutó.
 // =====================================================================
@@ -4718,8 +4734,9 @@ async function cargarArchivoFidessa(input, tipo){
         if(rowNumber===1) return;
         const folioOrden = row.getCell(headers['Folio Registro Orden']).value;
         if(!folioOrden) return;
+        const _notesTrade = row.getCell(headers['Notes']) ? String(row.getCell(headers['Notes']).value || '').trim() : '';
         mapa[String(folioOrden)] = {
-          grupo: normalizarGrupo(row.getCell(headers['CLIENT']).value),
+          grupo: grupoDeTrade(row.getCell(headers['CLIENT']).value, _notesTrade),
           lado: row.getCell(headers['B/S']).value === 'B' ? 'Compra' : 'Venta',
           security: row.getCell(headers['SECURITY']).value,
           qtyDone: Number(row.getCell(headers['QTY DONE']).value) || 0,
