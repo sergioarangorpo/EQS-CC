@@ -5830,10 +5830,25 @@ function procesarFidessa(){
   // = distribución 91.524 (OBL-CONSER 12.375 + OBL-MODER 79.149) = suma de las
   // dos órdenes de Trades 91.524. Contar las dos infla el volumen al doble.
   // El folio bueno del cliente es el de DISTRIBUCIÓN (trae la sub-cuenta).
+  // Regla general de las filas de DISTRIBUCIÓN (vale para PROTECCIÓN, COLFONDOS
+  // y cualquier cliente que reparta a sub-cuentas): una fila cuyo Client/Book
+  // es un cliente identificado y que NO trae Parent Order ID es la pata de
+  // BOOKING, o sea el lado CONTRARIO al del cliente. La fila que sí trae POID
+  // es la que fue al mercado y lleva el lado bueno.
+  // Confirmado 05-ago con los dos cruces de PFGRUPOARG: COLFONDOS COMPRÓ, y sus
+  // 25 filas de distribución están registradas como 'S'. Sin esto el reporte de
+  // COLFONDOS sale con el C/V invertido.
+  const _esFilaDistribucion = f =>
+    !f.parentOrderId && !!String(f.clientBook||'').trim() && normalizarGrupo(String(f.clientBook||'').trim()) !== 'COLCCP';
+  _fidessaFoliosRaw.forEach(f=>{
+    f._ladoCliente = _esFilaDistribucion(f)
+      ? (f.side==='B' ? 'Venta' : 'Compra')     // booking: al revés
+      : (f.side==='B' ? 'Compra' : 'Venta');    // mercado: tal cual
+  });
+
   const _distProtPorTcn = {};
   _fidessaFoliosRaw.forEach(f=>{
-    const n = String(f.notes||'').trim();
-    if(String(f.clientBook||'').trim()==='PROTECCION' && typeof PROTECCION_SUBCUENTAS!=='undefined' && PROTECCION_SUBCUENTAS[n]){
+    if(_esFilaDistribucion(f)){
       const k = String(f.tcn);
       _distProtPorTcn[k] = (_distProtPorTcn[k]||0) + f.cantidad;
     }
@@ -5853,9 +5868,7 @@ function procesarFidessa(){
   });
   let _patasMercadoProt = 0;
   _fidessaFoliosRaw = _fidessaFoliosRaw.filter(f=>{
-    const n = String(f.notes||'').trim();
-    const esDist = String(f.clientBook||'').trim()==='PROTECCION' && typeof PROTECCION_SUBCUENTAS!=='undefined' && PROTECCION_SUBCUENTAS[n];
-    if(esDist) return true;                                   // la distribución se queda
+    if(_esFilaDistribucion(f)) return true;                   // la distribución se queda
     const dist = _distProtPorTcn[String(f.tcn)];
     // Solo se descarta si: ese TCN tiene distribución de PROTECCIÓN, esta fila
     // cubre EXACTAMENTE esa misma cantidad, y su Parent Order ID no corresponde
@@ -6012,7 +6025,7 @@ function procesarFidessa(){
   // (_ladoMercadoPorTcn se construyó en el PASO 0.a, antes de descartar las patas de mercado.)
   const _ladoProtDeFolio = f => {
     if(f.parentOrderId) return f.side==='B' ? 'Compra' : 'Venta';   // caso (1)
-    return _ladoMercadoPorTcn[String(f.tcn)] || '';                  // caso (2)
+    return f._ladoCliente || _ladoMercadoPorTcn[String(f.tcn)] || ''; // caso (2)
   };
   const _ladoProtDe = (especie, portafolio, folio)=>{
     const em = emsxProt[especie+'|'+String(portafolio||'').trim()];
@@ -6050,7 +6063,8 @@ function procesarFidessa(){
       // el mismo Instructions en un cruce (bug 23-jul: todo salía PFGRUPOARG).
       especie: nemoCanonico(f.instrument, 'fidessa'),
       // Para PROTECCIÓN el lado sale de la orden (Trades); para el resto, del folio.
-      lado: esPortProteccion ? _ladoProtDe(nemoCanonico(f.instrument, 'fidessa'), notes, f) : (f.side === 'B' ? 'Compra' : 'Venta'),
+      lado: esPortProteccion ? _ladoProtDe(nemoCanonico(f.instrument, 'fidessa'), notes, f)
+                             : (f._ladoCliente || (f.side === 'B' ? 'Compra' : 'Venta')),
       hora: horaDeTimestampFidessa(f.traded),
       folio: f.tcn,
       clientBook: f.clientBook,
