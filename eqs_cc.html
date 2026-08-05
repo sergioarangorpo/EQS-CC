@@ -1146,20 +1146,24 @@
 
   <div class="stat-cards" style="padding:16px 24px 0;">
     <div class="stat-card">
-      <div class="stat-label">Folios filtrados</div>
-      <div class="stat-value" id="statFolios">0</div>
+      <div class="stat-label">Cantidad Fidessa Trades</div>
+      <div class="stat-value" id="statQtyTrades">0</div>
+      <div class="stat-label" id="statQtyTradesSub" style="opacity:.6;"></div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Cantidad total</div>
+      <div class="stat-label">Cantidad Fidessa Folios</div>
       <div class="stat-value" id="statCantidad">0</div>
+      <div class="stat-label" id="statFolios" style="opacity:.6;"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Arqueo Trades vs Folios</div>
+      <div class="stat-value" id="statArqueo">—</div>
+      <div class="stat-label" id="statArqueoSub" style="opacity:.6;"></div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Precio promedio ponderado</div>
       <div class="stat-value amber" id="statPrecio">—</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Folios marcados bloque/cruce</div>
-      <div class="stat-value purple" id="statBloque">0</div>
+      <div class="stat-label" id="statPrecioSub" style="opacity:.6;"></div>
     </div>
   </div>
 
@@ -4616,7 +4620,9 @@ function poblarFiltros(){
   const selCliente = document.getElementById('filtroCliente');
   const clienteActual = selCliente.value;
   selCliente.innerHTML = '<option value="">Todos</option>' +
-    Object.keys(clientesDB).map(k=>`<option value="${k}">${clientesDB[k].nombre}</option>`).join('');
+    Object.keys(clientesDB)
+      .sort((a,b)=>String(clientesDB[a].nombre||a).localeCompare(String(clientesDB[b].nombre||b), 'es', {sensitivity:'base'}))
+      .map(k=>`<option value="${k}">${clientesDB[k].nombre}</option>`).join('');
   selCliente.value = clienteActual;
 
   // El desplegable de Security se armaba SOLO con foliosFidessa, que se llena
@@ -4797,7 +4803,14 @@ async function cargarArchivoFidessa(input, tipo){
     }
 
     poblarFiltros();
-    document.getElementById('btnProcesarFidessa').disabled = !(_fidessaTradesRaw && _fidessaFoliosRaw);
+    // Conciliar es obligatorio para que sirva de algo lo que se acaba de cargar,
+    // así que se hace SOLO. El botón queda como reproceso manual (rehace el
+    // cruce y resetea marcas/selección) pero ya no hay que acordarse de él:
+    // olvidarlo dejaba la app mostrando la conciliación ANTERIOR sobre archivos
+    // nuevos, que es peor que no mostrar nada.
+    const listo = !!(_fidessaTradesRaw && _fidessaFoliosRaw);
+    document.getElementById('btnProcesarFidessa').disabled = !listo;
+    if(listo) procesarFidessa();
   }catch(e){
     console.error('Error leyendo archivo Fidessa:', e);
     alert(`No se pudo leer el archivo (${tipo}). Revisa que sea el formato exportado de Fidessa. Detalle: ${e.message}`);
@@ -6638,12 +6651,61 @@ function marcarSeleccionComo(tipo){
 }
 
 function renderStats(filtrados){
-  document.getElementById('statFolios').textContent = filtrados.length;
-  const totalQty = filtrados.reduce((s,f)=>s+f.cantidad,0);
-  document.getElementById('statCantidad').textContent = fmtInt(totalQty);
-  const ppp = totalQty>0 ? filtrados.reduce((s,f)=>s+f.cantidad*f.precio,0)/totalQty : 0;
-  document.getElementById('statPrecio').textContent = totalQty>0 ? fmtRate(ppp) : '—';
-  document.getElementById('statBloque').textContent = filtrados.filter(f=>f.marca==='bloque').length;
+  const $ = id => document.getElementById(id);
+  // --- Cantidad de FOLIOS filtrados (el número de folios en sí no dice nada:
+  //     va como subtítulo chiquito; lo que importa es la cantidad) ---
+  const qtyFolios = filtrados.reduce((s,f)=>s+f.cantidad,0);
+  $('statCantidad').textContent = fmtInt(qtyFolios);
+  $('statFolios').textContent = filtrados.length + (filtrados.length===1?' folio':' folios');
+
+  // --- Cantidad de TRADES con los MISMOS filtros (cliente/especie/lado) ---
+  // Es la mamá: si esto no coincide con los folios, falta asociar algo.
+  const fCli = document.getElementById('filtroCliente').value;
+  const fEsp = document.getElementById('filtroEspecie').value;
+  const fLado = document.getElementById('filtroLado').value;
+  let qtyTrades = 0, nOrdenes = 0;
+  Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
+    const t = _fidessaTradesRaw[oid];
+    if(!t.qtyDone) return;
+    if(_tradesConsolidar.size > 0 && !_tradesConsolidar.has(oid)) return; // respeta el zoom
+    if(!coincideFiltroRVL({cliente:normalizarGrupo(t.grupo), especie:nemoCanonico(t.security,'fidessa'), lado:t.lado})) return;
+    qtyTrades += t.qtyDone; nOrdenes++;
+  });
+  $('statQtyTrades').textContent = fmtInt(qtyTrades);
+  $('statQtyTradesSub').textContent = nOrdenes + (nOrdenes===1?' orden':' órdenes');
+
+  // --- Arqueo: es el cuadro que de verdad importa ---
+  const arq = $('statArqueo'), arqSub = $('statArqueoSub');
+  if(qtyTrades === 0 && qtyFolios === 0){
+    arq.textContent = '—'; arq.className = 'stat-value'; arqSub.textContent = 'sin nada filtrado';
+  } else if(qtyTrades === qtyFolios){
+    arq.textContent = '✓ cuadra'; arq.className = 'stat-value buy';
+    arqSub.textContent = fmtInt(qtyTrades) + ' acciones';
+  } else {
+    const dif = qtyFolios - qtyTrades;
+    arq.textContent = (dif>0?'+':'') + fmtInt(dif); arq.className = 'stat-value sell';
+    arqSub.textContent = dif>0 ? 'sobran folios' : 'faltan ' + fmtInt(-dif) + ' en folios';
+  }
+
+  // --- Precio promedio: solo tiene sentido con UNA especie y UN lado ---
+  const especies = new Set(filtrados.map(f=>f.especie));
+  const lados = new Set(filtrados.map(f=>f.lado));
+  const pre = $('statPrecio'), preSub = $('statPrecioSub');
+  if(qtyFolios === 0){
+    pre.textContent = '—'; preSub.textContent = '';
+  } else if(especies.size > 1 || lados.size > 1){
+    // Promediar precios de especies o lados distintos da un número sin
+    // significado (mezclar GEB con PFCIBEST no es un precio de nada).
+    pre.textContent = '—';
+    preSub.textContent = 'filtra una especie y un lado' +
+      (especies.size>1 ? ' · ' + especies.size + ' especies' : '') +
+      (lados.size>1 ? ' · compra y venta' : '');
+  } else {
+    pre.textContent = fmtRate(filtrados.reduce((s,f)=>s+f.cantidad*f.precio,0)/qtyFolios);
+    const bloqueQty = filtrados.filter(f=>f.marca==='bloque').reduce((s,f)=>s+f.cantidad,0);
+    preSub.textContent = [...especies][0] + ' ' + [...lados][0] +
+      (bloqueQty>0 ? ' · ' + fmtInt(bloqueQty) + ' en bloque' : '');
+  }
 }
 
 function renderFolioSummary(){
