@@ -713,7 +713,7 @@
       <div class="brand-mark">CC</div>
       <div>
         <div class="brand-name">EQS&nbsp;CC</div>
-        <div class="brand-sub">Equity Sales · Credicorp Capital</div>
+        <div class="brand-sub">Equity Sales · Credicorp Capital <span id="buildStamp" title="Versión del archivo que está corriendo el navegador. Si no coincide con la que acabas de subir, es caché — recarga con Ctrl+Shift+R." style="opacity:.45;font-size:11px;margin-left:6px;"></span></div>
       </div>
     </div>
     <div class="header-right">
@@ -9634,6 +9634,16 @@ setInterval(() => {
 poblarFiltros();
 renderFolios();
 initDatesRVL();
+// Sello de versión. Sirve para saber, sin adivinar, si el navegador está
+// corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
+// propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
+const BUILD_ID = '2026-08-05 21:28 UTC';
+try{
+  const el = document.getElementById('buildStamp');
+  if(el) el.textContent = 'build ' + BUILD_ID;
+  console.log('%cEQS CC — build ' + BUILD_ID, 'color:#a855f7;font-weight:700;');
+}catch(e){}
+
 cargarEmsxCBDesdeSupabase();
 cargarFidessaDesdeSupabase();
 // RVI
