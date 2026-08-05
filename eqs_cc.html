@@ -5537,8 +5537,25 @@ function agruparFoliosPorTcnLado(filas){
     const hijas  = rs.filter(r=>!r.parentOrderId).sort((a,b)=>(a.ord||0)-(b.ord||0));
     if(padres.length === 0){ huerfanos.push({k, filas: rs}); return; }
     const padre = padres[0]; // >1 padre en el mismo (TCN,lado) no se vio nunca en datos reales
-    if(hijas.length === 0) directos.push({k, padre});
-    else composites.push({k, padre, hijas});
+    if(hijas.length === 0){ directos.push({k, padre}); return; }
+    // Un padre cuyo Parent Order ID SÍ corresponde a una orden real no puede
+    // absorber hijas de OTRO cliente. Pasó el 05-ago a media jornada: en el TCN
+    // 603565 convivían la venta de BTG (40.000, POID de su propia orden) con
+    // tres filas de COLFONDOS a sub-cuentas, sin POID. El composite tomaba la
+    // fila de BTG como padre y repartía SUS 40.000 entre las órdenes de
+    // COLFONDOS: BTG desaparecía del reporte y hasta le cambiaba el lado a
+    // Compra. En ese caso el padre se trata como folio directo de su dueño y
+    // las hijas quedan huérfanas VISIBLES, para que se resuelvan aparte.
+    const _ordPadre = (typeof _fidessaTradesRaw!=='undefined' && _fidessaTradesRaw) ? _fidessaTradesRaw[String(padre.parentOrderId)] : null;
+    if(_ordPadre){
+      const cliPadre = normalizarGrupo(String(_ordPadre.grupo||''));
+      const ajenas = hijas.some(h=>{
+        const c = normalizarGrupo(String(h.clientBook||'').trim());
+        return c && c !== 'COLCCP' && c !== cliPadre;
+      });
+      if(ajenas){ directos.push({k, padre}); huerfanos.push({k, filas: hijas}); return; }
+    }
+    composites.push({k, padre, hijas});
   });
   return {directos, composites, huerfanos};
 }
