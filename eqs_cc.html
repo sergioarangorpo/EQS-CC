@@ -4407,9 +4407,20 @@ function sedolTickerRVI(sym){ return SEDOL_RVI[String(sym||'').trim().toUpperCas
 function diasSettlementRVI(sym){ const m = String(sym||'').toUpperCase().match(/\b(US|UN|LN)\b/); return (m && m[1]==='LN') ? 2 : 1; }
 function settlementRVI(sym, tradeDateISO){ const base = tradeDateISO ? new Date(tradeDateISO+'T00:00:00') : new Date(); return sumarDiasHabiles(base, diasSettlementRVI(sym)); }
 
-function esEstadoActivo(status){
-  const s = (status||'').toUpperCase().replace(/\s+/g,'');
-  return ['WORKING','FILLED','PARTFILL','PARTIALFILL','PARTIALFILLED'].includes(s);
+function esEstadoActivo(status, filled){
+  const s = (status||'').toUpperCase().replace(/[\s_-]+/g,'');
+  // Lista blanca de estados conocidos.
+  if(['WORKING','FILLED','PARTFILL','PARTIALFILL','PARTIALFILLED','CFD','COMPLETED','DONE','SENT','NEW'].includes(s)) return true;
+  // Red de seguridad: EMSX_STATUS no es un vocabulario cerrado — Bloomberg
+  // devuelve variantes según cómo termine la orden. Con una lista blanca
+  // estricta, cualquier estado no previsto hacía DESAPARECER la orden del
+  // cuadro sin decir nada, aunque tuviera acciones ejecutadas. Y lo que manda
+  // para reportar es que se haya ejecutado, no cómo se llame el estado.
+  // Regla: si tiene ejecución, se muestra — salvo que esté explícitamente
+  // cancelada/rechazada Y sin ejecutar.
+  const q = Number(filled) || 0;
+  if(q > 0) return true;
+  return false;
 }
 
 // =====================================================================
@@ -6339,7 +6350,15 @@ async function cargarEmsxCBDesdeSupabase(){
     const hoyDate = new Date();
     const inicioHoy = new Date(hoyDate.getFullYear(), hoyDate.getMonth(), hoyDate.getDate(), 0, 0, 0).toISOString(); // medianoche LOCAL convertida correctamente a UTC, sin ambigüedad de zona horaria
     const data = await supaFetch('emsx_orders', `exchange=eq.CB&order_time=gte.${inicioHoy}&order=order_time.desc&limit=500`);
-    _emsxCBCache = data.filter(row => esEstadoActivo(row.status));
+    const descartadas = data.filter(row => !esEstadoActivo(row.status, row.filled));
+    if(descartadas.length){
+      // Deja rastro en consola de lo que se está ocultando y por qué, para no
+      // volver a perseguir "órdenes que no aparecen" a ciegas.
+      console.log('EMSX CB: ' + descartadas.length + ' orden(es) ocultas por estado', 
+        descartadas.map(r=>({ticker:r.ticker, account:r.account, status:r.status, filled:r.filled})));
+    }
+    _emsxCBCache = data.filter(row => esEstadoActivo(row.status, row.filled));
+    console.log('EMSX CB: ' + data.length + ' órdenes CB de hoy en Supabase, ' + _emsxCBCache.length + ' en el cuadro');
     poblarFiltros(); // el desplegable de Security se arma con lo que haya en pantalla
     renderEmsxCBTable();
   }catch(e){
@@ -8865,12 +8884,12 @@ async function cargarEmsxDesdeSupabase(){
     // Y de eso, solo lo que sigue vivo (Working/Filled/Partial) — una orden
     // cancelada con saldo cero ya no sirve de nada en el blotter.
     const paraRVI = data.filter(row => (row.exchange||'').toUpperCase() !== 'CB');
-    const idsCancelados = new Set(paraRVI.filter(row => !esEstadoActivo(row.status)).map(row=>row.id));
+    const idsCancelados = new Set(paraRVI.filter(row => !esEstadoActivo(row.status, row.filled)).map(row=>row.id));
     // Si algo que ya teníamos en pantalla se acaba de cancelar, se quita —
     // no solo se actualiza su estado, se elimina del todo.
     emsxData = emsxData.filter(e => !idsCancelados.has(e.id));
 
-    paraRVI.filter(row => esEstadoActivo(row.status)).forEach(row=>{
+    paraRVI.filter(row => esEstadoActivo(row.status, row.filled)).forEach(row=>{
       const existente = emsxData.find(e=>e.id===row.id);
       if(existente){
         // Refrescar solo los campos "vivos" de mercado; conservar lo que el trader ya asignó.
