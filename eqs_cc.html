@@ -4445,7 +4445,25 @@ function coincideFiltroRVL({cliente, cuenta, especie, lado}){
     // la cuenta sí queda correcta (LV_CO, PORVENIR...). Se normaliza con
     // el mismo alias que usamos para Fidessa (LV_CO -> LARRAIN VIAL PP).
     const cuentaNorm = normalizarGrupo(String(cuenta||'').toUpperCase().trim());
-    const matchCuenta = cuentaNorm && (cuentaNorm===b || cuentaNorm.includes(b) || b.includes(cuentaNorm) || (nombreCompleto && cuentaNorm.includes(nombreCompleto)));
+    let matchCuenta = cuentaNorm && (cuentaNorm===b || cuentaNorm.includes(b) || b.includes(cuentaNorm) || (nombreCompleto && cuentaNorm.includes(nombreCompleto)));
+    // Si la cuenta no calzó por texto completo, se intenta por PALABRAS. En
+    // Bloomberg la cuenta se digita a mano y no siempre queda igual al alias:
+    // 'BTG' calzaba pero 'BTG CAYMAN' no, y esas órdenes desaparecían del
+    // cuadro de EMSX aunque en Fidessa sí salieran (05-ago, las de EXITO).
+    // Regla: TODAS las palabras significativas de la cuenta tienen que estar
+    // en el nombre del cliente. 'BTG CAYMAN' -> BTG ✓ CAYMAN ✓ -> calza.
+    // Salvaguarda contra falsos positivos: si la cuenta YA identifica a un
+    // cliente propio (ej. 'BTG PACTUAL AM', que es otro cliente), solo calza
+    // con ese y no se hace la comparación por palabras.
+    if(!matchCuenta && cuentaNorm){
+      const esOtroCliente = typeof clientesDB !== 'undefined' && clientesDB[cuentaNorm] && cuentaNorm !== b;
+      if(!esOtroCliente){
+        const GENERICAS = new Set(['SA','S.A.','SAS','INC','LTDA','BANCO','FONDO','THE','AND','DEL','LOS','LAS']);
+        const palabras = cuentaNorm.split(/[^A-ZÁÉÍÓÚÑ0-9]+/).filter(x=>x.length>=3 && !GENERICAS.has(x));
+        const objetivo = (b + ' ' + nombreCompleto).toUpperCase();
+        matchCuenta = palabras.length > 0 && palabras.every(x=>objetivo.includes(x));
+      }
+    }
     if(!matchFirm && !matchCuenta) return false;
   }
   return true;
