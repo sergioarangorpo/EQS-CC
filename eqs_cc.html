@@ -830,6 +830,7 @@
               <th class="sortable" onclick="ordenarPorFX('fcump')">F. cumplimiento<span class="sort-arrow" id="arrow-fx-fcump"></span></th>
               <th class="sortable" onclick="ordenarPorFX('lado')">Lado<span class="sort-arrow" id="arrow-fx-lado"></span></th>
               <th class="num sortable" onclick="ordenarPorFX('monto')">Monto USD<span class="sort-arrow" id="arrow-fx-monto"></span></th>
+              <th class="num sortable" onclick="ordenarPorFX('tasaT0')" title="Tasa de la orden a T+0 — antes de aplicar los puntos de fondeo hasta la fecha de cumplimiento">Tasa orden T+0<span class="sort-arrow" id="arrow-fx-tasaT0"></span></th>
               <th class="num sortable" onclick="ordenarPorFX('tasaNuestra')">Tasa final cliente<span class="sort-arrow" id="arrow-fx-tasaNuestra"></span></th>
               <th class="num sortable" onclick="ordenarPorFX('comEqs')">Com. EQS<span class="sort-arrow" id="arrow-fx-comEqs"></span></th>
               <th class="sortable" onclick="ordenarPorFX('receptor')">Receptor<span class="sort-arrow" id="arrow-fx-receptor"></span></th>
@@ -838,7 +839,7 @@
             </tr>
           </thead>
           <tbody id="historyBody">
-            <tr><td colspan="12" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>
+            <tr><td colspan="13" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>
           </tbody>
         </table>
       </div>
@@ -2796,7 +2797,7 @@ function renderHistory(){
   poblarSelectorReporteFX();
 
   if(operaciones.length===0){
-    tbody.innerHTML = '<tr><td colspan="12" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="empty-state">Aún no hay operaciones registradas en esta sesión.</td></tr>';
     actualizarNetoPanelFX([], false);
     return;
   }
@@ -2822,7 +2823,7 @@ function renderHistory(){
   actualizarNetoPanelFX(filas, hayFiltroActivo);
 
   if(filas.length===0){
-    tbody.innerHTML = '<tr><td colspan="12" class="empty-state">Ninguna operación coincide con estos filtros.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="empty-state">Ninguna operación coincide con estos filtros.</td></tr>';
     return;
   }
 
@@ -2837,6 +2838,7 @@ function renderHistory(){
         case 'lado': return f.op.side;
         case 'monto': return f.op.amount;
         case 'tasaCliente': return f.rateMostrar;
+        case 'tasaT0': return f.r.tasaClienteT0;
         case 'tasaNuestra': return f.r.tasaFinalCliente;
         case 'comEqs': return f.r.comEqs;
         case 'receptor': return f.op.trader;
@@ -2868,6 +2870,7 @@ function renderHistory(){
       <td class="mono-id">${op.settleDate?fmtFechaCorta(op.settleDate):'—'}</td>
       <td><span class="side-badge ${op.side==='BUY'?'buy':'sell'}">${op.side==='BUY'?'Compra':'Venta'}</span></td>
       <td class="num">${fmtUSD(op.amount)}</td>
+      <td class="num">${fmtRate(r.tasaClienteT0)}</td>
       <td class="num">${fmtRate(r.tasaFinalCliente)}</td>
       <td class="num">${fmtMoney(r.comEqs)}</td>
       <td class="mono-id">${op.trader}</td>
