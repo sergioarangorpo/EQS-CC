@@ -1078,7 +1078,7 @@
       <label>Fidessa Folios (.xlsx)</label>
       <input type="file" id="fileFidessaFolios" accept=".xlsx" onchange="cargarArchivoFidessa(this,'folios')" style="font-size:12px;width:100%;">
     </div>
-    <div class="tb-field">
+    <div class="tb-field" style="display:none;">
       <label>&nbsp;</label>
       <button class="btn small" id="btnProcesarFidessa" onclick="procesarFidessa()" disabled>⚙ Conciliar y cargar folios</button>
     </div>
@@ -6834,11 +6834,31 @@ function sincronizarAllocOrdenActiva(){
 function getOrdenesConAlloc(){
   sincronizarAllocOrdenActiva();
   const out = [];
-  Object.keys(_allocPorOrden).forEach(poid=>{
-    const allocs = _allocPorOrden[poid] || [];
-    if(allocs.length===0) return;
+  // Clientes de PORTAFOLIO AUTOMÁTICO (BTG Cayman, Andes...): no hay reparto
+  // que hacer, toda la orden va a su único portafolio. Antes había que llenar
+  // _allocPorOrden a mano, cosa que nadie hacía porque el panel decía "no
+  // requiere reparto manual" — y al generar saltaba "Ninguna orden tiene el
+  // reparto completo", sin forma de destrabarlo. Ahora la allocation se arma
+  // sola, pero SOLO si los folios de esa orden suman exactamente su QTY DONE:
+  // si no cuadra, la orden queda incompleta a propósito y la guarda frena.
+  const cliente = document.getElementById('filtroCliente') ? document.getElementById('filtroCliente').value : '';
+  const cfg = cliente ? getClienteDB(cliente) : null;
+  const portAuto = (cfg && cfg.autoPortafolio) ? (cfg.portafolios||[]).find(p=>p.id===cfg.autoPortafolio) : null;
+  const poids = new Set(Object.keys(_allocPorOrden));
+  if(portAuto){
+    foliosFidessa.forEach(f=>{
+      if(f.cliente === cliente && f.parentOrderId) poids.add(String(f.parentOrderId));
+    });
+  }
+  poids.forEach(poid=>{
+    let allocs = _allocPorOrden[poid] || [];
     const t = _fidessaTradesRaw && _fidessaTradesRaw[poid] ? _fidessaTradesRaw[poid] : null;
-    const qtyOrden = t ? t.qtyDone : (foliosFidessa.filter(f=>String(f.parentOrderId)===String(poid)).reduce((s,f)=>s+f.cantidad,0));
+    const qtyFolios = foliosFidessa.filter(f=>String(f.parentOrderId)===String(poid)).reduce((s,f)=>s+f.cantidad,0);
+    const qtyOrden = t ? t.qtyDone : qtyFolios;
+    if(allocs.length===0 && portAuto && qtyOrden>0 && qtyFolios===qtyOrden){
+      allocs = [{ portId: portAuto.id, cantidad: qtyOrden }];
+    }
+    if(allocs.length===0) return;
     const sumaAsignada = allocs.reduce((s,a)=>s+a.cantidad,0);
     out.push({ parentOrderId:poid, qtyOrden, allocations:allocs, sumaAsignada, completa: sumaAsignada===qtyOrden });
   });
