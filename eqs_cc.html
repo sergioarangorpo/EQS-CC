@@ -4859,7 +4859,7 @@ function renderFidessaTradesPanel(){
         ${thOrdenable('fidessaTrades','security','Security')}
         ${thOrdenable('fidessaTrades','qtyDone','Qty Done','num')}
         ${thOrdenable('fidessaTrades','avgPx','Avg Px','num')}
-        <th style="width:90px;" title="Cuántas veces esta línea ya salió en un reporte hoy. Es solo informativo: puedes volver a incluirla cuando el cliente pida el consolidado.">Reportado</th>
+        <th style="width:120px;" title="Cuántas veces esta línea ya salió en un reporte hoy. Es solo informativo: puedes volver a incluirla cuando el cliente pida el consolidado.">Reportado</th>
       </tr></thead>
       <tbody>${filas.map(f=>`<tr class="${_tradesConsolidar.has(f.folioOrden)?'row-sel':''}">
         <td style="text-align:center;"><input type="checkbox" ${_tradesConsolidar.has(f.folioOrden)?'checked':''} onclick="toggleTradeConsolidar('${(f.folioOrden||'').replace(/'/g,"\\'")}')"></td>
@@ -4869,11 +4869,7 @@ function renderFidessaTradesPanel(){
         <td class="mono-id">${nemoCanonico(f.security, 'fidessa')}</td>
         <td class="num">${fmtInt(f.qtyDone)}</td>
         <td class="num">${fmtRate(f.avgPx)}</td>
-        <td style="text-align:center;">${(()=>{ const n = vecesReportada(f.folioOrden);
-          return n === 0
-            ? '<span style="opacity:.35;">—</span>'
-            : `<span style="color:var(--buy);" title="Incluida en ${n} reporte(s) de hoy">● ${n}</span>`;
-        })()}</td>
+        <td style="text-align:center;">${badgeReporte(f.folioOrden, f.grupo)}</td>
       </tr>`).join('')}</tbody></table>
     </div>
   `;
@@ -6457,7 +6453,7 @@ function renderModuloReportes(){
             <div class="blotter-wrap" style="margin-bottom:14px;">
               <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);">
                 <strong>${cli}</strong>
-                <span class="field-note">envío ${romano(ultima)} · ${rs.length} línea(s) · ${fmtInt(qty)} · comisión ${fmtMoney(com)}</span>
+                <span class="field-note">${etiquetaVersion(ultima)} · ${rs.length} línea(s) · ${fmtInt(qty)} · comisión ${fmtMoney(com)}</span>
               </div>
               <table><thead><tr>
                 <th>Hora</th><th>Parent Order ID</th><th>Especie</th><th>Lado</th>
@@ -6471,7 +6467,7 @@ function renderModuloReportes(){
                 <td class="num">${fmtInt(r.cantidad)}</td>
                 <td class="num">${fmtRate(r.precio)}</td>
                 <td class="num">${fmtMoney(r.comision)}</td>
-                <td>${romano(Number(r.version)||1)}</td>
+                <td>${sufijoVersion(Number(r.version)||1) || '—'}</td>
               </tr>`).join('')}
               </tbody></table>
             </div>`;
@@ -6493,6 +6489,37 @@ async function cargarReportesGenerados(){
 }
 
 // Cuántas veces se ha reportado una línea (para la marca del cuadro de Trades)
+// ¿A este cliente se le manda reporte? Sale de GRUPO_COMISIONES_DB, que es la
+// tabla maestra: formato 'NO' = no se le reporta (Goldman, HSBC, Santander,
+// Scotia...). Sin esto, esos clientes aparecerían eternamente "pendientes" y
+// la columna se llenaría de ruido que nunca se resuelve.
+function clienteRequiereReporte(grupo){
+  const cfgCom = configCliente(grupo);
+  if(cfgCom) return String(cfgCom.formato||'').toUpperCase().trim() !== 'NO' && cfgCom.reporte !== false;
+  // Si no está en la tabla maestra, se busca por el nombre del cliente curado.
+  const cli = (typeof clientesDB !== 'undefined') ? clientesDB[grupo] : null;
+  if(cli && cli.formatoReporte) return true;
+  const porCategoria = (typeof CATEGORIAS_DB !== 'undefined')
+    ? GRUPO_COMISIONES_DB.find(x => cli && (x.grupo === cli.portafoliosDeCategorias)) : null;
+  if(porCategoria) return String(porCategoria.formato||'').toUpperCase().trim() !== 'NO';
+  return true;   // ante la duda, se pide reportar: es el error menos malo
+}
+
+// Etiqueta de estado para el cuadro de Fidessa Trades. Puramente informativa.
+function badgeReporte(parentOrderId, grupo){
+  if(!clienteRequiereReporte(grupo)){
+    return '<span title="Este cliente no lleva reporte (formato NO en la tabla de comisiones)" ' +
+           'style="color:var(--accent,#818cf8);font-size:10px;letter-spacing:.3px;">NO SE REPORTA</span>';
+  }
+  const n = vecesReportada(parentOrderId);
+  if(n === 0){
+    return '<span title="Todavía no ha salido en ningún reporte de hoy" ' +
+           'style="color:var(--amber,#f59e0b);font-size:10px;letter-spacing:.3px;">PENDIENTE</span>';
+  }
+  return `<span title="Incluida en ${n} reporte(s) de hoy. Puedes volver a incluirla: el cliente puede pedir el consolidado." ` +
+         `style="color:var(--buy,#22c55e);font-size:10px;letter-spacing:.3px;">● ${n===1?'REPORTADO':'REPORTADO '+n+' VECES'}</span>`;
+}
+
 function vecesReportada(parentOrderId){
   const p = String(parentOrderId||'');
   if(!p) return 0;
@@ -6502,6 +6529,12 @@ function vecesReportada(parentOrderId){
 // Número de envío del cliente hoy, en romano: I, II, III...
 const _ROMANOS = ['','I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII','XIII','XIV','XV'];
 function romano(n){ return _ROMANOS[n] || String(n); }
+// El PRIMER envío del día va sin numeral: el archivo se llama igual que
+// siempre. El segundo lleva I, el tercero II. Así el cliente ve un nombre
+// limpio en el caso normal (un solo envío) y el numeral solo aparece cuando
+// de verdad hubo reenvío.
+function sufijoVersion(v){ return v <= 1 ? '' : romano(v - 1); }
+function etiquetaVersion(v){ return v <= 1 ? 'envío original' : 'reenvío ' + romano(v - 1); }
 function proximaVersion(cliente, modulo){
   const versiones = _reportesGenerados
     .filter(r => r.cliente === cliente && r.modulo === modulo)
@@ -7781,8 +7814,8 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
   // cálculo paralelo: si fueran dos caminos, algún día mostrarían cosas
   // distintas y el de la pantalla sería el que no vale.
   const ok = await previsualizarReporte({
-    titulo: `${cfg.nombre} — envío ${romano(version)}`,
-    archivo: `${nombreArchivo} ${fechaSlug} ${romano(version)}.xlsx`,
+    titulo: `${cfg.nombre} — ${etiquetaVersion(version)}`,
+    archivo: `${nombreArchivo} ${fechaSlug}${sufijoVersion(version) ? ' ' + sufijoVersion(version) : ''}.xlsx`,
     columnas: ['Portafolio','Especie','Lado','Cantidad','Precio','Com %'],
     filas: filasEquity.map(f=>[f.portNombre, f.especie, f.lado, fmtInt(f.cantidad), fmtRate(f.precio), (f.comPct*100).toFixed(4)+'%']),
     totales: `${filasEquity.length} línea(s) · ${fmtInt(filasEquity.reduce((s,f)=>s+f.cantidad,0))} acciones`,
@@ -7790,7 +7823,7 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
   if(!ok) return;
 
   await generarExcelGenericoEquity(cfg.nombre, filasEquity, {
-    name: `${nombreArchivo} ${romano(version)}`, fechaSlug, tdTxt, sdTxt,
+    name: nombreArchivo + (sufijoVersion(version) ? ' ' + sufijoVersion(version) : ''), fechaSlug, tdTxt, sdTxt,
   });
 
   // Se REGISTRA lo enviado, no se borra nada. Los folios y las órdenes siguen
@@ -7809,7 +7842,7 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
 
   const qtyTotal = lineas.reduce((s,l)=>s+l.cantidad,0);
   const comTotal = lineas.reduce((s,l)=>s+l.comision,0);
-  avisoExito(`Reporte generado — ${cfg.nombre} envío ${romano(version)}`,
+  avisoExito(`Reporte generado — ${cfg.nombre} · ${etiquetaVersion(version)}`,
     `${filasEquity.length} línea(s) · ${fmtInt(qtyTotal)} acciones · comisión ${fmtMoney(comTotal)}` +
     (nuevas === 0 ? '<br><span style="opacity:.7;">Reenvío: ninguna línea nueva respecto a lo ya reportado.</span>'
                   : `<br><span style="opacity:.7;">${nuevas} línea(s) nueva(s) en el registro de Reportes.</span>`));
@@ -9873,7 +9906,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-06 18:50 UTC';
+const BUILD_ID = '2026-08-06 19:37 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
