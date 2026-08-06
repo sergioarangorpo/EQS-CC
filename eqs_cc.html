@@ -2006,33 +2006,9 @@ async function cargarInboxDesdeSupabase() {
     const anio = hoyDate.getFullYear();
     const tradeDateHoy = `${mesCorto} ${dia},${anio}`; // "Jul 08,2026"
 
-    // El filtro por trade_date NO va en la consulta. Antes se pedía
-    // trade_date=eq."Aug 06,2026" — coincidencia EXACTA de texto contra un
-    // campo que llega de un correo. Bastaba una diferencia de formato para que
-    // la bandeja saliera vacía sin ningún error: en particular los días 1 al 9,
-    // porque la app rellena con cero ("Aug 06,2026") y el correo puede traer
-    // "Aug 6,2026". Ahora se traen los pendientes recientes y la fecha se
-    // compara ya normalizada, en el navegador.
-    const params = `estado=eq.pendiente&order=capturado_en.desc&limit=200`;
+    const params = `estado=eq.pendiente&trade_date=eq.${encodeURIComponent(tradeDateHoy)}&order=capturado_en.desc&limit=200`;
     const data = await supaFetch('fx_andes_inbox', params);
-    const hoyISO = `${anio}-${String(hoyDate.getMonth()+1).padStart(2,'0')}-${dia}`;
-    const esDeHoy = r => {
-      const t = String(r.trade_date||'').trim();
-      if(!t){ // sin trade_date: se cae al momento de captura
-        return String(r.capturado_en||'').slice(0,10) === hoyISO;
-      }
-      const d = new Date(t.replace(',', ', '));   // "Aug 6,2026" -> "Aug 6, 2026"
-      if(!isNaN(d)){
-        return d.getFullYear()===anio && d.getMonth()===hoyDate.getMonth() && d.getDate()===hoyDate.getDate();
-      }
-      return t === tradeDateHoy;  // último recurso: comparación literal
-    };
-    const deHoy = data.filter(esDeHoy);
-    if(data.length > 0 && deHoy.length === 0){
-      console.warn(`⚠ FX: hay ${data.length} correo(s) pendientes en Supabase pero ninguno quedó como de hoy (${tradeDateHoy}). Revisa el campo trade_date:`,
-        [...new Set(data.slice(0,20).map(r=>r.trade_date))]);
-    }
-    const nuevos = deHoy.filter(r => !idsRegistradosSesion.has(r.id));
+    const nuevos = data.filter(r => !idsRegistradosSesion.has(r.id));
     const ocultosPorSeguridad = data.length - nuevos.length;
     inboxData = nuevos.map(r => ({
       supaId:   r.id,
@@ -9661,7 +9637,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-06 14:39 UTC';
+const BUILD_ID = '2026-08-06 15:25 UTC (FX revertido)';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
