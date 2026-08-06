@@ -1843,8 +1843,14 @@
 
   <!-- ===== Reportes placeholder ===== -->
   <div id="mod-Reportes" class="mod-section">
-    <div style="text-align:center;padding:80px 20px;color:var(--text-2);font-size:13px;">
-      Módulo de Reportes consolidados — próximamente
+    <div class="section-label" style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <span>Reportes generados hoy</span>
+      <span class="field-note" id="reportesResumen">—</span>
+    </div>
+    <div style="padding:0 24px 24px;">
+      <div id="repRVL"></div>
+      <div id="repRVI"></div>
+      <div id="repFX"></div>
     </div>
   </div>
 
@@ -4845,7 +4851,7 @@ function renderFidessaTradesPanel(){
       </span>
     </div>
     <div class="blotter-wrap" style="overflow-x:auto;">
-      <table style="min-width:800px;"><thead><tr>
+      <table style="min-width:800px;table-layout:fixed;"><thead><tr>
         <th style="width:34px;text-align:center;"><input type="checkbox" id="chkTodosTrades" ${filas.length>0 && filas.every(f=>_tradesConsolidar.has(f.folioOrden))?'checked':''} onclick="toggleTodosTrades(this.checked)" title="Seleccionar todas las órdenes"></th>
         ${thOrdenable('fidessaTrades','folioOrden','Parent Order ID')}
         ${thOrdenable('fidessaTrades','grupo','Client/Book')}
@@ -4853,6 +4859,7 @@ function renderFidessaTradesPanel(){
         ${thOrdenable('fidessaTrades','security','Security')}
         ${thOrdenable('fidessaTrades','qtyDone','Qty Done','num')}
         ${thOrdenable('fidessaTrades','avgPx','Avg Px','num')}
+        <th style="width:90px;" title="Cuántas veces esta línea ya salió en un reporte hoy. Es solo informativo: puedes volver a incluirla cuando el cliente pida el consolidado.">Reportado</th>
       </tr></thead>
       <tbody>${filas.map(f=>`<tr class="${_tradesConsolidar.has(f.folioOrden)?'row-sel':''}">
         <td style="text-align:center;"><input type="checkbox" ${_tradesConsolidar.has(f.folioOrden)?'checked':''} onclick="toggleTradeConsolidar('${(f.folioOrden||'').replace(/'/g,"\\'")}')"></td>
@@ -4862,6 +4869,11 @@ function renderFidessaTradesPanel(){
         <td class="mono-id">${nemoCanonico(f.security, 'fidessa')}</td>
         <td class="num">${fmtInt(f.qtyDone)}</td>
         <td class="num">${fmtRate(f.avgPx)}</td>
+        <td style="text-align:center;">${(()=>{ const n = vecesReportada(f.folioOrden);
+          return n === 0
+            ? '<span style="opacity:.35;">—</span>'
+            : `<span style="color:var(--buy);" title="Incluida en ${n} reporte(s) de hoy">● ${n}</span>`;
+        })()}</td>
       </tr>`).join('')}</tbody></table>
     </div>
   `;
@@ -6345,6 +6357,197 @@ function procesarFidessa(){
 // =====================================================================
 let _emsxCBCache = [];
 
+// =====================================================================
+// REGISTRO DE LO REPORTADO (tabla reportes_generados en Supabase)
+// ---------------------------------------------------------------------
+// La unidad es la LÍNEA de Fidessa Trades (su Parent Order ID), que es
+// justo lo que Sergio selecciona para reportar. Cada línea entra UNA sola
+// vez: si BTG ya iba con 3 líneas y opera una cuarta, al regenerar solo se
+// agrega la nueva — no se duplican las tres anteriores.
+// Es informativo, NUNCA bloquea: volver a reportar una línea es legítimo
+// (el cliente pide el consolidado del día).
+// Vive en Supabase porque Fidessa se carga por archivo: recargar la página
+// no puede perder el rastro de lo enviado.
+// =====================================================================
+let _reportesGenerados = [];   // filas de hoy
+
+function _hoyISO(){
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// Modal de previsualización. Devuelve una promesa: true = confirmar, false = cancelar.
+// Genérico a propósito, para que RVI y FX lo reusen sin duplicar UI.
+function previsualizarReporte({titulo, archivo, columnas, filas, totales}){
+  return new Promise(resolve=>{
+    const prev = document.getElementById('modalPreview');
+    if(prev) prev.remove();
+    const div = document.createElement('div');
+    div.id = 'modalPreview';
+    div.className = 'modal-backdrop';
+    div.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:9999;padding:24px;';
+    div.innerHTML = `
+      <div style="background:var(--bg-1,#12141a);border:1px solid var(--border,#2a2f3a);border-radius:10px;max-width:min(1000px,95vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5);">
+        <div style="padding:16px 20px;border-bottom:1px solid var(--border,#2a2f3a);">
+          <div style="font-weight:700;font-size:14px;">${titulo}</div>
+          <div class="field-note" style="margin-top:4px;">${archivo}</div>
+        </div>
+        <div style="overflow:auto;padding:0 20px;flex:1;">
+          <table style="width:100%;"><thead><tr>${columnas.map(c=>`<th>${c}</th>`).join('')}</tr></thead>
+          <tbody>${filas.map(f=>`<tr>${f.map((v,i)=>`<td class="${i>=3?'num':''}">${v}</td>`).join('')}</tr>`).join('')}</tbody></table>
+        </div>
+        <div style="padding:14px 20px;border-top:1px solid var(--border,#2a2f3a);display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <span class="field-note">${totales}</span>
+          <span style="display:flex;gap:8px;">
+            <button class="btn small ghost" id="btnPrevCancel">Cancelar</button>
+            <button class="btn small" id="btnPrevOk">Descargar y registrar</button>
+          </span>
+        </div>
+      </div>`;
+    document.body.appendChild(div);
+    const cerrar = v => { div.remove(); resolve(v); };
+    div.querySelector('#btnPrevOk').onclick = ()=>cerrar(true);
+    div.querySelector('#btnPrevCancel').onclick = ()=>cerrar(false);
+    div.onclick = e => { if(e.target === div) cerrar(false); };
+  });
+}
+
+function avisoExito(titulo, detalle){
+  const prev = document.getElementById('modalExito');
+  if(prev) prev.remove();
+  const div = document.createElement('div');
+  div.id = 'modalExito';
+  div.style.cssText = 'position:fixed;right:24px;bottom:24px;background:var(--bg-1,#12141a);border:1px solid var(--buy,#22c55e);border-left:4px solid var(--buy,#22c55e);border-radius:8px;padding:14px 18px;z-index:9999;max-width:440px;box-shadow:0 10px 30px rgba(0,0,0,.45);';
+  div.innerHTML = `<div style="font-weight:700;font-size:13px;color:var(--buy,#22c55e);">✓ ${titulo}</div>
+                   <div style="font-size:12px;margin-top:6px;line-height:1.5;">${detalle}</div>`;
+  document.body.appendChild(div);
+  setTimeout(()=>{ if(div.parentNode) div.remove(); }, 9000);
+  div.onclick = ()=>div.remove();
+}
+
+function renderModuloReportes(){
+  const resumen = document.getElementById('reportesResumen');
+  if(!document.getElementById('repRVL')) return;
+  const total = _reportesGenerados.length;
+  if(resumen) resumen.textContent = total === 0
+    ? 'Aún no se ha generado ningún reporte hoy'
+    : `${total} línea(s) reportada(s) · ${new Set(_reportesGenerados.map(r=>r.cliente)).size} cliente(s)`;
+
+  [['RVL','repRVL','Renta Variable Local'],
+   ['RVI','repRVI','Renta Variable Internacional'],
+   ['FX','repFX','Divisas']].forEach(([mod, divId, titulo])=>{
+    const cont = document.getElementById(divId);
+    if(!cont) return;
+    const filas = _reportesGenerados.filter(r => r.modulo === mod);
+    // Agrupado por cliente: es como Sergio piensa el envío ("¿qué le mandé a BTG?")
+    const porCliente = {};
+    filas.forEach(r=>{ (porCliente[r.cliente] = porCliente[r.cliente] || []).push(r); });
+    const clientes = Object.keys(porCliente).sort();
+
+    cont.innerHTML = `
+      <div class="section-label" style="margin-top:20px;">${mod} — ${titulo}</div>
+      ${clientes.length === 0
+        ? `<div class="empty-state" style="padding:20px 0;">Sin reportes de ${mod} hoy.</div>`
+        : clientes.map(cli=>{
+            const rs = porCliente[cli].slice().sort((a,b)=> String(a.generado_en).localeCompare(String(b.generado_en)));
+            const qty = rs.reduce((s,r)=>s+(Number(r.cantidad)||0),0);
+            const com = rs.reduce((s,r)=>s+(Number(r.comision)||0),0);
+            const ultima = Math.max(...rs.map(r=>Number(r.version)||1));
+            return `
+            <div class="blotter-wrap" style="margin-bottom:14px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);">
+                <strong>${cli}</strong>
+                <span class="field-note">envío ${romano(ultima)} · ${rs.length} línea(s) · ${fmtInt(qty)} · comisión ${fmtMoney(com)}</span>
+              </div>
+              <table><thead><tr>
+                <th>Hora</th><th>Parent Order ID</th><th>Especie</th><th>Lado</th>
+                <th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Comisión</th><th>Envío</th>
+              </tr></thead><tbody>
+              ${rs.map(r=>`<tr>
+                <td>${String(r.generado_en||'').slice(11,19) || '—'}</td>
+                <td class="mono-id">${r.parent_order_id}</td>
+                <td class="mono-id">${r.especie||'—'}</td>
+                <td>${r.lado||'—'}</td>
+                <td class="num">${fmtInt(r.cantidad)}</td>
+                <td class="num">${fmtRate(r.precio)}</td>
+                <td class="num">${fmtMoney(r.comision)}</td>
+                <td>${romano(Number(r.version)||1)}</td>
+              </tr>`).join('')}
+              </tbody></table>
+            </div>`;
+          }).join('')}
+    `;
+  });
+}
+
+async function cargarReportesGenerados(){
+  try{
+    _reportesGenerados = await supaFetch('reportes_generados',
+      `fecha=eq.${_hoyISO()}&order=generado_en.desc&limit=1000`);
+  }catch(e){
+    console.warn('No se pudo cargar el registro de reportes (¿falta crear la tabla reportes_generados?):', e.message);
+    _reportesGenerados = [];
+  }
+  renderModuloReportes();
+  if(typeof renderFidessaTradesPanel === 'function') renderFidessaTradesPanel();
+}
+
+// Cuántas veces se ha reportado una línea (para la marca del cuadro de Trades)
+function vecesReportada(parentOrderId){
+  const p = String(parentOrderId||'');
+  if(!p) return 0;
+  return _reportesGenerados.filter(r => String(r.parent_order_id) === p).length;
+}
+
+// Número de envío del cliente hoy, en romano: I, II, III...
+const _ROMANOS = ['','I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII','XIII','XIV','XV'];
+function romano(n){ return _ROMANOS[n] || String(n); }
+function proximaVersion(cliente, modulo){
+  const versiones = _reportesGenerados
+    .filter(r => r.cliente === cliente && r.modulo === modulo)
+    .map(r => Number(r.version) || 0);
+  return (versiones.length ? Math.max(...versiones) : 0) + 1;
+}
+
+// Registra las líneas de un envío. Solo inserta las que aún no están.
+async function registrarReporte(modulo, cliente, lineas, version){
+  const yaEstan = new Set(_reportesGenerados
+    .filter(r => r.cliente === cliente && r.modulo === modulo)
+    .map(r => String(r.parent_order_id)));
+  const nuevas = lineas.filter(l => !yaEstan.has(String(l.parentOrderId)));
+  if(nuevas.length === 0) return 0;   // reenvío puro: nada nuevo que registrar
+  const filas = nuevas.map(l => ({
+    fecha: _hoyISO(), modulo, cliente,
+    parent_order_id: String(l.parentOrderId),
+    especie: l.especie || '', lado: l.lado || '',
+    cantidad: Number(l.cantidad) || 0,
+    precio: Number(l.precio) || 0,
+    comision: Number(l.comision) || 0,
+    version, generado_en: new Date().toISOString(),
+  }));
+  try{
+    const res = await fetch(`${SUPA_URL}/rest/v1/reportes_generados`, {
+      method:'POST',
+      headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
+                'Content-Type':'application/json', 'Prefer':'resolution=ignore-duplicates,return=representation' },
+      body: JSON.stringify(filas),
+    });
+    if(res.ok){
+      const guardadas = await res.json().catch(()=>filas);
+      _reportesGenerados = _reportesGenerados.concat(guardadas.length ? guardadas : filas);
+    }else{
+      console.error('No se pudo registrar el reporte en Supabase (HTTP '+res.status+'):', await res.text().catch(()=>''));
+      _reportesGenerados = _reportesGenerados.concat(filas);  // al menos queda en pantalla
+    }
+  }catch(e){
+    console.error('Error de red registrando el reporte:', e);
+    _reportesGenerados = _reportesGenerados.concat(filas);
+  }
+  renderModuloReportes();
+  if(typeof renderFidessaTradesPanel === 'function') renderFidessaTradesPanel();
+  return nuevas.length;
+}
+
 async function cargarEmsxCBDesdeSupabase(){
   try{
     const hoyDate = new Date();
@@ -6869,6 +7072,14 @@ function getOrdenesConAlloc(){
       if(f.cliente === cliente && f.parentOrderId) poids.add(String(f.parentOrderId));
     });
   }
+  // LA SELECCIÓN DE FIDESSA TRADES MANDA. Es el mecanismo con el que Sergio
+  // decide qué va en cada envío: si COLFONDOS pide primero ECOPETROL y después
+  // PFGRUPOARG, marca solo esas líneas; si BTG pide el consolidado, marca todas.
+  // Antes esta función recogía TODAS las órdenes del cliente con folios y el
+  // reporte salía completo aunque hubiera una sola línea marcada.
+  poids.forEach(poid=>{
+    if(_tradesConsolidar.size > 0 && !_tradesConsolidar.has(String(poid))) poids.delete(poid);
+  });
   poids.forEach(poid=>{
     let allocs = _allocPorOrden[poid] || [];
     const t = _fidessaTradesRaw && _fidessaTradesRaw[poid] ? _fidessaTradesRaw[poid] : null;
@@ -7562,24 +7773,49 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
 
   const hoyDate = new Date();
   const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
+  const version = proximaVersion(cfg.nombre, 'RVL');
   const nombreArchivo = 'Operaciones ' + (cfg.fileNombre || cfg.nombre);
+
+  // PREVISUALIZACIÓN: se muestra exactamente lo que va al archivo, armado de
+  // la MISMA estructura (filasEquity) que usa el generador de Excel. No es un
+  // cálculo paralelo: si fueran dos caminos, algún día mostrarían cosas
+  // distintas y el de la pantalla sería el que no vale.
+  const ok = await previsualizarReporte({
+    titulo: `${cfg.nombre} — envío ${romano(version)}`,
+    archivo: `${nombreArchivo} ${fechaSlug} ${romano(version)}.xlsx`,
+    columnas: ['Portafolio','Especie','Lado','Cantidad','Precio','Com %'],
+    filas: filasEquity.map(f=>[f.portNombre, f.especie, f.lado, fmtInt(f.cantidad), fmtRate(f.precio), (f.comPct*100).toFixed(4)+'%']),
+    totales: `${filasEquity.length} línea(s) · ${fmtInt(filasEquity.reduce((s,f)=>s+f.cantidad,0))} acciones`,
+  });
+  if(!ok) return;
+
   await generarExcelGenericoEquity(cfg.nombre, filasEquity, {
-    name: nombreArchivo, fechaSlug, tdTxt, sdTxt,
+    name: `${nombreArchivo} ${romano(version)}`, fechaSlug, tdTxt, sdTxt,
   });
 
-  // Limpiar: quitar los folios reportados y resetear el reparto de esas órdenes.
-  const poidsUsados = new Set(completas.map(o=>String(o.parentOrderId)));
-  foliosFidessa = foliosFidessa.filter(f=>!poidsUsados.has(String(f.parentOrderId)));
-  completas.forEach(o=> { delete _allocPorOrden[o.parentOrderId]; });
-  _tradesConsolidar.clear();
-  _ordenActiva = null;
-  allocations = [];
-  selectedFolios.clear();
+  // Se REGISTRA lo enviado, no se borra nada. Los folios y las órdenes siguen
+  // disponibles: volver a generar el consolidado del día (con las líneas de
+  // antes más las nuevas) es un caso normal, no un error.
+  const lineas = completas.map(o=>{
+    const folios = foliosFidessa.filter(f=>String(f.parentOrderId)===String(o.parentOrderId));
+    const qty = folios.reduce((s,f)=>s+f.cantidad,0);
+    const bruto = folios.reduce((s,f)=>s+f.cantidad*f.precio,0);
+    return { parentOrderId:o.parentOrderId, especie: folios[0] ? folios[0].especie : '',
+             lado: folios[0] ? folios[0].lado : '', cantidad: qty,
+             precio: qty>0 ? bruto/qty : 0,
+             comision: folios.reduce((s,f)=> s + f.cantidad*f.precio*(f.marca==='bloque'?comBloque:comPantalla), 0) };
+  }).filter(l=>l.cantidad>0);
+  const nuevas = await registrarReporte('RVL', cfg.nombre, lineas, version);
+
+  const qtyTotal = lineas.reduce((s,l)=>s+l.cantidad,0);
+  const comTotal = lineas.reduce((s,l)=>s+l.comision,0);
+  avisoExito(`Reporte generado — ${cfg.nombre} envío ${romano(version)}`,
+    `${filasEquity.length} línea(s) · ${fmtInt(qtyTotal)} acciones · comisión ${fmtMoney(comTotal)}` +
+    (nuevas === 0 ? '<br><span style="opacity:.7;">Reenvío: ninguna línea nueva respecto a lo ya reportado.</span>'
+                  : `<br><span style="opacity:.7;">${nuevas} línea(s) nueva(s) en el registro de Reportes.</span>`));
+
   renderFidessaTradesPanel();
   renderFolios();
-
-  const toast = document.getElementById('toastRVL');
-  if(toast){ toast.classList.add('show'); setTimeout(()=>toast.classList.remove('show'), 2400); }
 }
 
 // Guarda de C/V: el lado SIEMPRE sale de Fidessa Trades o EMSX. Durante la
@@ -9637,13 +9873,14 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-06 15:25 UTC (FX revertido)';
+const BUILD_ID = '2026-08-06 18:50 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
   console.log('%cEQS CC — build ' + BUILD_ID, 'color:#a855f7;font-weight:700;');
 }catch(e){}
 
+cargarReportesGenerados();
 cargarEmsxCBDesdeSupabase();
 cargarFidessaDesdeSupabase();
 // RVI
