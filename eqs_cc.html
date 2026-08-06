@@ -6493,8 +6493,18 @@ async function cargarReportesGenerados(){
 // tabla maestra: formato 'NO' = no se le reporta (Goldman, HSBC, Santander,
 // Scotia...). Sin esto, esos clientes aparecerían eternamente "pendientes" y
 // la columna se llenaría de ruido que nunca se resuelve.
+// El Client/Book de Fidessa no siempre coincide con el nombre del grupo en la
+// tabla de comisiones. SANTNYCV (Fidessa) es SANTANDER (formato NO). Se mapea
+// aquí y no en ALIAS_GRUPO a propósito: ALIAS_GRUPO alimenta el desplegable de
+// clientes y los portafolios, y mover SANTNYCV allá lo sacaría de la lista.
+const ALIAS_REPORTE = {
+  'SANTNYCV': 'SANTANDER',
+  'SANTNYCCV': 'SANTANDER',
+};
+
 function clienteRequiereReporte(grupo){
-  const cfgCom = configCliente(grupo);
+  const g = ALIAS_REPORTE[String(grupo||'').trim().toUpperCase()] || grupo;
+  const cfgCom = configCliente(g);
   if(cfgCom) return String(cfgCom.formato||'').toUpperCase().trim() !== 'NO' && cfgCom.reporte !== false;
   // Si no está en la tabla maestra, se busca por el nombre del cliente curado.
   const cli = (typeof clientesDB !== 'undefined') ? clientesDB[grupo] : null;
@@ -6506,15 +6516,63 @@ function clienteRequiereReporte(grupo){
 }
 
 // Etiqueta de estado para el cuadro de Fidessa Trades. Puramente informativa.
+// Marca MANUAL por línea. Hay clientes donde el dato no alcanza para decidir:
+// a CITI_NY se le reporta parte de lo operado y parte no, y eso no se puede
+// deducir de Fidessa ni de EMSX (depender del trader sería frágil: cambia).
+// Así que lo decide Sergio con un clic, y queda guardado en Supabase para que
+// sobreviva al refresco y a recargar la página.
+let _lineasNoReportar = new Set();
+
+async function cargarLineasNoReportar(){
+  try{
+    const filas = await supaFetch('lineas_no_reportar', `fecha=eq.${_hoyISO()}&limit=1000`);
+    _lineasNoReportar = new Set(filas.map(f => String(f.parent_order_id)));
+  }catch(e){
+    console.warn('No se pudo cargar lineas_no_reportar (¿falta crear la tabla?):', e.message);
+    _lineasNoReportar = new Set();
+  }
+}
+
+async function toggleNoReportar(parentOrderId){
+  const p = String(parentOrderId);
+  const marcada = _lineasNoReportar.has(p);
+  // Optimista: se pinta ya y se persiste detrás. Si Supabase falla, se avisa.
+  if(marcada) _lineasNoReportar.delete(p); else _lineasNoReportar.add(p);
+  renderFidessaTradesPanel();
+  try{
+    if(marcada){
+      const res = await fetch(`${SUPA_URL}/rest/v1/lineas_no_reportar?fecha=eq.${_hoyISO()}&parent_order_id=eq.${encodeURIComponent(p)}`,
+        { method:'DELETE', headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}` } });
+      if(!res.ok) throw new Error('HTTP '+res.status);
+    }else{
+      const res = await fetch(`${SUPA_URL}/rest/v1/lineas_no_reportar`, {
+        method:'POST',
+        headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
+                  'Content-Type':'application/json', 'Prefer':'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify([{ fecha:_hoyISO(), parent_order_id:p, marcado_en:new Date().toISOString() }]),
+      });
+      if(!res.ok) throw new Error('HTTP '+res.status);
+    }
+  }catch(e){
+    console.error('No se pudo guardar la marca de "no reportar":', e);
+    alert('La marca se ve en pantalla pero NO se guardó en Supabase. Al recargar se pierde.\n\nDetalle: '+e.message);
+  }
+}
+
 function badgeReporte(parentOrderId, grupo){
+  const poid = String(parentOrderId||'').replace(/'/g,"\\'");
   if(!clienteRequiereReporte(grupo)){
     return '<span title="Este cliente no lleva reporte (formato NO en la tabla de comisiones)" ' +
            'style="color:var(--accent,#818cf8);font-size:10px;letter-spacing:.3px;">NO SE REPORTA</span>';
   }
   const n = vecesReportada(parentOrderId);
+  if(_lineasNoReportar.has(String(parentOrderId)) && n === 0){
+    return `<span onclick="toggleNoReportar('${poid}')" title="Marcada a mano como no reportable. Clic para volverla a Pendiente." ` +
+           `style="color:var(--accent,#818cf8);font-size:10px;letter-spacing:.3px;cursor:pointer;border-bottom:1px dotted;">NO SE REPORTA ✎</span>`;
+  }
   if(n === 0){
-    return '<span title="Todavía no ha salido en ningún reporte de hoy" ' +
-           'style="color:var(--amber,#f59e0b);font-size:10px;letter-spacing:.3px;">PENDIENTE</span>';
+    return `<span onclick="toggleNoReportar('${poid}')" title="Todavía no ha salido en ningún reporte de hoy. Clic para marcarla como no reportable (ej. las líneas de CITI_NY que no se reportan)." ` +
+           `style="color:var(--amber,#f59e0b);font-size:10px;letter-spacing:.3px;cursor:pointer;border-bottom:1px dotted;">PENDIENTE</span>`;
   }
   return `<span title="Incluida en ${n} reporte(s) de hoy. Puedes volver a incluirla: el cliente puede pedir el consolidado." ` +
          `style="color:var(--buy,#22c55e);font-size:10px;letter-spacing:.3px;">● ${n===1?'REPORTADO':'REPORTADO '+n+' VECES'}</span>`;
@@ -7112,6 +7170,10 @@ function getOrdenesConAlloc(){
   // reporte salía completo aunque hubiera una sola línea marcada.
   poids.forEach(poid=>{
     if(_tradesConsolidar.size > 0 && !_tradesConsolidar.has(String(poid))) poids.delete(poid);
+    // Marcada a mano como no reportable: no entra al archivo aunque esté
+    // seleccionada. Que el letrero diga "NO SE REPORTA" y luego saliera en el
+    // Excel sería peor que no tener la marca.
+    if(_lineasNoReportar.has(String(poid))) poids.delete(poid);
   });
   poids.forEach(poid=>{
     let allocs = _allocPorOrden[poid] || [];
@@ -7818,7 +7880,9 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
     archivo: `${nombreArchivo} ${fechaSlug}${sufijoVersion(version) ? ' ' + sufijoVersion(version) : ''}.xlsx`,
     columnas: ['Portafolio','Especie','Lado','Cantidad','Precio','Com %'],
     filas: filasEquity.map(f=>[f.portNombre, f.especie, f.lado, fmtInt(f.cantidad), fmtRate(f.precio), (f.comPct*100).toFixed(4)+'%']),
-    totales: `${filasEquity.length} línea(s) · ${fmtInt(filasEquity.reduce((s,f)=>s+f.cantidad,0))} acciones`,
+    totales: `${filasEquity.length} línea(s) · ${fmtInt(filasEquity.reduce((s,f)=>s+f.cantidad,0))} acciones` +
+      (()=>{ const excl = [..._tradesConsolidar].filter(o=>_lineasNoReportar.has(String(o))).length;
+             return excl ? ` · <span style="color:var(--accent,#818cf8);">${excl} excluida(s) por la marca "no se reporta"</span>` : ''; })(),
   });
   if(!ok) return;
 
@@ -9906,14 +9970,14 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-06 19:37 UTC';
+const BUILD_ID = '2026-08-06 20:56 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
   console.log('%cEQS CC — build ' + BUILD_ID, 'color:#a855f7;font-weight:700;');
 }catch(e){}
 
-cargarReportesGenerados();
+cargarLineasNoReportar().then(cargarReportesGenerados);
 cargarEmsxCBDesdeSupabase();
 cargarFidessaDesdeSupabase();
 // RVI
