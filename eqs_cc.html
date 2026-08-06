@@ -4489,8 +4489,12 @@ function registrarTablaOrdenable(tablaId, renderFn){
   _renderRegistry[tablaId] = renderFn;
 }
 
-function thOrdenable(tablaId, campo, label, claseExtra){
-  return `<th class="sortable ${claseExtra||''}" onclick="aplicarOrdenGenerico('${tablaId}','${campo}')">${label}<span class="sort-arrow" id="arrow-${tablaId}-${campo}"></span></th>`;
+function thOrdenable(tablaId, campo, label, claseExtra, ancho){
+  // `ancho` permite fijar el reparto de columnas cuando la tabla usa
+  // table-layout:fixed. Sin él, el navegador reparte a partes iguales y
+  // 'BANCO BTG PACTUAL CAYMAN BRANCH' queda cortado mientras Lado sobra.
+  const w = ancho ? `width:${ancho};` : '';
+  return `<th class="sortable ${claseExtra||''}" style="${w}" onclick="aplicarOrdenGenerico('${tablaId}','${campo}')">${label}<span class="sort-arrow" id="arrow-${tablaId}-${campo}"></span></th>`;
 }
 
 function aplicarOrdenGenerico(tablaId, campo){
@@ -4851,20 +4855,20 @@ function renderFidessaTradesPanel(){
       </span>
     </div>
     <div class="blotter-wrap" style="overflow-x:auto;">
-      <table style="min-width:800px;table-layout:fixed;"><thead><tr>
-        <th style="width:34px;text-align:center;"><input type="checkbox" id="chkTodosTrades" ${filas.length>0 && filas.every(f=>_tradesConsolidar.has(f.folioOrden))?'checked':''} onclick="toggleTodosTrades(this.checked)" title="Seleccionar todas las órdenes"></th>
-        ${thOrdenable('fidessaTrades','folioOrden','Parent Order ID')}
-        ${thOrdenable('fidessaTrades','grupo','Client/Book')}
-        ${thOrdenable('fidessaTrades','lado','Lado')}
-        ${thOrdenable('fidessaTrades','security','Security')}
-        ${thOrdenable('fidessaTrades','qtyDone','Qty Done','num')}
-        ${thOrdenable('fidessaTrades','avgPx','Avg Px','num')}
-        <th style="width:120px;" title="Cuántas veces esta línea ya salió en un reporte hoy. Es solo informativo: puedes volver a incluirla cuando el cliente pida el consolidado.">Reportado</th>
+      <table style="width:100%;min-width:1050px;table-layout:fixed;"><thead><tr>
+        <th style="width:32px;text-align:center;"><input type="checkbox" id="chkTodosTrades" ${filas.length>0 && filas.every(f=>_tradesConsolidar.has(f.folioOrden))?'checked':''} onclick="toggleTodosTrades(this.checked)" title="Seleccionar todas las órdenes"></th>
+        ${thOrdenable('fidessaTrades','folioOrden','Parent Order ID',null,'16%')}
+        ${thOrdenable('fidessaTrades','grupo','Client/Book',null,'27%')}
+        ${thOrdenable('fidessaTrades','lado','Lado',null,'8%')}
+        ${thOrdenable('fidessaTrades','security','Security',null,'12%')}
+        ${thOrdenable('fidessaTrades','qtyDone','Qty Done','num','11%')}
+        ${thOrdenable('fidessaTrades','avgPx','Avg Px','num','11%')}
+        <th style="width:13%;" title="Cuántas veces esta línea ya salió en un reporte hoy. Es solo informativo: puedes volver a incluirla cuando el cliente pida el consolidado.">Reportado</th>
       </tr></thead>
       <tbody>${filas.map(f=>`<tr class="${_tradesConsolidar.has(f.folioOrden)?'row-sel':''}">
         <td style="text-align:center;"><input type="checkbox" ${_tradesConsolidar.has(f.folioOrden)?'checked':''} onclick="toggleTradeConsolidar('${(f.folioOrden||'').replace(/'/g,"\\'")}')"></td>
         <td class="mono-id">${f.folioOrden}</td>
-        <td style="cursor:pointer;text-decoration:underline dotted;" onclick="filtrarPorClienteRVL('${(f.grupo||'').replace(/'/g,"\\'")}')" title="Filtrar por este cliente">${f.grupo||'—'}</td>
+        <td style="cursor:pointer;text-decoration:underline dotted;white-space:normal;line-height:1.3;" onclick="filtrarPorClienteRVL('${(f.grupo||'').replace(/'/g,"\\'")}')" title="Filtrar por este cliente">${f.grupo||'—'}</td>
         <td>${f.lado}</td>
         <td class="mono-id">${nemoCanonico(f.security, 'fidessa')}</td>
         <td class="num">${fmtInt(f.qtyDone)}</td>
@@ -6684,16 +6688,16 @@ function renderEmsxCBTable(){
     </div>
     ${(document.getElementById('filtroCliente').value || document.getElementById('filtroEspecie').value || document.getElementById('filtroLado').value) ? `<div style="margin-bottom:12px;padding:8px 12px;background:rgba(168,85,247,0.12);border-radius:6px;color:var(--purple);font-size:15px;font-weight:700;">Filtro activo (Client/Book, Security y/o Lado arriba) — <a href="#" onclick="borrarFiltros();return false;" style="color:var(--purple);text-decoration:underline;">quitar filtros</a></div>` : ''}
     <div class="blotter-wrap" style="overflow-x:auto;">
-      <table style="min-width:1050px;"><thead><tr>
-        ${thOrdenable('emsxCB','hora','Hora')}
-        ${thOrdenable('emsxCB','firm','Client/Book')}
-        ${thOrdenable('emsxCB','account','Account')}
-        ${thOrdenable('emsxCB','lado','Lado')}
-        ${thOrdenable('emsxCB','ticker','Security')}
-        ${thOrdenable('emsxCB','filled','Qty Done','num')}
-        ${thOrdenable('emsxCB','avgPrice','Precio prom.','num')}
-        ${thOrdenable('emsxCB','status','Estado')}
-        ${thOrdenable('emsxCB','instructions','Instructions')}
+      <table style="width:100%;min-width:1050px;table-layout:fixed;"><thead><tr>
+        ${thOrdenable('emsxCB','hora','Hora',null,'7%')}
+        ${thOrdenable('emsxCB','firm','Client/Book',null,'22%')}
+        ${thOrdenable('emsxCB','account','Account',null,'14%')}
+        ${thOrdenable('emsxCB','lado','Lado',null,'8%')}
+        ${thOrdenable('emsxCB','ticker','Security',null,'12%')}
+        ${thOrdenable('emsxCB','filled','Qty Done','num','11%')}
+        ${thOrdenable('emsxCB','avgPrice','Precio prom.','num','11%')}
+        ${thOrdenable('emsxCB','status','Estado',null,'8%')}
+        ${thOrdenable('emsxCB','instructions','Instructions',null,'7%')}
       </tr></thead>
       <tbody>${filas.map(row=>{
         return `<tr>
@@ -9970,7 +9974,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-06 20:56 UTC';
+const BUILD_ID = '2026-08-06 21:07 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
