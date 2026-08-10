@@ -8928,6 +8928,24 @@ function folioProteccion(tcn){
 // Registra en el módulo Reportes lo que acaba de generar el camino viejo
 // (PROTECCIÓN, COLFONDOS). Agrupa los folios del lote por su línea de Fidessa
 // Trades, que es la unidad del registro.
+// Nombre CORTO del portafolio de PROTECCIÓN. El nombre largo de
+// PROTECCION_SUBCUENTAS ("PROTECCION FONDO DE PENSIONES OBLIGATORIAS MODERA")
+// viene truncado del archivo del cliente; el corto vive en CATEGORIAS y se
+// cruza por deceval: OBL-MODER -> 1454 -> "PROTECCION FPO MODERADO".
+// Cruzan las 42 sub-cuentas, así que no hay caso sin nombre; aun así, si
+// faltara, se devuelve el largo antes que dejar la celda vacía.
+let _NOMBRE_CORTO_DECEVAL = null;
+function nombreCortoSubcuenta(sub){
+  if(!sub) return '';
+  if(!_NOMBRE_CORTO_DECEVAL){
+    _NOMBRE_CORTO_DECEVAL = {};
+    (typeof CATEGORIAS_DB !== 'undefined' ? CATEGORIAS_DB : []).forEach(c=>{
+      if(c && c.deceval != null) _NOMBRE_CORTO_DECEVAL[String(c.deceval)] = c.nombre;
+    });
+  }
+  return _NOMBRE_CORTO_DECEVAL[String(sub.deceval)] || sub.nombre || '';
+}
+
 async function registrarLoteRVL(cliente, loteDet, version){
   const porOrden = {};
   (loteDet||[]).forEach(f=>{
@@ -9022,7 +9040,7 @@ async function generarReporteProteccion(cliente, loteDet){
       sub && sub.documento != null && sub.documento !== '' ? Number(sub.documento) : '',
       sub && sub.digito != null && sub.digito !== '' ? Number(sub.digito) : '',
       f.portafolio || '',
-      sub ? sub.nombre : '',
+      nombreCortoSubcuenta(sub),
       'SAR',
     ];
     fila.forEach((v,i)=>{ ws.getCell(r, i+1).value = v; });
@@ -10564,7 +10582,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-10 21:44 UTC';
+const BUILD_ID = '2026-08-10 22:07 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
