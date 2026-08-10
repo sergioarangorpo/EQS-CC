@@ -1851,7 +1851,7 @@
       </div>
       <div class="tb-field">
         <label>USDCOP</label>
-        <input type="number" id="usdcopAyudas" step="0.01" placeholder="4000" oninput="recalcularCanasta()" style="width:120px;">
+        <input type="text" inputmode="decimal" id="usdcopAyudas" placeholder="4,000.00" oninput="recalcularCanasta()" onblur="formatInputAsNumber(this,2);recalcularCanasta()" style="width:120px;">
       </div>
       <div class="tb-field" style="flex:2;">
         <label>&nbsp;</label>
@@ -1874,6 +1874,39 @@
 
     <div class="section-label">Pendientes de tasa</div>
     <div id="canastasPendientes" style="padding:0 24px 24px;"></div>
+
+    <!-- ===== Calculadora de ejecución ===== -->
+    <div class="section-label">Calculadora de ejecución</div>
+    <div style="padding:0 24px 8px;">
+      <div class="field-note" style="margin-bottom:8px;">Un WMCO grande se cierra en varios tickets. Escribe el objetivo y ve agregando lo que cierras: la calculadora lleva el acumulado, el faltante y el promedio.</div>
+      <div style="display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+        <div class="tb-field"><label>¿Cuánto quiero ejecutar?</label>
+          <input type="text" inputmode="decimal" id="ejecObjetivo" placeholder="7,253,000" oninput="renderEjecucion()" onblur="formatInputAsNumber(this,0);renderEjecucion()" style="width:170px;"></div>
+        <div class="tb-field"><label>Cantidad</label>
+          <input type="text" inputmode="decimal" id="ejecCant" placeholder="250,000" style="width:150px;"></div>
+        <div class="tb-field"><label>Precio</label>
+          <input type="text" inputmode="decimal" id="ejecPrecio" placeholder="3,955.00" style="width:140px;"
+                 onkeydown="if(event.key==='Enter') agregarTicket();"></div>
+        <button class="btn small" onclick="agregarTicket()">Agregar ticket</button>
+        <button class="btn small ghost" onclick="limpiarEjecucion()">Limpiar</button>
+      </div>
+    </div>
+    <div id="ejecResultado" style="padding:0 24px 24px;"></div>
+
+    <!-- ===== Spread entre especies ===== -->
+    <div class="section-label">Spread entre especies</div>
+    <div style="padding:0 24px 24px;">
+      <div class="field-note" style="margin-bottom:8px;">Los precios se traen del archivo de trades del mercado; puedes sobreescribirlos.</div>
+      <div id="spreadPresets" style="margin-bottom:10px;"></div>
+      <div style="display:flex;align-items:end;gap:10px;flex-wrap:wrap;">
+        <div class="tb-field"><label>Especie A</label><input list="listaEspecies" id="spA" oninput="renderSpread()" style="width:170px;"></div>
+        <div class="tb-field"><label>Precio A</label><input type="text" inputmode="decimal" id="spPxA" oninput="renderSpread()" style="width:140px;"></div>
+        <div class="tb-field"><label>Especie B</label><input list="listaEspecies" id="spB" oninput="renderSpread()" style="width:170px;"></div>
+        <div class="tb-field"><label>Precio B</label><input type="text" inputmode="decimal" id="spPxB" oninput="renderSpread()" style="width:140px;"></div>
+      </div>
+      <datalist id="listaEspecies"></datalist>
+      <div id="spreadResultado" style="margin-top:12px;"></div>
+    </div>
   </div>
 
   <!-- ===== Reportes placeholder ===== -->
@@ -6527,6 +6560,7 @@ function procesarTradesMercado(texto){
     `${n.toLocaleString('es-CO')} trades · ${especies} especies · de ${_mercadoRango.desde} a ${_mercadoRango.hasta} ` +
     `<span style="color:${cierre?'var(--buy,#22c55e)':'var(--amber,#f59e0b)'};">(${cierre?'parece cierre del día':'parece intradía'})</span>`;
   recalcularCanasta();
+  pintarPresetsSpread();
 }
 
 // Parseo del correo de MLI. Se aceptan tabulaciones o varios espacios entre
@@ -6574,7 +6608,7 @@ function recalcularCanasta(){
   const manuales = window._preciosManuales || (window._preciosManuales = {});
   c.filas.forEach(f=>{ if(manuales[f.nemo] != null){ f.precio = manuales[f.nemo]; f.manual = true; f.hora = f.hora || 'manual'; } });
   _canastaActual = c;
-  const usdcop = Number((document.getElementById('usdcopAyudas')||{}).value) || 0;
+  const usdcop = Number(String((document.getElementById('usdcopAyudas')||{}).value||'').replace(/,/g,'')) || 0;
 
   const lado = s => c.filas.filter(f=>f.side===s);
   const resumen = s => {
@@ -6584,8 +6618,7 @@ function recalcularCanasta(){
   };
   const B = resumen('B'), S = resumen('S');
   const netoCop = B.cop - S.cop, netoUsd = usdcop ? netoCop/usdcop : 0;
-  const usdTxt = v => !usdcop ? '<span style="opacity:.4;">escribe el USDCOP</span>'
-                    : (Math.abs(v) >= 1e6 ? (v/1e6).toFixed(2)+'MM' : Math.round(v/1000)+'K');
+  const usdTxt = v => !usdcop ? '<span style="opacity:.4;">escribe el USDCOP</span>' : usdCorto(v);
 
   cont.innerHTML = `
     <div class="stat-cards" style="padding:8px 0 12px;">
@@ -6628,6 +6661,16 @@ function recalcularCanasta(){
 // el cálculo.
 let _canastasPendientes = [];
 
+// El monto que se registra en FX es EL MISMO que se muestra. Antes se mostraba
+// "43K" y se registraba 42.588: Sergio cierra en el mercado el número redondo,
+// así que registrar el crudo obligaba a corregirlo a mano. Al cierre del día el
+// giro exacto se ajusta por otro proceso.
+function montoUsdRedondeado(v){ return Math.round((Number(v)||0)/1000)*1000; }
+function usdCorto(v){
+  const r = montoUsdRedondeado(v);
+  return Math.abs(r) >= 1e6 ? (r/1e6).toFixed(2)+'MM' : (r/1000)+'K';
+}
+
 async function cargarCanastasPendientes(){
   try{
     _canastasPendientes = await supaFetch('canastas_mli', `fecha=eq.${_hoyISO()}&order=creado_en.desc&limit=200`);
@@ -6641,7 +6684,7 @@ async function cargarCanastasPendientes(){
 async function dejarCanastaPendiente(){
   const c = _canastaActual;
   if(!c || c.filas.length === 0){ alert('No hay canasta para dejar pendiente.'); return; }
-  const usdcop = Number((document.getElementById('usdcopAyudas')||{}).value) || 0;
+  const usdcop = Number(String((document.getElementById('usdcopAyudas')||{}).value||'').replace(/,/g,'')) || 0;
   if(!usdcop){ alert('Escribe el USDCOP antes de dejarla pendiente: es lo que define el nocional.'); return; }
   const sinPx = c.filas.filter(f => f.precio == null);
   if(sinPx.length){ alert(`Faltan precios: ${sinPx.map(f=>f.nemo).join(', ')}. Escríbelos antes de dejarla pendiente.`); return; }
@@ -6685,7 +6728,6 @@ function renderCanastasPendientes(){
   if(!cont) return;
   const pend = _canastasPendientes.filter(c => c.estado === 'pendiente');
   if(pend.length === 0){ cont.innerHTML = '<div class="empty-state" style="padding:16px 0;">Sin canastas pendientes de tasa.</div>'; return; }
-  const usdTxt = v => Math.abs(v) >= 1e6 ? (v/1e6).toFixed(2)+'MM' : Math.round(v/1000)+'K';
   cont.innerHTML = pend.map(c=>{
     const b = c.buys||{}, sv = c.sells||{};
     return `<div class="blotter-wrap" style="margin-bottom:12px;">
@@ -6695,14 +6737,14 @@ function renderCanastasPendientes(){
       </div>
       <table><thead><tr><th>Lado acciones</th><th class="num">Papeletas</th><th class="num">Acciones</th><th class="num">Valor COP</th><th class="num">USD</th><th>Genera en FX</th></tr></thead>
       <tbody>
-        ${b.papeletas ? `<tr><td>Buys</td><td class="num">${b.papeletas}</td><td class="num">${fmtInt(b.acciones)}</td><td class="num">${fmtMoney(b.cop)}</td><td class="num"><b>${usdTxt(b.usd)}</b></td><td><span class="side-badge sell">Venta USD</span></td></tr>`:''}
-        ${sv.papeletas ? `<tr><td>Sells</td><td class="num">${sv.papeletas}</td><td class="num">${fmtInt(sv.acciones)}</td><td class="num">${fmtMoney(sv.cop)}</td><td class="num"><b>${usdTxt(sv.usd)}</b></td><td><span class="side-badge buy">Compra USD</span></td></tr>`:''}
+        ${b.papeletas ? `<tr><td>Buys</td><td class="num">${b.papeletas}</td><td class="num">${fmtInt(b.acciones)}</td><td class="num">${fmtMoney(b.cop)}</td><td class="num"><b>${usdCorto(b.usd)}</b><div class="stat-label" style="opacity:.55;">${fmtInt(montoUsdRedondeado(b.usd))}</div></td><td><span class="side-badge sell">Venta USD</span></td></tr>`:''}
+        ${sv.papeletas ? `<tr><td>Sells</td><td class="num">${sv.papeletas}</td><td class="num">${fmtInt(sv.acciones)}</td><td class="num">${fmtMoney(sv.cop)}</td><td class="num"><b>${usdCorto(sv.usd)}</b><div class="stat-label" style="opacity:.55;">${fmtInt(montoUsdRedondeado(sv.usd))}</div></td><td><span class="side-badge buy">Compra USD</span></td></tr>`:''}
       </tbody></table>
       <div style="padding:12px 14px;display:flex;align-items:end;gap:10px;flex-wrap:wrap;">
         <div class="tb-field"><label>Tasa ejecutada en mercado</label>
-          <input type="number" step="0.01" id="spot_${c.id}" placeholder="a cómo ejecuté" style="width:150px;"></div>
+          <input type="text" inputmode="decimal" id="spot_${c.id}" placeholder="a cómo ejecuté" onblur="formatInputAsNumber(this,2)" style="width:150px;"></div>
         <div class="tb-field"><label>Tasa WMCO al cliente</label>
-          <input type="number" step="0.01" id="wmco_${c.id}" placeholder="a cómo salió el WMCO" style="width:160px;"></div>
+          <input type="text" inputmode="decimal" id="wmco_${c.id}" placeholder="a cómo salió el WMCO" onblur="formatInputAsNumber(this,2)" style="width:160px;"></div>
         <button class="btn small" onclick="cerrarCanastaYRegistrar(${c.id})">Registrar en FX</button>
         <button class="btn small ghost" onclick="descartarCanasta(${c.id})">Descartar</button>
       </div>
@@ -6717,8 +6759,9 @@ function renderCanastasPendientes(){
 async function cerrarCanastaYRegistrar(id){
   const c = _canastasPendientes.find(x=>String(x.id)===String(id));
   if(!c) return;
-  const spotReal = Number((document.getElementById('spot_'+id)||{}).value) || 0;
-  const rateUnica = Number((document.getElementById('wmco_'+id)||{}).value) || 0;
+  const numTasa = v => Number(String(v||'').replace(/,/g,'').trim()) || 0;   // 3,955.00 -> 3955
+  const spotReal = numTasa((document.getElementById('spot_'+id)||{}).value);
+  const rateUnica = numTasa((document.getElementById('wmco_'+id)||{}).value);
   if(!spotReal || !rateUnica){ alert('Escribe las dos tasas: la ejecutada en el mercado y la del WMCO.'); return; }
 
   const td = document.getElementById('tradeDate').value;
@@ -6732,8 +6775,8 @@ async function cerrarCanastaYRegistrar(id){
   // se hace desde nuestra óptica igual que hoy lo hace Sergio a mano: compran
   // acciones = venta de USD.
   const lineas = [];
-  if(c.buys && c.buys.papeletas) lineas.push({side:'SELL', amount: Math.round(c.buys.usd)});
-  if(c.sells && c.sells.papeletas) lineas.push({side:'BUY', amount: Math.round(c.sells.usd)});
+  if(c.buys && c.buys.papeletas) lineas.push({side:'SELL', amount: montoUsdRedondeado(c.buys.usd)});
+  if(c.sells && c.sells.papeletas) lineas.push({side:'BUY', amount: montoUsdRedondeado(c.sells.usd)});
 
   lineas.forEach((l, i)=>{
     const op = {
@@ -6784,6 +6827,115 @@ async function descartarCanasta(id){
     });
   }catch(e){ console.error(e); }
   renderCanastasPendientes();
+}
+
+// --- Calculadora de ejecución ----------------------------------------
+// Un WMCO grande no se cierra en un ticket: se va vendiendo en cortes de
+// 250K, 500K, 1MM. Esto lleva la cuenta de lo hecho, lo que falta y el
+// promedio ponderado, que es lo que después se reporta.
+let _tickets = [];
+const _numAyudas = v => Number(String(v||'').replace(/,/g,'').trim()) || 0;
+
+function agregarTicket(){
+  const cant = _numAyudas((document.getElementById('ejecCant')||{}).value);
+  const px   = _numAyudas((document.getElementById('ejecPrecio')||{}).value);
+  if(!cant){ alert('Escribe la cantidad del ticket.'); return; }
+  _tickets.push({cant, px, hora: new Date().toLocaleTimeString('es-CO',{hour12:false})});
+  document.getElementById('ejecCant').value = '';
+  document.getElementById('ejecPrecio').value = '';
+  document.getElementById('ejecCant').focus();
+  renderEjecucion();
+}
+function borrarTicket(i){ _tickets.splice(i,1); renderEjecucion(); }
+function limpiarEjecucion(){ _tickets = []; document.getElementById('ejecObjetivo').value=''; renderEjecucion(); }
+
+function renderEjecucion(){
+  const cont = document.getElementById('ejecResultado');
+  if(!cont) return;
+  const objetivo = _numAyudas((document.getElementById('ejecObjetivo')||{}).value);
+  const hecho = _tickets.reduce((a,t)=>a+t.cant,0);
+  const bruto = _tickets.reduce((a,t)=>a+t.cant*t.px,0);
+  const prom  = hecho > 0 ? bruto/hecho : 0;
+  const falta = objetivo - hecho;
+  const pct   = objetivo > 0 ? (hecho/objetivo*100) : 0;
+  const exceso = falta < 0;
+
+  cont.innerHTML = `
+    <div class="stat-cards" style="padding:0 0 12px;">
+      <div class="stat-card"><div class="stat-label">Ejecutado</div><div class="stat-value">${fmtInt(hecho)}</div>
+        <div class="stat-label" style="opacity:.6;">${objetivo?pct.toFixed(1)+'% del objetivo':'sin objetivo'}</div></div>
+      <div class="stat-card"><div class="stat-label">${exceso?'Excedido':'Falta'}</div>
+        <div class="stat-value ${!objetivo?'':(falta===0?'buy':(exceso?'sell':'amber'))}">${objetivo?fmtInt(Math.abs(falta)):'—'}</div>
+        <div class="stat-label" style="opacity:.6;">${objetivo && falta===0?'objetivo completo':''}</div></div>
+      <div class="stat-card"><div class="stat-label">Precio promedio</div><div class="stat-value amber">${hecho?fmtRate(prom):'—'}</div>
+        <div class="stat-label" style="opacity:.6;">${_tickets.length} ticket(s)</div></div>
+      <div class="stat-card"><div class="stat-label">Valor bruto</div><div class="stat-value">${hecho?fmtMoney(bruto):'—'}</div></div>
+    </div>
+    ${objetivo ? `<div style="height:6px;background:var(--bg-2,#0f1116);border-radius:3px;overflow:hidden;margin-bottom:12px;">
+      <div style="height:100%;width:${Math.min(100,pct)}%;background:${exceso?'var(--sell,#ef4444)':(falta===0?'var(--buy,#22c55e)':'var(--accent,#818cf8)')};"></div></div>` : ''}
+    ${_tickets.length ? `<div class="blotter-wrap"><table><thead><tr>
+        <th>#</th><th>Hora</th><th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Bruto</th><th class="num">Acumulado</th><th></th>
+      </tr></thead><tbody>${(()=>{ let ac=0; return _tickets.map((t,i)=>{ ac+=t.cant; return `<tr>
+        <td>${i+1}</td><td>${t.hora}</td><td class="num">${fmtInt(t.cant)}</td>
+        <td class="num">${t.px?fmtRate(t.px):'—'}</td><td class="num">${t.px?fmtMoney(t.cant*t.px):'—'}</td>
+        <td class="num">${fmtInt(ac)}</td>
+        <td><button class="btn small ghost" onclick="borrarTicket(${i})">✕</button></td></tr>`; }).join(''); })()}
+      </tbody></table></div>` : '<div class="empty-state" style="padding:12px 0;">Sin tickets todavía.</div>'}`;
+}
+
+// --- Spread entre especies -------------------------------------------
+// Los pares que Sergio mira son ordinaria contra preferencial (CIBEST /
+// PFCIBEST) y comparaciones entre emisores. Se muestran la diferencia en
+// pesos y la relación en %, que es como se cotiza el spread.
+const PARES_SPREAD = [
+  ['CIBEST','PFCIBEST'], ['GRUPOSURA','PFGRUPSURA'], ['GRUPOARGOS','PFGRUPOARG'],
+  ['CEMARGOS','PFCEMARGOS'], ['GRUPOSURA','CIBEST'], ['GRUPOSURA','PFCIBEST'],
+];
+
+function pintarPresetsSpread(){
+  const cont = document.getElementById('spreadPresets');
+  if(!cont) return;
+  cont.innerHTML = PARES_SPREAD.map(([a,b])=>
+    `<button class="btn small ghost" style="margin:0 6px 6px 0;" onclick="usarParSpread('${a}','${b}')">${a} / ${b}</button>`).join('');
+  const dl = document.getElementById('listaEspecies');
+  if(dl) dl.innerHTML = Object.keys(_preciosMercado).sort().map(e=>`<option value="${e}">`).join('');
+}
+
+function usarParSpread(a,b){
+  document.getElementById('spA').value = a;
+  document.getElementById('spB').value = b;
+  document.getElementById('spPxA').value = _preciosMercado[a] ? _preciosMercado[a].precio : '';
+  document.getElementById('spPxB').value = _preciosMercado[b] ? _preciosMercado[b].precio : '';
+  renderSpread();
+}
+
+function renderSpread(){
+  const cont = document.getElementById('spreadResultado');
+  if(!cont) return;
+  const A = String((document.getElementById('spA')||{}).value||'').trim().toUpperCase();
+  const B = String((document.getElementById('spB')||{}).value||'').trim().toUpperCase();
+  // Si escribe la especie y el precio está vacío, se autocompleta del mercado.
+  const inA = document.getElementById('spPxA'), inB = document.getElementById('spPxB');
+  if(A && _preciosMercado[A] && !inA.value) inA.value = _preciosMercado[A].precio;
+  if(B && _preciosMercado[B] && !inB.value) inB.value = _preciosMercado[B].precio;
+  const pa = _numAyudas(inA.value), pb = _numAyudas(inB.value);
+  if(!pa || !pb){ cont.innerHTML = '<div class="field-note">Escribe las dos especies (o usa un par de arriba).</div>'; return; }
+  // El spread se mira en PESOS, no en porcentaje: es la diferencia monetaria
+  // entre las dos especies (Sergio, 10-ago).
+  const dif = pa - pb;
+  const hA = _preciosMercado[A] ? _preciosMercado[A].hora : null;
+  const hB = _preciosMercado[B] ? _preciosMercado[B].hora : null;
+  cont.innerHTML = `
+    <div class="stat-cards" style="padding:0;">
+      <div class="stat-card"><div class="stat-label">${A||'A'}</div><div class="stat-value">${fmtRate(pa)}</div>
+        <div class="stat-label" style="opacity:.6;">${hA?'último '+hA:'precio escrito'}</div></div>
+      <div class="stat-card"><div class="stat-label">${B||'B'}</div><div class="stat-value">${fmtRate(pb)}</div>
+        <div class="stat-label" style="opacity:.6;">${hB?'último '+hB:'precio escrito'}</div></div>
+      <div class="stat-card" style="border-color:var(--accent,#818cf8);">
+        <div class="stat-label">Spread ${A||'A'} − ${B||'B'}</div>
+        <div class="stat-value ${dif>=0?'buy':'sell'}" style="font-size:22px;">${dif>=0?'+':'−'}${fmtRate(Math.abs(dif))}</div>
+        <div class="stat-label" style="opacity:.6;">${dif>=0 ? (A||'A')+' está por encima' : (B||'B')+' está por encima'}</div></div>
+    </div>`;
 }
 
 function fijarPrecioManual(nemo, valor){
@@ -10391,7 +10543,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-10 18:37 UTC';
+const BUILD_ID = '2026-08-10 19:11 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
