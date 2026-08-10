@@ -729,7 +729,8 @@
     <button data-mod="RVL"     onclick="switchModule('RVL')"     class="">RVL</button>
     <button data-mod="RVI"     onclick="switchModule('RVI')"     class="">RVI</button>
     <button data-mod="RFI"     onclick="switchModule('RFI')"     class="disabled" disabled>RFI</button>
-    <button data-mod="Reportes" onclick="switchModule('Reportes')" class="disabled" disabled>Reportes</button>
+    <button data-mod="Reportes" onclick="switchModule('Reportes')" class="">Reportes</button>
+    <button data-mod="Ayudas"   onclick="switchModule('Ayudas')"   class="">Ayudas</button>
   </div>
 
   <!-- ===== FX MODULE ===== -->
@@ -1839,6 +1840,40 @@
     <div style="text-align:center;padding:80px 20px;color:var(--text-2);font-size:13px;">
       Módulo RFI (Renta Fija Internacional) — próximamente
     </div>
+  </div>
+
+  <!-- ===== AYUDAS ===== -->
+  <div id="mod-Ayudas" class="mod-section">
+    <div class="toolbar">
+      <div class="tb-field" style="flex:1;min-width:340px;">
+        <label>Trades del mercado (All_Trades .csv)</label>
+        <input type="file" id="fileMercado" accept=".csv" onchange="cargarTradesMercado(this)" style="font-size:12px;width:100%;">
+      </div>
+      <div class="tb-field">
+        <label>USDCOP</label>
+        <input type="number" id="usdcopAyudas" step="0.01" placeholder="4000" oninput="recalcularCanasta()" style="width:120px;">
+      </div>
+      <div class="tb-field" style="flex:2;">
+        <label>&nbsp;</label>
+        <span class="field-note" id="mercadoStatus">Carga el archivo de trades del mercado para tener los últimos precios.</span>
+      </div>
+    </div>
+
+    <div class="section-label">Canasta MLI</div>
+    <div style="padding:0 24px 8px;">
+      <div class="field-note" style="margin-bottom:6px;">Pega el correo completo de Lucas (con Entity / Stocks / FX y la tabla). Las líneas en 0.00 se descartan solas.</div>
+      <textarea id="canastaTexto" rows="8" oninput="recalcularCanasta()"
+        style="width:100%;font-family:var(--mono,monospace);font-size:12px;background:var(--bg-2,#0f1116);color:var(--text-1,#e5e7eb);border:1px solid var(--border,#2a2f3a);border-radius:6px;padding:10px;"
+        placeholder="Hi all,&#10;Please execute order as below:&#10;Entity: MLI&#10;Stocks: MOC&#10;FX: WMCO&#10;&#10;Side&#9;Quantity&#9;Ric&#9;BBG Code&#10;B&#9;500.00&#9;CIBEST.CN&#9;CIBEST CB Equity"></textarea>
+    </div>
+    <div id="canastaResultado" style="padding:0 24px 8px;"></div>
+    <div style="padding:0 24px 20px;">
+      <button class="btn small" onclick="dejarCanastaPendiente()">Dejar pendiente de tasa</button>
+      <span class="field-note" style="margin-left:10px;">Queda guardada hasta que cierres la tasa en el mercado.</span>
+    </div>
+
+    <div class="section-label">Pendientes de tasa</div>
+    <div id="canastasPendientes" style="padding:0 24px 24px;"></div>
   </div>
 
   <!-- ===== Reportes placeholder ===== -->
@@ -6425,6 +6460,339 @@ function avisoExito(titulo, detalle){
   div.onclick = ()=>div.remove();
 }
 
+// =====================================================================
+// MÓDULO AYUDAS — canastas MLI
+// ---------------------------------------------------------------------
+// Reemplaza la macro de Excel: se pega el correo de Lucas, se toman los
+// últimos precios del archivo de trades del mercado y sale el nocional en
+// USD por lado. MLI pide confirmar "long & short notionals", o sea CADA
+// LADO por separado; el neto es el que después se gira en FX.
+// El archivo de trades del mercado NO se guarda: es un insumo del momento.
+// =====================================================================
+let _preciosMercado = {};      // { nemo: {precio, hora} }
+let _mercadoRango = null;      // {desde, hasta} para saber si es intradía o cierre
+
+function cargarTradesMercado(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  const lector = new FileReader();
+  lector.onload = e => {
+    try{
+      procesarTradesMercado(String(e.target.result));
+    }catch(err){
+      document.getElementById('mercadoStatus').textContent = 'No se pudo leer el archivo: ' + err.message;
+    }
+  };
+  lector.readAsText(file, 'utf-8');
+}
+
+function procesarTradesMercado(texto){
+  // El export trae una primera línea suelta ("8620 Records exported.") antes
+  // del encabezado real, y viene ordenado del trade MÁS RECIENTE al más viejo:
+  // por eso la PRIMERA aparición de cada especie es su último precio.
+  const lineas = texto.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
+  const iHead = lineas.findIndex(l => /(^|,)\s*Time\s*,/.test(l) || l.startsWith('#,Time'));
+  if(iHead < 0) throw new Error('no encontré el encabezado (#,Time,Orderbook,...)');
+  const cols = lineas[iHead].split(',').map(c=>c.trim());
+  const iTime = cols.indexOf('Time'), iBook = cols.indexOf('Orderbook'),
+        iPx = cols.indexOf('TradePrice'), iQty = cols.indexOf('Quantity');
+
+  const partirCsv = l => {
+    const out=[]; let cur='', dentro=false;
+    for(const ch of l){
+      if(ch === '"'){ dentro = !dentro; continue; }
+      if(ch === ',' && !dentro){ out.push(cur); cur=''; continue; }
+      cur += ch;
+    }
+    out.push(cur); return out;
+  };
+  const num = v => Number(String(v||'').replace(/,/g,'')) || 0;
+
+  _preciosMercado = {};
+  let horas = [], n = 0;
+  for(let i = iHead+1; i < lineas.length; i++){
+    const c = partirCsv(lineas[i]);
+    const esp = String(c[iBook]||'').trim();
+    if(!esp) continue;
+    const px = num(c[iPx]); if(!px) continue;
+    horas.push(String(c[iTime]||'').trim());
+    n++;
+    if(!_preciosMercado[esp]) _preciosMercado[esp] = { precio: px, hora: String(c[iTime]||'').trim() };
+  }
+  horas.sort();
+  _mercadoRango = { desde: horas[0], hasta: horas[horas.length-1] };
+  const especies = Object.keys(_preciosMercado).length;
+  const cierre = _mercadoRango.hasta >= '15:55';
+  document.getElementById('mercadoStatus').innerHTML =
+    `${n.toLocaleString('es-CO')} trades · ${especies} especies · de ${_mercadoRango.desde} a ${_mercadoRango.hasta} ` +
+    `<span style="color:${cierre?'var(--buy,#22c55e)':'var(--amber,#f59e0b)'};">(${cierre?'parece cierre del día':'parece intradía'})</span>`;
+  recalcularCanasta();
+}
+
+// Parseo del correo de MLI. Se aceptan tabulaciones o varios espacios entre
+// columnas, porque al copiar de Outlook puede llegar de las dos formas.
+function parsearCanastaMLI(texto){
+  const t = String(texto||'');
+  const cap = re => { const m = t.match(re); return m ? m[1].trim() : ''; };
+  const cab = {
+    entity: cap(/Entity\s*:\s*(.+)/i),
+    stocks: cap(/Stocks\s*:\s*(.+)/i),
+    fx:     cap(/FX\s*:\s*(.+)/i),
+  };
+  const filas = [], ceros = [], sinPrecio = [];
+  t.split(/\r?\n/).forEach(linea => {
+    if(/BBG\s*Code/i.test(linea)) return;                 // encabezado
+    if(!/(CB\s+Equity)/i.test(linea)) return;             // solo filas de papeleta
+    const c = linea.split(/\t|\s{2,}/).map(x=>x.trim()).filter((x,i,a)=> !(x==='' && i===a.length-1));
+    // Estructura: [Side, Quantity, Ric, BBG Code]. Side puede venir vacío.
+    const bbg = c[c.length-1];
+    const ric = c[c.length-2] || '';
+    const qty = Number(String(c[c.length-3]||'').replace(/,/g,'')) || 0;
+    let side = c.length >= 4 ? String(c[0]).toUpperCase().replace(/[^BS]/g,'') : '';
+    const nemo = nemoCanonico(bbg, 'emsx');
+    if(qty <= 0){ ceros.push({nemo, ric, bbg}); return; }   // plantilla, no se opera
+    if(!side) side = 'B';
+    const px = _preciosMercado[nemo];
+    if(!px) sinPrecio.push(nemo);
+    filas.push({ side, qty, ric, bbg, nemo,
+                 precio: px ? px.precio : null, hora: px ? px.hora : null,
+                 manual: false });
+  });
+  return { cab, filas, ceros, sinPrecio };
+}
+
+let _canastaActual = null;
+
+function recalcularCanasta(){
+  const cont = document.getElementById('canastaResultado');
+  if(!cont) return;
+  const texto = (document.getElementById('canastaTexto')||{}).value || '';
+  if(!texto.trim()){ cont.innerHTML = ''; _canastaActual = null; return; }
+  const c = parsearCanastaMLI(texto);
+  // Los precios escritos a mano sobreviven al recálculo (por si una especie
+  // no aparece en el archivo del mercado).
+  const manuales = window._preciosManuales || (window._preciosManuales = {});
+  c.filas.forEach(f=>{ if(manuales[f.nemo] != null){ f.precio = manuales[f.nemo]; f.manual = true; f.hora = f.hora || 'manual'; } });
+  _canastaActual = c;
+  const usdcop = Number((document.getElementById('usdcopAyudas')||{}).value) || 0;
+
+  const lado = s => c.filas.filter(f=>f.side===s);
+  const resumen = s => {
+    const fs = lado(s);
+    const cop = fs.reduce((a,f)=> a + (f.precio ? f.qty*f.precio : 0), 0);
+    return { n: fs.length, acciones: fs.reduce((a,f)=>a+f.qty,0), cop, usd: usdcop ? cop/usdcop : 0 };
+  };
+  const B = resumen('B'), S = resumen('S');
+  const netoCop = B.cop - S.cop, netoUsd = usdcop ? netoCop/usdcop : 0;
+  const usdTxt = v => !usdcop ? '<span style="opacity:.4;">escribe el USDCOP</span>'
+                    : (Math.abs(v) >= 1e6 ? (v/1e6).toFixed(2)+'MM' : Math.round(v/1000)+'K');
+
+  cont.innerHTML = `
+    <div class="stat-cards" style="padding:8px 0 12px;">
+      <div class="stat-card"><div class="stat-label">Entity</div><div class="stat-value" style="font-size:16px;">${c.cab.entity||'—'}</div></div>
+      <div class="stat-card"><div class="stat-label">Stocks / FX</div><div class="stat-value" style="font-size:16px;">${(c.cab.stocks||'—')} + ${(c.cab.fx||'—')}</div></div>
+      <div class="stat-card"><div class="stat-label">Neto a girar</div><div class="stat-value ${netoCop>=0?'sell':'buy'}" style="font-size:16px;">${usdTxt(Math.abs(netoUsd))} ${netoCop>=0?'venta USD':'compra USD'}</div>
+        <div class="stat-label" style="opacity:.6;">${netoCop>=0?'compran acciones':'venden acciones'}</div></div>
+    </div>
+    <div class="blotter-wrap" style="margin-bottom:14px;">
+      <table><thead><tr><th></th><th class="num">Papeletas</th><th class="num">Acciones</th><th class="num">Valor COP</th><th class="num">USD</th></tr></thead>
+      <tbody>
+        <tr><td><b>Buys</b></td><td class="num">${B.n||'—'}</td><td class="num">${B.n?fmtInt(B.acciones):'—'}</td><td class="num">${B.n?fmtMoney(B.cop):'—'}</td><td class="num"><b>${B.n?usdTxt(B.usd):'—'}</b></td></tr>
+        <tr><td><b>Sells</b></td><td class="num">${S.n||'—'}</td><td class="num">${S.n?fmtInt(S.acciones):'—'}</td><td class="num">${S.n?fmtMoney(S.cop):'—'}</td><td class="num"><b>${S.n?usdTxt(S.usd):'—'}</b></td></tr>
+        <tr style="border-top:2px solid var(--border,#2a2f3a);"><td><b>Neto</b></td><td class="num">—</td><td class="num">—</td><td class="num">${fmtMoney(Math.abs(netoCop))}</td><td class="num"><b>${usdTxt(Math.abs(netoUsd))}</b></td></tr>
+      </tbody></table>
+    </div>
+    ${c.sinPrecio.length ? `<div class="field-note" style="color:var(--amber,#f59e0b);margin-bottom:8px;">
+      ⚠ Sin precio en el archivo del mercado: ${c.sinPrecio.join(', ')} — escríbelo abajo para completar el total.</div>` : ''}
+    <div class="blotter-wrap">
+      <table><thead><tr><th>Lado</th><th class="num">Cantidad</th><th>RIC</th><th>Especie</th><th class="num">Último precio</th><th>Hora</th><th class="num">Valor COP</th></tr></thead>
+      <tbody>${c.filas.map(f=>`<tr>
+        <td>${f.side==='B'?'<span class="side-badge buy">Compra</span>':'<span class="side-badge sell">Venta</span>'}</td>
+        <td class="num">${fmtInt(f.qty)}</td>
+        <td class="mono-id">${f.ric}</td>
+        <td class="mono-id">${f.nemo}</td>
+        <td class="num">${f.precio!=null
+          ? (f.manual ? '<span style="color:var(--amber,#f59e0b);">'+fmtRate(f.precio)+'</span>' : fmtRate(f.precio))
+          : `<input type="number" step="0.01" placeholder="escribir" onchange="fijarPrecioManual('${f.nemo}', this.value)" style="width:100px;">`}</td>
+        <td>${f.hora||'—'}</td>
+        <td class="num">${f.precio!=null?fmtMoney(f.qty*f.precio):'—'}</td>
+      </tr>`).join('')}
+      ${c.ceros.length ? `<tr><td colspan="7" class="field-note" style="opacity:.6;">Descartadas por cantidad 0.00: ${c.ceros.map(x=>x.nemo).join(', ')}</td></tr>` : ''}
+      </tbody></table>
+    </div>`;
+}
+
+// --- Canastas pendientes de tasa -------------------------------------
+// Entre que llega la canasta y Sergio cierra la tasa pueden pasar horas, así
+// que el pendiente vive en Supabase: un refresco no puede obligar a rehacer
+// el cálculo.
+let _canastasPendientes = [];
+
+async function cargarCanastasPendientes(){
+  try{
+    _canastasPendientes = await supaFetch('canastas_mli', `fecha=eq.${_hoyISO()}&order=creado_en.desc&limit=200`);
+  }catch(e){
+    console.warn('No se pudo cargar canastas_mli (¿falta crear la tabla?):', e.message);
+    _canastasPendientes = [];
+  }
+  renderCanastasPendientes();
+}
+
+async function dejarCanastaPendiente(){
+  const c = _canastaActual;
+  if(!c || c.filas.length === 0){ alert('No hay canasta para dejar pendiente.'); return; }
+  const usdcop = Number((document.getElementById('usdcopAyudas')||{}).value) || 0;
+  if(!usdcop){ alert('Escribe el USDCOP antes de dejarla pendiente: es lo que define el nocional.'); return; }
+  const sinPx = c.filas.filter(f => f.precio == null);
+  if(sinPx.length){ alert(`Faltan precios: ${sinPx.map(f=>f.nemo).join(', ')}. Escríbelos antes de dejarla pendiente.`); return; }
+
+  const lado = sd => { const fs = c.filas.filter(f=>f.side===sd);
+    const cop = fs.reduce((a,f)=>a+f.qty*f.precio,0);
+    return { papeletas: fs.length, acciones: fs.reduce((a,f)=>a+f.qty,0), cop, usd: cop/usdcop }; };
+  const fila = {
+    fecha: _hoyISO(),
+    entity: c.cab.entity || 'MLI',
+    stocks: c.cab.stocks || '', fx_tipo: c.cab.fx || 'WMCO',
+    usdcop,
+    buys: lado('B'), sells: lado('S'),
+    detalle: c.filas.map(f=>({side:f.side, qty:f.qty, nemo:f.nemo, ric:f.ric, precio:f.precio, hora:f.hora})),
+    estado: 'pendiente',
+    creado_en: new Date().toISOString(),
+  };
+  try{
+    const res = await fetch(`${SUPA_URL}/rest/v1/canastas_mli`, {
+      method:'POST',
+      headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
+                'Content-Type':'application/json', 'Prefer':'return=representation' },
+      body: JSON.stringify([fila]),
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status+' '+await res.text().catch(()=>''));
+    const guardadas = await res.json();
+    _canastasPendientes = guardadas.concat(_canastasPendientes);
+  }catch(e){
+    console.error('No se pudo guardar la canasta:', e);
+    alert('La canasta NO se guardó en Supabase, así que se perdería al recargar.\n\nDetalle: '+e.message);
+    _canastasPendientes = [fila].concat(_canastasPendientes);
+  }
+  document.getElementById('canastaTexto').value = '';
+  window._preciosManuales = {};
+  recalcularCanasta();
+  renderCanastasPendientes();
+}
+
+function renderCanastasPendientes(){
+  const cont = document.getElementById('canastasPendientes');
+  if(!cont) return;
+  const pend = _canastasPendientes.filter(c => c.estado === 'pendiente');
+  if(pend.length === 0){ cont.innerHTML = '<div class="empty-state" style="padding:16px 0;">Sin canastas pendientes de tasa.</div>'; return; }
+  const usdTxt = v => Math.abs(v) >= 1e6 ? (v/1e6).toFixed(2)+'MM' : Math.round(v/1000)+'K';
+  cont.innerHTML = pend.map(c=>{
+    const b = c.buys||{}, sv = c.sells||{};
+    return `<div class="blotter-wrap" style="margin-bottom:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);">
+        <strong>${c.entity||'MLI'} · ${c.stocks||''}${c.fx_tipo?' + '+c.fx_tipo:''}</strong>
+        <span class="field-note">${String(c.creado_en||'').slice(11,19)} · USDCOP ${fmtRate(c.usdcop)}</span>
+      </div>
+      <table><thead><tr><th>Lado acciones</th><th class="num">Papeletas</th><th class="num">Acciones</th><th class="num">Valor COP</th><th class="num">USD</th><th>Genera en FX</th></tr></thead>
+      <tbody>
+        ${b.papeletas ? `<tr><td>Buys</td><td class="num">${b.papeletas}</td><td class="num">${fmtInt(b.acciones)}</td><td class="num">${fmtMoney(b.cop)}</td><td class="num"><b>${usdTxt(b.usd)}</b></td><td><span class="side-badge sell">Venta USD</span></td></tr>`:''}
+        ${sv.papeletas ? `<tr><td>Sells</td><td class="num">${sv.papeletas}</td><td class="num">${fmtInt(sv.acciones)}</td><td class="num">${fmtMoney(sv.cop)}</td><td class="num"><b>${usdTxt(sv.usd)}</b></td><td><span class="side-badge buy">Compra USD</span></td></tr>`:''}
+      </tbody></table>
+      <div style="padding:12px 14px;display:flex;align-items:end;gap:10px;flex-wrap:wrap;">
+        <div class="tb-field"><label>Tasa ejecutada en mercado</label>
+          <input type="number" step="0.01" id="spot_${c.id}" placeholder="a cómo ejecuté" style="width:150px;"></div>
+        <div class="tb-field"><label>Tasa WMCO al cliente</label>
+          <input type="number" step="0.01" id="wmco_${c.id}" placeholder="a cómo salió el WMCO" style="width:160px;"></div>
+        <button class="btn small" onclick="cerrarCanastaYRegistrar(${c.id})">Registrar en FX</button>
+        <button class="btn small ghost" onclick="descartarCanasta(${c.id})">Descartar</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Cierra la canasta y crea las operaciones de FX. DOS líneas cuando la canasta
+// trae los dos lados: una por los Buys de acciones (venta de USD) y otra por
+// los Sells (compra de USD). Se cierra por el neto, pero cada lado queda
+// registrado por separado.
+async function cerrarCanastaYRegistrar(id){
+  const c = _canastasPendientes.find(x=>String(x.id)===String(id));
+  if(!c) return;
+  const spotReal = Number((document.getElementById('spot_'+id)||{}).value) || 0;
+  const rateUnica = Number((document.getElementById('wmco_'+id)||{}).value) || 0;
+  if(!spotReal || !rateUnica){ alert('Escribe las dos tasas: la ejecutada en el mercado y la del WMCO.'); return; }
+
+  const td = document.getElementById('tradeDate').value;
+  const sd = document.getElementById('settleDate').value;
+  const nochesT0 = (td && sd) ? Math.round((new Date(sd)-new Date(td))/86400000) : 0;
+  const ptsVenta = parseFloat(String(document.getElementById('ptsVenta').value).replace(',','.'))||0;
+  const ptsCompra = parseFloat(String(document.getElementById('ptsCompra').value).replace(',','.'))||0;
+  const hora = new Date().toLocaleTimeString('es-CO', {timeZone:'America/Bogota', hour12:false});
+
+  // Buys de acciones -> el cliente necesita COP -> nos VENDE USD... el registro
+  // se hace desde nuestra óptica igual que hoy lo hace Sergio a mano: compran
+  // acciones = venta de USD.
+  const lineas = [];
+  if(c.buys && c.buys.papeletas) lineas.push({side:'SELL', amount: Math.round(c.buys.usd)});
+  if(c.sells && c.sells.papeletas) lineas.push({side:'BUY', amount: Math.round(c.sells.usd)});
+
+  lineas.forEach((l, i)=>{
+    const op = {
+      id: Date.now() + i,
+      horaRegistro: hora,
+      tradeDate: td, settleDate: sd,
+      modelo: 'UNICA_WMCO',
+      cliente: 'MLI',
+      tipoOperacion: 'WMCO',
+      side: l.side,
+      amount: l.amount,
+      noches: nochesT0,
+      params: { rateUnica, spotReal, ptsVenta, ptsCompra, nochesT0 },
+      trader: 'JAJ',
+      origen: 'manual',
+      emailsOrigen: null,
+      verificado: false,
+    };
+    operaciones.unshift(op);
+    if(typeof guardarOperacionSupabase === 'function') guardarOperacionSupabase(op);
+  });
+
+  c.estado = 'cerrada';
+  try{
+    await fetch(`${SUPA_URL}/rest/v1/canastas_mli?id=eq.${c.id}`, {
+      method:'PATCH',
+      headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`, 'Content-Type':'application/json', 'Prefer':'return=minimal' },
+      body: JSON.stringify({estado:'cerrada', cerrado_en:new Date().toISOString()}),
+    });
+  }catch(e){ console.error('No se pudo marcar la canasta como cerrada:', e); }
+
+  renderCanastasPendientes();
+  if(typeof renderHistory === 'function') renderHistory();
+  avisoExito(`${lineas.length} operación(es) registrada(s) en FX`,
+    lineas.map(l=>`${l.side==='SELL'?'Venta':'Compra'} USD ${fmtInt(l.amount)}`).join(' · ') +
+    `<br><span style="opacity:.7;">WMCO ${fmtRate(rateUnica)} · mercado ${fmtRate(spotReal)} · receptor JAJ (editable en FX)</span>`);
+}
+
+async function descartarCanasta(id){
+  if(!confirm('¿Descartar esta canasta? No se registra nada en FX.')) return;
+  const c = _canastasPendientes.find(x=>String(x.id)===String(id));
+  if(c) c.estado = 'descartada';
+  try{
+    await fetch(`${SUPA_URL}/rest/v1/canastas_mli?id=eq.${id}`, {
+      method:'PATCH',
+      headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`, 'Content-Type':'application/json', 'Prefer':'return=minimal' },
+      body: JSON.stringify({estado:'descartada'}),
+    });
+  }catch(e){ console.error(e); }
+  renderCanastasPendientes();
+}
+
+function fijarPrecioManual(nemo, valor){
+  const v = Number(valor);
+  if(!v) return;
+  (window._preciosManuales || (window._preciosManuales = {}))[nemo] = v;
+  recalcularCanasta();
+}
+
 function renderModuloReportes(){
   const resumen = document.getElementById('reportesResumen');
   if(!document.getElementById('repRVL')) return;
@@ -10023,7 +10391,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-10 15:11 UTC';
+const BUILD_ID = '2026-08-10 18:37 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -10031,6 +10399,7 @@ try{
 }catch(e){}
 
 cargarLineasNoReportar().then(cargarReportesGenerados);
+cargarCanastasPendientes();
 cargarEmsxCBDesdeSupabase();
 cargarFidessaDesdeSupabase();
 // RVI
