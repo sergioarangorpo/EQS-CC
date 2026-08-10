@@ -9366,9 +9366,20 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
   const HEADERS = ['REGISTRO','CUMPLIMIENTO','PORTAFOLIO','NIT','CONTRAPARTE','C/V','ESPECIE','MONEDA',
                     'CANTIDAD','PRECIO','MONTO BRUTO','COM%','COM$$','IVA%','IVA$$','MONTO NETO','MONTO NETO Planilla','dif'];
 
+  // Las fechas llegan como texto "2026-08-10" (value de un input date). Si se
+  // escriben así, Excel las guarda como TEXTO y el formato dd/mm/yyyy no hace
+  // nada: el cliente ve 2026-08-10. Hay que escribir un Date de verdad, a
+  // medianoche LOCAL (new Date("2026-08-10") lo interpreta como UTC y en
+  // Colombia queda el día anterior).
+  const aFecha = v => {
+    if(v instanceof Date) return v;
+    const m = String(v||'').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? new Date(Number(m[1]), Number(m[2])-1, Number(m[3])) : v;
+  };
+
   function construirFilaBase(portafolioObj, especie, lado, cantidad, precio, comPct, comMonto, ivaMonto, montoNeto, fechaReg, fechaCum){
     return [
-      fechaReg, fechaCum, portafolioObj.nombre, portafolioObj.nit || '', 'CREDICORP CAPITAL', lado,
+      aFecha(fechaReg), aFecha(fechaCum), portafolioObj.nombre, portafolioObj.nit || '', 'CREDICORP CAPITAL', lado,
       nemoCanonico(especie), 'COP', cantidad, precio, cantidad*precio, comPct, comMonto,
       portafolioObj.iva ? 0.19 : 0, ivaMonto, montoNeto, null, null,
     ];
@@ -9378,7 +9389,19 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Hoja1');
     const todosHeaders = [filaEncabezadoExtra, ...HEADERS];
-    todosHeaders.forEach((h, col) => { ws.getCell(1, col+1).value = h; });
+    todosHeaders.forEach((h, col) => {
+      const c = ws.getCell(1, col+1);
+      c.value = h;
+      // Encabezado con formato: fondo azul oscuro, letra blanca en negrita,
+      // centrado y con borde. Sin esto la hoja llega en blanco y negro.
+      c.font = { bold:true, color:{argb:'FFFFFFFF'}, size:10, name:'Calibri' };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF1F3864'} };
+      c.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+      c.border = { top:{style:'thin',color:{argb:'FF000000'}}, left:{style:'thin',color:{argb:'FF000000'}},
+                   bottom:{style:'thin',color:{argb:'FF000000'}}, right:{style:'thin',color:{argb:'FF000000'}} };
+    });
+    ws.getRow(1).height = 28;
+    ws.views = [{ state:'frozen', ySplit:1 }];   // el encabezado queda fijo al scrollear
     filas.forEach((f, filaIdx) => {
       f.forEach((valor, col) => { ws.getCell(filaIdx+2, col+1).value = valor; });
     });
@@ -10709,7 +10732,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-10 22:28 UTC';
+const BUILD_ID = '2026-08-10 22:37 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
