@@ -8026,12 +8026,11 @@ async function generarReporte(){
     loteDet.push(fila);
   });
 
-  // Quitar de la bandeja de folios pendientes los que ya quedaron reportados,
-  // igual que en FX: un folio ya asignado no puede volver a seleccionarse
-  // ni reportarse por accidente.
-  const idsUsados = new Set(seleccionados.map(f=>f.id));
-  foliosFidessa = foliosFidessa.filter(f=>!idsUsados.has(f.id));
-
+  // NO se borran los folios reportados. El modelo es el mismo del camino
+  // genérico: reportar NO consume la línea. El cliente puede pedir el
+  // consolidado del día (COLFONDOS: primero ECOPETROL, después el acumulado
+  // con PFGRUPOARG), y si los folios desaparecieran habría que recargar los
+  // archivos de Fidessa. Lo que queda es el REGISTRO en el módulo Reportes.
   renderHistoryRVL();
 
   // Limpiar selección y allocations tras registrar, igual que en FX
@@ -8049,7 +8048,22 @@ async function generarReporte(){
   // texto prometía "Genera Operaciones_CLIENTE... y agrega al Detalle...".
   const formato = getClienteDB(cliente).formatoReporte;
   if(formato === 'colfondos'){
+    const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
+    const ok = await previsualizarReporte({
+      titulo: `${getClienteDB(cliente).nombre} — ${etiquetaVersion(version)}`,
+      archivo: `Operaciones_COLFONDOS_${(fechaReg||'').replace(/-/g,'')}${sufijoVersion(version)?' '+sufijoVersion(version):''}.xlsx  +  Detalle_operaciones`,
+      columnas: ['Portafolio','Especie','Lado','Cantidad','Precio','Com %'],
+      filas: loteOps.map(o=>[o.portafolio && o.portafolio.nombre ? o.portafolio.nombre : String(o.portafolio||''),
+                             o.especie, o.lado, fmtInt(o.cantidad), fmtRate(o.precio), (o.comPct*100).toFixed(4)+'%']),
+      totales: `${loteOps.length} portafolio(s) · ${fmtInt(loteOps.reduce((s,o)=>s+o.cantidad,0))} acciones · ${loteDet.length} folio(s) en el Detalle`,
+    });
+    if(!ok) return;
+    window._sufijoReporte = sufijoVersion(version);
     await generarReporteColfondos(cliente, loteOps, loteDet);
+    window._sufijoReporte = '';
+    const nuevas = await registrarLoteRVL(cliente, loteDet, version);
+    avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos Operaciones + Detalle');
+    renderFidessaTradesPanel();
   } else if(formato === 'andes_fxequity'){
     // ANDES: reporte unificado Equity + FX. Se arma el equity de los folios
     // seleccionados (agrupados por lado+especie con precio promedio) y se
@@ -8279,7 +8293,16 @@ function mostrarAprobacionProteccion(cliente, loteDet){
       }
     });
     modal.style.display = 'none';
+    // PROTECCIÓN conserva SU pantalla de aprobación (cantidad vs ejecutado,
+    // portafolios, trader editable). No se reemplaza por la previsualización
+    // genérica: hace más y es la que Sergio ya revisa a ojo.
+    const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
+    window._sufijoReporte = sufijoVersion(version);
     await generarReporteProteccion(cliente, loteDet);
+    window._sufijoReporte = '';
+    const nuevas = await registrarLoteRVL(cliente, loteDet, version);
+    avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos rtpcredicorp + credicorp');
+    renderFidessaTradesPanel();
   };
   modal.style.display = 'flex';
 }
@@ -8364,6 +8387,32 @@ function folioProteccion(tcn){
   const s = String(tcn == null ? '' : tcn).trim();
   if(!/^\d+$/.test(s)) return s;
   return PROTECCION_FOLIO_PREFIJO + s.padStart(6, '0');
+}
+
+// Registra en el módulo Reportes lo que acaba de generar el camino viejo
+// (PROTECCIÓN, COLFONDOS). Agrupa los folios del lote por su línea de Fidessa
+// Trades, que es la unidad del registro.
+async function registrarLoteRVL(cliente, loteDet, version){
+  const porOrden = {};
+  (loteDet||[]).forEach(f=>{
+    const k = String(f.parentOrderId || '');
+    if(!k) return;   // sin línea de Trades no hay nada que registrar
+    const o = porOrden[k] || (porOrden[k] = {parentOrderId:k, especie:f.especie, lado:f.lado, cantidad:0, bruto:0, comision:0});
+    o.cantidad += Number(f.cantidad)||0;
+    o.bruto    += (Number(f.cantidad)||0) * (Number(f.precio)||0);
+    o.comision += (Number(f.cantidad)||0) * (Number(f.precio)||0) * ((Number(f.comisionPct)||0)/100);
+  });
+  const lineas = Object.values(porOrden).map(o=>({...o, precio: o.cantidad>0 ? o.bruto/o.cantidad : 0}));
+  if(lineas.length === 0) return 0;
+  return await registrarReporte('RVL', getClienteDB(cliente).nombre, lineas, version);
+}
+
+function avisoLoteGenerado(cliente, loteDet, version, nuevas, archivos){
+  const qty = (loteDet||[]).reduce((s,f)=>s+(Number(f.cantidad)||0),0);
+  avisoExito(`Reporte generado — ${getClienteDB(cliente).nombre} · ${etiquetaVersion(version)}`,
+    `${(loteDet||[]).length} folio(s) · ${fmtInt(qty)} acciones · ${archivos}` +
+    (nuevas === 0 ? '<br><span style="opacity:.7;">Reenvío: ninguna línea nueva respecto a lo ya reportado.</span>'
+                  : `<br><span style="opacity:.7;">${nuevas} línea(s) nueva(s) en el registro de Reportes.</span>`));
 }
 
 async function generarReporteProteccion(cliente, loteDet){
@@ -8456,7 +8505,7 @@ async function generarReporteProteccion(cliente, loteDet){
     r++;
   });
 
-  const nombre = `rtpcredicorp_${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}.xlsx`;
+  const nombre = `rtpcredicorp_${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}${window._sufijoReporte ? ' ' + window._sufijoReporte : ''}.xlsx`;
   autofitColumnas(ws);
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
@@ -8552,7 +8601,7 @@ async function generarCredicorpProteccion(loteDet){
   const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `credicorp_${yyyymmdd}.xlsx`;
+  a.download = `credicorp_${yyyymmdd}${window._sufijoReporte ? ' ' + window._sufijoReporte : ''}.xlsx`;
   a.click();
   URL.revokeObjectURL(a.href);
 
@@ -8682,7 +8731,7 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
     i+1,
     ...construirFilaBase(op.portafolio, op.especie, op.lado, op.cantidad, op.precio, op.comPct, op.comMonto, op.ivaMonto, op.montoNeto, op.fechaReg, op.fechaCum),
   ]);
-  await descargarPlano(`Operaciones_COLFONDOS_${fechaSlug}.xlsx`, 'No.', filasOps);
+  await descargarPlano(`Operaciones_COLFONDOS_${fechaSlug}${window._sufijoReporte ? ' ' + window._sufijoReporte : ''}.xlsx`, 'No.', filasOps);
 
   // ---------- Detalle_operaciones_COLFONDOS (folio a folio) ----------
   // Los folios no traen su portafolio propio en nuestro modelo de datos hoy
@@ -8710,7 +8759,7 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
       ...construirFilaBase(op.portafolio, f.especie, f.lado, cantidad, f.precio, comPct, comMon, ivaMon, neto, f.fechaReg, f.fechaCum),
     ]);
   });
-  await descargarPlano(`Detalle_operaciones_COLFONDOS_${fechaSlug}.xlsx`, 'FOLIO', filasDet);
+  await descargarPlano(`Detalle_operaciones_COLFONDOS_${fechaSlug}${window._sufijoReporte ? ' ' + window._sufijoReporte : ''}.xlsx`, 'FOLIO', filasDet);
 }
 
 async function generarYDescargarReporteRVL(cliente){
@@ -9974,7 +10023,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-06 21:07 UTC';
+const BUILD_ID = '2026-08-10 15:11 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
