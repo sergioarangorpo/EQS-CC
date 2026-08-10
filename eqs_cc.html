@@ -2108,8 +2108,24 @@ async function cargarInboxDesdeSupabase() {
 }
 
 // Festivos CO + US (subset relevante para la demo)
-const festivosCO = ['2026-06-15','2026-07-13','2026-07-20','2026-08-07'];
-const festivosUS = ['2026-06-19','2026-07-04','2026-09-07'];
+// Calendario completo. Antes solo estaban 4 días de 2026 y faltaba, entre
+// otros, el 17-ago (la Asunción cae sábado 15 y por Ley Emiliani se corre al
+// lunes): un T+2 desde el jueves 13 caía en festivo. El cumplimiento no puede
+// caer en festivo CO ni US, así que ambas listas tienen que estar completas.
+// >>> VERIFICAR contra el calendario oficial de la BVC antes de fin de año.
+const festivosCO = [
+  // 2026 — Ley Emiliani aplicada (Pascua 2026 = 5-abr)
+  '2026-01-01','2026-01-12','2026-03-23','2026-04-02','2026-04-03','2026-05-01',
+  '2026-05-18','2026-06-08','2026-06-15','2026-06-29','2026-07-13','2026-07-20',
+  '2026-08-07','2026-08-17','2026-10-12','2026-11-02','2026-11-16','2026-12-08','2026-12-25',
+  // 2027 — para los cumplimientos de fin de año
+  '2027-01-01','2027-01-11',
+];
+const festivosUS = [
+  '2026-01-01','2026-01-19','2026-02-16','2026-05-25','2026-06-19','2026-07-03','2026-07-04',
+  '2026-09-07','2026-10-12','2026-11-11','2026-11-26','2026-12-25',
+  '2027-01-01','2027-01-18',
+];
 const festivos = new Set([...festivosCO, ...festivosUS]);
 
 function esHabil(d){
@@ -9498,9 +9514,14 @@ function tickClock(){
 function initDatesRVL(){
   const today = new Date().toISOString().slice(0,10);
   document.getElementById('fechaRegistro').value = today;
-  const d = new Date();
-  d.setDate(d.getDate()+4); // aprox T+2 habil para el ejemplo visual
-  document.getElementById('fechaCumplimiento').value = d.toISOString().slice(0,10);
+  // T+2 HÁBIL de verdad, con el calendario de festivos de Colombia. Antes esto
+  // sumaba 4 días CALENDARIO con un comentario que decía "aprox ... para el
+  // ejemplo visual": era un placeholder de los inicios que se quedó y salía en
+  // los reportes reales (10-ago daba cumplimiento 14-ago en vez de 12-ago).
+  const hoyLocal = new Date();
+  const cum = sumarDiasHabiles(new Date(hoyLocal.getFullYear(), hoyLocal.getMonth(), hoyLocal.getDate()), 2);
+  document.getElementById('fechaCumplimiento').value =
+    `${cum.getFullYear()}-${String(cum.getMonth()+1).padStart(2,'0')}-${String(cum.getDate()).padStart(2,'0')}`;
 }
 
 // =====================================================================
@@ -10543,7 +10564,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-10 19:11 UTC';
+const BUILD_ID = '2026-08-10 21:44 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
