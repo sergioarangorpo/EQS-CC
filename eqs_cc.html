@@ -8487,8 +8487,16 @@ async function generarReporte(){
   // PROTECCIÓN reporta TODOS sus folios (los marcados como bloque van a 0.15%);
   // no depende de la selección puntual. Los demás clientes sí usan la selección.
   const esProteccionRep = normalizarGrupo(cliente)==='PROTECCION' || (getClienteDB(cliente)||{}).formatoReporte==='proteccion';
-  const seleccionados = esProteccionRep ? filtrados.filter(f=>f.origen==='proteccion-directo') : filtrados.filter(f=>selectedFolios.has(f.id));
-  if(seleccionados.length===0){ alert(esProteccionRep ? 'No hay folios de PROTECCIÓN para reportar. Carga Fidessa Trades + Folios y filtra AFP PROTECCIÓN.' : 'Selecciona al menos un folio para generar el reporte (marca las líneas en la tabla de folios).'); return; }
+  // La selección de folios YA NO es obligatoria. Si el filtro de Client/Book
+  // deja un conjunto coherente y el arqueo cuadra, se reporta todo lo filtrado.
+  // Marcar folios sirve para dos cosas: ponerle comisión de bloque a alguno, o
+  // reportar a propósito solo una parte. Pedir la selección cuando la app ya
+  // tiene EMSX + Trades + Folios cuadrados era trabajo manual sin valor.
+  const marcados = filtrados.filter(f=>selectedFolios.has(f.id));
+  const seleccionados = esProteccionRep
+    ? filtrados.filter(f=>f.origen==='proteccion-directo')
+    : (marcados.length > 0 ? marcados : filtrados);
+  if(seleccionados.length===0){ alert(esProteccionRep ? 'No hay folios de PROTECCIÓN para reportar. Carga Fidessa Trades + Folios y filtra AFP PROTECCIÓN.' : 'No hay folios para este cliente con los filtros actuales.'); return; }
   if(frenarSiLadoSinOrden(seleccionados)) return;
 
   // Validación de coincidencia EMSX = Fidessa Trades = Fidessa Folios para
@@ -8519,6 +8527,32 @@ async function generarReporte(){
   // Se guarda el lote de ESTE reporte aparte (no solo en el histórico
   // acumulado) — algunos clientes como COLFONDOS piden un reporte por cada
   // orden que termina, no el acumulado del día completo.
+  // ---- Allocation automática desde EMSX -----------------------------
+  // Si el cliente reparte a portafolios y no hay allocation cargada a mano,
+  // se arma con los Account de las líneas de EMSX. Si no alcanza a cubrir la
+  // cantidad de los folios, NO se genera: se dice exactamente qué falta.
+  if(!esProteccionRep && (getClienteDB(cliente).portafolios||[]).length > 0 && allocations.length === 0){
+    const auto = allocDesdeEmsx(cliente, seleccionados);
+    if(auto.ok){
+      allocations = auto.allocations.map(a=>({ portId:a.portafolio.id, cantidad:a.cantidad }));
+      if(typeof renderAllocations === 'function') renderAllocations();
+    }else{
+      let msg = 'No se generó el reporte: falta el reparto a portafolios.\n\n';
+      if(auto.allocations.length === 0 && auto.faltan.length === 0){
+        msg += 'No encontré ninguna línea de EMSX con Account para ' + cliente +
+               ' en las especies filtradas. Asigna los portafolios a mano o pega la allocation del trader.';
+      }else if(auto.faltan.length){
+        msg += 'Estas cuentas de EMSX no corresponden a ningún portafolio del cliente: ' +
+               auto.faltan.join(', ') + '.\nHay que agregarlas a la base o asignar a mano.';
+      }else{
+        msg += 'El reparto de EMSX suma ' + fmtInt(auto.suma) + ' y los folios suman ' + fmtInt(auto.qtyFolios) +
+               ' (diferencia ' + fmtInt(auto.qtyFolios - auto.suma) + ').\n\nEMSX: ' + auto.detalle;
+      }
+      alert(msg);
+      return;
+    }
+  }
+
   const loteOps = [];
   const loteDet = [];
 
@@ -8944,6 +8978,99 @@ function nombreCortoSubcuenta(sub){
     });
   }
   return _NOMBRE_CORTO_DECEVAL[String(sub.deceval)] || sub.nombre || '';
+}
+
+// =====================================================================
+// ALLOCATION AUTOMÁTICA DESDE EMSX
+// ---------------------------------------------------------------------
+// Si el reparto ya viene en el Account de la línea de EMSX (COLFONDOS manda
+// FPO MAYOR RIESGO, CESANTIAS LP...), no tiene sentido pedirle a Sergio que
+// lo teclee otra vez: la app tiene el dato. Regla acordada el 10-ago:
+//   - arqueo Trades vs Folios cuadra  +  alloc completo en EMSX  -> genera
+//   - falta alloc o no cuadra                                    -> frena
+// Nunca se completa "a ojo": si la suma de los accounts de EMSX no da la
+// cantidad de los folios, no se asigna nada y se avisa qué falta.
+// =====================================================================
+function _normAcc(t){ return String(t||'').toUpperCase()
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')   // quita tildes: CESANTÍAS -> CESANTIAS
+  .replace(/[^A-Z0-9]/g,''); }
+
+// Cuentas de EMSX que NO se pueden deducir del nombre del portafolio y hay que
+// declarar. Ej: el cliente escribe 'CESANTIAS LP' y el portafolio se llama
+// 'COLFONDOS FONDO DE CESANTÍAS LARGO PLAZO' — LP contra LARGO PLAZO no cruza
+// por texto. Se agregan aquí a medida que aparezcan; si una cuenta no está y no
+// cruza sola, la app FRENA y la nombra, que es lo seguro.
+const ALIAS_CUENTA_PORTAFOLIO = {
+  'COLFONDOS': {
+    'CESANTIASLP': 'CESLP',
+    'CESANTIASLARGOPLAZO': 'CESLP',
+    'FPOMAYORRIESGO': 'FPO_MAYOR_RIESGO',
+    'FPOMODERADO': 'FPO_MODERADO',
+    'FPOCONSERVADOR': 'FPO_CONSERVADOR',
+    'FPORETIROPROGRAMADO': 'FPO_RETIRO_PROGRAMADO',
+    'FPVCLASSDINAMICO': 'DINAMICO',
+    'FPVCLASDINAMICO': 'DINAMICO',
+  },
+};
+
+function portafolioPorCuentaEmsx(cfg, cuenta){
+  const objetivo = _normAcc(cuenta);
+  if(!objetivo) return null;
+  const ports = cfg.portafolios || [];
+  // 0) alias declarado  1) por id  2) por nombre  3) por contención (el nombre
+  //    del portafolio suele traer el prefijo: "COLFONDOS - FPO MAYOR RIESGO").
+  // La llave del mapa se busca por contención: el cliente puede llamarse
+  // 'COLFONDOS SA' y la entrada estar como 'COLFONDOS'.
+  const nomNorm = _normAcc(cfg.nombre);
+  const claveAlias = Object.keys(ALIAS_CUENTA_PORTAFOLIO).find(k => nomNorm.includes(_normAcc(k)));
+  const alias = claveAlias ? ALIAS_CUENTA_PORTAFOLIO[claveAlias][objetivo] : null;
+  if(alias){ const p = ports.find(x => x.id === alias); if(p) return p; }
+  return ports.find(p => _normAcc(p.id) === objetivo)
+      || ports.find(p => _normAcc(p.nombre) === objetivo)
+      || ports.find(p => _normAcc(p.nombre).endsWith(objetivo))
+      || ports.find(p => _normAcc(p.nombre).includes(objetivo))
+      || null;
+}
+
+// Devuelve {ok, allocations, faltan, detalle} para los folios dados.
+function allocDesdeEmsx(cliente, folios){
+  const cfg = getClienteDB(cliente);
+  const porCuenta = {};      // cuenta EMSX -> cantidad
+  const combos = new Set(folios.map(f => f.especie + '|' + f.lado));
+  (_emsxCBCache || []).forEach(r => {
+    const especie = nemoCanonico(r.ticker || r.nombre_completo || '', 'emsx');
+    const lado = _ladoEmsxGlobal(r);
+    if(!combos.has(especie + '|' + lado)) return;
+    // La línea de EMSX tiene que ser de ESTE cliente.
+    const firm = String(r.originate_trader_firm || r.firm || '').toUpperCase();
+    const cuenta = String(r.account || '').trim();
+    const delCliente = normalizarGrupo(firm) === cliente
+      || _normAcc(firm).includes(_normAcc(cfg.nombre).slice(0,9))
+      || !!portafolioPorCuentaEmsx(cfg, cuenta);
+    if(!delCliente || !cuenta) return;
+    porCuenta[cuenta] = (porCuenta[cuenta] || 0) + (Number(r.filled) || 0);
+  });
+
+  const qtyFolios = folios.reduce((a,f)=>a+f.cantidad, 0);
+  const allocations = [];
+  const faltan = [];
+  Object.keys(porCuenta).forEach(cuenta=>{
+    const port = portafolioPorCuentaEmsx(cfg, cuenta);
+    if(!port){ faltan.push(cuenta); return; }
+    allocations.push({ portafolio: port, cantidad: porCuenta[cuenta] });
+  });
+  const suma = allocations.reduce((a,x)=>a+x.cantidad, 0);
+  return {
+    ok: allocations.length > 0 && faltan.length === 0 && suma === qtyFolios,
+    allocations, faltan, suma, qtyFolios,
+    detalle: Object.entries(porCuenta).map(([c,q])=>c+' '+fmtInt(q)).join(' · '),
+  };
+}
+
+// Mismo criterio de lado que usa el resto de la app (EMSX guarda `side`).
+function _ladoEmsxGlobal(r){
+  const s = String(r.side || '').trim().toUpperCase();
+  return s ? (s.startsWith('B') ? 'Compra' : 'Venta') : '';
 }
 
 async function registrarLoteRVL(cliente, loteDet, version){
@@ -10582,7 +10709,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-10 22:07 UTC';
+const BUILD_ID = '2026-08-10 22:28 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
