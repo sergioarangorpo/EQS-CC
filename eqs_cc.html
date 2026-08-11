@@ -7436,6 +7436,15 @@ function renderFolios(){
 // Habilita el botón grande "Generar reporte" de arriba solo cuando hay un
 // cliente y al menos un folio seleccionado. El despacho por tipo de cliente
 // (Andes / PROTECCIÓN / COLFONDOS / genérico) lo resuelve generarReporte().
+// Folios que entran al reporte: los marcados si hay marcas, y si no, TODOS los
+// filtrados. Es la misma regla que aplica generarReporte desde el 10-ago: si el
+// filtro y el arqueo están bien, no hay que marcar nada a mano.
+function foliosParaReportar(){
+  const filtrados = getFiltrados();
+  const marcados = filtrados.filter(f=>selectedFolios.has(f.id));
+  return marcados.length > 0 ? marcados : filtrados;
+}
+
 function actualizarBotonGenerar(){
   const btn = document.getElementById('btnGenerarTop');
   if(!btn) return;
@@ -7446,7 +7455,10 @@ function actualizarBotonGenerar(){
   // renderAllocations aquí para evitar recursión (renderAllocations→recalcularTodo
   // →actualizarBotonGenerar); el <div> de la lista se refresca aparte.
   if(cfg && cfg.autoPortafolio){
-    const totalSel = getFiltrados().filter(f=>selectedFolios.has(f.id)).reduce((s,f)=>s+f.cantidad,0);
+    // Antes esto se calculaba SOLO con los folios marcados, así que al no
+    // marcar nada la asignación quedaba en cero y el reporte se frenaba
+    // pidiendo un reparto que el cliente no necesita (caso ANDES, 11-ago).
+    const totalSel = foliosParaReportar().reduce((s,f)=>s+f.cantidad,0);
     allocations = totalSel > 0 ? [{ portId: cfg.autoPortafolio, cantidad: totalSel }] : [];
     pintarAllocList();
   }
@@ -7762,7 +7774,7 @@ function inicializarAllocationsDesdeCliente(){
   if(cfg && cfg.autoPortafolio){
     const port = (cfg.portafolios||[]).find(p=>p.id===cfg.autoPortafolio);
     if(port){
-      const totalSel = getFiltrados().filter(f=>selectedFolios.has(f.id)).reduce((s,f)=>s+f.cantidad,0);
+      const totalSel = foliosParaReportar().reduce((s,f)=>s+f.cantidad,0);
       allocations = [{ portId: port.id, cantidad: totalSel }];
     }
   }
@@ -8558,6 +8570,18 @@ async function generarReporte(){
   const _fmtCli = (getClienteDB(cliente)||{}).formatoReporte;
   const _necesitaAlloc = _fmtCli === 'colfondos' || _fmtCli === 'andes_fxequity';
   if(!esProteccionRep && _necesitaAlloc && (getClienteDB(cliente).portafolios||[]).length > 0 && allocations.length === 0){
+    // Cliente de portafolio único (ANDES): toda la cantidad va ahí, no hay
+    // nada que repartir ni que buscar en EMSX.
+    const _cfgAuto = getClienteDB(cliente);
+    if(_cfgAuto.autoPortafolio){
+      const p = (_cfgAuto.portafolios||[]).find(x=>x.id === _cfgAuto.autoPortafolio);
+      if(p){
+        allocations = [{ portId: p.id, cantidad: seleccionados.reduce((a,f)=>a+f.cantidad, 0) }];
+        if(typeof renderAllocations === 'function') renderAllocations();
+      }
+    }
+  }
+  if(!esProteccionRep && _necesitaAlloc && (getClienteDB(cliente).portafolios||[]).length > 0 && allocations.length === 0){
     const auto = allocDesdeEmsx(cliente, seleccionados);
     if(auto.ok){
       allocations = auto.allocations.map(a=>({ portId:a.portafolio.id, cantidad:a.cantidad }));
@@ -8683,6 +8707,9 @@ async function generarReporte(){
     // toman las operaciones FX de Andes del día. Antes de generar se muestra
     // un cuadro de verificación con ambos segmentos; solo genera si Sergio
     // confirma.
+    // Se guarda el contexto para poder REGISTRAR en Reportes cuando Sergio
+    // confirme: el modal de Andes es asíncrono y el registro va después.
+    window._andesCtx = { cliente, loteDet, seleccionados };
     mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum);
   } else if(formato === 'proteccion' || normalizarGrupo(cliente) === 'PROTECCION'){
     // PROTECCIÓN es el cliente principal: antes de generar se muestra una
@@ -8821,7 +8848,35 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
   btn.onclick = async () => {
     document.getElementById('modalVerifAndes').style.display = 'none';
     const rep = window._andesReporte;
+    const ctx = window._andesCtx || {};
+    const cliente = ctx.cliente || document.getElementById('filtroCliente').value;
+    const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
+    window._sufijoReporte = sufijoVersion(version);
     await generarExcelAndes(rep.eqLotes, rep.fxOps);
+    window._sufijoReporte = '';
+
+    // ANDES genera UN archivo con las dos patas, así que se registra en las dos
+    // secciones del módulo Reportes: RVL por los folios de equity y FX por las
+    // operaciones de divisas del día que van en el mismo Excel.
+    const nuevasRVL = await registrarLoteRVL(cliente, ctx.loteDet || [], version);
+    let nuevasFX = 0;
+    if(rep.fxOps && rep.fxOps.length){
+      const lineasFX = rep.fxOps.map(o=>({
+        parentOrderId: 'FX-' + o.id,          // la unidad en FX es la operación
+        especie: 'USDCOP', lado: o.side === 'BUY' ? 'Compra' : 'Venta',
+        cantidad: Number(o.amount) || 0,
+        precio: (()=>{ try { return calcularDesdeValores(o.modelo, o.side, o.amount, o.params).tasaFinalCliente || 0; }
+                       catch(e){ return (o.params && (o.params.rateUnica || o.params.rate)) || 0; } })(),
+        comision: 0,
+      }));
+      nuevasFX = await registrarReporte('FX', getClienteDB(cliente).nombre, lineasFX, version);
+    }
+    const qty = (ctx.loteDet||[]).reduce((a,f)=>a+(Number(f.cantidad)||0),0);
+    avisoExito(`Reporte generado — ${getClienteDB(cliente).nombre} · ${etiquetaVersion(version)}`,
+      `Equity: ${(ctx.loteDet||[]).length} folio(s) · ${fmtInt(qty)} acciones` +
+      (rep.fxOps && rep.fxOps.length ? `<br>FX: ${rep.fxOps.length} operación(es)` : '') +
+      `<br><span style="opacity:.7;">${nuevasRVL} línea(s) nueva(s) en RVL${nuevasFX?` · ${nuevasFX} en FX`:''}.</span>`);
+    renderFidessaTradesPanel();
   };
   document.getElementById('modalVerifAndes').style.display = 'flex';
 }
@@ -10930,7 +10985,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-11 15:08 UTC';
+const BUILD_ID = '2026-08-11 15:21 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
