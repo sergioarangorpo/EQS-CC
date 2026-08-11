@@ -702,6 +702,7 @@
 .mod-section.active { display:block; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
 <body>
 
@@ -1911,7 +1912,11 @@
         <input type="text" inputmode="decimal" id="infColcap" placeholder="2,372.50" oninput="renderInformeDiario()" onblur="formatInputAsNumber(this,2);renderInformeDiario()" style="width:130px;"></div>
       <div class="tb-field"><label>Variación COLCAP %</label>
         <input type="text" inputmode="decimal" id="infColcapVar" placeholder="0.94" oninput="renderInformeDiario()" style="width:140px;"></div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="infEnUSD" onchange="renderInformeDiario()"> Ver en USD</label>
       <button class="btn small" onclick="renderInformeDiario()">Actualizar informe</button>
+      <button class="btn small purple" onclick="descargarInformeImagen()">🖼 Descargar imagen</button>
+      <button class="btn small ghost" onclick="copiarInformeImagen()">Copiar al portapapeles</button>
       <button class="btn small ghost" onclick="guardarCierreDelDia()">Guardar cierre del día</button>
       <span class="field-note" id="cierreStatus"></span>
     </div>
@@ -7112,6 +7117,25 @@ function renderSpread(){
 // más trades que la de cierre (6-ago: apertura 371 vs cierre 316).
 // =====================================================================
 
+// Segmentación del mercado para el informe. Validado contra el informe real
+// del 10-ago: ETF locales da EXACTO (2.944.603.843).
+//   MGC  = Mercado Global Colombiano: los tickers que terminan en CO.
+//   ETF  = los locales listados abajo.
+//   Continuo = todo lo demás.
+// NUCO queda como MGC configurable: con NUCO adentro el MGC del 10-ago da
+// 7.763.514.760 contra los 7.738.120.740 del informe (25 MM de diferencia), y
+// sin NUCO da 5.666.275.460. Se deja la bandera para ajustarlo sin tocar código.
+const ETF_LOCALES = ['ICOLCAP','HCOLSEL','GXTESCOL','ICOLTES'];
+const NUCO_ES_MGC = true;
+
+function segmentoDe(nemo){
+  const e = String(nemo||'').toUpperCase();
+  if(ETF_LOCALES.includes(e)) return 'ETF';
+  if(e === 'NUCO') return NUCO_ES_MGC ? 'MGC' : 'CONTINUO';
+  if(/CO$/.test(e)) return 'MGC';
+  return 'CONTINUO';
+}
+
 function detectarSubastaCierre(){
   const tarde = _mercadoTrades.filter(t => t.hora >= '15:00');
   if(tarde.length === 0) return null;
@@ -7186,7 +7210,10 @@ function treemapVolumen(items, W, H){
       fila = cand; mejor = v;
     }
     const s = fila.reduce((a,it)=>a+it.valor, 0);
-    const grosor = (w >= h ? w : h) * (s/tot);
+    // Si esta franja consume TODO lo que queda, ocupa el ancho/alto completo.
+    // Sin esto el redondeo dejaba una banda vacía en el borde derecho.
+    const ultima = (i >= lista.length);
+    const grosor = ultima ? (w >= h ? w : h) : (w >= h ? w : h) * (s/tot);
     let off = 0;
     fila.forEach(it=>{
       const p = it.valor / s;
@@ -7289,6 +7316,40 @@ async function guardarCierreDelDia(){
   }
 }
 
+// Descarga del informe como PNG. Sergio hoy manda una captura de pantalla del
+// Excel; con esto sale el PNG ya recortado y en alta resolución, listo para
+// pegar en el correo. Se usa html2canvas (mismo CDN que ExcelJS).
+async function _informeACanvas(){
+  const el = document.getElementById('informeLienzo');
+  if(!el) throw new Error('genera primero el informe');
+  if(typeof html2canvas === 'undefined') throw new Error('no cargó html2canvas (revisa la conexión)');
+  return await html2canvas(el, { backgroundColor:'#0d0f14', scale:2, logging:false, useCORS:true });
+}
+
+async function descargarInformeImagen(){
+  try{
+    const canvas = await _informeACanvas();
+    const d = new Date();
+    const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+    const usd = (document.getElementById('infEnUSD')||{}).checked ? '_USD' : '';
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    a.download = `Informe_diario_${slug}${usd}.png`;
+    a.click();
+  }catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
+}
+
+async function copiarInformeImagen(){
+  try{
+    const canvas = await _informeACanvas();
+    const blob = await new Promise(r=>canvas.toBlob(r, 'image/png'));
+    await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+    avisoExito('Informe copiado', 'Pégalo directo en el correo con Ctrl+V.');
+  }catch(e){
+    alert('No se pudo copiar al portapapeles (' + e.message + ').\n\nUsa "Descargar imagen" y adjunta el PNG.');
+  }
+}
+
 function renderInformeDiario(){
   const cont = document.getElementById('informeDiario');
   if(!cont) return;
@@ -7300,41 +7361,81 @@ function renderInformeDiario(){
   const colcap    = num((document.getElementById('infColcap')||{}).value);
   const colcapVar = num((document.getElementById('infColcapVar')||{}).value);
   const usdcop    = num((document.getElementById('usdcopAyudas')||{}).value);
+  const enUSD     = !!(document.getElementById('infEnUSD')||{}).checked && usdcop > 0;
 
-  const cierres = _cierresAnteriores || {};   // { nemo: precio } del cierre anterior
+  // En modo USD los MONTOS se convierten; los PRECIOS de las acciones NO
+  // (siguen en pesos, que es como cotizan). Los porcentajes son iguales en
+  // ambos mundos.
+  const M = v => enUSD ? fmtMoney(v/usdcop) : fmtMoney(v);
+  const sufijo = enUSD ? ' USD' : ' COP';
+
+  const cierres = _cierresAnteriores || {};
   const hayHist = Object.keys(cierres).length > 0;
 
   const stats = Object.values(_mercadoStats).map(d=>{
-    // Variación contra el cierre ANTERIOR si ya lo tenemos guardado; si no,
-    // intradía (último contra el primero del día). Se marca cuál es cuál para
-    // no hacer pasar una por la otra.
     const base = cierres[d.esp] || d.primero;
     const bYtd = _CIERRE_YTD[d.esp], bMtd = _CIERRE_MTD[d.esp];
     return { ...d, base, varPct: base ? (d.ultimo/base - 1)*100 : 0,
-             esIntradia: !cierres[d.esp],
+             esIntradia: !cierres[d.esp], seg: segmentoDe(d.esp),
              mtd: bMtd ? (d.ultimo/bMtd - 1)*100 : null,
              ytd: bYtd ? (d.ultimo/bYtd - 1)*100 : null };
   });
   const total = stats.reduce((a,d)=>a+d.monto, 0);
-  const porVol = stats.slice().sort((a,b)=>b.monto-a.monto);
-  const conMov = stats.filter(d=>d.trades >= 5);           // ruido fuera
-  const suben  = conMov.slice().sort((a,b)=>b.varPct-a.varPct).slice(0,5);
-  const bajan  = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,5);
   const subasta = detectarSubastaCierre();
+  const volSub = subasta ? subasta.monto : 0;
+  const volMGC = stats.filter(d=>d.seg==='MGC').reduce((a,d)=>a+d.monto,0);
+  const volETF = stats.filter(d=>d.seg==='ETF').reduce((a,d)=>a+d.monto,0);
+  const volCont = total - volMGC - volETF;
+
+  const porVol = stats.slice().sort((a,b)=>b.monto-a.monto);
   const horaMax = _mercadoRango ? _mercadoRango.hasta : '';
   const esCierre = horaMax >= '15:55';
-
-  const tmItems = porVol.slice(0,18).map(d=>({ nombre:d.esp, valor:d.monto, varPct:d.varPct }));
   const fecha = new Date().toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   const pct = v => `<span style="color:${v>=0?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};">${v>=0?'+':''}${v.toFixed(2)}%</span>`;
 
+  // Bloque de movimientos + volumen para un segmento dado.
+  const bloqueSegmento = (titulo, filtro, nTree)=>{
+    const gs = stats.filter(filtro);
+    if(gs.length === 0) return '';
+    const totSeg = gs.reduce((a,d)=>a+d.monto,0);
+    const conMov = gs.filter(d=>d.trades >= 5);
+    const suben = conMov.slice().sort((a,b)=>b.varPct-a.varPct).slice(0,5);
+    const bajan = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,5);
+    const vol = gs.slice().sort((a,b)=>b.monto-a.monto).slice(0,8);
+    const linea = d=>`<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;font-size:12px;">
+        <span style="width:104px;font-family:var(--mono,monospace);">${d.esp}</span>
+        <span style="width:64px;text-align:right;">${pct(d.varPct)}</span>
+        <span style="width:82px;text-align:right;opacity:.8;">${fmtRate(d.ultimo)}</span>
+        ${sparkline(d.serie, d.varPct)}</div>`;
+    return `
+    <div style="border:1px solid var(--border,#2a2f3a);border-radius:8px;padding:14px;margin-top:16px;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;">
+        <div style="font-size:13px;font-weight:700;letter-spacing:.4px;">${titulo}</div>
+        <div class="field-note">${M(totSeg)}${sufijo} · ${gs.length} especies · ${(totSeg/total*100).toFixed(1)}% del día</div>
+      </div>
+      ${nTree ? treemapVolumen(vol.slice(0,nTree).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 960, 150) : ''}
+      <div style="display:flex;gap:22px;flex-wrap:wrap;margin-top:${nTree?14:0}px;">
+        <div style="flex:1;min-width:290px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:.4px;opacity:.7;margin-bottom:6px;">LO QUE MÁS SUBIÓ</div>
+          ${suben.map(linea).join('')}
+          <div style="font-size:11px;font-weight:700;letter-spacing:.4px;opacity:.7;margin:12px 0 6px;">LO QUE MÁS BAJÓ</div>
+          ${bajan.map(linea).join('')}
+        </div>
+        <div style="flex:1;min-width:310px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:.4px;opacity:.7;margin-bottom:6px;">DÓNDE ESTUVO EL VOLUMEN</div>
+          ${barrasVolumen(vol.map(d=>({nombre:d.esp, valor: enUSD ? d.monto/usdcop : d.monto})), enUSD ? totSeg/usdcop : totSeg)}
+        </div>
+      </div>
+    </div>`;
+  };
+
   cont.innerHTML = `
     ${!esCierre ? `<div style="background:rgba(245,158,11,.12);border:1px solid var(--amber,#f59e0b);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12px;">
-      ⚠ El archivo cargado llega hasta las ${horaMax}, así que <b>todavía no hay subasta de cierre</b>. El informe sale incompleto: vuelve a cargarlo después del cierre.</div>` : ''}
+      ⚠ El archivo cargado llega hasta las ${horaMax}, así que <b>todavía no hay subasta de cierre</b>. Vuelve a cargarlo después del cierre.</div>` : ''}
 
     <div id="informeLienzo" style="background:#0d0f14;border:1px solid var(--border,#2a2f3a);border-radius:10px;padding:22px;">
       <div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:2px solid var(--accent,#818cf8);padding-bottom:10px;margin-bottom:16px;">
-        <div><div style="font-size:19px;font-weight:800;letter-spacing:-.3px;">Informe diario de mercado</div>
+        <div><div style="font-size:19px;font-weight:800;letter-spacing:-.3px;">Informe diario de mercado${enUSD?' · USD':''}</div>
              <div class="field-note" style="text-transform:capitalize;">${fecha}</div></div>
         <div style="text-align:right;">
           <div style="font-size:11px;opacity:.6;">COLCAP</div>
@@ -7343,44 +7444,29 @@ function renderInformeDiario(){
         </div>
       </div>
 
-      <div class="stat-cards" style="padding:0 0 16px;">
+      <div class="stat-cards" style="padding:0 0 6px;">
         <div class="stat-card"><div class="stat-label">Volumen total</div>
-          <div class="stat-value" style="font-size:18px;">${fmtMoney(total)}</div>
-          <div class="stat-label" style="opacity:.6;">${usdcop? 'USD '+(total/usdcop/1e6).toFixed(1)+' MM' : 'escribe el USDCOP'}</div></div>
+          <div class="stat-value" style="font-size:17px;">${M(total)}</div>
+          <div class="stat-label" style="opacity:.6;">${enUSD?'USD':'COP'}${!enUSD&&usdcop?' · USD '+(total/usdcop/1e6).toFixed(1)+' MM':''}</div></div>
+        <div class="stat-card"><div class="stat-label">Mercado continuo</div>
+          <div class="stat-value" style="font-size:17px;">${M(volCont)}</div>
+          <div class="stat-label" style="opacity:.6;">${(volCont/total*100).toFixed(1)}% del día</div></div>
         <div class="stat-card"><div class="stat-label">Subasta de cierre</div>
-          <div class="stat-value" style="font-size:18px;">${subasta? fmtMoney(subasta.monto) : '—'}</div>
-          <div class="stat-label" style="opacity:.6;">${subasta? subasta.hora+' · '+subasta.especies.length+' especies' : 'sin subasta en el archivo'}</div></div>
-        <div class="stat-card"><div class="stat-label">Especies negociadas</div>
-          <div class="stat-value" style="font-size:18px;">${stats.length}</div>
-          <div class="stat-label" style="opacity:.6;">${_mercadoTrades.length.toLocaleString('es-CO')} trades</div></div>
-        <div class="stat-card"><div class="stat-label">Concentración</div>
-          <div class="stat-value" style="font-size:18px;">${(porVol[0].monto/total*100).toFixed(0)}%</div>
-          <div class="stat-label" style="opacity:.6;">en ${porVol[0].esp}</div></div>
+          <div class="stat-value" style="font-size:17px;">${subasta? M(volSub) : '—'}</div>
+          <div class="stat-label" style="opacity:.6;">${subasta? subasta.hora+' · '+(volSub/total*100).toFixed(1)+'%' : 'sin subasta'}</div></div>
+        <div class="stat-card"><div class="stat-label">MGC</div>
+          <div class="stat-value" style="font-size:17px;">${M(volMGC)}</div>
+          <div class="stat-label" style="opacity:.6;">${(volMGC/total*100).toFixed(1)}% del día</div></div>
+        <div class="stat-card"><div class="stat-label">ETFs</div>
+          <div class="stat-value" style="font-size:17px;">${M(volETF)}</div>
+          <div class="stat-label" style="opacity:.6;">${(volETF/total*100).toFixed(1)}% del día</div></div>
       </div>
 
-      <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:6px 0 8px;">MAPA DEL MERCADO — tamaño por volumen, color por variación</div>
-      ${treemapVolumen(tmItems, 980, 260)}
+      <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:14px 0 8px;">MAPA DEL MERCADO — tamaño por volumen, color por variación</div>
+      ${treemapVolumen(porVol.slice(0,22).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 960, 260)}
 
-      <div style="display:flex;gap:22px;margin-top:20px;flex-wrap:wrap;">
-        <div style="flex:1;min-width:300px;">
-          <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:8px;">LO QUE MÁS SUBIÓ</div>
-          ${suben.map(d=>`<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;font-size:12px;">
-            <span style="width:96px;font-family:var(--mono,monospace);">${d.esp}</span>
-            <span style="width:64px;text-align:right;">${pct(d.varPct)}</span>
-            <span style="width:78px;text-align:right;opacity:.8;">${fmtRate(d.ultimo)}</span>
-            ${sparkline(d.serie, d.varPct)}</div>`).join('')}
-          <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:14px 0 8px;">LO QUE MÁS BAJÓ</div>
-          ${bajan.map(d=>`<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;font-size:12px;">
-            <span style="width:96px;font-family:var(--mono,monospace);">${d.esp}</span>
-            <span style="width:64px;text-align:right;">${pct(d.varPct)}</span>
-            <span style="width:78px;text-align:right;opacity:.8;">${fmtRate(d.ultimo)}</span>
-            ${sparkline(d.serie, d.varPct)}</div>`).join('')}
-        </div>
-        <div style="flex:1;min-width:320px;">
-          <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:8px;">DÓNDE ESTUVO EL VOLUMEN</div>
-          ${barrasVolumen(porVol.slice(0,8).map(d=>({nombre:d.esp, valor:d.monto})), total)}
-        </div>
-      </div>
+      ${bloqueSegmento('MERCADO CONTINUO', d=>d.seg==='CONTINUO', 0)}
+      ${bloqueSegmento('MERCADO GLOBAL COLOMBIANO (MGC)', d=>d.seg==='MGC', 10)}
 
       <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:20px 0 8px;">
         RESUMEN DEL CONTINUO${hayHist? '' : ' — variación intradía (aún no hay cierre anterior guardado)'}</div>
@@ -7388,7 +7474,7 @@ function renderInformeDiario(){
         <th>Especie</th><th class="num">Último</th><th class="num">Var %</th><th class="num">MTD</th><th class="num">YTD</th>
         <th class="num">Mín</th><th class="num">Máx</th><th class="num">VWAP</th><th class="num">Volumen</th><th>Intradía</th>
       </tr></thead><tbody>
-      ${porVol.slice(0,20).map(d=>`<tr>
+      ${porVol.filter(d=>d.seg!=='MGC').slice(0,20).map(d=>`<tr>
         <td class="mono-id">${d.esp}</td>
         <td class="num">${fmtRate(d.ultimo)}</td>
         <td class="num">${pct(d.varPct)}</td>
@@ -7397,22 +7483,22 @@ function renderInformeDiario(){
         <td class="num" style="opacity:.7;">${fmtRate(d.min)}</td>
         <td class="num" style="opacity:.7;">${fmtRate(d.max)}</td>
         <td class="num">${fmtRate(d.monto/d.qty)}</td>
-        <td class="num">${fmtMoney(d.monto)}</td>
+        <td class="num">${M(d.monto)}</td>
         <td>${sparkline(d.serie, d.varPct, 110, 20)}</td>
       </tr>`).join('')}
       </tbody></table></div>
 
       ${subasta ? `
       <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:20px 0 8px;">
-        SUBASTA DE CIERRE — ${subasta.hora} · ${subasta.nTrades} trades</div>
+        SUBASTA DE CIERRE — ${subasta.hora} · ${subasta.nTrades} trades · ${M(volSub)}</div>
       <div class="blotter-wrap"><table style="width:100%;"><thead><tr>
-        <th>Especie</th><th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Volumen</th><th class="num">% del día</th>
+        <th>Especie</th><th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Volumen</th><th class="num">% del volumen diario</th>
       </tr></thead><tbody>
       ${subasta.especies.slice(0,15).map(a=>{
         const d = _mercadoStats[a.esp];
         return `<tr><td class="mono-id">${a.esp}</td>
           <td class="num">${fmtInt(a.qty)}</td><td class="num">${fmtRate(a.precio)}</td>
-          <td class="num">${fmtMoney(a.monto)}</td>
+          <td class="num">${M(a.monto)}</td>
           <td class="num" style="opacity:.7;">${d? (a.monto/d.monto*100).toFixed(0)+'%' : '—'}</td></tr>`;
       }).join('')}
       </tbody></table></div>` : ''}
@@ -11496,7 +11582,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-11 21:35 UTC';
+const BUILD_ID = '2026-08-11 21:51 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
