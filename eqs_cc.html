@@ -4333,6 +4333,17 @@ const clientesDB = {
     // Comisión SIEMPRE 0.1%: ambos iguales para que la marca no cambie nada.
     comisionBloque: 0.001, comisionPantalla: 0.001,
   },
+  'FIDUCIARIA SKANDIA': {
+    nombre: 'FIDUCIARIA SKANDIA',
+    // Skandia manda el ID Fondo en el Notes de la orden de Fidessa (H4, 92,
+    // FL...), así que no hay reparto manual: cada folio ya sabe a qué fondo va.
+    formatoReporte: 'skandia', reparteManual: false,
+    portafoliosDeCategorias: 'FIDUCIARIA SKANDIA', portafolios: [],
+    fileNombre: 'SKANDIA',
+    // Pantalla 0,08% / Cruce 0,15%. ECOPETROL y PFCIBEST siempre 0,08%
+    // (mismo override que PROTECCIÓN y PORVENIR).
+    comisionBloque: 0.0015, comisionPantalla: 0.0008,
+  },
   'FIDUASHMORE': {
     nombre: 'FIDUASHMORE',
     formatoReporte: 'generico_equity', reparteManual: true,
@@ -4411,6 +4422,7 @@ const ALIAS_GRUPO = {
   // El CLIENT de Fidessa no siempre es el nombre del grupo: sin estos alias el
   // cliente tenía folios pero NO aparecía en el desplegable (no se podía filtrar
   // ni reportar). Detectado en la auditoría de cierre del 04-ago.
+  SKANDIA: 'FIDUCIARIA SKANDIA',
   BRSE: 'BRADESCO',
   ITAU: 'ITAU_NY',
   // En EMSX el account llega como 'BTG PACTUAL PP'; en Fidessa el CLIENT es 'BTG'.
@@ -8539,7 +8551,13 @@ async function generarReporte(){
   // Si el cliente reparte a portafolios y no hay allocation cargada a mano,
   // se arma con los Account de las líneas de EMSX. Si no alcanza a cubrir la
   // cantidad de los folios, NO se genera: se dice exactamente qué falta.
-  if(!esProteccionRep && (getClienteDB(cliente).portafolios||[]).length > 0 && allocations.length === 0){
+  // Solo se exige allocation a los formatos que de verdad reparten entre
+  // portafolios. SKANDIA no: el fondo (H4, 92, FL...) viene en el Notes de la
+  // orden, así que cada folio ya sabe a dónde va. PROTECCIÓN igual, por su
+  // sub-cuenta. Pedirles reparto era frenar por algo que no aplica.
+  const _fmtCli = (getClienteDB(cliente)||{}).formatoReporte;
+  const _necesitaAlloc = _fmtCli === 'colfondos' || _fmtCli === 'andes_fxequity';
+  if(!esProteccionRep && _necesitaAlloc && (getClienteDB(cliente).portafolios||[]).length > 0 && allocations.length === 0){
     const auto = allocDesdeEmsx(cliente, seleccionados);
     if(auto.ok){
       allocations = auto.allocations.map(a=>({ portId:a.portafolio.id, cantidad:a.cantidad }));
@@ -8625,7 +8643,24 @@ async function generarReporte(){
   // tabla en pantalla, sin producir ningún archivo, a pesar de que su propio
   // texto prometía "Genera Operaciones_CLIENTE... y agrega al Detalle...".
   const formato = getClienteDB(cliente).formatoReporte;
-  if(formato === 'colfondos'){
+  if(formato === 'skandia'){
+    const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
+    const ok = await previsualizarReporte({
+      titulo: `${getClienteDB(cliente).nombre} — ${etiquetaVersion(version)}`,
+      archivo: `Operaciones_SKANDIA_${(fechaReg||'').replace(/-/g,'')}${sufijoVersion(version)?' '+sufijoVersion(version):''}.xlsx  +  BO_Skandia`,
+      columnas: ['ID fondo','Folio','Nemo','Tipo','Cantidad','Precio','Com %'],
+      filas: seleccionados.map(f=>[ _skFondoDeFolio(f).id || '—', f.folio, f.especie, f.lado,
+                                    fmtInt(f.cantidad), fmtRate(f.precio), (f.comisionPct||0).toFixed(4)+'%' ]),
+      totales: `${seleccionados.length} folio(s) · ${fmtInt(seleccionados.reduce((a,f)=>a+f.cantidad,0))} acciones`,
+    });
+    if(!ok) return;
+    window._sufijoReporte = sufijoVersion(version);
+    await generarReporteSkandia(cliente, loteDet);
+    window._sufijoReporte = '';
+    const nuevas = await registrarLoteRVL(cliente, loteDet, version);
+    avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos Operaciones + BO');
+    renderFidessaTradesPanel();
+  } else if(formato === 'colfondos'){
     const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
     const ok = await previsualizarReporte({
       titulo: `${getClienteDB(cliente).nombre} — ${etiquetaVersion(version)}`,
@@ -9362,6 +9397,154 @@ function repartirFoliosColfondos(alocaciones, folios){
     });
   });
   return salida;
+}
+
+// =====================================================================
+// SKANDIA — dos archivos, calcados de los reales del 10-ago
+// ---------------------------------------------------------------------
+//  1) Operaciones_SKANDIA_yyyymmdd.xlsx — 14 columnas, encabezado FF597B7C,
+//     una fila por FOLIO. La primera columna es el ID Fondo (H4, 92, FL...),
+//     que llega en el Notes de la orden de Fidessa Trades.
+//  2) BO_Skandia_yyyymmdd.xlsx — mismo detalle con otro layout: título
+//     "INFORME DE OPERACIONES SKANDIA" en F2:I2, encabezado de DOS filas
+//     (6 y 7) en FF006150, y los datos desde la fila 8.
+//
+// El FOLIO va con el TCN COMPLETO de 6 dígitos. Los archivos que Skandia
+// venía recibiendo traían 4 (TCN − 600.000), herencia de antes de NUAM.
+// =====================================================================
+const SKANDIA_FONDOS = [{"deceval": 1434, "nombre": "SKANDIA FONDO DE CESANTIAS LARGO PLAZO", "id": "75"}, {"deceval": 1458, "nombre": "SKANDIA FPO MODERADO", "id": "92"}, {"deceval": 2534, "nombre": "SKANDIA P.A. SAN JOSE", "id": "FL"}, {"deceval": 86502, "nombre": "SKANDIA FONDO DE PENSIONES VOLUNTARIO", "id": "FVOL"}, {"deceval": 479006, "nombre": "SKANDIA FONDO ALTERNATIVO DE PENSIONES BA", "id": "BA"}, {"deceval": 1225583, "nombre": "SKANDIA P.A. E.F FIMBRA", "id": "GV"}, {"deceval": 1538842, "nombre": "SKANDIA FPO CONSERVADOR", "id": "93"}, {"deceval": 1538848, "nombre": "SKANDIA FPO MAYOR RIESGO", "id": "94"}, {"deceval": 1538851, "nombre": "SKANDIA FPO RETIRO PROGRAMADO", "id": "95"}, {"deceval": 1765814, "nombre": "SKANDIA SEGURO DE VIDA AHORRO +", "id": "29"}, {"deceval": 1941775, "nombre": "SKANDIA P.A. CESA", "id": "RZ"}, {"deceval": 1973877, "nombre": "SKANDIA P.A. ACOSTA IRRENO Y ASOCIADOS S.A.", "id": "JW"}, {"deceval": 1973877, "nombre": "SKANDIA P.A. ACOSTA IRRENO Y ASOCIADOS S.A.", "id": "VJ"}, {"deceval": 1995828, "nombre": "SKANDIA SEGUROS DE VIDA S.A. - SEGURO PENSION", "id": "31"}, {"deceval": 2004882, "nombre": "SKANDIA P.A. UNIVERSIDAD DE MEDELLIN", "id": "F5"}, {"deceval": 2004883, "nombre": "SKANDIA P.A. FUNDACIÓN LUKER", "id": "F4"}, {"deceval": 2004888, "nombre": "SKANDIA P.A. FRATERNIDAD", "id": "F3"}, {"deceval": 2004888, "nombre": "SKANDIA P.A INV BALMASEDA", "id": "VH"}, {"deceval": 2056928, "nombre": "SKANDIA P.A. ADRIATICO", "id": "G0"}, {"deceval": 2137034, "nombre": "SKANDIA P.A. BANCO DE LA REPUBLICA", "id": "VL"}, {"deceval": 2287379, "nombre": "SKANDIA P.A. EOLH", "id": "VX"}, {"deceval": 2315309, "nombre": "SKANDIA P.A. BIOFIX", "id": "V3"}, {"deceval": 2352358, "nombre": "SKANDIA FIC DINAMICO", "id": "VZ"}, {"deceval": 2357009, "nombre": "SKANDIA P.A GRUPO INTER", "id": "V7"}, {"deceval": 2325670, "nombre": "SKANDIA P.A SAKECA", "id": "V4"}, {"deceval": 2044335, "nombre": "SKANDIA P.A JORLISAN", "id": "F7"}, {"deceval": 2427943, "nombre": "SKANDIA FPV ESP.INMOB.GLOBAL", "id": "ESP.INMOB.GLOBAL"}, {"deceval": 2427945, "nombre": "SKANDIA FPV ESP.INMOB.-CPA", "id": "ESP.INMOB.-CPA"}, {"deceval": 2427946, "nombre": "SKANDIA FPV STRA. M. SOSTENI", "id": "STRA. M. SOSTENI"}, {"deceval": 2427947, "nombre": "SKANDIA FPV STRA.MODERADO", "id": "DI"}, {"deceval": 2428017, "nombre": "SKANDIA FPV STRA.CONSERVADOR", "id": "DL"}, {"deceval": 2428250, "nombre": "SKANDIA FPV ESP. UNO MAS COL", "id": "ESP. UNO MAS COL"}, {"deceval": 2428506, "nombre": "SKANDIA FPV ESP.BON CBIA.PLUS", "id": "ESP.BON CBIA.PLUS"}, {"deceval": 2428530, "nombre": "SKANDIA FPV ESPECIAL REIT", "id": "EG"}, {"deceval": 2428531, "nombre": "SKANDIA FPV STRAT.ACC.CBIA.", "id": "ES"}, {"deceval": 2428533, "nombre": "SKANDIA FPV ESPECIAL PC2008", "id": "ESPECIAL PC2008"}, {"deceval": 2428534, "nombre": "SKANDIA FPV ESPECIAL EQ 2017", "id": "ESPECIAL EQ 2017"}, {"deceval": 2428535, "nombre": "SKANDIA FPV ESPECIAL EF 2013", "id": "CO"}, {"deceval": 2428536, "nombre": "SKANDIA FPV ACC.BANCOLOMBIA", "id": "H4"}, {"deceval": 2428537, "nombre": "SKANDIA FPV ACCIONES GLOBAL", "id": "ACCIONES GLOBAL"}, {"deceval": 2428538, "nombre": "SKANDIA FPV ACC.GLOB.PETROLEO", "id": "ACC.GLOB.PETROLEO"}, {"deceval": 2428540, "nombre": "SKANDIA FPV ACCIONES USA", "id": "ACCIONES USA"}, {"deceval": 2430015, "nombre": "SKANDIA FPV ACCIONES EUROPA", "id": "ACCIONES EUROPA"}, {"deceval": 2430016, "nombre": "SKANDIA FPV LIQUIDEZ USA", "id": "LIQUIDEZ USA"}, {"deceval": 2430017, "nombre": "SKANDIA FPV ESP.CAT11/07/2022", "id": "ESP.CAT11/07/2022"}, {"deceval": 2430018, "nombre": "SKANDIA FPV ACC.NVAS.TECNOLOG", "id": "ACC.NVAS.TECNOLOG"}, {"deceval": 2430019, "nombre": "SKANDIA FPV ESP.CAT27/09/2022", "id": "ESP.CAT27/09/2022"}, {"deceval": 2430067, "nombre": "SKANDIA FPV ACC.ECOPETROL", "id": "MV"}, {"deceval": 2430170, "nombre": "SKANDIA FPV ESP. OPORTUNO", "id": "MW"}, {"deceval": 2430180, "nombre": "SKANDIA FPV ESP. EQ 2011", "id": "ESP. EQ 2011"}, {"deceval": 2430181, "nombre": "SKANDIA FPV ESP.CAT19/09/2023", "id": "ESP.CAT19/09/2023"}, {"deceval": 2430182, "nombre": "SKANDIA FPV ESPECIAL EC 2020", "id": "ESPECIAL EC 2020"}, {"deceval": 2430197, "nombre": "SKANDIA FPV ACC.MERC.EMERGENT", "id": "ACC.MERC.EMERGENT"}, {"deceval": 2430220, "nombre": "SKANDIA FPV ESPECIAL PRO I", "id": "ESPECIAL PRO I"}, {"deceval": 2430221, "nombre": "SKANDIA FPV ESPECIAL PRO II", "id": "ESPECIAL PRO II"}, {"deceval": 2430222, "nombre": "SKANDIA FPV ESPECIAL NH 2019", "id": "ESPECIAL NH 2019"}, {"deceval": 4790063, "nombre": "SKANDIA FONDO ALTERNATIVO DE PENSIONES BG", "id": "BG"}, {"deceval": 4790064, "nombre": "SKANDIA FONDO ALTERNATIVO DE PENSIONES BR", "id": "BR"}, {"deceval": 2445895, "nombre": "SKANDIA FPV STRA.LIQ.CBIA", "id": "STRA.LIQ.CBIA"}, {"deceval": 4790061, "nombre": "SKANDIA FONDO ALTERNATIVO DE PENSIONES BQ", "id": "BQ"}, {"deceval": 4790062, "nombre": "SKANDIA FONDO ALTERNATIVO DE PENSIONES BP", "id": "BP"}];
+
+const _SKANDIA_POR_ID = {};
+SKANDIA_FONDOS.forEach(f => { _SKANDIA_POR_ID[String(f.id).toUpperCase().trim()] = f; });
+
+const SKANDIA_NIT_CONTRAPARTE = '860068182-5';
+
+// Formatos numéricos tal cual los traen los archivos reales.
+const _SK_FMT = {
+  qtyEntero : '_(* #,##0_);_(* \\(#,##0\\);_(* "-"??_);_(@_)',
+  qty2      : '_(* #,##0.00_);_(* \\(#,##0.00\\);_(* "-"??_);_(@_)',
+  dinero    : '_("$"* #,##0.00_);_("$"* \\(#,##0.00\\);_("$"* "-"??_);_(@_)',
+  neto      : '"$"#,##0.00_);\\("$"#,##0.00\\)',
+  pct       : '0.00%',
+  fecha     : 'dd/mm/yyyy',
+};
+
+function _skFondoDeFolio(f){
+  // El ID Fondo viene en el Notes de la orden (H4). Si el folio no lo trae,
+  // se busca en la orden de Trades a la que pertenece.
+  let id = String(f.portafolio || f.notes || '').trim();
+  if(!id && f.parentOrderId && _fidessaTradesRaw && _fidessaTradesRaw[String(f.parentOrderId)]){
+    id = String(_fidessaTradesRaw[String(f.parentOrderId)].notes || '').trim();
+  }
+  return { id, fondo: _SKANDIA_POR_ID[id.toUpperCase()] || null };
+}
+
+async function generarReporteSkandia(cliente, loteDet){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar la librería de Excel (ExcelJS).'); return; }
+  if(!loteDet || loteDet.length === 0){ alert('No hay folios para reportar.'); return; }
+
+  const hoyDate = new Date();
+  const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
+  const aFecha = v => { if(v instanceof Date) return v;
+    const m = String(v||'').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? new Date(Number(m[1]), Number(m[2])-1, Number(m[3])) : v; };
+
+  // Orden del archivo real: agrupado por ESPECIE y, dentro de cada una, por
+  // folio ascendente. (Verificado en Operaciones_SKANDIA_20260810: CIBEST del
+  // 606081 al 609772 y luego PFCIBEST, cada bloque ascendente.)
+  const sinFondo = new Set();
+  const ordenado = loteDet.slice().sort((a,b)=>
+    String(a.especie).localeCompare(String(b.especie)) || (Number(a.folio) - Number(b.folio)));
+  const filas = ordenado.map(f => {
+    const {id, fondo} = _skFondoDeFolio(f);
+    if(!fondo) sinFondo.add(id || '(vacío)');
+    const comPct = (Number(f.comisionPct) || 0) / 100;   // 0.08 -> 0.0008
+    const bruto  = f.cantidad * f.precio;
+    const com    = bruto * comPct;
+    const iva    = (fondo && fondo.iva) ? com * 0.19 : 0;
+    const neto   = f.lado === 'Venta' ? bruto - com - iva : bruto + com + iva;
+    return { id, fondo, folio: Number(f.folio), nemo: f.especie, tipo: f.lado,
+             cantidad: f.cantidad, precio: f.precio, bruto, com, comPct, iva, neto,
+             fechaReg: aFecha(f.fechaReg), fechaCum: aFecha(f.fechaCum) };
+  });
+
+  if(sinFondo.size){
+    alert('No se generó el reporte de SKANDIA.\n\nEstos ID de fondo no están en la base: ' +
+          [...sinFondo].join(', ') + '.\n\nHay que agregarlos a la pestaña SKANDIA antes de reportar.');
+    return;
+  }
+
+  const bajar = async (wb, nombre) => {
+    const buf = await wb.xlsx.writeBuffer();
+    const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+    const a = document.createElement('a'); a.href = url; a.download = nombre; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const suf = window._sufijoReporte ? ' ' + window._sufijoReporte : '';
+
+  // ---------- 1) Operaciones ----------
+  {
+    const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('Hoja1');
+    const H = ['ID fondo','Fecha de operación','Folio',' Nemo ',' Tipo ','  Cantidad de unidades  ','  Precio  ',
+               '  Valor Bruto  ',' Comisión ','Comisión %','IVA',' Valor a Pagar ',' Fecha de Cumplimiento ',' Contraparte nit '];
+    H.forEach((h,i)=>{ const c = ws.getCell(1,i+1);
+      c.value = h;
+      c.font = { bold:true, color:{argb:'FFFFFFFF'}, size:10, name:'Calibri' };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF597B7C'} };
+      c.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+    });
+    filas.forEach((f,i)=>{
+      const r = i+2;
+      [f.id, f.fechaReg, f.folio, f.nemo, f.tipo, f.cantidad, f.precio, f.bruto,
+       f.com, f.comPct, f.iva, f.neto, f.fechaCum, SKANDIA_NIT_CONTRAPARTE]
+        .forEach((v,c)=>{ ws.getCell(r,c+1).value = v; });
+    });
+    const fmtCol = (c,f)=>{ ws.getColumn(c).numFmt = f; };
+    fmtCol(1,_SK_FMT.qtyEntero); fmtCol(2,_SK_FMT.fecha); fmtCol(3,_SK_FMT.qtyEntero);
+    fmtCol(5,_SK_FMT.qty2); fmtCol(6,_SK_FMT.qty2); fmtCol(7,_SK_FMT.dinero);
+    fmtCol(8,_SK_FMT.dinero); fmtCol(9,_SK_FMT.dinero); fmtCol(10,_SK_FMT.pct);
+    fmtCol(11,_SK_FMT.dinero); fmtCol(12,_SK_FMT.neto); fmtCol(13,_SK_FMT.fecha);
+    autofitColumnas(ws);
+    ws.views = [{ state:'frozen', ySplit:1 }];
+    await bajar(wb, `Operaciones_SKANDIA_${fechaSlug}${suf}.xlsx`);
+  }
+
+  // ---------- 2) BO ----------
+  {
+    const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('Hoja1');
+    ws.mergeCells('F2:I2');
+    const t = ws.getCell('F2');
+    t.value = 'INFORME DE OPERACIONES SKANDIA';
+    t.font = { bold:true, size:12, name:'Calibri' };
+    t.alignment = { horizontal:'center', vertical:'middle' };
+
+    // Encabezado de DOS filas: la 6 lleva el título general y la 7 la segunda
+    // palabra donde aplica (FECHA/OPERACIÓN, FECHA/CUMPLIMIENTO...).
+    const H6 = ['FECHA','FECHA','FOLIO','COMPRA/VENTA','ESPECIE','CANTIDAD','PRECIO ','GIRO BRUTO',
+                'PORCENTAJE','COMISION','IVA','GIRO NETO','NIT CONTRAPARTE','PORTAFOLIO'];
+    const H7 = ['OPERACIÓN','CUMPLIMIENTO','','','','ACCIONES','','','COMISION','','COMISION','','',''];
+    [[6,H6],[7,H7]].forEach(([fila,arr])=>{
+      arr.forEach((h,i)=>{ const c = ws.getCell(fila,i+1);
+        if(h) c.value = h;
+        c.font = { bold:true, color:{argb:'FFFFFFFF'}, size:10, name:'Calibri' };
+        c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF006150'} };
+        c.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+      });
+    });
+    filas.forEach((f,i)=>{
+      const r = i+8;
+      [f.fechaReg, f.fechaCum, f.folio, f.tipo, f.nemo, f.cantidad, f.precio, f.bruto,
+       f.comPct, f.com, f.iva, f.neto, SKANDIA_NIT_CONTRAPARTE, f.id]
+        .forEach((v,c)=>{ ws.getCell(r,c+1).value = v; });
+    });
+    const fmtCol = (c,f)=>{ ws.getColumn(c).numFmt = f; };
+    fmtCol(1,_SK_FMT.fecha); fmtCol(2,_SK_FMT.fecha);
+    fmtCol(6,_SK_FMT.qtyEntero); fmtCol(7,_SK_FMT.dinero); fmtCol(8,_SK_FMT.dinero);
+    fmtCol(9,_SK_FMT.pct); fmtCol(10,_SK_FMT.dinero); fmtCol(11,_SK_FMT.dinero);
+    fmtCol(12,_SK_FMT.dinero); fmtCol(14,_SK_FMT.qtyEntero);
+    autofitColumnas(ws);
+    await bajar(wb, `BO_Skandia_${fechaSlug}${suf}.xlsx`);
+  }
 }
 
 async function generarReporteColfondos(cliente, loteOps, loteDet){
@@ -10747,7 +10930,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-11 14:13 UTC';
+const BUILD_ID = '2026-08-11 15:08 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
