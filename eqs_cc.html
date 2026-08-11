@@ -1907,6 +1907,19 @@
       <datalist id="listaEspecies"></datalist>
       <div id="spreadResultado" style="margin-top:12px;"></div>
     </div>
+
+    <!-- ===== Informe diario ===== -->
+    <div class="section-label">Informe diario</div>
+    <div style="padding:0 24px 10px;display:flex;align-items:end;gap:10px;flex-wrap:wrap;">
+      <div class="tb-field"><label>COLCAP</label>
+        <input type="text" inputmode="decimal" id="infColcap" placeholder="2,372.50" oninput="renderInformeDiario()" onblur="formatInputAsNumber(this,2);renderInformeDiario()" style="width:130px;"></div>
+      <div class="tb-field"><label>Variación COLCAP %</label>
+        <input type="text" inputmode="decimal" id="infColcapVar" placeholder="0.94" oninput="renderInformeDiario()" style="width:140px;"></div>
+      <button class="btn small" onclick="renderInformeDiario()">Actualizar informe</button>
+      <button class="btn small ghost" onclick="guardarCierreDelDia()">Guardar cierre del día</button>
+      <span class="field-note" id="cierreStatus"></span>
+    </div>
+    <div id="informeDiario" style="padding:0 24px 24px;"></div>
   </div>
 
   <!-- ===== Reportes placeholder ===== -->
@@ -6539,6 +6552,8 @@ function avisoExito(titulo, detalle){
 // El archivo de trades del mercado NO se guarda: es un insumo del momento.
 // =====================================================================
 let _preciosMercado = {};      // { nemo: {precio, hora} }
+let _mercadoStats = {};        // { nemo: {qty, monto, trades, primero, ultimo, max, min, serie} }
+let _mercadoTrades = [];       // trades crudos del día
 let _mercadoRango = null;      // {desde, hasta} para saber si es intradía o cierre
 
 function cargarTradesMercado(input){
@@ -6578,15 +6593,34 @@ function procesarTradesMercado(texto){
   const num = v => Number(String(v||'').replace(/,/g,'')) || 0;
 
   _preciosMercado = {};
+  _mercadoStats = {};      // por especie: volumen, trades, primero/último, serie
+  _mercadoTrades = [];     // crudo, para la subasta y las gráficas
   let horas = [], n = 0;
   for(let i = iHead+1; i < lineas.length; i++){
     const c = partirCsv(lineas[i]);
     const esp = String(c[iBook]||'').trim();
     if(!esp) continue;
     const px = num(c[iPx]); if(!px) continue;
-    horas.push(String(c[iTime]||'').trim());
+    const qt = num(c[iQty]);
+    const hora = String(c[iTime]||'').trim();
+    horas.push(hora);
     n++;
-    if(!_preciosMercado[esp]) _preciosMercado[esp] = { precio: px, hora: String(c[iTime]||'').trim() };
+    if(!_preciosMercado[esp]) _preciosMercado[esp] = { precio: px, hora };   // el archivo viene del más nuevo al más viejo
+    _mercadoTrades.push({ esp, hora, px, qt, monto: qt*px });
+  }
+  // El archivo llega del trade MÁS RECIENTE al más viejo: se recorre al revés
+  // para armar la serie del día en orden cronológico.
+  for(let i = _mercadoTrades.length - 1; i >= 0; i--){
+    const t = _mercadoTrades[i];
+    const d = _mercadoStats[t.esp] || (_mercadoStats[t.esp] = {
+      esp:t.esp, qty:0, monto:0, trades:0, primero:null, ultimo:null,
+      max:-Infinity, min:Infinity, serie:[], horaUlt:'' });
+    if(d.primero === null) d.primero = t.px;
+    d.ultimo = t.px; d.horaUlt = t.hora;
+    d.qty += t.qt; d.monto += t.monto; d.trades++;
+    if(t.px > d.max) d.max = t.px;
+    if(t.px < d.min) d.min = t.px;
+    d.serie.push([t.hora, t.px]);
   }
   horas.sort();
   _mercadoRango = { desde: horas[0], hasta: horas[horas.length-1] };
@@ -6597,6 +6631,7 @@ function procesarTradesMercado(texto){
     `<span style="color:${cierre?'var(--buy,#22c55e)':'var(--amber,#f59e0b)'};">(${cierre?'parece cierre del día':'parece intradía'})</span>`;
   recalcularCanasta();
   pintarPresetsSpread();
+  renderInformeDiario();
 }
 
 // Parseo del correo de MLI. Se aceptan tabulaciones o varios espacios entre
@@ -6971,6 +7006,291 @@ function renderSpread(){
         <div class="stat-label">Spread ${A||'A'} − ${B||'B'}</div>
         <div class="stat-value ${dif>=0?'buy':'sell'}" style="font-size:22px;">${dif>=0?'+':'−'}${fmtRate(Math.abs(dif))}</div>
         <div class="stat-label" style="opacity:.6;">${dif>=0 ? (A||'A')+' está por encima' : (B||'B')+' está por encima'}</div></div>
+    </div>`;
+}
+
+// =====================================================================
+// INFORME DIARIO
+// ---------------------------------------------------------------------
+// Se arma con el mismo archivo All_Trades que ya carga Ayudas. Todo lo que
+// se puede calcular del archivo se calcula; lo que no está (COLCAP y USDCOP,
+// que vienen de Bloomberg) se escribe a mano y queda guardado con el cierre.
+//
+// SUBASTA DE CIERRE: es la moda de la hora, pero buscada SOLO en la tarde.
+// Con la moda global se colaba la subasta de APERTURA, que algunos días tiene
+// más trades que la de cierre (6-ago: apertura 371 vs cierre 316).
+// =====================================================================
+
+function detectarSubastaCierre(){
+  const tarde = _mercadoTrades.filter(t => t.hora >= '15:00');
+  if(tarde.length === 0) return null;
+  const c = {};
+  tarde.forEach(t => { c[t.hora] = (c[t.hora]||0) + 1; });
+  let hora = null, max = 0;
+  Object.keys(c).forEach(h => { if(c[h] > max){ max = c[h]; hora = h; } });
+  const trades = _mercadoTrades.filter(t => t.hora === hora);
+  const porEsp = {};
+  trades.forEach(t => {
+    const d = porEsp[t.esp] || (porEsp[t.esp] = { esp:t.esp, qty:0, monto:0, precio:t.px });
+    d.qty += t.qt; d.monto += t.monto; d.precio = t.px;
+  });
+  return { hora, nTrades: max, especies: Object.values(porEsp).sort((a,b)=>b.monto-a.monto),
+           monto: trades.reduce((a,t)=>a+t.monto,0) };
+}
+
+// Mini-gráfica del precio a lo largo del día, en SVG.
+function sparkline(serie, subeBaja, ancho, alto){
+  if(!serie || serie.length < 2) return '';
+  const W = ancho || 90, H = alto || 24;
+  const px = serie.map(p => p[1]);
+  const min = Math.min(...px), max = Math.max(...px);
+  const rango = (max - min) || 1;
+  // Si hay muchos trades se submuestrea: 60 puntos bastan y el SVG queda liviano.
+  const paso = Math.max(1, Math.floor(serie.length / 60));
+  const pts = [];
+  for(let i = 0; i < serie.length; i += paso){
+    const x = (i / (serie.length - 1)) * W;
+    const y = H - ((px[i] - min) / rango) * H;
+    pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+  }
+  const ultY = H - ((px[px.length-1] - min) / rango) * H;
+  const color = subeBaja >= 0 ? '#22c55e' : '#ef4444';
+  return `<svg width="${W}" height="${H}" style="vertical-align:middle;">
+    <polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.4"/>
+    <circle cx="${W}" cy="${ultY.toFixed(1)}" r="2" fill="${color}"/></svg>`;
+}
+
+// Treemap estilo finviz: área = volumen, color = variación.
+// Algoritmo squarified simplificado: se van cortando franjas alternando
+// horizontal y vertical, que da rectángulos con proporciones razonables.
+function treemapVolumen(items, W, H){
+  const total = items.reduce((a,i)=>a+i.valor, 0);
+  if(!total) return '';
+  const colorDe = v => {
+    const t = Math.max(-4, Math.min(4, v)) / 4;         // satura en ±4%
+    if(Math.abs(v) < 0.05) return '#3f4451';
+    if(t > 0) return `rgb(${Math.round(40 - 20*t)},${Math.round(120 + 80*t)},${Math.round(60 - 10*t)})`;
+    return `rgb(${Math.round(150 + 80*(-t))},${Math.round(60 - 25*(-t))},${Math.round(60 - 25*(-t))})`;
+  };
+  const out = [];
+  let x = 0, y = 0, w = W, h = H;
+  let resto = items.slice().sort((a,b)=>b.valor-a.valor);
+  let quedan = total;
+  while(resto.length){
+    const it = resto.shift();
+    const frac = it.valor / quedan;
+    let rx, ry, rw, rh;
+    if(w >= h){ rw = w * frac; rh = h; rx = x; ry = y; x += rw; w -= rw; }
+    else      { rh = h * frac; rw = w; rx = x; ry = y; y += rh; h -= rh; }
+    quedan -= it.valor;
+    const mostrarTxt = rw > 42 && rh > 22;
+    const mostrarPct = rw > 42 && rh > 34;
+    out.push(`<g>
+      <rect x="${rx.toFixed(1)}" y="${ry.toFixed(1)}" width="${Math.max(0,rw-1.5).toFixed(1)}" height="${Math.max(0,rh-1.5).toFixed(1)}"
+            fill="${colorDe(it.varPct)}" rx="2"/>
+      ${mostrarTxt ? `<text x="${(rx+rw/2).toFixed(1)}" y="${(ry+rh/2 - (mostrarPct?5:0)).toFixed(1)}" text-anchor="middle"
+            font-family="Inter,system-ui,sans-serif" font-size="${Math.min(13, Math.max(8, rw/7)).toFixed(0)}" font-weight="700"
+            fill="#fff">${it.nombre}</text>` : ''}
+      ${mostrarPct ? `<text x="${(rx+rw/2).toFixed(1)}" y="${(ry+rh/2+11).toFixed(1)}" text-anchor="middle"
+            font-family="Inter,system-ui,sans-serif" font-size="10" fill="rgba(255,255,255,.9)">${it.varPct>=0?'+':''}${it.varPct.toFixed(2)}%</text>` : ''}
+    </g>`);
+  }
+  return `<svg width="${W}" height="${H}" style="display:block;">${out.join('')}</svg>`;
+}
+
+// Barras horizontales de concentración de volumen (más legible que una torta
+// cuando una sola especie se lleva el 40% del mercado, que es lo normal acá).
+function barrasVolumen(items, total){
+  const paleta = ['#818cf8','#22c55e','#f59e0b','#38bdf8','#f472b6','#a78bfa','#34d399','#fb7185'];
+  let acum = 0;
+  const filas = items.map((it,i)=>{
+    const pct = it.valor/total*100; acum += pct;
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+      <div style="width:96px;font-size:11px;font-family:var(--mono,monospace);">${it.nombre}</div>
+      <div style="flex:1;background:rgba(255,255,255,.05);border-radius:3px;overflow:hidden;height:14px;">
+        <div style="width:${pct.toFixed(1)}%;height:100%;background:${paleta[i%paleta.length]};"></div></div>
+      <div style="width:52px;text-align:right;font-size:11px;">${pct.toFixed(1)}%</div>
+      <div style="width:120px;text-align:right;font-size:11px;opacity:.75;">${fmtMoney(it.valor)}</div>
+    </div>`;
+  }).join('');
+  return filas + `<div class="field-note" style="margin-top:6px;">Estas ${items.length} especies concentran el ${acum.toFixed(1)}% del volumen del día.</div>`;
+}
+
+// Cierres guardados: alimentan la variación % contra el día anterior. Sin
+// esto la variación es intradía, que no es lo que reporta el mercado.
+let _cierresAnteriores = {};
+
+async function cargarCierreAnterior(){
+  try{
+    const filas = await supaFetch('cierres_mercado', `fecha=lt.${_hoyISO()}&order=fecha.desc&limit=200`);
+    if(!filas.length) return;
+    const ultima = filas[0].fecha;
+    _cierresAnteriores = {};
+    filas.filter(f=>f.fecha === ultima).forEach(f=>{ _cierresAnteriores[f.nemo] = Number(f.ultimo)||0; });
+    console.log('Informe diario: cierre anterior cargado ('+ultima+', '+Object.keys(_cierresAnteriores).length+' especies)');
+  }catch(e){
+    console.warn('No se pudo cargar cierres_mercado (¿falta crear la tabla?):', e.message);
+  }
+}
+
+async function guardarCierreDelDia(){
+  const st = document.getElementById('cierreStatus');
+  if(Object.keys(_mercadoStats).length === 0){ alert('Carga primero el archivo All_Trades.'); return; }
+  const horaMax = _mercadoRango ? _mercadoRango.hasta : '';
+  if(horaMax < '15:55' && !confirm(`El archivo llega hasta las ${horaMax}, o sea que NO parece el cierre del día.\n\nGuardarlo como cierre dejaría precios parciales en la historia y la variación de mañana saldría mal.\n\n¿Guardar de todos modos?`)) return;
+  const subasta = detectarSubastaCierre();
+  const enSubasta = {};
+  if(subasta) subasta.especies.forEach(a=>{ enSubasta[a.esp] = a; });
+  const filas = Object.values(_mercadoStats).map(d=>({
+    fecha: _hoyISO(), nemo: d.esp,
+    ultimo: d.ultimo, primero: d.primero, maximo: d.max, minimo: d.min,
+    cantidad: d.qty, monto: d.monto, trades: d.trades,
+    vwap: d.qty ? d.monto/d.qty : 0,
+    subasta_qty: enSubasta[d.esp] ? enSubasta[d.esp].qty : 0,
+    subasta_precio: enSubasta[d.esp] ? enSubasta[d.esp].precio : null,
+    subasta_monto: enSubasta[d.esp] ? enSubasta[d.esp].monto : 0,
+  }));
+  try{
+    const res = await fetch(`${SUPA_URL}/rest/v1/cierres_mercado`, {
+      method:'POST',
+      headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
+                'Content-Type':'application/json', 'Prefer':'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(filas),
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status+' '+await res.text().catch(()=>''));
+    if(st){ st.textContent = `✓ cierre guardado: ${filas.length} especies`; st.style.color = 'var(--buy,#22c55e)'; }
+  }catch(e){
+    console.error(e);
+    if(st){ st.textContent = 'no se pudo guardar: '+e.message; st.style.color = 'var(--sell,#ef4444)'; }
+  }
+}
+
+function renderInformeDiario(){
+  const cont = document.getElementById('informeDiario');
+  if(!cont) return;
+  if(Object.keys(_mercadoStats).length === 0){
+    cont.innerHTML = '<div class="empty-state" style="padding:24px 0;">Carga el archivo All_Trades del cierre para armar el informe.</div>';
+    return;
+  }
+  const num = v => Number(String(v||'').replace(/,/g,'')) || 0;
+  const colcap    = num((document.getElementById('infColcap')||{}).value);
+  const colcapVar = num((document.getElementById('infColcapVar')||{}).value);
+  const usdcop    = num((document.getElementById('usdcopAyudas')||{}).value);
+
+  const cierres = _cierresAnteriores || {};   // { nemo: precio } del cierre anterior
+  const hayHist = Object.keys(cierres).length > 0;
+
+  const stats = Object.values(_mercadoStats).map(d=>{
+    // Variación contra el cierre ANTERIOR si ya lo tenemos guardado; si no,
+    // intradía (último contra el primero del día). Se marca cuál es cuál para
+    // no hacer pasar una por la otra.
+    const base = cierres[d.esp] || d.primero;
+    return { ...d, base, varPct: base ? (d.ultimo/base - 1)*100 : 0,
+             esIntradia: !cierres[d.esp] };
+  });
+  const total = stats.reduce((a,d)=>a+d.monto, 0);
+  const porVol = stats.slice().sort((a,b)=>b.monto-a.monto);
+  const conMov = stats.filter(d=>d.trades >= 5);           // ruido fuera
+  const suben  = conMov.slice().sort((a,b)=>b.varPct-a.varPct).slice(0,5);
+  const bajan  = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,5);
+  const subasta = detectarSubastaCierre();
+  const horaMax = _mercadoRango ? _mercadoRango.hasta : '';
+  const esCierre = horaMax >= '15:55';
+
+  const tmItems = porVol.slice(0,18).map(d=>({ nombre:d.esp, valor:d.monto, varPct:d.varPct }));
+  const fecha = new Date().toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const pct = v => `<span style="color:${v>=0?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};">${v>=0?'+':''}${v.toFixed(2)}%</span>`;
+
+  cont.innerHTML = `
+    ${!esCierre ? `<div style="background:rgba(245,158,11,.12);border:1px solid var(--amber,#f59e0b);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12px;">
+      ⚠ El archivo cargado llega hasta las ${horaMax}, así que <b>todavía no hay subasta de cierre</b>. El informe sale incompleto: vuelve a cargarlo después del cierre.</div>` : ''}
+
+    <div id="informeLienzo" style="background:#0d0f14;border:1px solid var(--border,#2a2f3a);border-radius:10px;padding:22px;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:2px solid var(--accent,#818cf8);padding-bottom:10px;margin-bottom:16px;">
+        <div><div style="font-size:19px;font-weight:800;letter-spacing:-.3px;">Informe diario de mercado</div>
+             <div class="field-note" style="text-transform:capitalize;">${fecha}</div></div>
+        <div style="text-align:right;">
+          <div style="font-size:11px;opacity:.6;">COLCAP</div>
+          <div style="font-size:22px;font-weight:800;">${colcap? fmtRate(colcap) : '—'}</div>
+          <div style="font-size:12px;">${colcap? pct(colcapVar) : '<span class="field-note">escribe el COLCAP</span>'}</div>
+        </div>
+      </div>
+
+      <div class="stat-cards" style="padding:0 0 16px;">
+        <div class="stat-card"><div class="stat-label">Volumen total</div>
+          <div class="stat-value" style="font-size:18px;">${fmtMoney(total)}</div>
+          <div class="stat-label" style="opacity:.6;">${usdcop? 'USD '+(total/usdcop/1e6).toFixed(1)+' MM' : 'escribe el USDCOP'}</div></div>
+        <div class="stat-card"><div class="stat-label">Subasta de cierre</div>
+          <div class="stat-value" style="font-size:18px;">${subasta? fmtMoney(subasta.monto) : '—'}</div>
+          <div class="stat-label" style="opacity:.6;">${subasta? subasta.hora+' · '+subasta.especies.length+' especies' : 'sin subasta en el archivo'}</div></div>
+        <div class="stat-card"><div class="stat-label">Especies negociadas</div>
+          <div class="stat-value" style="font-size:18px;">${stats.length}</div>
+          <div class="stat-label" style="opacity:.6;">${_mercadoTrades.length.toLocaleString('es-CO')} trades</div></div>
+        <div class="stat-card"><div class="stat-label">Concentración</div>
+          <div class="stat-value" style="font-size:18px;">${(porVol[0].monto/total*100).toFixed(0)}%</div>
+          <div class="stat-label" style="opacity:.6;">en ${porVol[0].esp}</div></div>
+      </div>
+
+      <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:6px 0 8px;">MAPA DEL MERCADO — tamaño por volumen, color por variación</div>
+      ${treemapVolumen(tmItems, 980, 260)}
+
+      <div style="display:flex;gap:22px;margin-top:20px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:300px;">
+          <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:8px;">LO QUE MÁS SUBIÓ</div>
+          ${suben.map(d=>`<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;font-size:12px;">
+            <span style="width:96px;font-family:var(--mono,monospace);">${d.esp}</span>
+            <span style="width:64px;text-align:right;">${pct(d.varPct)}</span>
+            <span style="width:78px;text-align:right;opacity:.8;">${fmtRate(d.ultimo)}</span>
+            ${sparkline(d.serie, d.varPct)}</div>`).join('')}
+          <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:14px 0 8px;">LO QUE MÁS BAJÓ</div>
+          ${bajan.map(d=>`<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;font-size:12px;">
+            <span style="width:96px;font-family:var(--mono,monospace);">${d.esp}</span>
+            <span style="width:64px;text-align:right;">${pct(d.varPct)}</span>
+            <span style="width:78px;text-align:right;opacity:.8;">${fmtRate(d.ultimo)}</span>
+            ${sparkline(d.serie, d.varPct)}</div>`).join('')}
+        </div>
+        <div style="flex:1;min-width:320px;">
+          <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:8px;">DÓNDE ESTUVO EL VOLUMEN</div>
+          ${barrasVolumen(porVol.slice(0,8).map(d=>({nombre:d.esp, valor:d.monto})), total)}
+        </div>
+      </div>
+
+      <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:20px 0 8px;">
+        RESUMEN DEL CONTINUO${hayHist? '' : ' — variación intradía (aún no hay cierre anterior guardado)'}</div>
+      <div class="blotter-wrap"><table style="width:100%;"><thead><tr>
+        <th>Especie</th><th class="num">Último</th><th class="num">Var %</th><th class="num">Mín</th><th class="num">Máx</th>
+        <th class="num">VWAP</th><th class="num">Volumen</th><th class="num">Trades</th><th>Intradía</th>
+      </tr></thead><tbody>
+      ${porVol.slice(0,20).map(d=>`<tr>
+        <td class="mono-id">${d.esp}</td>
+        <td class="num">${fmtRate(d.ultimo)}</td>
+        <td class="num">${pct(d.varPct)}</td>
+        <td class="num" style="opacity:.7;">${fmtRate(d.min)}</td>
+        <td class="num" style="opacity:.7;">${fmtRate(d.max)}</td>
+        <td class="num">${fmtRate(d.monto/d.qty)}</td>
+        <td class="num">${fmtMoney(d.monto)}</td>
+        <td class="num" style="opacity:.7;">${d.trades}</td>
+        <td>${sparkline(d.serie, d.varPct, 110, 20)}</td>
+      </tr>`).join('')}
+      </tbody></table></div>
+
+      ${subasta ? `
+      <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:20px 0 8px;">
+        SUBASTA DE CIERRE — ${subasta.hora} · ${subasta.nTrades} trades</div>
+      <div class="blotter-wrap"><table style="width:100%;"><thead><tr>
+        <th>Especie</th><th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Volumen</th><th class="num">% del día</th>
+      </tr></thead><tbody>
+      ${subasta.especies.slice(0,15).map(a=>{
+        const d = _mercadoStats[a.esp];
+        return `<tr><td class="mono-id">${a.esp}</td>
+          <td class="num">${fmtInt(a.qty)}</td><td class="num">${fmtRate(a.precio)}</td>
+          <td class="num">${fmtMoney(a.monto)}</td>
+          <td class="num" style="opacity:.7;">${d? (a.monto/d.monto*100).toFixed(0)+'%' : '—'}</td></tr>`;
+      }).join('')}
+      </tbody></table></div>` : ''}
+
+      <div class="field-note" style="margin-top:16px;opacity:.5;">
+        Sergio Arango Restrepo · VP RVL–RVI · Mercado de Capitales · Credicorp Capital</div>
     </div>`;
 }
 
@@ -10985,7 +11305,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-11 15:21 UTC';
+const BUILD_ID = '2026-08-11 16:31 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -10994,6 +11314,7 @@ try{
 
 cargarLineasNoReportar().then(cargarReportesGenerados);
 cargarCanastasPendientes();
+cargarCierreAnterior();
 cargarEmsxCBDesdeSupabase();
 cargarFidessaDesdeSupabase();
 // RVI
