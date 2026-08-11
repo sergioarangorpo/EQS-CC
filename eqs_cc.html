@@ -1883,9 +1883,9 @@
         <div class="tb-field"><label>¿Cuánto quiero ejecutar?</label>
           <input type="text" inputmode="decimal" id="ejecObjetivo" placeholder="7,253,000" oninput="renderEjecucion()" onblur="formatInputAsNumber(this,0);renderEjecucion()" style="width:170px;"></div>
         <div class="tb-field"><label>Cantidad</label>
-          <input type="text" inputmode="decimal" id="ejecCant" placeholder="250,000" style="width:150px;"></div>
+          <input type="text" inputmode="decimal" id="ejecCant" placeholder="250,000" onblur="formatInputAsNumber(this,0)" style="width:150px;"></div>
         <div class="tb-field"><label>Precio</label>
-          <input type="text" inputmode="decimal" id="ejecPrecio" placeholder="3,955.00" style="width:140px;"
+          <input type="text" inputmode="decimal" id="ejecPrecio" placeholder="3,955.00" onblur="formatInputAsNumber(this,2)" style="width:140px;"
                  onkeydown="if(event.key==='Enter') agregarTicket();"></div>
         <button class="btn small" onclick="agregarTicket()">Agregar ticket</button>
         <button class="btn small ghost" onclick="limpiarEjecucion()">Limpiar</button>
@@ -1900,9 +1900,9 @@
       <div id="spreadPresets" style="margin-bottom:10px;"></div>
       <div style="display:flex;align-items:end;gap:10px;flex-wrap:wrap;">
         <div class="tb-field"><label>Especie A</label><input list="listaEspecies" id="spA" oninput="renderSpread()" style="width:170px;"></div>
-        <div class="tb-field"><label>Precio A</label><input type="text" inputmode="decimal" id="spPxA" oninput="renderSpread()" style="width:140px;"></div>
+        <div class="tb-field"><label>Precio A</label><input type="text" inputmode="decimal" id="spPxA" oninput="renderSpread()" onblur="formatInputAsNumber(this,2);renderSpread()" style="width:140px;"></div>
         <div class="tb-field"><label>Especie B</label><input list="listaEspecies" id="spB" oninput="renderSpread()" style="width:170px;"></div>
-        <div class="tb-field"><label>Precio B</label><input type="text" inputmode="decimal" id="spPxB" oninput="renderSpread()" style="width:140px;"></div>
+        <div class="tb-field"><label>Precio B</label><input type="text" inputmode="decimal" id="spPxB" oninput="renderSpread()" onblur="formatInputAsNumber(this,2);renderSpread()" style="width:140px;"></div>
       </div>
       <datalist id="listaEspecies"></datalist>
       <div id="spreadResultado" style="margin-top:12px;"></div>
@@ -3656,9 +3656,15 @@ async function generarExcelCruce(clienteKey, registrados, trader){
     ws.getCell(`C${r}`).value = sdTxt;
     ws.getCell(`D${r}`).value = lado.ladoFX === 'SELL' ? 'Sell' : 'Buy';
     ws.getCell(`E${r}`).value = 'USDCOP';
-    ws.getCell(`F${r}`).value = redondear(lado.usd, 2);
-    ws.getCell(`G${r}`).value = redondear(lado.tasaFinalCliente, 2);
-    ws.getCell(`H${r}`).value = redondear(lado.netoCOP, 2);
+    // COP Value = USD Amount x Rate, con los MISMOS números que se imprimen.
+    // Antes G mostraba la tasa redondeada a 2 decimales pero H salía del neto
+    // calculado con la tasa completa: el cliente multiplicaba las dos columnas
+    // y no le daba. La cifra que se muestra tiene que ser la que cuadra.
+    const usdF = redondear(lado.usd, 2);
+    const rateF = redondear(lado.tasaFinalCliente, 2);
+    ws.getCell(`F${r}`).value = usdF;
+    ws.getCell(`G${r}`).value = rateF;
+    ws.getCell(`H${r}`).value = redondear(usdF * rateF, 2);
     r++;
   });
   const fxFin = r-1;
@@ -3962,8 +3968,10 @@ async function generarExcelAndes(eqLotes, fxOps){
                ['center','center','left','left','right','right','right']);
     const fxIni = r;
     fxOps.forEach(o=>{
-      const rate = tasaDeOp(o);
-      const usd = o.amount;
+      // Mismo criterio: se multiplica con la tasa YA redondeada a 2 decimales,
+      // que es la que ve el cliente en la columna Rate.
+      const rate = redondear(tasaDeOp(o), 2);
+      const usd = redondear(o.amount, 2);
       const cop = redondear(usd * rate, 2);
       const tdTxt = fmtFechaCorta(o.tradeDate);
       const sdTxt = fmtFechaCorta(o.settleDate);
@@ -9389,32 +9397,39 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Hoja1');
     const todosHeaders = [filaEncabezadoExtra, ...HEADERS];
+    // Formato del encabezado CALCADO del archivo real de COLFONDOS:
+    // Tahoma 9 en negrita, letra blanca, fondo FF002060, centrado con ajuste de
+    // texto, borde medio y fila de 14,25 de alto.
+    const AZUL_COLF = 'FF002060';
     todosHeaders.forEach((h, col) => {
       const c = ws.getCell(1, col+1);
       c.value = h;
-      // Encabezado con formato: fondo azul oscuro, letra blanca en negrita,
-      // centrado y con borde. Sin esto la hoja llega en blanco y negro.
-      c.font = { bold:true, color:{argb:'FFFFFFFF'}, size:10, name:'Calibri' };
-      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF1F3864'} };
+      c.font = { bold:true, color:{argb:'FFFFFFFF'}, size:9, name:'Tahoma' };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:AZUL_COLF} };
       c.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
-      c.border = { top:{style:'thin',color:{argb:'FF000000'}}, left:{style:'thin',color:{argb:'FF000000'}},
-                   bottom:{style:'thin',color:{argb:'FF000000'}}, right:{style:'thin',color:{argb:'FF000000'}} };
+      c.border = { top:{style:'medium'}, left:{style:'medium'}, bottom:{style:'medium'}, right:{style:'medium'} };
     });
-    ws.getRow(1).height = 28;
+    ws.getRow(1).height = 14.25;
     ws.views = [{ state:'frozen', ySplit:1 }];   // el encabezado queda fijo al scrollear
     filas.forEach((f, filaIdx) => {
       f.forEach((valor, col) => { ws.getCell(filaIdx+2, col+1).value = valor; });
     });
     // Formatos que pide COLFONDOS: fechas dd/mm/yyyy, montos en contable y
     // los dos porcentajes como porcentaje de verdad (no como 0,0015 pelado).
+    // Formatos numéricos CALCADOS del archivo real de COLFONDOS, columna por
+    // columna. Las fechas van dd/mm/yyyy (el archivo traía mm-dd-yy, que en
+    // Colombia se lee al revés).
     const idx = h => todosHeaders.indexOf(h) + 1;   // 1-based; 0 si no está
-    const CONTABLE = '_-* #,##0.00_-;-* #,##0.00_-;_-* "-"??_-;_-@_-';
+    const CONTABLE_$  = '_-"$"* #,##0.00_-;\\-"$"* #,##0.00_-;_-"$"* "-"_-;_-@_-';
+    const CONTABLE_PX = '_("$"* #,##0.00_);_("$"* \\(#,##0.00\\);_("$"* "-"_);_(@_)';
+    const CONTABLE_QT = '_(* #,##0_);_(* \\(#,##0\\);_(* "-"_);_(@_)';
     const fmt = (nombre, formato)=>{ const c = idx(nombre); if(c > 0) ws.getColumn(c).numFmt = formato; };
     fmt('REGISTRO', 'dd/mm/yyyy');
     fmt('CUMPLIMIENTO', 'dd/mm/yyyy');
-    fmt('CANTIDAD', '#,##0');
-    ['PRECIO','MONTO BRUTO','COM$$','IVA$$','MONTO NETO','MONTO NETO Planilla','dif'].forEach(n=> fmt(n, CONTABLE));
-    fmt('COM%', '0.0000%');
+    fmt('CANTIDAD', CONTABLE_QT);
+    fmt('PRECIO', CONTABLE_PX);
+    ['MONTO BRUTO','COM$$','IVA$$','MONTO NETO'].forEach(n=> fmt(n, CONTABLE_$));
+    fmt('COM%', '0.000%');
     fmt('IVA%', '0%');
     for(let i=1; i<=todosHeaders.length; i++){ ws.getColumn(i).width = 16; }
     autofitColumnas(ws);
@@ -10732,7 +10747,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-10 22:37 UTC';
+const BUILD_ID = '2026-08-11 14:13 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
