@@ -1912,8 +1912,6 @@
         <input type="text" inputmode="decimal" id="infColcap" placeholder="2,372.50" oninput="renderInformeDiario()" onblur="formatInputAsNumber(this,2);renderInformeDiario()" style="width:130px;"></div>
       <div class="tb-field"><label>Variación COLCAP %</label>
         <input type="text" inputmode="decimal" id="infColcapVar" placeholder="0.94" oninput="renderInformeDiario()" style="width:140px;"></div>
-      <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
-        <input type="checkbox" id="infEnUSD" onchange="renderInformeDiario()"> Ver en USD</label>
       <button class="btn small" onclick="renderInformeDiario()">Actualizar informe</button>
       <button class="btn small purple" onclick="descargarInformeImagen()">🖼 Descargar imagen</button>
       <button class="btn small ghost" onclick="copiarInformeImagen()">Copiar al portapapeles</button>
@@ -4832,7 +4830,14 @@ function getFiltrados(){
     // y el arqueo de abajo no cuadraba contra el de arriba. La bandera existía
     // porque esos folios eran huérfanos; ahora ya se les asigna su Parent Order
     // ID de verdad, así que el zoom normal alcanza.
-    (f.origen==='proteccion-directo' || !zoomParents || zoomParents.has(String(f.parentOrderId)) || (zoomKeys && zoomKeys.has(String(f.especie)+'|'+String(f.portafolio||'').trim())))
+    // El enlace por (especie|portafolio) es SOLO para folios que no tienen
+    // Parent Order ID (la distribución de PROTECCIÓN). Si el folio ya sabe a
+    // qué orden pertenece, manda su POID y punto: con la regla anterior, dos
+    // órdenes de la misma especie con portafolio vacío (COLFONDOS: PFCIBEST
+    // 135.000 y 6.800) se veían como una sola de 141.800 al hacer zoom.
+    (f.origen==='proteccion-directo' || !zoomParents
+      || zoomParents.has(String(f.parentOrderId))
+      || (!f.parentOrderId && zoomKeys && zoomKeys.has(String(f.especie)+'|'+String(f.portafolio||'').trim())))
   );
   if(sortCol){
     res = [...res].sort((a,b)=>{
@@ -7220,20 +7225,48 @@ function treemapVolumen(items, W, H){
       if(w >= h){ rects.push({x, y:y+off, w:grosor, h:h*p, it}); off += h*p; }
       else      { rects.push({x:x+off, y, w:w*p, h:grosor, it}); off += w*p; }
     });
+    // Si ya no queda nada por colocar, la franja actual se estiró al 100% y no
+    // hay resto: sin esto quedaba una banda vacía en el borde.
+    if(ultima) return;
     if(w >= h) sq(lista.slice(i), x+grosor, y, w-grosor, h);
     else       sq(lista.slice(i), x, y+grosor, w, h-grosor);
   })(items.slice().sort((a,b)=>b.valor-a.valor), 0, 0, W, H);
 
   const out = rects.map(r=>{
-    const mostrarTxt = r.w > 46 && r.h > 24;
-    const mostrarPct = r.w > 46 && r.h > 38;
-    return `<g>
+    // NINGUNA caja se queda sin nombre: si no cabe el texto horizontal, se
+    // achica la fuente y, si sigue sin caber, se rota 90°. Solo se omite el
+    // porcentaje, nunca el nemo.
+    const nombre = r.it.nombre;
+    const anchoNecesario = nombre.length * 6.2;
+    let fuente = Math.min(14, Math.max(7, r.w / (nombre.length * 0.62)));
+    const cabeHorizontal = r.w > 26 && r.h > 12;
+    const rotar = !cabeHorizontal && r.h > 34 && r.w > 12;
+    const mostrarPct = r.w > 50 && r.h > 40;
+    const cx = r.x + r.w/2, cy = r.y + r.h/2;
+    let texto = '';
+    if(cabeHorizontal){
+      if(fuente * nombre.length * 0.62 > r.w - 4) fuente = Math.max(6, (r.w - 4) / (nombre.length * 0.62));
+      texto = `<text x="${cx.toFixed(1)}" y="${(cy - (mostrarPct?5:0) + fuente/3).toFixed(1)}" text-anchor="middle"
+            font-family="Inter,system-ui,sans-serif" font-size="${fuente.toFixed(1)}" font-weight="700"
+            fill="#fff">${nombre}</text>`;
+    }else if(rotar){
+      const f = Math.max(6, Math.min(11, (r.h - 4) / (nombre.length * 0.62)));
+      texto = `<text x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" text-anchor="middle"
+            transform="rotate(-90 ${cx.toFixed(1)} ${cy.toFixed(1)})"
+            font-family="Inter,system-ui,sans-serif" font-size="${f.toFixed(1)}" font-weight="700"
+            fill="#fff">${nombre}</text>`;
+    }else{
+      // Caja diminuta: el nemo abreviado, para que nada quede anónimo.
+      const f = Math.max(5.5, Math.min(8, r.w / 3.2));
+      texto = `<text x="${cx.toFixed(1)}" y="${(cy + f/3).toFixed(1)}" text-anchor="middle"
+            font-family="Inter,system-ui,sans-serif" font-size="${f.toFixed(1)}" font-weight="700"
+            fill="rgba(255,255,255,.95)">${nombre.slice(0,4)}</text>`;
+    }
+    return `<g><title>${nombre} · ${r.it.varPct>=0?'+':''}${r.it.varPct.toFixed(2)}%</title>
       <rect x="${r.x.toFixed(1)}" y="${r.y.toFixed(1)}" width="${Math.max(0,r.w-2).toFixed(1)}" height="${Math.max(0,r.h-2).toFixed(1)}"
             fill="${colorDe(r.it.varPct)}" rx="3"/>
-      ${mostrarTxt ? `<text x="${(r.x+r.w/2).toFixed(1)}" y="${(r.y+r.h/2 - (mostrarPct?5:0)).toFixed(1)}" text-anchor="middle"
-            font-family="Inter,system-ui,sans-serif" font-size="${Math.min(14, Math.max(9, r.w/8)).toFixed(0)}" font-weight="700"
-            fill="#fff">${r.it.nombre}</text>` : ''}
-      ${mostrarPct ? `<text x="${(r.x+r.w/2).toFixed(1)}" y="${(r.y+r.h/2+12).toFixed(1)}" text-anchor="middle"
+      ${texto}
+      ${mostrarPct ? `<text x="${cx.toFixed(1)}" y="${(cy+12).toFixed(1)}" text-anchor="middle"
             font-family="Inter,system-ui,sans-serif" font-size="11" fill="rgba(255,255,255,.92)">${r.it.varPct>=0?'+':''}${r.it.varPct.toFixed(2)}%</text>` : ''}
     </g>`;
   });
@@ -7242,20 +7275,29 @@ function treemapVolumen(items, W, H){
 
 // Barras horizontales de concentración de volumen (más legible que una torta
 // cuando una sola especie se lleva el 40% del mercado, que es lo normal acá).
-function barrasVolumen(items, total){
+// Barras de volumen con las DOS monedas a la vista: COP en blanco y USD en
+// ámbar. Así el mismo informe sirve para el cliente local y para los de afuera,
+// sin tener que generar dos versiones.
+function barrasVolumen(items, total, usdcop){
   const paleta = ['#818cf8','#22c55e','#f59e0b','#38bdf8','#f472b6','#a78bfa','#34d399','#fb7185'];
+  const usd = v => usdcop ? '$' + Math.round(v/usdcop).toLocaleString('es-CO') : '';
   let acum = 0;
   const filas = items.map((it,i)=>{
     const pct = it.valor/total*100; acum += pct;
-    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
-      <div style="width:96px;font-size:11px;font-family:var(--mono,monospace);">${it.nombre}</div>
-      <div style="flex:1;background:rgba(255,255,255,.05);border-radius:3px;overflow:hidden;height:14px;">
+    return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+      <div style="width:104px;font-size:12px;font-family:var(--mono,monospace);">${it.nombre}</div>
+      <div style="flex:1;background:rgba(255,255,255,.05);border-radius:3px;overflow:hidden;height:15px;">
         <div style="width:${pct.toFixed(1)}%;height:100%;background:${paleta[i%paleta.length]};"></div></div>
-      <div style="width:52px;text-align:right;font-size:11px;">${pct.toFixed(1)}%</div>
-      <div style="width:120px;text-align:right;font-size:11px;opacity:.75;">${fmtMoney(it.valor)}</div>
+      <div style="width:50px;text-align:right;font-size:12px;">${pct.toFixed(1)}%</div>
+      <div style="width:132px;text-align:right;font-size:12px;">${fmtMoney(it.valor)}</div>
+      ${usdcop ? `<div style="width:104px;text-align:right;font-size:12px;color:var(--amber,#f59e0b);">${usd(it.valor)}</div>` : ''}
     </div>`;
   }).join('');
-  return filas + `<div class="field-note" style="margin-top:6px;">Estas ${items.length} especies concentran el ${acum.toFixed(1)}% del volumen del día.</div>`;
+  const cab = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;font-size:10px;letter-spacing:.4px;opacity:.55;">
+      <div style="width:104px;"></div><div style="flex:1;"></div><div style="width:50px;text-align:right;">%</div>
+      <div style="width:132px;text-align:right;">COP</div>
+      ${usdcop ? '<div style="width:104px;text-align:right;color:var(--amber,#f59e0b);">USD</div>' : ''}</div>`;
+  return cab + filas + `<div class="field-note" style="margin-top:6px;">Estas ${items.length} especies concentran el ${acum.toFixed(1)}% del volumen del día.</div>`;
 }
 
 // Cierres guardados: alimentan la variación % contra el día anterior. Sin
@@ -7331,10 +7373,9 @@ async function descargarInformeImagen(){
     const canvas = await _informeACanvas();
     const d = new Date();
     const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
-    const usd = (document.getElementById('infEnUSD')||{}).checked ? '_USD' : '';
     const a = document.createElement('a');
     a.href = canvas.toDataURL('image/png');
-    a.download = `Informe_diario_${slug}${usd}.png`;
+    a.download = `Informe_diario_${slug}.png`;
     a.click();
   }catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
 }
@@ -7361,13 +7402,13 @@ function renderInformeDiario(){
   const colcap    = num((document.getElementById('infColcap')||{}).value);
   const colcapVar = num((document.getElementById('infColcapVar')||{}).value);
   const usdcop    = num((document.getElementById('usdcopAyudas')||{}).value);
-  const enUSD     = !!(document.getElementById('infEnUSD')||{}).checked && usdcop > 0;
-
-  // En modo USD los MONTOS se convierten; los PRECIOS de las acciones NO
-  // (siguen en pesos, que es como cotizan). Los porcentajes son iguales en
-  // ambos mundos.
-  const M = v => enUSD ? fmtMoney(v/usdcop) : fmtMoney(v);
-  const sufijo = enUSD ? ' USD' : ' COP';
+  // Ya no hay switch COP/USD: el informe muestra las DOS monedas a la vez, así
+  // el mismo archivo sirve para el cliente local y para los de afuera. Los
+  // PRECIOS de las acciones siempre van en pesos (así cotizan) y los
+  // porcentajes son iguales en ambos mundos.
+  const M = v => fmtMoney(v);
+  const U = v => usdcop ? '$' + Math.round(v/usdcop).toLocaleString('es-CO') : '';
+  const sufijo = ' COP';
 
   const cierres = _cierresAnteriores || {};
   const hayHist = Object.keys(cierres).length > 0;
@@ -7411,7 +7452,7 @@ function renderInformeDiario(){
     <div style="border:1px solid var(--border,#2a2f3a);border-radius:8px;padding:14px;margin-top:16px;">
       <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;">
         <div style="font-size:13px;font-weight:700;letter-spacing:.4px;">${titulo}</div>
-        <div class="field-note">${M(totSeg)}${sufijo} · ${gs.length} especies · ${(totSeg/total*100).toFixed(1)}% del día</div>
+        <div class="field-note">${M(totSeg)} COP${usdcop?' · <span style="color:var(--amber,#f59e0b);">'+U(totSeg)+' USD</span>':''} · ${gs.length} especies · ${(totSeg/total*100).toFixed(1)}% del día</div>
       </div>
       ${nTree ? treemapVolumen(vol.slice(0,nTree).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 960, 150) : ''}
       <div style="display:flex;gap:22px;flex-wrap:wrap;margin-top:${nTree?14:0}px;">
@@ -7423,7 +7464,7 @@ function renderInformeDiario(){
         </div>
         <div style="flex:1;min-width:310px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:.4px;opacity:.7;margin-bottom:6px;">DÓNDE ESTUVO EL VOLUMEN</div>
-          ${barrasVolumen(vol.map(d=>({nombre:d.esp, valor: enUSD ? d.monto/usdcop : d.monto})), enUSD ? totSeg/usdcop : totSeg)}
+          ${barrasVolumen(vol.map(d=>({nombre:d.esp, valor:d.monto})), totSeg, usdcop)}
         </div>
       </div>
     </div>`;
@@ -7435,7 +7476,7 @@ function renderInformeDiario(){
 
     <div id="informeLienzo" style="background:#0d0f14;border:1px solid var(--border,#2a2f3a);border-radius:10px;padding:22px;">
       <div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:2px solid var(--accent,#818cf8);padding-bottom:10px;margin-bottom:16px;">
-        <div><div style="font-size:19px;font-weight:800;letter-spacing:-.3px;">Informe diario de mercado${enUSD?' · USD':''}</div>
+        <div><div style="font-size:19px;font-weight:800;letter-spacing:-.3px;">Informe diario de mercado</div>
              <div class="field-note" style="text-transform:capitalize;">${fecha}</div></div>
         <div style="text-align:right;">
           <div style="font-size:11px;opacity:.6;">COLCAP</div>
@@ -7445,21 +7486,15 @@ function renderInformeDiario(){
       </div>
 
       <div class="stat-cards" style="padding:0 0 6px;">
-        <div class="stat-card"><div class="stat-label">Volumen total</div>
-          <div class="stat-value" style="font-size:17px;">${M(total)}</div>
-          <div class="stat-label" style="opacity:.6;">${enUSD?'USD':'COP'}${!enUSD&&usdcop?' · USD '+(total/usdcop/1e6).toFixed(1)+' MM':''}</div></div>
-        <div class="stat-card"><div class="stat-label">Mercado continuo</div>
-          <div class="stat-value" style="font-size:17px;">${M(volCont)}</div>
-          <div class="stat-label" style="opacity:.6;">${(volCont/total*100).toFixed(1)}% del día</div></div>
-        <div class="stat-card"><div class="stat-label">Subasta de cierre</div>
-          <div class="stat-value" style="font-size:17px;">${subasta? M(volSub) : '—'}</div>
-          <div class="stat-label" style="opacity:.6;">${subasta? subasta.hora+' · '+(volSub/total*100).toFixed(1)+'%' : 'sin subasta'}</div></div>
-        <div class="stat-card"><div class="stat-label">MGC</div>
-          <div class="stat-value" style="font-size:17px;">${M(volMGC)}</div>
-          <div class="stat-label" style="opacity:.6;">${(volMGC/total*100).toFixed(1)}% del día</div></div>
-        <div class="stat-card"><div class="stat-label">ETFs</div>
-          <div class="stat-value" style="font-size:17px;">${M(volETF)}</div>
-          <div class="stat-label" style="opacity:.6;">${(volETF/total*100).toFixed(1)}% del día</div></div>
+        ${[['Volumen total',total,''],
+            ['Mercado continuo',volCont,(volCont/total*100).toFixed(1)+'% del día'],
+            ['Subasta de cierre',volSub, subasta? subasta.hora+' · '+(volSub/total*100).toFixed(1)+'%' : 'sin subasta'],
+            ['MGC',volMGC,(volMGC/total*100).toFixed(1)+'% del día'],
+            ['ETFs',volETF,(volETF/total*100).toFixed(1)+'% del día']].map(([lab,val,sub])=>`
+          <div class="stat-card"><div class="stat-label">${lab}</div>
+            <div class="stat-value" style="font-size:16px;">${val? M(val) : '—'}</div>
+            ${usdcop&&val ? `<div style="font-size:13px;color:var(--amber,#f59e0b);margin-top:1px;">${U(val)} USD</div>` : ''}
+            <div class="stat-label" style="opacity:.55;">${sub}</div></div>`).join('')}
       </div>
 
       <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:14px 0 8px;">MAPA DEL MERCADO — tamaño por volumen, color por variación</div>
@@ -7483,7 +7518,7 @@ function renderInformeDiario(){
         <td class="num" style="opacity:.7;">${fmtRate(d.min)}</td>
         <td class="num" style="opacity:.7;">${fmtRate(d.max)}</td>
         <td class="num">${fmtRate(d.monto/d.qty)}</td>
-        <td class="num">${M(d.monto)}</td>
+        <td class="num">${M(d.monto)}${usdcop?`<div style="font-size:11px;color:var(--amber,#f59e0b);">${U(d.monto)}</div>`:''}</td>
         <td>${sparkline(d.serie, d.varPct, 110, 20)}</td>
       </tr>`).join('')}
       </tbody></table></div>
@@ -11582,7 +11617,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-11 21:51 UTC';
+const BUILD_ID = '2026-08-11 22:07 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
