@@ -7068,33 +7068,57 @@ function treemapVolumen(items, W, H){
   if(!total) return '';
   const colorDe = v => {
     const t = Math.max(-4, Math.min(4, v)) / 4;         // satura en ±4%
-    if(Math.abs(v) < 0.05) return '#3f4451';
-    if(t > 0) return `rgb(${Math.round(40 - 20*t)},${Math.round(120 + 80*t)},${Math.round(60 - 10*t)})`;
+    if(Math.abs(v) < 0.05) return '#4a4a48';
+    if(t > 0) return `rgb(${Math.round(30 - 10*t)},${Math.round(110 + 70*t)},${Math.round(60 - 10*t)})`;
     return `rgb(${Math.round(150 + 80*(-t))},${Math.round(60 - 25*(-t))},${Math.round(60 - 25*(-t))})`;
   };
-  const out = [];
-  let x = 0, y = 0, w = W, h = H;
-  let resto = items.slice().sort((a,b)=>b.valor-a.valor);
-  let quedan = total;
-  while(resto.length){
-    const it = resto.shift();
-    const frac = it.valor / quedan;
-    let rx, ry, rw, rh;
-    if(w >= h){ rw = w * frac; rh = h; rx = x; ry = y; x += rw; w -= rw; }
-    else      { rh = h * frac; rw = w; rx = x; ry = y; y += rh; h -= rh; }
-    quedan -= it.valor;
-    const mostrarTxt = rw > 42 && rh > 22;
-    const mostrarPct = rw > 42 && rh > 34;
-    out.push(`<g>
-      <rect x="${rx.toFixed(1)}" y="${ry.toFixed(1)}" width="${Math.max(0,rw-1.5).toFixed(1)}" height="${Math.max(0,rh-1.5).toFixed(1)}"
-            fill="${colorDe(it.varPct)}" rx="2"/>
-      ${mostrarTxt ? `<text x="${(rx+rw/2).toFixed(1)}" y="${(ry+rh/2 - (mostrarPct?5:0)).toFixed(1)}" text-anchor="middle"
-            font-family="Inter,system-ui,sans-serif" font-size="${Math.min(13, Math.max(8, rw/7)).toFixed(0)}" font-weight="700"
-            fill="#fff">${it.nombre}</text>` : ''}
-      ${mostrarPct ? `<text x="${(rx+rw/2).toFixed(1)}" y="${(ry+rh/2+11).toFixed(1)}" text-anchor="middle"
-            font-family="Inter,system-ui,sans-serif" font-size="10" fill="rgba(255,255,255,.9)">${it.varPct>=0?'+':''}${it.varPct.toFixed(2)}%</text>` : ''}
-    </g>`);
-  }
+  // SQUARIFIED, el mismo criterio de Finviz: se agrupan las especies en franjas
+  // buscando que los rectángulos tiendan a cuadrado. Con el reparto anterior
+  // (cortar una franja por especie, alternando) ECOPETROL se llevaba una
+  // columna entera con su 43% y las últimas quedaban como tiras donde no cabía
+  // el texto.
+  const rects = [];
+  (function sq(lista, x, y, w, h){
+    if(!lista.length) return;
+    const tot = lista.reduce((a,i)=>a+i.valor, 0);
+    const corto = Math.min(w, h);
+    const peor = (fila, largo)=>{
+      const s = fila.reduce((a,i)=>a+i.valor, 0);
+      const lado = s/tot * (w*h) / largo;
+      return Math.max(...fila.map(i=>{ const o = i.valor/s * largo; return Math.max(o/lado, lado/o); }));
+    };
+    let fila = [], mejor = Infinity, i = 0;
+    for(; i < lista.length; i++){
+      const cand = fila.concat([lista[i]]);
+      const v = peor(cand, corto);
+      if(v > mejor && fila.length) break;
+      fila = cand; mejor = v;
+    }
+    const s = fila.reduce((a,it)=>a+it.valor, 0);
+    const grosor = (w >= h ? w : h) * (s/tot);
+    let off = 0;
+    fila.forEach(it=>{
+      const p = it.valor / s;
+      if(w >= h){ rects.push({x, y:y+off, w:grosor, h:h*p, it}); off += h*p; }
+      else      { rects.push({x:x+off, y, w:w*p, h:grosor, it}); off += w*p; }
+    });
+    if(w >= h) sq(lista.slice(i), x+grosor, y, w-grosor, h);
+    else       sq(lista.slice(i), x, y+grosor, w, h-grosor);
+  })(items.slice().sort((a,b)=>b.valor-a.valor), 0, 0, W, H);
+
+  const out = rects.map(r=>{
+    const mostrarTxt = r.w > 46 && r.h > 24;
+    const mostrarPct = r.w > 46 && r.h > 38;
+    return `<g>
+      <rect x="${r.x.toFixed(1)}" y="${r.y.toFixed(1)}" width="${Math.max(0,r.w-2).toFixed(1)}" height="${Math.max(0,r.h-2).toFixed(1)}"
+            fill="${colorDe(r.it.varPct)}" rx="3"/>
+      ${mostrarTxt ? `<text x="${(r.x+r.w/2).toFixed(1)}" y="${(r.y+r.h/2 - (mostrarPct?5:0)).toFixed(1)}" text-anchor="middle"
+            font-family="Inter,system-ui,sans-serif" font-size="${Math.min(14, Math.max(9, r.w/8)).toFixed(0)}" font-weight="700"
+            fill="#fff">${r.it.nombre}</text>` : ''}
+      ${mostrarPct ? `<text x="${(r.x+r.w/2).toFixed(1)}" y="${(r.y+r.h/2+12).toFixed(1)}" text-anchor="middle"
+            font-family="Inter,system-ui,sans-serif" font-size="11" fill="rgba(255,255,255,.92)">${r.it.varPct>=0?'+':''}${r.it.varPct.toFixed(2)}%</text>` : ''}
+    </g>`;
+  });
   return `<svg width="${W}" height="${H}" style="display:block;">${out.join('')}</svg>`;
 }
 
@@ -11305,7 +11329,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-11 16:31 UTC';
+const BUILD_ID = '2026-08-11 19:00 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
