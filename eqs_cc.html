@@ -4821,7 +4821,13 @@ function getFiltrados(){
     // Coincidencia FLEXIBLE de cliente (ej. filtro "COLFONDOS SA" calza con el
     // grupo "COLFONDOS"); antes usaba === exacto y por eso salía 0 folios.
     coincideFiltroRVL({cliente: f.cliente, especie: f.especie, lado: f.lado}) &&
-    (f.origen==='proteccion-directo' || f.grupoColfondos || !zoomParents || zoomParents.has(String(f.parentOrderId)) || (zoomKeys && zoomKeys.has(String(f.especie)+'|'+String(f.portafolio||'').trim())))
+    // El zoom por orden aplica a TODOS los clientes. Antes COLFONDOS traía una
+    // bandera (grupoColfondos) que lo dejaba pasar entero: al seleccionar una
+    // sola línea de Trades el cuadro de folios seguía mostrando las 7 órdenes,
+    // y el arqueo de abajo no cuadraba contra el de arriba. La bandera existía
+    // porque esos folios eran huérfanos; ahora ya se les asigna su Parent Order
+    // ID de verdad, así que el zoom normal alcanza.
+    (f.origen==='proteccion-directo' || !zoomParents || zoomParents.has(String(f.parentOrderId)) || (zoomKeys && zoomKeys.has(String(f.especie)+'|'+String(f.portafolio||'').trim())))
   );
   if(sortCol){
     res = [...res].sort((a,b)=>{
@@ -8535,36 +8541,59 @@ function mapearOrdenesAlloc(ordenesRaw, cliente){
 //    reparto en la misma línea ("-442.000 ECO x FDO Accion Colombia").
 //  - Líneas de reparto: "Portafolio x 363.000" o "Portafolio ~ 363.000".
 // Ignora saludos, horas y nombres.
+// Parser del alloc que llega por chat. Soporta los DOS formatos que se usan:
+//
+//   Diego:                          Nico:
+//   -203.950 ICOLCAP alloc:         ICOLCAP:
+//   FPV DINAMICO x 39.400           FPV DINAMICO: 39.400
+//   FPV 701 x 1.100                 FPV 701: 1.100
+//   ----                            (+ para compra, - para venta)
+//
+// La especie se reconoce porque calza con un nemo conocido; el separador puede
+// ser x, X, : o =. El lado sale del signo cuando está, y si no, de la orden de
+// Fidessa, que es la fuente buena de todas formas.
 function parsearAllocLocal(texto){
-  const num = s => parseInt(String(s).replace(/[.\s]/g,''),10);
-  const lineas = texto.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  const num = s => parseInt(String(s).replace(/[.,\s]/g,''),10);
+  const lineas = texto.split(/\r?\n/).map(l=>l.trim());
   const ordenes = [];
   let actual = null;
-  // Cabecera: opcional hora (HH:MM:SS) + cantidad con signo/puntos + ticker.
-  // Ej: "08:50:10 -1.449.000 ECO alloc:" o "-442.000 ECO x FDO Accion Colombia".
-  const reCab = /(?:^|\s)-\s*([\d.]{3,})\s+([A-Za-zÁÉÍÓÚÑ]{2,})\b(.*)$/;
-  // Línea de reparto: "<nombre> x|~|= <cantidad>". El nombre no empieza con dígito.
-  const reLinea = /^([A-Za-zÁÉÍÓÚÑ].*?)\s*[x~=]\s*([\d.]{2,})\s*$/i;
+  const esNemo = t => {
+    const v = String(t||'').toUpperCase().replace(/[^A-ZÁÉÍÓÚÑ0-9]/g,'');
+    if(!v) return null;
+    if(v === 'ECO') return 'ECOPETROL';            // abreviatura habitual
+    if(v === 'GRUPARG') return 'GRUPOARGOS';
+    const canon = nemoCanonico(v, 'fidessa');
+    if(canon && canon !== v) return canon;
+    // ¿existe tal cual en la tabla de nemos?
+    return (typeof NEMO_TABLE !== 'undefined' && NEMO_TABLE.some(n=>n.nuam === v)) ? v : null;
+  };
+
   lineas.forEach(l=>{
-    const mL = l.match(reLinea);
-    const mC = l.match(reCab);
-    // Es cabecera si trae un "-CANT TICKER" (con el guion de venta). Tiene
-    // prioridad sobre reparto porque el guion + ticker es inequívoco.
-    if(mC){
-      const cant = num(mC[1]);
-      const tk = mC[2].toUpperCase();
-      const especie = tk==='ECO' ? 'ECOPETROL' : tk;
-      actual = { cantidadTotal:cant, especie, lineas:[] };
+    if(!l || /^-{3,}$/.test(l)) return;            // separadores "----"
+    // ---- Cabecera con cantidad: "-203.950 ICOLCAP alloc:" o "+4.000 CIBEST"
+    const mC = l.match(/^([+-])?\s*([\d.,]{3,})\s+([A-Za-zÁÉÍÓÚÑ0-9]{2,})\b(.*)$/);
+    if(mC && esNemo(mC[3])){
+      actual = { cantidadTotal:num(mC[2]), especie:esNemo(mC[3]),
+                 lado: mC[1]==='+' ? 'Compra' : (mC[1]==='-' ? 'Venta' : null), lineas:[] };
       ordenes.push(actual);
-      const resto = (mC[3]||'').trim();
-      const mInline = resto.match(/^x\s+(.+)$/i);
-      if(mInline){ actual.lineas.push({portafolio:mInline[1].trim(), cantidad:cant}); }
+      // Reparto en la misma línea: "-442.000 ECO x FDO Accion Colombia"
+      const mInline = (mC[4]||'').trim().match(/^[x:=]\s+(.+)$/i);
+      if(mInline) actual.lineas.push({portafolio:mInline[1].trim(), cantidad:actual.cantidadTotal});
       return;
     }
-    if(mL && actual){
-      actual.lineas.push({portafolio:mL[1].trim(), cantidad:num(mL[2])});
+    // ---- Cabecera SIN cantidad (formato Nico): "ICOLCAP:" a secas
+    const mN = l.match(/^([A-Za-zÁÉÍÓÚÑ0-9]{2,})\s*:?\s*$/);
+    if(mN && esNemo(mN[1])){
+      actual = { cantidadTotal:0, especie:esNemo(mN[1]), lado:null, lineas:[], sinTotal:true };
+      ordenes.push(actual);
+      return;
     }
+    // ---- Línea de reparto: "<portafolio> x|:|= <cantidad>"
+    const mL = l.match(/^([A-Za-zÁÉÍÓÚÑ][^:x=]*?)\s*[x:=]\s*([\d.,]{2,})\s*$/i);
+    if(mL && actual) actual.lineas.push({portafolio:mL[1].trim(), cantidad:num(mL[2])});
   });
+  // En el formato de Nico el total no viene: se toma de la suma del reparto.
+  ordenes.forEach(o=>{ if(o.sinTotal) o.cantidadTotal = o.lineas.reduce((a,x)=>a+x.cantidad,0); });
   return ordenes.filter(o=>o.lineas.length>0);
 }
 
@@ -8620,18 +8649,50 @@ function aplicarAllocInterpretado(){
     // Así se puede pegar el texto COMPLETO de Diego (todas las órdenes del día)
     // y quedan todas repartidas de una vez.
     sincronizarAllocOrdenActiva();
-    let aplicadas = 0; const sinMatch = [];
+    // ---- GUARDAS ANTES DE APLICAR ----
+    // (a) el reparto de cada especie tiene que sumar su total. Un typo en el
+    //     chat (205.697 por 205.679) se ve igual a simple vista y descuadraría
+    //     el reporte sin que nadie lo note.
+    const descuadres = _allocInterpretado.ordenes.filter(o=>{
+      const suma = o.lineas.reduce((a,l)=>a+(Number(l.cantidad)||0),0);
+      return suma !== o.cantidadTotal;
+    });
+    if(descuadres.length){
+      alert('No se aplicó el reparto.\n\n' + descuadres.map(o=>{
+        const suma = o.lineas.reduce((a,l)=>a+(Number(l.cantidad)||0),0);
+        return `${o.especie}: el chat dice ${fmtInt(o.cantidadTotal)} pero el reparto suma ${fmtInt(suma)} ` +
+               `(diferencia ${fmtInt(suma-o.cantidadTotal)}).`;
+      }).join('\n') + '\n\nCorrige el texto y vuelve a interpretarlo.');
+      return;
+    }
+    // (b) portafolios que no cruzaron: no se puede asignar a ciegas.
+    const sinPort = [];
+    _allocInterpretado.ordenes.forEach(o=>o.lineas.forEach(l=>{ if(!l.portId) sinPort.push(o.especie+' → '+l.portTexto); }));
+    if(sinPort.length){
+      alert('No se aplicó el reparto: estos portafolios no cruzaron con la base del cliente.\n\n' +
+            sinPort.join('\n') + '\n\nElígelos a mano en la lista de arriba y vuelve a aplicar.');
+      return;
+    }
+
+    let aplicadas = 0; const sinMatch = [], ignoradas = [];
     _allocInterpretado.ordenes.forEach(orden=>{
-      // Buscar la orden de Trades con esa cantidad (qtyDone) del cliente.
-      const poid = Object.keys(_fidessaTradesRaw||{}).find(k=>{
+      // La orden de Fidessa se busca por especie + cantidad, no solo por
+      // cantidad: dos especies distintas pueden tener el mismo qtyDone y
+      // asignarle a una el reparto de la otra sería un error silencioso.
+      const candidatas = Object.keys(_fidessaTradesRaw||{}).filter(k=>{
         const t = _fidessaTradesRaw[k];
-        return normalizarGrupo(t.grupo)===normalizarGrupo(cliente) && t.qtyDone === orden.cantidadTotal;
+        if(normalizarGrupo(t.grupo)!==normalizarGrupo(cliente) || t.qtyDone !== orden.cantidadTotal) return false;
+        if(orden.especie && nemoCanonico(t.security,'fidessa') !== orden.especie) return false;
+        if(orden.lado && t.lado !== orden.lado) return false;
+        return true;
       });
-      if(!poid){ sinMatch.push(orden.cantidadTotal); return; }
-      const allocs = orden.lineas.filter(l=>l.portId).map(l=>({portId:l.portId, cantidad:l.cantidad}));
-      _allocPorOrden[poid] = allocs;
+      if(candidatas.length === 0){ sinMatch.push((orden.especie||'?')+' '+fmtInt(orden.cantidadTotal)); return; }
+      if(candidatas.length > 1){ ignoradas.push((orden.especie||'?')+' '+fmtInt(orden.cantidadTotal)+' (varias órdenes calzan)'); return; }
+      const poid = candidatas[0];
+      _allocPorOrden[poid] = orden.lineas.filter(l=>l.portId).map(l=>({portId:l.portId, cantidad:l.cantidad}));
       aplicadas++;
     });
+    if(ignoradas.length) sinMatch.push(...ignoradas);
     // Si la orden activa quedó con reparto, recargar su vista.
     if(_ordenActiva && _allocPorOrden[_ordenActiva]) allocations = _allocPorOrden[_ordenActiva].slice();
     document.getElementById('modalPegarAlloc').style.display='none';
@@ -11435,7 +11496,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-11 20:56 UTC';
+const BUILD_ID = '2026-08-11 21:35 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
