@@ -7142,6 +7142,15 @@ function barrasVolumen(items, total){
 
 // Cierres guardados: alimentan la variación % contra el día anterior. Sin
 // esto la variación es intradía, que no es lo que reporta el mercado.
+// Cierres base para MTD y YTD. Vienen de Bloomberg (Sergio, 11-ago) y son
+// FIJOS: el de diciembre sirve todo 2026 y el de fin de mes se actualiza una
+// vez al mes. Los tickers de Bloomberg ya vienen traducidos a nemo NUAM.
+// OCCIDENTE y GXTESCOL se mapearon a mano: no están en NEMO_TABLE.
+const CIERRES_BASE = [{"nemo": "BHI", "dic2025": 429.0, "jul2026": 360.0}, {"nemo": "BOGOTA", "dic2025": 39780.0, "jul2026": 38720.0}, {"nemo": "BVC", "dic2025": 14500.0, "jul2026": 16220.0}, {"nemo": "CELSIA", "dic2025": 4900.0, "jul2026": 5010.0}, {"nemo": "CEMARGOS", "dic2025": 10760.0, "jul2026": 11020.0}, {"nemo": "CIBEST", "dic2025": 69200.0, "jul2026": 89420.0}, {"nemo": "CONCONCRET", "dic2025": 437.0, "jul2026": 426.0}, {"nemo": "CORFICOLCF", "dic2025": 18260.0, "jul2026": 20500.0}, {"nemo": "CORFICOLCF", "dic2025": 18260.0, "jul2026": 20500.0}, {"nemo": "ECOPETROL", "dic2025": 1870.0, "jul2026": 2675.0}, {"nemo": "ENKA", "dic2025": 20.3, "jul2026": 19.4}, {"nemo": "ETB", "dic2025": 46.5, "jul2026": 70.5}, {"nemo": "EXITO", "dic2025": 4255.0, "jul2026": 4705.0}, {"nemo": "GEB", "dic2025": 2970.0, "jul2026": 2865.0}, {"nemo": "GRUBOLIVAR", "dic2025": 87000.0, "jul2026": 80000.0}, {"nemo": "GRUPOARGOS", "dic2025": 16980.0, "jul2026": 16900.0}, {"nemo": "GRUPOAVAL", "dic2025": 757.0, "jul2026": 809.0}, {"nemo": "GRUPOSURA", "dic2025": 54000.0, "jul2026": 54960.0}, {"nemo": "GXTESCOL", "dic2025": 53550.0, "jul2026": 59200.0}, {"nemo": "HCOLSEL", "dic2025": 22841.0, "jul2026": 26200.0}, {"nemo": "ICOLCAP", "dic2025": 20000.0, "jul2026": 23480.0}, {"nemo": "ISA", "dic2025": 24660.0, "jul2026": 29900.0}, {"nemo": "MINEROS", "dic2025": 15300.0, "jul2026": 15940.0}, {"nemo": "NUTRESA", "dic2025": 282000.0, "jul2026": 314000.0}, {"nemo": "OCCIDENTE", "dic2025": 21500.0, "jul2026": 20700.0}, {"nemo": "PEI", "dic2025": 79960.0, "jul2026": 65480.0}, {"nemo": "PFAVAL", "dic2025": 770.0, "jul2026": 844.0}, {"nemo": "PFCEMARGOS", "dic2025": 13340.0, "jul2026": 11640.0}, {"nemo": "PFCIBEST", "dic2025": 59820.0, "jul2026": 74500.0}, {"nemo": "PFDAVIGRP", "dic2025": 28300.0, "jul2026": 32100.0}, {"nemo": "PFDAVVNDA", "dic2025": 24820.0, "jul2026": 24040.0}, {"nemo": "PFGRUPOARG", "dic2025": 12820.0, "jul2026": 12880.0}, {"nemo": "PFGRUPSURA", "dic2025": 42540.0, "jul2026": 44700.0}, {"nemo": "PROMIGAS", "dic2025": 6340.0, "jul2026": 6640.0}, {"nemo": "TERPEL", "dic2025": 18700.0, "jul2026": 17760.0}, {"nemo": "TIN", "dic2025": 20060.0, "jul2026": 13500.0}];
+
+const _CIERRE_YTD = {}, _CIERRE_MTD = {};
+CIERRES_BASE.forEach(c=>{ _CIERRE_YTD[c.nemo] = c.dic2025; _CIERRE_MTD[c.nemo] = c.jul2026; });
+
 let _cierresAnteriores = {};
 
 async function cargarCierreAnterior(){
@@ -7209,8 +7218,11 @@ function renderInformeDiario(){
     // intradía (último contra el primero del día). Se marca cuál es cuál para
     // no hacer pasar una por la otra.
     const base = cierres[d.esp] || d.primero;
+    const bYtd = _CIERRE_YTD[d.esp], bMtd = _CIERRE_MTD[d.esp];
     return { ...d, base, varPct: base ? (d.ultimo/base - 1)*100 : 0,
-             esIntradia: !cierres[d.esp] };
+             esIntradia: !cierres[d.esp],
+             mtd: bMtd ? (d.ultimo/bMtd - 1)*100 : null,
+             ytd: bYtd ? (d.ultimo/bYtd - 1)*100 : null };
   });
   const total = stats.reduce((a,d)=>a+d.monto, 0);
   const porVol = stats.slice().sort((a,b)=>b.monto-a.monto);
@@ -7282,18 +7294,19 @@ function renderInformeDiario(){
       <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:20px 0 8px;">
         RESUMEN DEL CONTINUO${hayHist? '' : ' — variación intradía (aún no hay cierre anterior guardado)'}</div>
       <div class="blotter-wrap"><table style="width:100%;"><thead><tr>
-        <th>Especie</th><th class="num">Último</th><th class="num">Var %</th><th class="num">Mín</th><th class="num">Máx</th>
-        <th class="num">VWAP</th><th class="num">Volumen</th><th class="num">Trades</th><th>Intradía</th>
+        <th>Especie</th><th class="num">Último</th><th class="num">Var %</th><th class="num">MTD</th><th class="num">YTD</th>
+        <th class="num">Mín</th><th class="num">Máx</th><th class="num">VWAP</th><th class="num">Volumen</th><th>Intradía</th>
       </tr></thead><tbody>
       ${porVol.slice(0,20).map(d=>`<tr>
         <td class="mono-id">${d.esp}</td>
         <td class="num">${fmtRate(d.ultimo)}</td>
         <td class="num">${pct(d.varPct)}</td>
+        <td class="num">${d.mtd!=null ? pct(d.mtd) : '<span style="opacity:.3;">—</span>'}</td>
+        <td class="num">${d.ytd!=null ? pct(d.ytd) : '<span style="opacity:.3;">—</span>'}</td>
         <td class="num" style="opacity:.7;">${fmtRate(d.min)}</td>
         <td class="num" style="opacity:.7;">${fmtRate(d.max)}</td>
         <td class="num">${fmtRate(d.monto/d.qty)}</td>
         <td class="num">${fmtMoney(d.monto)}</td>
-        <td class="num" style="opacity:.7;">${d.trades}</td>
         <td>${sparkline(d.serie, d.varPct, 110, 20)}</td>
       </tr>`).join('')}
       </tbody></table></div>
@@ -11329,7 +11342,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-11 19:00 UTC';
+const BUILD_ID = '2026-08-11 19:10 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
