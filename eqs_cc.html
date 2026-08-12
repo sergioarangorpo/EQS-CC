@@ -8088,7 +8088,7 @@ function actualizarBotonGenerar(){
     asignacionOk = completas.length>0 && sobrepasadas.length===0;
   } else if(!esAutoGen && cliente){
     const filtrados = getFiltrados();
-    const totalSel = filtrados.filter(f=>selectedFolios.has(f.id)).reduce((s,f)=>s+f.cantidad,0);
+    const totalSel = foliosParaReportar().reduce((s,f)=>s+f.cantidad,0);
     const totalAsig = allocations.reduce((s,a)=>s+a.cantidad,0);
     asignacionOk = totalSel>0 && totalAsig>0 && Math.abs(totalSel-totalAsig)<1;
   }
@@ -8111,6 +8111,8 @@ function toggleSeleccionarTodos(checked){
 }
 
 function actualizarChkSelectAll(filtrados){
+  // El checkbox de "seleccionar todos" se eliminó del cuadro de folios; queda
+  // la función por compatibilidad con quien la llame.
   const chk = document.getElementById('chkSelectAll');
   if(!chk) return;
   const totalSel = filtrados.filter(f=>selectedFolios.has(f.id)).length;
@@ -8201,7 +8203,7 @@ function renderStats(filtrados){
 
 function renderFolioSummary(){
   const filtrados = getFiltrados();
-  const sel = filtrados.filter(f=>selectedFolios.has(f.id));
+  const sel = foliosParaReportar();
   const bar = document.getElementById('folioSummaryBar');
   if(sel.length===0){ bar.innerHTML=''; return; }
   const totalQty = sel.reduce((s,f)=>s+f.cantidad,0);
@@ -8302,8 +8304,12 @@ function renderValidadorAlloc(){
 // Asignación a portafolios
 // ----------------------------------------------------------------------
 function getTotalSeleccionado(){
-  const filtrados = getFiltrados();
-  return filtrados.filter(f=>selectedFolios.has(f.id)).reduce((s,f)=>s+f.cantidad,0);
+  // Lo asignable son los folios QUE SE VAN A REPORTAR, no unos "marcados": el
+  // checkbox por folio se quitó el 11-ago (la marca de la última columna es de
+  // comisión, no de selección). Como esta función seguía contando
+  // selectedFolios, el "Disponible por asignar" quedaba en 0 y no se podía
+  // asignar ningún portafolio a mano — le pasó a Fidusura el 12-ago.
+  return foliosParaReportar().reduce((s,f)=>s+f.cantidad,0);
 }
 
 function getTotalAsignado(){
@@ -8317,7 +8323,29 @@ function getDisponible(){
 // Guarda el allocation de la orden activa en el store por-orden (para no
 // perderlo). Se llama antes de leer el agregado o de generar.
 function sincronizarAllocOrdenActiva(){
-  if(_ordenActiva) _allocPorOrden[_ordenActiva] = allocations.slice();
+  if(_ordenActiva){ _allocPorOrden[_ordenActiva] = allocations.slice(); return; }
+  // Sin orden activa (hay VARIAS líneas seleccionadas) la asignación se hacía
+  // en el vacío: se escribía en `allocations` pero no se guardaba contra
+  // ninguna orden, y al generar salía "ninguna orden tiene el reparto
+  // completo". Le pasó a Fidusura el 12-ago con sus dos líneas (EMGACO 2.762 e
+  // ISACCO 89) yendo las dos al mismo portafolio.
+  // Cuando el reparto es a UN SOLO portafolio, se replica en cada orden con su
+  // propia cantidad: es lo que Sergio quiere decir al asignar el total.
+  if(allocations.length !== 1 || !allocations[0]) return;
+  const portId = allocations[0].portId;
+  const ords = [...(_tradesConsolidar||[])].filter(o=>_fidessaTradesRaw && _fidessaTradesRaw[o]);
+  if(ords.length < 2) return;
+  const cliente = document.getElementById('filtroCliente').value;
+  const foliosPorOrden = {};
+  foliosParaReportar().forEach(f=>{
+    const k = String(f.parentOrderId||'');
+    if(k) foliosPorOrden[k] = (foliosPorOrden[k]||0) + f.cantidad;
+  });
+  const total = Object.values(foliosPorOrden).reduce((a,x)=>a+x,0);
+  if(total !== allocations[0].cantidad) return;   // solo si el total cuadra
+  ords.forEach(o=>{
+    if(foliosPorOrden[o]) _allocPorOrden[o] = [{ portId, cantidad: foliosPorOrden[o] }];
+  });
 }
 
 // Devuelve TODAS las órdenes con reparto guardado + la activa. Cada entrada:
@@ -8953,7 +8981,7 @@ function calcularComisionEfectiva(cliente, folios){
 function recalcularTodo(){
   const cliente = document.getElementById('filtroCliente').value;
   const filtrados = getFiltrados();
-  const seleccionados = filtrados.filter(f=>selectedFolios.has(f.id));
+  const seleccionados = foliosParaReportar();
   const totalSeleccionado = seleccionados.reduce((s,f)=>s+f.cantidad,0);
   const totalAsignado = allocations.reduce((s,a)=>s+a.cantidad,0);
   const disponible = totalSeleccionado - totalAsignado;
@@ -11705,7 +11733,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-12 16:10 UTC';
+const BUILD_ID = '2026-08-12 16:18 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
