@@ -4345,6 +4345,16 @@ const clientesDB = {
     // Comisión SIEMPRE 0.1%: ambos iguales para que la marca no cambie nada.
     comisionBloque: 0.001, comisionPantalla: 0.001,
   },
+  'CREDICORP CAPITAL BOLSA': {
+    nombre: 'CREDICORP CAPITAL BOLSA',
+    // Somos nosotros en Perú. La orden llega por la mesa de allá y el reporte
+    // lo hace su BO, así que desde acá NO se reporta (formato NO en
+    // GRUPO_COMISIONES). Se registra como cliente para poder filtrarlo y para
+    // que la columna Reportado lo marque en azul en vez de dejarlo pendiente.
+    formatoReporte: null, reparteManual: false, portafolios: [],
+    fileNombre: 'Credicorp Capital Bolsa',
+    comisionBloque: 0.0008, comisionPantalla: 0.0008,
+  },
   'FIDUCIARIA SKANDIA': {
     nombre: 'FIDUCIARIA SKANDIA',
     // Skandia manda el ID Fondo en el Notes de la orden de Fidessa (H4, 92,
@@ -4455,6 +4465,10 @@ const ALIAS_GRUPO = {
   // cliente tenía folios pero NO aparecía en el desplegable (no se podía filtrar
   // ni reportar). Detectado en la auditoría de cierre del 04-ago.
   SKANDIA: 'FIDUCIARIA SKANDIA',
+  // Somos nosotros mismos en Perú: la orden llega por Mafe y el reporte lo hace
+  // el BO, así que NO se reporta desde acá (formato NO en GRUPO_COMISIONES).
+  CREDIBOLSA: 'CREDICORP CAPITAL BOLSA',
+  CSI: 'CREDICORP CAPITAL BOLSA',
   BRSE: 'BRADESCO',
   ITAU: 'ITAU_NY',
   // En EMSX el account llega como 'BTG PACTUAL PP'; en Fidessa el CLIENT es 'BTG'.
@@ -4475,11 +4489,30 @@ function normalizarGrupo(g){ return ALIAS_GRUPO[g] || g; }
 // Solo se usa el Notes cuando el CLIENT NO corresponde a ningún cliente
 // conocido Y el Notes SÍ. Así, el día que los admins creen la cuenta real,
 // esta regla deja de dispararse sola — no hay que acordarse de quitarla.
+// Cuentas provisionales de Fidessa. Cuando la cuenta real del cliente todavía
+// no existe, la mesa opera contra una de estas y escribe el cliente verdadero
+// en el Instruction/Notes de la orden. Regla de Sergio (12-ago): TODO lo que
+// llegue en TEST viene con el Instruction claro, SIEMPRE.
+const CUENTAS_PROVISIONALES = ['TEST'];
+const _sinInstruccion = [];   // órdenes en cuenta provisional sin cliente en el Notes
+
 function grupoDeTrade(clientRaw, notes){
+  const raw = String(clientRaw||'').trim().toUpperCase();
   const g = normalizarGrupo(String(clientRaw||'').trim());
-  if(typeof clientesDB !== 'undefined' && clientesDB[g]) return g;
+  const conocido = typeof clientesDB !== 'undefined' && !!clientesDB[g];
   const porNotes = normalizarGrupo(String(notes||'').trim());
-  if(porNotes && typeof clientesDB !== 'undefined' && clientesDB[porNotes]) return porNotes;
+  const notesValido = porNotes && typeof clientesDB !== 'undefined' && !!clientesDB[porNotes];
+
+  // En cuenta provisional MANDA el Instruction, aunque 'TEST' llegara a existir
+  // como cliente: el nombre real siempre está ahí.
+  if(CUENTAS_PROVISIONALES.includes(raw)){
+    if(notesValido) return porNotes;
+    if(!_sinInstruccion.includes(String(notes||'(vacío)')))
+      _sinInstruccion.push(String(notes||'(vacío)'));
+    return g;
+  }
+  if(conocido) return g;
+  if(notesValido) return porNotes;
   return g;
 }
 
@@ -6487,6 +6520,14 @@ function procesarFidessa(){
   // del botón "Generar reporte" se apoye en él — ya maneja composites, cruces
   // de doble representación y DMA correctamente, a diferencia de una suma cruda
   // de folios (que doble-cuenta los cruces).
+  if(_sinInstruccion.length){
+    // No se puede saber de quién es: reportarla como 'TEST' sería atribuirle la
+    // operación a un cliente que no existe.
+    console.warn('⚠ Órdenes en cuenta provisional sin cliente reconocible en el Instruction:', _sinInstruccion.slice());
+    const el = document.getElementById('fidessaStatus');
+    if(el) el.innerHTML += ` <span style="color:var(--amber,#f59e0b);">⚠ Hay orden(es) en TEST cuyo Instruction (${_sinInstruccion.join(', ')}) no corresponde a ningún cliente conocido.</span>`;
+    _sinInstruccion.length = 0;
+  }
   window._reconPorOrden = filasRecon;
   window._reconDiferencias = diferencias;
   window._reconSinFolios = sinFolios;
@@ -11630,7 +11671,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-12 14:45 UTC';
+const BUILD_ID = '2026-08-12 15:53 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
