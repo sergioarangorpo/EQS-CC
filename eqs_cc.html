@@ -5,6 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>EQS CC — Equity Sales · Credicorp Capital</title>
 <style>
+/* Solo mientras se genera el PNG: agranda todo para que el informe se lea
+   cuando el cliente lo abre en el correo. Sin esto la letra de 11-12px queda
+   microscópica después de que Outlook reduce la imagen. */
+.informe-zoom { font-size: 15px !important; }
+.informe-zoom table { font-size: 15px !important; }
+.informe-zoom th, .informe-zoom td { font-size: 15px !important; padding: 7px 10px !important; }
+.informe-zoom .field-note { font-size: 13px !important; }
+.informe-zoom .stat-label { font-size: 13px !important; }
+.informe-zoom .stat-value { font-size: 24px !important; }
+.informe-zoom div[style*="font-size:11px"] { font-size: 14px !important; }
+.informe-zoom div[style*="font-size:12px"] { font-size: 15px !important; }
+.informe-zoom div[style*="font-size:13px"] { font-size: 16px !important; }
+.informe-zoom div[style*="font-size:19px"] { font-size: 28px !important; }
+.informe-zoom div[style*="font-size:22px"] { font-size: 32px !important; }
+.informe-zoom span[style*="font-size:12px"] { font-size: 15px !important; }
 :root{
     --bg-0:#0a0d12;
     --bg-1:#10141c;
@@ -7264,7 +7279,9 @@ function treemapVolumen(items, W, H){
     // Si esta franja consume TODO lo que queda, ocupa el ancho/alto completo.
     // Sin esto el redondeo dejaba una banda vacía en el borde derecho.
     const ultima = (i >= lista.length);
-    const grosor = ultima ? (w >= h ? w : h) : (w >= h ? w : h) * (s/tot);
+    let grosor = ultima ? (w >= h ? w : h) : (w >= h ? w : h) * (s/tot);
+    // Nunca dejar una banda de menos de 1px sin usar por errores de redondeo.
+    if(!ultima && Math.abs((w >= h ? w : h) - grosor) < 1) grosor = (w >= h ? w : h);
     let off = 0;
     fila.forEach(it=>{
       const p = it.valor / s;
@@ -7417,10 +7434,43 @@ async function _informeACanvas(){
   const el = document.getElementById('informeLienzo');
   if(!el) throw new Error('genera primero el informe');
   if(typeof html2canvas === 'undefined') throw new Error('no cargó html2canvas (revisa la conexión)');
-  return await html2canvas(el, { backgroundColor:'#0d0f14', scale:2, logging:false, useCORS:true });
+  // El informe se ve bien en pantalla pero al pegarlo en el correo Outlook lo
+  // reduce al ancho del mensaje y queda ilegible. La solución es capturarlo
+  // MÁS GRANDE: se ensancha el lienzo y se sube el tamaño de letra antes de la
+  // foto, y se deja como estaba después. Así el PNG sale con letra grande y
+  // aguanta la compresión del correo.
+  const estiloPrevio = el.getAttribute('style') || '';
+  el.style.width = '1600px';
+  el.style.fontSize = '15px';
+  el.classList.add('informe-zoom');
+  await new Promise(r=>setTimeout(r, 60));   // que el navegador reacomode
+  try{
+    return await html2canvas(el, {
+      backgroundColor:'#0d0f14', scale:2, logging:false, useCORS:true,
+      width: 1600, windowWidth: 1800,
+    });
+  } finally {
+    el.setAttribute('style', estiloPrevio);
+    el.classList.remove('informe-zoom');
+  }
+}
+
+// El informe sale al cliente: si falta el COLCAP o el dólar, las tarjetas
+// quedan incompletas y no aparecen los montos en USD. Mejor frenar.
+function informeCompleto(){
+  const num = v => Number(String(v||'').replace(/,/g,'')) || 0;
+  const falta = [];
+  if(!num((document.getElementById('infColcap')||{}).value)) falta.push('el COLCAP');
+  if(!String((document.getElementById('infColcapVar')||{}).value||'').trim()) falta.push('la variación del COLCAP');
+  if(!num((document.getElementById('usdcopAyudas')||{}).value)) falta.push('el USDCOP (arriba, en la barra de Ayudas)');
+  if(falta.length === 0) return true;
+  alert('No se puede enviar el informe todavía: falta ' + falta.join(', ') + '.\n\n' +
+        'Sin esos datos el informe sale con las tarjetas incompletas y sin los montos en USD.');
+  return false;
 }
 
 async function descargarInformeImagen(){
+  if(!informeCompleto()) return;
   try{
     const canvas = await _informeACanvas();
     const d = new Date();
@@ -7433,6 +7483,7 @@ async function descargarInformeImagen(){
 }
 
 async function copiarInformeImagen(){
+  if(!informeCompleto()) return;
   try{
     const canvas = await _informeACanvas();
     const blob = await new Promise(r=>canvas.toBlob(r, 'image/png'));
@@ -7550,7 +7601,7 @@ function renderInformeDiario(){
       </div>
 
       <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:14px 0 8px;">MAPA DEL MERCADO — tamaño por volumen, color por variación</div>
-      ${treemapVolumen(porVol.slice(0,22).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 960, 260)}
+      ${treemapVolumen(porVol.filter(d=>d.seg!=='MGC').slice(0,22).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 960, 260)}
 
       ${bloqueSegmento('MERCADO CONTINUO', d=>d.seg==='CONTINUO', 0)}
       ${bloqueSegmento('MERCADO GLOBAL COLOMBIANO (MGC)', d=>d.seg==='MGC', 10)}
@@ -12283,7 +12334,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-12 21:42 UTC';
+const BUILD_ID = '2026-08-12 21:50 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
