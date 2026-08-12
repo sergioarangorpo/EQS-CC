@@ -10336,7 +10336,15 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
     ws.getRow(1).height = 14.25;
     ws.views = [{ state:'frozen', ySplit:1 }];   // el encabezado queda fijo al scrollear
     filas.forEach((f, filaIdx) => {
-      f.forEach((valor, col) => { ws.getCell(filaIdx+2, col+1).value = valor; });
+      f.forEach((valor, col) => {
+        const c = ws.getCell(filaIdx+2, col+1);
+        c.value = valor;
+        // ExcelJS solo trata la celda como fecha si reconoce el objeto Date.
+        // Si por cualquier motivo llegó como texto ISO, se fuerza el tipo aquí:
+        // una fecha guardada como texto ignora el formato dd/mm/yyyy y el
+        // cliente termina viendo "2026-08-12T00:00:00.000Z".
+        if(valor instanceof Date && c.type !== 4){ c.value = new Date(valor.getTime()); }
+      });
     });
     // Formatos que pide COLFONDOS: fechas dd/mm/yyyy, montos en contable y
     // los dos porcentajes como porcentaje de verdad (no como 0,0015 pelado).
@@ -10374,7 +10382,7 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
     i+1,
     ...construirFilaBase(op.portafolio, op.especie, op.lado, op.cantidad, op.precio, op.comPct, op.comMonto, op.ivaMonto, op.montoNeto, op.fechaReg, op.fechaCum),
   ]);
-  await descargarPlano(`Operaciones_COLFONDOS_${fechaSlug}${window._sufijoReporte ? ' ' + window._sufijoReporte : ''}.xlsx`, 'No.', filasOps);
+  // (el archivo de Operaciones se genera más abajo, acumulando el detalle)
 
   // ---------- Detalle_operaciones_COLFONDOS (folio a folio) ----------
   // Los folios no traen su portafolio propio en nuestro modelo de datos hoy
@@ -10387,12 +10395,20 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
   // eso era el error: daba folios enteros a un solo portafolio cuando en la
   // realidad todos participan de cada folio). Cero tolerancia en los dos
   // sentidos: cada folio suma su cantidad y cada portafolio suma su allocation.
+  // EL DETALLE MANDA, y el consolidado es su ACUMULADO. Es como funciona la
+  // macro de Sergio: se calcula folio a folio y las Operaciones son la suma
+  // exacta de esas filas. Antes el consolidado se calculaba aparte con la
+  // comisión ponderada, y los dos archivos no cuadraban entre sí.
   const filasDet = [];
+  const acum = new Map();     // portafolio -> totales sumados del detalle
   repartirFoliosColfondos(loteOps, loteDet).forEach(({folio:f, alloc:op, cantidad})=>{
     // La comisión del pedazo sale de la MARCA DEL PROPIO FOLIO (bloque o
-    // pantalla), no de la comisión ponderada del portafolio: dentro de una
-    // misma orden puede haber folios marcados distinto.
-    const comPct  = (f.comisionPct != null) ? f.comisionPct : op.comPct;
+    // pantalla): dentro de una misma orden puede haber folios marcados
+    // distinto. OJO con las unidades: `f.comisionPct` viene en UNIDADES DE
+    // PORCENTAJE (0.08 = 0,08%), mientras `op.comPct` ya es fracción
+    // (0.0008). Mezclarlas escribía 8% en vez de 0,08% y multiplicaba la
+    // comisión por 100.
+    const comPct  = (f.comisionPct != null) ? (Number(f.comisionPct)/100) : op.comPct;
     const bruto   = cantidad * f.precio;
     const comMon  = bruto * comPct;
     const ivaMon  = op.portafolio.iva ? comMon * 0.19 : 0;
@@ -10401,7 +10417,25 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
       f.folio,
       ...construirFilaBase(op.portafolio, f.especie, f.lado, cantidad, f.precio, comPct, comMon, ivaMon, neto, f.fechaReg, f.fechaCum),
     ]);
+    const k = op.portafolio.id + '|' + f.especie + '|' + f.lado;
+    const a = acum.get(k) || { portafolio:op.portafolio, especie:f.especie, lado:f.lado,
+                               cantidad:0, bruto:0, com:0, iva:0, neto:0,
+                               fechaReg:f.fechaReg, fechaCum:f.fechaCum };
+    a.cantidad += cantidad; a.bruto += bruto; a.com += comMon; a.iva += ivaMon; a.neto += neto;
+    acum.set(k, a);
   });
+
+  // Operaciones = acumulado del detalle, línea por portafolio/especie/lado.
+  // El precio y el % de comisión salen de los totales, así que el archivo
+  // cuadra consigo mismo: cantidad x precio = bruto, y bruto x com% = comisión.
+  const filasOpsAcum = [...acum.values()].map((a,i)=>[
+    i+1,
+    ...construirFilaBase(a.portafolio, a.especie, a.lado, a.cantidad,
+                         a.cantidad ? a.bruto/a.cantidad : 0,
+                         a.bruto ? a.com/a.bruto : 0,
+                         a.com, a.iva, a.neto, a.fechaReg, a.fechaCum),
+  ]);
+  await descargarPlano(`Operaciones_COLFONDOS_${fechaSlug}${window._sufijoReporte ? ' ' + window._sufijoReporte : ''}.xlsx`, 'No.', filasOpsAcum);
   await descargarPlano(`Detalle_operaciones_COLFONDOS_${fechaSlug}${window._sufijoReporte ? ' ' + window._sufijoReporte : ''}.xlsx`, 'FOLIO', filasDet);
 }
 
@@ -11671,7 +11705,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-12 15:53 UTC';
+const BUILD_ID = '2026-08-12 16:10 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
