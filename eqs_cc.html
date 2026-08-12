@@ -4350,6 +4350,17 @@ const clientesDB = {
     // Comisión SIEMPRE 0.1%: ambos iguales para que la marca no cambie nada.
     comisionBloque: 0.001, comisionPantalla: 0.001,
   },
+  'PORVENIR': {
+    nombre: 'PORVENIR',
+    // El portafolio llega en el Instruction de la orden (ej. "CESANTIAS"), así
+    // que no hay reparto manual salvo que Sergio quiera partir una línea.
+    formatoReporte: 'porvenir', reparteManual: false, portafolios: [],
+    fileNombre: 'Porvenir',
+    // 0,15% bloque / 0,08% pantalla, con ECOPETROL y PFCIBEST siempre a 0,08%.
+    // Los spread trades van a 0,10%: se marcan con el selector de Cruce en ese
+    // valor antes de marcar el folio.
+    comisionBloque: 0.0015, comisionPantalla: 0.0008,
+  },
   'CREDICORP CAPITAL BOLSA': {
     nombre: 'CREDICORP CAPITAL BOLSA',
     // Somos nosotros en Perú. La orden llega por la mesa de allá y el reporte
@@ -8147,6 +8158,11 @@ function toggleMarca(id){
   const f = foliosFidessa.find(x=>x.id===id);
   if(!f) return;
   f.marca = f.marca==='bloque' ? 'pantalla' : 'bloque';
+  // Se GUARDA la comisión de cruce vigente en el momento de marcar. Antes se
+  // leía el selector al generar, así que si en la misma jornada había bloques
+  // a 0,15% y spreads a 0,10%, el último valor del selector se aplicaba a
+  // todos. Ahora cada folio se queda con la que tenía cuando se marcó.
+  f.comBloquePct = f.marca==='bloque' ? comisionCrucePct() : null;
   renderFolios();
 }
 
@@ -9369,7 +9385,8 @@ async function generarReporte(){
       fraccion: f.fraccion, ordNum: f.ordNum,
       trader: f.trader || PROTECCION_TRADER_DEFAULT,
       // Override: ECOPETROL y PFCIBEST SIEMPRE 0,08% en PROTECCIÓN, aunque estén marcados bloque.
-      comisionPct: (f.especie==='ECOPETROL'||f.especie==='PFCIBEST') ? comisionPantallaPct() : (f.marca === 'bloque' ? comisionCrucePct() : comisionPantallaPct()),
+      comisionPct: (f.especie==='ECOPETROL'||f.especie==='PFCIBEST') ? comisionPantallaPct()
+                 : (f.marca === 'bloque' ? (f.comBloquePct != null ? f.comBloquePct : comisionCrucePct()) : comisionPantallaPct()),
     };
     detalleHistorico.push(fila);
     loteDet.push(fila);
@@ -9396,7 +9413,31 @@ async function generarReporte(){
   // tabla en pantalla, sin producir ningún archivo, a pesar de que su propio
   // texto prometía "Genera Operaciones_CLIENTE... y agrega al Detalle...".
   const formato = getClienteDB(cliente).formatoReporte;
-  if(formato === 'skandia'){
+  if(formato === 'porvenir'){
+    const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
+    // La comisión que se le muestra es la PONDERADA por especie+lado, que es
+    // la que va a ver Porvenir: ellos consolidan, no quieren dos tarifas.
+    // La comisión de cada folio se calcula aquí igual que en el generador:
+    // `f.comisionPct` solo existe dentro del lote ya armado, así que en la
+    // confirmación hay que derivarla de la marca del folio.
+    const _pctFolio = f => (f.especie==='ECOPETROL' || f.especie==='PFCIBEST')
+      ? comisionPantallaPct()
+      : (f.marca === 'bloque' ? (f.comBloquePct != null ? f.comBloquePct : comisionCrucePct()) : comisionPantallaPct());
+    const comUnica = comisionesPorEspecieLado(seleccionados, _pctFolio);
+    const ok = await confirmarPorvenir(cliente, seleccionados, comUnica, version);
+    if(!ok) return;
+    window._sufijoReporte = sufijoVersion(version);
+    await generarReportePorvenir(cliente, loteDet, {
+      comUnica,
+      traderPorPort: window._porvTraderPorPort || {},
+      cumplimiento: window._porvCumplimiento || 'T+2',
+      medio: window._porvMedio || 'BBL',
+    });
+    window._sufijoReporte = '';
+    const nuevas = await registrarLoteRVL(cliente, loteDet, version);
+    avisoLoteGenerado(cliente, loteDet, version, nuevas, 'CREDICORPCAPITAL-PORVENIR + Archivo plano');
+    renderFidessaTradesPanel();
+  } else if(formato === 'skandia'){
     const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
     const ok = await previsualizarReporte({
       titulo: `${getClienteDB(cliente).nombre} — ${etiquetaVersion(version)}`,
@@ -9900,6 +9941,33 @@ function _ladoEmsxGlobal(r){
   return s ? (s.startsWith('B') ? 'Compra' : 'Venta') : '';
 }
 
+// PORVENIR consolida la comisión: si una especie+lado tiene folios con
+// comisiones distintas (unos en bloque a 0,15% y otros en pantalla a 0,08%),
+// el cliente NO espera ver dos tarifas sino UNA sola, la ponderada.
+//   comisión promedio = comisión total / giro bruto total
+// Y se deja en 3 decimales SIEMPRE, redondeando hacia arriba: es lógica
+// obligatoria de bolsa (0,09534684% -> 0,096%).
+function comisionPromedioPonderada(folios, pctDe){
+  let bruto = 0, com = 0;
+  folios.forEach(f=>{
+    const b = f.cantidad * f.precio;
+    bruto += b;
+    com   += b * (pctDe(f) / 100);      // pctDe devuelve unidades de %
+  });
+  if(!bruto) return 0;
+  const pct = com / bruto * 100;                       // en unidades de %
+  return Math.ceil(pct * 1000 - 1e-9) / 1000;          // 3 decimales, hacia arriba
+}
+
+// Agrupa por especie+lado y devuelve la comisión única de cada grupo.
+function comisionesPorEspecieLado(folios, pctDe){
+  const g = {};
+  folios.forEach(f=>{ (g[f.especie+'|'+f.lado] = g[f.especie+'|'+f.lado] || []).push(f); });
+  const out = {};
+  Object.keys(g).forEach(k=>{ out[k] = comisionPromedioPonderada(g[k], pctDe); });
+  return out;
+}
+
 async function registrarLoteRVL(cliente, loteDet, version){
   const porOrden = {};
   (loteDet||[]).forEach(f=>{
@@ -10221,6 +10289,343 @@ function _skFondoDeFolio(f){
     id = String(_fidessaTradesRaw[String(f.parentOrderId)].notes || '').trim();
   }
   return { id, fondo: _SKANDIA_POR_ID[id.toUpperCase()] || null };
+}
+
+// =====================================================================
+// PORVENIR — dos archivos, calcados de CREDICORPCAPITAL-PORVENIR.xlsx
+// y Archivo_plano_Porvenir.xlsx (11-ago).
+//
+//  1) CREDICORPCAPITAL-PORVENIR.xlsx — 4 hojas:
+//       RESUMEN   agrupado con subtotales por especie, por trader y general
+//       CONTADO   folio a folio, encabezado en la fila 9 con sus colores
+//       TTV       se deja con su estructura, sin datos (no hacemos TTV)
+//       PARAMETROS listas maestras (portafolios, traders, medios...)
+//  2) Archivo_plano_Porvenir.xlsx — 17 columnas, folio 1000 + TCN
+//
+// PARTICULARIDAD: Porvenir CONSOLIDA la comisión. Si una especie+lado trae
+// folios con tarifas distintas, TODOS salen con la ponderada
+// (comisión total / giro bruto), a 3 decimales redondeando hacia arriba.
+// =====================================================================
+const PORVENIR_PORTAFOLIOS = [{"nombre": "Acciones Ecopetrol", "deceval": 846773}, {"nombre": "Acciones Grupo Nutresa", "deceval": 1787908}, {"nombre": "Acciones Isa", "deceval": 1788072}, {"nombre": "Acciones Cemargos", "deceval": 1828444}, {"nombre": "Acciones Bancolombia", "deceval": 1868729}, {"nombre": "Renta Variable Grupo Argos", "deceval": 1932089}, {"nombre": "Renta Variable Davivienda", "deceval": 1932088}, {"nombre": "Renta Variable Grupo Sura", "deceval": 1932090}, {"nombre": "Diversificado Básico", "deceval": 1232323}, {"nombre": "Diversificada Dinámica", "deceval": 1232310}, {"nombre": "Diversificada Extrema", "deceval": 1454662}, {"nombre": "Acciones Colombia", "deceval": 622789}, {"nombre": "Arquimed", "deceval": 1947147}, {"nombre": "En sus Manos Estudio 2022", "deceval": 1434426}, {"nombre": "Moderado", "deceval": 1448}, {"nombre": "Mayor Riesgo", "deceval": 1544233}, {"nombre": "Retiro Programado", "deceval": 1544235}, {"nombre": "Conservador", "deceval": 1544232}, {"nombre": "Cesantías LP", "deceval": 1431}, {"nombre": "Acciones Celsia", "deceval": 2000990}, {"nombre": "SmurfitKappa", "deceval": 1552}, {"nombre": "Acciones CLH", "deceval": 2103091}, {"nombre": "Táctico Porvenir", "deceval": 2100819}, {"nombre": "ARAS", "deceval": 2121594}, {"nombre": "PASIVOS PENSIONALES FONPET 2012 - PORVENIR", "deceval": 1806864}, {"nombre": "Acciones GEB", "deceval": 2090031}, {"nombre": "Alt Especial Progresivo", "deceval": 2006836}, {"nombre": "Renovar", "deceval": 2239493}, {"nombre": "Generación Sostenible", "deceval": 2276983}, {"nombre": "Fondos Futuro", "deceval": 2146478}, {"nombre": "Alternativa Especial AQD", "deceval": 1947147}, {"nombre": "Acciones Corficolombiana", "deceval": 2404266}, {"nombre": "Acciones Grupo Aval", "deceval": 2404267}, {"nombre": "Premium Riesgo Bajo", "deceval": 1912295}, {"nombre": "Renta Fija Alto Valor", "deceval": 1998088}, {"nombre": "Estrategias Inmobiliarias Tramo I", "deceval": 2014266}, {"nombre": "FIJOMES", "deceval": 2146537}, {"nombre": "Advisor", "deceval": 2182835}, {"nombre": "Estrategias Inmobiliarias Tramo II", "deceval": 1197736}];
+
+// Nombre del fondo tal como lo espera Porvenir en el archivo plano. En
+// PARAMETROS los portafolios van con nombre corto ("Cesantías LP") pero el
+// plano lleva el nombre completo del fondo.
+const PORVENIR_NOMBRE_PLANO = {
+  'Cesantías LP': 'Fondo de Cesantías Porvenir',
+};
+
+const _PORV_POR_DECEVAL = {};
+PORVENIR_PORTAFOLIOS.forEach(p=>{ _PORV_POR_DECEVAL[String(p.deceval)] = p; });
+
+// Traders por tipo de portafolio (Sergio, 12-ago). El primero es el default.
+const PORVENIR_TRADERS = {
+  FPO:  ['Marcela Ramirez', 'Camilo Navarro'],
+  FPV:  ['Sergio Vargas', 'Juan Amaris'],
+};
+// Los portafolios de FPO y Cesantías llevan el grupo FPO; el resto (voluntarias
+// y alternativos) van con FPV.
+const _PORV_FPO = ['Moderado','Mayor Riesgo','Retiro Programado','Conservador','Cesantías LP'];
+function grupoTraderPorvenir(nombrePort){
+  const n = String(nombrePort||'');
+  return _PORV_FPO.some(x=>n.toLowerCase().includes(x.toLowerCase())) ? 'FPO' : 'FPV';
+}
+
+function _porvPortDeFolio(f){
+  // El portafolio llega en el Notes de la orden (ej. "CESANTIAS" -> Cesantías LP).
+  let txt = String(f.portafolio || f.notes || '').trim();
+  if(!txt && f.parentOrderId && _fidessaTradesRaw && _fidessaTradesRaw[String(f.parentOrderId)]){
+    txt = String(_fidessaTradesRaw[String(f.parentOrderId)].notes || '').trim();
+  }
+  const norm = t => String(t||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9]/g,'');
+  const objetivo = norm(txt);
+  if(!objetivo) return null;
+  return PORVENIR_PORTAFOLIOS.find(p=>norm(p.nombre)===objetivo)
+      || PORVENIR_PORTAFOLIOS.find(p=>norm(p.nombre).startsWith(objetivo))
+      || PORVENIR_PORTAFOLIOS.find(p=>objetivo.startsWith(norm(p.nombre)))
+      || null;
+}
+
+// Pantalla de confirmación de PORVENIR: muestra la comisión PONDERADA que se
+// va a reportar por especie+lado (no las tarifas sueltas de cada folio) y deja
+// elegir el trader por portafolio, el cumplimiento y el medio.
+function confirmarPorvenir(cliente, folios, comUnica, version){
+  return new Promise(resolve=>{
+    const prev = document.getElementById('modalPorvenir');
+    if(prev) prev.remove();
+    // Grupos por especie+lado, con su comisión única y de dónde salió.
+    const grupos = {};
+    folios.forEach(f=>{ const k = f.especie+'|'+f.lado;
+      const g = grupos[k] || (grupos[k] = {especie:f.especie, lado:f.lado, cantidad:0, bruto:0, bloques:0, qBloque:0});
+      g.cantidad += f.cantidad; g.bruto += f.cantidad*f.precio;
+      if(f.marca === 'bloque'){ g.bloques++; g.qBloque += f.cantidad; } });
+    // Portafolios presentes, para el menú de traders.
+    const ports = {};
+    folios.forEach(f=>{ const p = _porvPortDeFolio(f); if(p) ports[p.nombre] = p; });
+    window._porvTraderPorPort = window._porvTraderPorPort || {};
+
+    const div = document.createElement('div');
+    div.id = 'modalPorvenir'; div.className = 'edit-overlay';
+    div.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:9999;padding:24px;';
+    div.innerHTML = `
+      <div style="background:var(--bg-1,#12141a);border:1px solid var(--border,#2a2f3a);border-radius:10px;max-width:min(980px,95vw);max-height:88vh;display:flex;flex-direction:column;">
+        <div style="padding:16px 20px;border-bottom:1px solid var(--border,#2a2f3a);">
+          <div style="font-weight:700;font-size:14px;">PORVENIR — ${etiquetaVersion(version)}</div>
+          <div class="field-note" style="margin-top:4px;">La comisión que se reporta es la <b>ponderada por especie y lado</b>, a 3 decimales.</div>
+        </div>
+        <div style="overflow:auto;padding:14px 20px;flex:1;">
+          <table style="width:100%;"><thead><tr>
+            <th>Especie</th><th>Lado</th><th class="num">Cantidad</th><th class="num">En bloque</th>
+            <th class="num">Giro bruto</th><th class="num">Comisión a reportar</th>
+          </tr></thead><tbody>
+          ${Object.values(grupos).map(g=>`<tr>
+            <td class="mono-id">${g.especie}</td><td>${g.lado}</td>
+            <td class="num">${fmtInt(g.cantidad)}</td>
+            <td class="num" style="opacity:.75;">${g.qBloque? fmtInt(g.qBloque)+' ('+g.bloques+' folios)' : '—'}</td>
+            <td class="num">${fmtMoney(g.bruto)}</td>
+            <td class="num"><b style="color:var(--amber,#f59e0b);font-size:14px;">${(comUnica[g.especie+'|'+g.lado]||0).toFixed(3)}%</b></td>
+          </tr>`).join('')}
+          </tbody></table>
+
+          <div class="section-label" style="margin:18px 0 8px;">Trader por portafolio</div>
+          ${Object.values(ports).map(p=>{
+            const grupo = grupoTraderPorvenir(p.nombre);
+            const opciones = PORVENIR_TRADERS[grupo];
+            const actual = window._porvTraderPorPort[p.nombre] || opciones[0];
+            return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+              <span style="width:230px;font-size:12px;">${p.nombre}</span>
+              <span class="field-note" style="width:40px;">${grupo}</span>
+              <select id="porvTrader_${p.deceval}" style="width:220px;">
+                ${opciones.map(t=>`<option value="${t}" ${t===actual?'selected':''}>${t}</option>`).join('')}
+              </select></div>`;
+          }).join('')}
+
+          <div style="display:flex;gap:16px;margin-top:14px;">
+            <div class="tb-field"><label>Cumplimiento</label>
+              <select id="porvCumpl" style="width:110px;">
+                ${['T+0','T+1','T+2','T+3'].map(x=>`<option ${x==='T+2'?'selected':''}>${x}</option>`).join('')}
+              </select></div>
+            <div class="tb-field"><label>Medio</label>
+              <select id="porvMedio" style="width:120px;">
+                ${['BBL','TEL','EMSX','Correo'].map(x=>`<option>${x}</option>`).join('')}
+              </select></div>
+          </div>
+        </div>
+        <div style="padding:14px 20px;border-top:1px solid var(--border,#2a2f3a);display:flex;justify-content:space-between;gap:12px;">
+          <span class="field-note">${folios.length} folio(s) · ${fmtInt(folios.reduce((a,f)=>a+f.cantidad,0))} acciones</span>
+          <span style="display:flex;gap:8px;">
+            <button class="btn small ghost" id="porvCancel">Cancelar</button>
+            <button class="btn small" id="porvOk">Generar</button>
+          </span>
+        </div>
+      </div>`;
+    document.body.appendChild(div);
+    const cerrar = v => {
+      if(v){
+        Object.values(ports).forEach(p=>{
+          const sel = document.getElementById('porvTrader_'+p.deceval);
+          if(sel) window._porvTraderPorPort[p.nombre] = sel.value;
+        });
+        window._porvCumplimiento = document.getElementById('porvCumpl').value;
+        window._porvMedio = document.getElementById('porvMedio').value;
+      }
+      div.remove(); resolve(v);
+    };
+    div.querySelector('#porvOk').onclick = ()=>cerrar(true);
+    div.querySelector('#porvCancel').onclick = ()=>cerrar(false);
+  });
+}
+
+async function generarReportePorvenir(cliente, loteDet, opciones){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar la librería de Excel (ExcelJS).'); return; }
+  if(!loteDet || loteDet.length === 0){ alert('No hay folios para reportar.'); return; }
+  const opts = opciones || {};
+  const hoyDate = new Date();
+  const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
+  const aFecha = v => { if(v instanceof Date) return v;
+    const m = String(v||'').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? new Date(Number(m[1]), Number(m[2])-1, Number(m[3])) : v; };
+
+  // Comisión ÚNICA por especie+lado (la ponderada).
+  // Si la confirmación ya calculó la comisión, se usa esa misma: lo que se
+  // muestra tiene que ser exactamente lo que se genera.
+  const comUnica = opts.comUnica || comisionesPorEspecieLado(loteDet, f=>Number(f.comisionPct)||0);
+
+  const sinPort = new Set();
+  const filas = loteDet.map(f=>{
+    const port = opts.portPorFolio ? opts.portPorFolio(f) : _porvPortDeFolio(f);
+    if(!port) sinPort.add(String(f.portafolio||f.notes||'(vacío)'));
+    const pct   = (comUnica[f.especie+'|'+f.lado] || 0) / 100;   // fracción
+    const bruto = f.cantidad * f.precio;
+    const com   = redondear(bruto * pct, 3);
+    const iva   = redondear(com * 0.19, 3);
+    const neto  = f.lado === 'Venta' ? bruto - com - iva : bruto + com + iva;
+    const trader = (opts.traderPorPort && port) ? (opts.traderPorPort[port.nombre] || null) : null;
+    return { folio:Number(f.folio), hora:f.hora, especie:f.especie, lado:f.lado,
+             cantidad:f.cantidad, precio:f.precio, pct, bruto, com, iva, neto,
+             port, deceval: port ? port.deceval : '', fechaCum: aFecha(f.fechaCum),
+             trader: trader || (port ? PORVENIR_TRADERS[grupoTraderPorvenir(port.nombre)][0] : 'Marcela Ramirez'),
+             fechaReg: aFecha(f.fechaReg), cumplimiento: opts.cumplimiento || 'T+2' };
+  });
+
+  if(sinPort.size){
+    alert('No se generó el reporte de PORVENIR.\n\nEstos portafolios no están en PARAMETROS: ' +
+          [...sinPort].join(', ') + '.\n\nRevisa el Instruction de la orden en Fidessa.');
+    return;
+  }
+
+  const bajar = async (wb, nombre) => {
+    const buf = await wb.xlsx.writeBuffer();
+    const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+    const a = document.createElement('a'); a.href = url; a.download = nombre; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const suf = window._sufijoReporte ? ' ' + window._sufijoReporte : '';
+  const NARANJA = 'FFE26C0A', VERDE = 'FF9BBB59', GRIS = 'FFA6A6A6';
+  const pintar = (ws, fila, desde, hasta, color) => {
+    for(let c = desde; c <= hasta; c++){
+      const cel = ws.getCell(fila, c);
+      cel.fill = { type:'pattern', pattern:'solid', fgColor:{argb:color} };
+      cel.font = { name:'Calibri', size:11, color:{argb:'FF000000'} };
+      cel.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+    }
+  };
+
+  // ---------- 1) CREDICORPCAPITAL-PORVENIR ----------
+  {
+    const wb = new ExcelJS.Workbook();
+
+    // --- RESUMEN: agrupado por trader > especie, con subtotales ---
+    const ws = wb.addWorksheet('RESUMEN');
+    ['','Día','Contraparte','Trader','Activo','Tipo','Portafolio','Deceval','Cumplimiento','% Comisión','Precio','Cantidad','Giro Neto']
+      .forEach((h,i)=>{ if(h) ws.getCell(9, i+1).value = h; });
+    let r = 10;
+    const porTrader = {};
+    filas.forEach(f=>{ (porTrader[f.trader] = porTrader[f.trader] || []).push(f); });
+    Object.keys(porTrader).sort().forEach(tr=>{
+      const porEsp = {};
+      porTrader[tr].forEach(f=>{ (porEsp[f.especie] = porEsp[f.especie] || []).push(f); });
+      let qTr = 0, nTr = 0;
+      Object.keys(porEsp).sort().forEach(esp=>{
+        let qE = 0, nE = 0;
+        porEsp[esp].forEach(f=>{
+          ws.getCell(r,2).value = f.fechaReg;    ws.getCell(r,2).numFmt = 'dd/mm/yyyy';
+          ws.getCell(r,3).value = 'CREDICORPCAPITAL';
+          ws.getCell(r,4).value = f.trader;
+          ws.getCell(r,5).value = f.especie;
+          ws.getCell(r,6).value = f.lado;
+          ws.getCell(r,7).value = f.port.nombre;
+          ws.getCell(r,8).value = f.deceval;
+          ws.getCell(r,9).value = f.cumplimiento;
+          ws.getCell(r,10).value = f.pct;        ws.getCell(r,10).numFmt = '0.000%';
+          ws.getCell(r,11).value = f.precio;     ws.getCell(r,11).numFmt = '#,##0';
+          ws.getCell(r,12).value = f.cantidad;   ws.getCell(r,12).numFmt = '#,##0';
+          ws.getCell(r,13).value = f.neto;       ws.getCell(r,13).numFmt = '#,##0';
+          qE += f.cantidad; nE += f.neto; r++;
+        });
+        ws.getCell(r,5).value = 'Total ' + esp;
+        ws.getCell(r,12).value = qE; ws.getCell(r,12).numFmt = '#,##0';
+        ws.getCell(r,13).value = nE; ws.getCell(r,13).numFmt = '#,##0';
+        [5,12,13].forEach(c=>{ ws.getCell(r,c).font = {bold:true}; });
+        qTr += qE; nTr += nE; r++;
+      });
+      ws.getCell(r,4).value = 'Total ' + tr;
+      ws.getCell(r,12).value = qTr; ws.getCell(r,12).numFmt = '#,##0';
+      ws.getCell(r,13).value = nTr; ws.getCell(r,13).numFmt = '#,##0';
+      [4,12,13].forEach(c=>{ ws.getCell(r,c).font = {bold:true}; });
+      r++;
+    });
+    ws.getCell(r,2).value = 'Total general';
+    ws.getCell(r,12).value = filas.reduce((a,f)=>a+f.cantidad,0); ws.getCell(r,12).numFmt = '#,##0';
+    ws.getCell(r,13).value = filas.reduce((a,f)=>a+f.neto,0);     ws.getCell(r,13).numFmt = '#,##0';
+    [2,12,13].forEach(c=>{ ws.getCell(r,c).font = {bold:true}; });
+    [5.7,13.3,18.4,21.6,19.6,17.7,28,15,17.7,15,11.9,8.6,13.2].forEach((w,i)=>{ ws.getColumn(i+1).width = w; });
+
+    // --- CONTADO: folio a folio, con los colores del archivo real ---
+    const wc = wb.addWorksheet('CONTADO');
+    ['','Folio','Día','Hora','Contraparte','Medio','Trader','Portafolio','Tipo','Cumplimiento','Activo',
+     'Cantidad','Precio','% Comisión','Giro Bruto','Comisión Bruta','Iva','Giro Neto','Deceval']
+      .forEach((h,i)=>{ if(h) wc.getCell(9, i+1).value = h; });
+    pintar(wc, 9, 2, 4, NARANJA);   // Folio / Día / Hora
+    pintar(wc, 9, 5, 11, VERDE);    // Contraparte .. Activo
+    pintar(wc, 9, 12, 14, NARANJA); // Cantidad / Precio / % Comisión
+    pintar(wc, 9, 15, 19, GRIS);    // Giro Bruto .. Deceval
+    let rc = 10;
+    filas.forEach(f=>{
+      wc.getCell(rc,2).value = f.folio;                  wc.getCell(rc,2).numFmt = '0';
+      wc.getCell(rc,3).value = f.fechaReg;               wc.getCell(rc,3).numFmt = 'dd/mm/yyyy';
+      wc.getCell(rc,4).value = f.hora || '';
+      wc.getCell(rc,5).value = 'CREDICORPCAPITAL';
+      wc.getCell(rc,6).value = opts.medio || 'BBL';
+      wc.getCell(rc,7).value = f.trader;
+      wc.getCell(rc,8).value = f.port.nombre;
+      wc.getCell(rc,9).value = f.lado;
+      wc.getCell(rc,10).value = f.cumplimiento;
+      wc.getCell(rc,11).value = f.especie;
+      wc.getCell(rc,12).value = f.cantidad;              wc.getCell(rc,12).numFmt = '#,##0';
+      wc.getCell(rc,13).value = f.precio;                wc.getCell(rc,13).numFmt = '#,##0';
+      wc.getCell(rc,14).value = f.pct;                   wc.getCell(rc,14).numFmt = '0.000%';
+      wc.getCell(rc,15).value = f.bruto;                 wc.getCell(rc,15).numFmt = '#,##0';
+      wc.getCell(rc,16).value = f.com;                   wc.getCell(rc,16).numFmt = '#,##0.000';
+      wc.getCell(rc,17).value = f.iva;                   wc.getCell(rc,17).numFmt = '#,##0.000';
+      wc.getCell(rc,18).value = f.neto;                  wc.getCell(rc,18).numFmt = '#,##0';
+      wc.getCell(rc,19).value = f.deceval;
+      rc++;
+    });
+    autofitColumnas(wc);
+
+    // --- TTV: solo la estructura, sin datos ---
+    const wt = wb.addWorksheet('TTV');
+    ['','Folio Salida','Folio Regreso','Día','Hora','Contraparte','Medio','Trader ','Portafolio','Activo',
+     'Días','Cantidad','Precio','Tasa EA','Fecha de Salida','Fecha de Regreso','Giro','Intereses','Deceval']
+      .forEach((h,i)=>{ if(h) wt.getCell(9, i+1).value = h; });
+    pintar(wt, 9, 2, 19, VERDE);
+    autofitColumnas(wt);
+
+    // --- PARAMETROS: las listas maestras ---
+    const wp = wb.addWorksheet('PARAMETROS');
+    [[2,'Portafolio'],[3,'DECEVAL'],[5,'Tipo'],[7,'Tipo'],[9,'Especie'],[11,'Medio'],[13,'Trader']]
+      .forEach(([c,h])=>{ wp.getCell(2,c).value = h; wp.getCell(2,c).font = {bold:true}; });
+    PORVENIR_PORTAFOLIOS.forEach((p,i)=>{
+      wp.getCell(3+i,2).value = p.nombre;
+      wp.getCell(3+i,3).value = p.deceval;
+    });
+    ['Compra','Venta'].forEach((v,i)=> wp.getCell(3+i,5).value = v);
+    ['T+0','T+1','T+2','T+3'].forEach((v,i)=> wp.getCell(3+i,7).value = v);
+    ['BBL','TEL','EMSX','Correo'].forEach((v,i)=> wp.getCell(3+i,11).value = v);
+    [...PORVENIR_TRADERS.FPO, ...PORVENIR_TRADERS.FPV].forEach((v,i)=> wp.getCell(3+i,13).value = v);
+    autofitColumnas(wp);
+
+    await bajar(wb, `CREDICORPCAPITAL-PORVENIR${suf}.xlsx`);
+  }
+
+  // ---------- 2) Archivo plano ----------
+  {
+    const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('Hoja1');
+    const H = ['Folio','Especie','Conf.','Codigo Cliente','Cliente','Cantidad/V.Nominal','Precio','Valor Bruto',
+               'Comision','IVA Comision','Interes','Rte.Fuente','Valor Neto','Corredor','Reg.','Liquidación','Cumplimiento'];
+    H.forEach((h,i)=>{ const c = ws.getCell(1,i+1); c.value = h; c.font = {bold:true}; });
+    // El nombre que espera Porvenir en el plano es el del FONDO completo, no el
+    // corto de PARAMETROS: "Fondo de Cesantías Porvenir", no "Cesantías LP".
+    const nombreLargo = p => PORVENIR_NOMBRE_PLANO[p.nombre] || p.nombre;
+    filas.forEach((f,i)=>{
+      const r = i+2;
+      [ '1000' + String(f.folio),      // folio del plano = 1000 + TCN completo
+        f.especie, 29, '800170043', nombreLargo(f.port),
+        f.cantidad, f.precio, f.bruto, f.com, f.iva, 0, 0, f.neto,
+        opts.corredor || 'SAR', 'BVC', f.lado, f.fechaCum
+      ].forEach((v,c)=>{ ws.getCell(r,c+1).value = v; });
+      // Formatos calcados del archivo real.
+      const CONT_Q = '_(* #,##0_);_(* \\(#,##0\\);_(* "-"_);_(@_)';
+      const CONT_$ = '_("$"* #,##0_);_("$"* \\(#,##0\\);_("$"* "-"_);_(@_)';
+      ws.getCell(r,6).numFmt = CONT_Q;
+      [7,8,9,10,11,12].forEach(c=> ws.getCell(r,c).numFmt = CONT_$);
+      ws.getCell(r,13).numFmt = '_-"$"* #,##0.00_-;\\-"$"* #,##0.00_-;_-"$"* "-"_-;_-@_-';
+      ws.getCell(r,17).numFmt = 'dd/mm/yyyy';
+    });
+    autofitColumnas(ws);
+    await bajar(wb, `Archivo_plano_Porvenir${suf}.xlsx`);
+  }
 }
 
 async function generarReporteSkandia(cliente, loteDet){
@@ -11751,7 +12156,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-12 17:07 UTC';
+const BUILD_ID = '2026-08-12 20:46 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
