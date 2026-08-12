@@ -3642,7 +3642,7 @@ async function generarExcelCruce(clienteKey, registrados, trader){
   for(let rr=eqIni; rr<=eqFin; rr++){
     ['B','C'].forEach(col=> ws.getCell(`${col}${rr}`).alignment = {horizontal:'center'});
     ws.getCell(`G${rr}`).numFmt = '#,##0';
-    ws.getCell(`H${rr}`).numFmt = '"$"#,##0.0000';
+    ws.getCell(`H${rr}`).numFmt = '"$"#,##0.00';   // Price: 2 decimales, como se complementa en bolsa
     ws.getCell(`I${rr}`).numFmt = '"$"#,##0.00';
     ws.getCell(`J${rr}`).numFmt = '"$"#,##0.00';
     ws.getCell(`K${rr}`).numFmt = '"$"#,##0.00';
@@ -3926,7 +3926,7 @@ async function generarExcelAndes(eqLotes, fxOps){
     for(let rr=eqIni; rr<=eqFin; rr++){
       ['B','C'].forEach(col=> ws.getCell(`${col}${rr}`).alignment = {horizontal:'center'});
       ws.getCell(`G${rr}`).numFmt = '#,##0';
-      ws.getCell(`H${rr}`).numFmt = '"$"#,##0.0000';
+      ws.getCell(`H${rr}`).numFmt = '"$"#,##0.00';   // Price: 2 decimales, como se complementa en bolsa
       ws.getCell(`I${rr}`).numFmt = '"$"#,##0.00';
       ws.getCell(`J${rr}`).numFmt = '"$"#,##0.00';
       ws.getCell(`K${rr}`).numFmt = '"$"#,##0.00';
@@ -4163,8 +4163,13 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
   const eqIni = r;
   const fechaSlug = fileBase.fechaSlug;
   filasEquity.forEach(f=>{
-    const gross = redondear(f.cantidad * f.precio, 2);
-    const comision = redondear(gross * f.comPct, 2);
+    // PRECIO a 2 decimales (así se complementa en bolsa y así lo espera el
+    // cliente) y COMISIÓN a 3 como máximo: en bolsa no se puede complementar
+    // con más precisión (Sergio, 12-ago). El redondeo es POR LÍNEA; un
+    // consolidado que sume varias líneas no lleva esa restricción.
+    const precio = redondear(f.precio, 2);
+    const gross = redondear(f.cantidad * precio, 2);
+    const comision = redondear(gross * f.comPct, 3);
     // IVA = 19% de la comisión (todos estos clientes lo llevan). El neto suma
     // (Compra) o resta (Venta) gross + comisión + IVA.
     const iva = redondear(comision * 0.19, 2);
@@ -4175,7 +4180,7 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
     ws.getCell(`E${r}`).value = f.portNombre;
     ws.getCell(`F${r}`).value = f.especie;
     ws.getCell(`G${r}`).value = f.cantidad;
-    ws.getCell(`H${r}`).value = redondear(f.precio, 4);
+    ws.getCell(`H${r}`).value = precio;
     ws.getCell(`I${r}`).value = gross;
     ws.getCell(`J${r}`).value = comision;
     ws.getCell(`K${r}`).value = f.comPct;
@@ -4187,9 +4192,9 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
   for(let rr=eqIni; rr<=eqFin; rr++){
     ['B','C'].forEach(col=> ws.getCell(`${col}${rr}`).alignment = {horizontal:'center'});
     ws.getCell(`G${rr}`).numFmt = '#,##0';
-    ws.getCell(`H${rr}`).numFmt = '"$"#,##0.0000';
+    ws.getCell(`H${rr}`).numFmt = '"$"#,##0.00';   // Price: 2 decimales, como se complementa en bolsa
     ws.getCell(`I${rr}`).numFmt = '"$"#,##0.00';
-    ws.getCell(`J${rr}`).numFmt = '"$"#,##0.00';
+    ws.getCell(`J${rr}`).numFmt = '"$"#,##0.000';
     ws.getCell(`K${rr}`).numFmt = '0.0000%';
     ws.getCell(`L${rr}`).numFmt = '"$"#,##0.00';
     ws.getCell(`M${rr}`).numFmt = '"$"#,##0.00';
@@ -6928,7 +6933,7 @@ function renderCanastasPendientes(){
     return `<div class="blotter-wrap" style="margin-bottom:12px;">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);">
         <strong>${c.entity||'MLI'} · ${c.stocks||''}${c.fx_tipo?' + '+c.fx_tipo:''}</strong>
-        <span class="field-note">${String(c.creado_en||'').slice(11,19)} · USDCOP ${fmtRate(c.usdcop)}</span>
+        <span class="field-note">${horaLocal(c.creado_en)} · USDCOP ${fmtRate(c.usdcop)}</span>
       </div>
       <table><thead><tr><th>Lado acciones</th><th class="num">Papeletas</th><th class="num">Acciones</th><th class="num">Valor COP</th><th class="num">USD</th><th>Genera en FX</th></tr></thead>
       <tbody>
@@ -7579,6 +7584,16 @@ function fijarPrecioManual(nemo, valor){
   recalcularCanasta();
 }
 
+// La hora se GUARDA en UTC (bien: es inequívoca) pero hay que MOSTRARLA en
+// hora de Bogotá. Antes se cortaba el string ISO con slice(11,19), que deja la
+// hora UTC tal cual: un reporte de las 10:56 salía como 15:56.
+function horaLocal(iso){
+  if(!iso) return '—';
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return String(iso).slice(11,19) || '—';
+  return d.toLocaleTimeString('es-CO', {timeZone:'America/Bogota', hour12:false});
+}
+
 function renderModuloReportes(){
   const resumen = document.getElementById('reportesResumen');
   if(!document.getElementById('repRVL')) return;
@@ -7618,7 +7633,7 @@ function renderModuloReportes(){
                 <th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Comisión</th><th>Envío</th>
               </tr></thead><tbody>
               ${rs.map(r=>`<tr>
-                <td>${String(r.generado_en||'').slice(11,19) || '—'}</td>
+                <td>${horaLocal(r.generado_en)}</td>
                 <td class="mono-id">${r.parent_order_id}</td>
                 <td class="mono-id">${r.especie||'—'}</td>
                 <td>${r.lado||'—'}</td>
@@ -10438,8 +10453,11 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
     // comisión por 100.
     const comPct  = (f.comisionPct != null) ? (Number(f.comisionPct)/100) : op.comPct;
     const bruto   = cantidad * f.precio;
-    const comMon  = bruto * comPct;
-    const ivaMon  = op.portafolio.iva ? comMon * 0.19 : 0;
+    // Máximo 3 decimales por folio: es el límite de complementación en bolsa.
+    // El acumulado de abajo suma estos valores ya redondeados, así que el
+    // consolidado cuadra exactamente con el detalle.
+    const comMon  = redondear(bruto * comPct, 3);
+    const ivaMon  = op.portafolio.iva ? redondear(comMon * 0.19, 3) : 0;
     const neto    = f.lado === 'Venta' ? bruto - comMon - ivaMon : bruto + comMon + ivaMon;
     filasDet.push([
       f.folio,
@@ -11733,7 +11751,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-12 16:18 UTC';
+const BUILD_ID = '2026-08-12 17:07 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
