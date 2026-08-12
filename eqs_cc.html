@@ -4354,7 +4354,10 @@ const clientesDB = {
     nombre: 'PORVENIR',
     // El portafolio llega en el Instruction de la orden (ej. "CESANTIAS"), así
     // que no hay reparto manual salvo que Sergio quiera partir una línea.
-    formatoReporte: 'porvenir', reparteManual: false, portafolios: [],
+    formatoReporte: 'porvenir', reparteManual: false,
+    // Se llenan más abajo con los 39 de PARAMETROS: PORVENIR_PORTAFOLIOS se
+    // declara después de esta tabla, así que aquí todavía no existe.
+    portafolios: [],
     fileNombre: 'Porvenir',
     // 0,15% bloque / 0,08% pantalla, con ECOPETROL y PFCIBEST siempre a 0,08%.
     // Los spread trades van a 0,10%: se marcan con el selector de Cruce en ese
@@ -9406,6 +9409,47 @@ async function generarReporte(){
   // archivos de Fidessa. Lo que queda es el REGISTRO en el módulo Reportes.
   renderHistoryRVL();
 
+  // PORVENIR: el reparto por chat se calcula AQUÍ, antes de limpiar las
+  // allocations. Si se hiciera después, _allocPorOrden ya está vacío y el
+  // portafolio asignado a mano se perdía (el reporte fallaba pidiendo el
+  // Instruction que Porvenir no siempre manda).
+  window._loteDetPorv = null;
+  if(getClienteDB(cliente).formatoReporte === 'porvenir'){
+    // Reparto por portafolio cuando Porvenir fracciona POR CHAT en vez de
+    // mandarlo en el Instruction. El reparto de cada orden vive en
+    // _allocPorOrden (no en `allocations`, que solo tiene la orden activa), y
+    // cada folio se parte proporcionalmente entre sus portafolios.
+    sincronizarAllocOrdenActiva();
+    const _portsPorv = getClienteDB(cliente).portafolios || [];
+    const _repartoPorv = [];
+    Object.keys(_allocPorOrden).forEach(poid=>{
+      (_allocPorOrden[poid]||[]).forEach(a=>{
+        if(!a.cantidad) return;
+        const port = _portsPorv.find(p=>p.id===a.portId);
+        if(port) _repartoPorv.push({ parentOrderId:poid, portafolio:port, cantidad:a.cantidad });
+      });
+    });
+    if(_repartoPorv.length){
+      const partido = [];
+      _repartoPorv.forEach(a=>{
+        const fs = seleccionados.filter(f=>String(f.parentOrderId)===String(a.parentOrderId));
+        const total = fs.reduce((x,f)=>x+f.cantidad,0);
+        if(!total) return;
+        let restante = a.cantidad;
+        fs.forEach((f,i)=>{
+          // Proporcional, y el último folio absorbe el redondeo para que la
+          // suma dé exacta: cero tolerancia a diferencias de cantidad.
+          const q = (i === fs.length-1) ? restante : Math.round(f.cantidad * a.cantidad / total);
+          restante -= q;
+          if(q > 0) partido.push({ ...f, cantidad:q, portNombre:a.portafolio.nombre });
+        });
+      });
+      if(partido.length) window._loteDetPorv = partido;
+    }
+    // La comisión que se le muestra es la PONDERADA por especie+lado, que es
+    // la que va a ver Porvenir: ellos consolidan, no quieren dos tarifas.
+  }
+
   // Limpiar selección y allocations tras registrar, igual que en FX
   selectedFolios.clear();
   allocations = [];
@@ -9422,8 +9466,7 @@ async function generarReporte(){
   const formato = getClienteDB(cliente).formatoReporte;
   if(formato === 'porvenir'){
     const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
-    // La comisión que se le muestra es la PONDERADA por especie+lado, que es
-    // la que va a ver Porvenir: ellos consolidan, no quieren dos tarifas.
+    const loteDetPorv = window._loteDetPorv || null;
     // La comisión de cada folio se calcula aquí igual que en el generador:
     // `f.comisionPct` solo existe dentro del lote ya armado, así que en la
     // confirmación hay que derivarla de la marca del folio.
@@ -9431,11 +9474,22 @@ async function generarReporte(){
       ? comisionPantallaPct()
       : (f.marca === 'bloque' ? (f.comBloquePct != null ? f.comBloquePct : comisionCrucePct()) : comisionPantallaPct());
     const comUnica = comisionesPorEspecieLado(seleccionados, _pctFolio);
+    const _registrarPorv = () => loteDetPorv || loteDet;
     const ok = await confirmarPorvenir(cliente, seleccionados, comUnica, version);
     if(!ok) return;
     window._sufijoReporte = sufijoVersion(version);
-    await generarReportePorvenir(cliente, loteDet, {
+    // Si hay reparto manual (Porvenir fraccionó por chat en vez de mandarlo en
+    // el Instruction), se usa el lote YA repartido: cada pedazo con el
+    // portafolio que le asignó Sergio. Si no lo hay, el generador saca el
+    // portafolio del Instruction como siempre.
+    const hayReparto = !!loteDetPorv;
+    await generarReportePorvenir(cliente, hayReparto ? loteDetPorv : loteDet, {
       comUnica,
+      portPorFolio: hayReparto ? (f => {
+        // El folio ya viene con su portafolio asignado desde el reparto.
+        const nom = f.portNombre || (f.portafolioObj && f.portafolioObj.nombre);
+        return nom ? (PORVENIR_PORTAFOLIOS.find(p=>p.nombre===nom) || null) : _porvPortDeFolio(f);
+      }) : null,
       traderPorPort: window._porvTraderPorPort || {},
       cumplimiento: window._porvCumplimiento || 'T+2',
       medio: window._porvMedio || 'BBL',
@@ -10375,6 +10429,14 @@ const PORVENIR_NOMBRE_PLANO = {
 const _PORV_POR_DECEVAL = {};
 PORVENIR_PORTAFOLIOS.forEach(p=>{ _PORV_POR_DECEVAL[String(p.deceval)] = p; });
 
+// Los 39 portafolios de PARAMETROS entran a la base del cliente, para poder
+// asignar a mano cuando el Instruction no alcance (el desplegable salía vacío).
+if(typeof clientesDB !== 'undefined' && clientesDB['PORVENIR']){
+  clientesDB['PORVENIR'].portafolios = PORVENIR_PORTAFOLIOS.map(p=>({
+    id: 'PORV_' + p.deceval, nombre: p.nombre, nit: '', iva: true, deceval: p.deceval,
+  }));
+}
+
 // Traders por tipo de portafolio (Sergio, 12-ago). El primero es el default.
 const PORVENIR_TRADERS = {
   FPO:  ['Marcela Ramirez', 'Camilo Navarro'],
@@ -10389,18 +10451,26 @@ function grupoTraderPorvenir(nombrePort){
 }
 
 function _porvPortDeFolio(f){
-  // El portafolio llega en el Notes de la orden (ej. "CESANTIAS" -> Cesantías LP).
-  let txt = String(f.portafolio || f.notes || '').trim();
-  if(!txt && f.parentOrderId && _fidessaTradesRaw && _fidessaTradesRaw[String(f.parentOrderId)]){
-    txt = String(_fidessaTradesRaw[String(f.parentOrderId)].notes || '').trim();
-  }
+  // El portafolio llega en el Notes/Instruction de la orden ("CESANTIAS" ->
+  // Cesantías LP). Se prueban VARIOS candidatos y gana el primero que exista en
+  // PARAMETROS: el campo `portafolio` del folio puede venir del Account de
+  // EMSX, que para Porvenir dice literalmente "PORVENIR" (el nombre del
+  // cliente, no del fondo) y no sirve para identificar el portafolio.
   const norm = t => String(t||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9]/g,'');
-  const objetivo = norm(txt);
-  if(!objetivo) return null;
-  return PORVENIR_PORTAFOLIOS.find(p=>norm(p.nombre)===objetivo)
-      || PORVENIR_PORTAFOLIOS.find(p=>norm(p.nombre).startsWith(objetivo))
-      || PORVENIR_PORTAFOLIOS.find(p=>objetivo.startsWith(norm(p.nombre)))
-      || null;
+  const candidatos = [];
+  if(f.parentOrderId && _fidessaTradesRaw && _fidessaTradesRaw[String(f.parentOrderId)]){
+    candidatos.push(_fidessaTradesRaw[String(f.parentOrderId)].notes);   // el Instruction de la orden manda
+  }
+  candidatos.push(f.notes, f.portafolio);
+  for(const c of candidatos){
+    const objetivo = norm(c);
+    if(!objetivo || objetivo === 'PORVENIR') continue;   // el nombre del cliente no es un portafolio
+    const hit = PORVENIR_PORTAFOLIOS.find(p=>norm(p.nombre)===objetivo)
+             || PORVENIR_PORTAFOLIOS.find(p=>norm(p.nombre).startsWith(objetivo))
+             || PORVENIR_PORTAFOLIOS.find(p=>objetivo.startsWith(norm(p.nombre)));
+    if(hit) return hit;
+  }
+  return null;
 }
 
 // Pantalla de confirmación de PORVENIR: muestra la comisión PONDERADA que se
@@ -12213,7 +12283,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-12 21:29 UTC';
+const BUILD_ID = '2026-08-12 21:42 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
