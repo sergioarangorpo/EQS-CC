@@ -6468,44 +6468,18 @@ function procesarFidessa(){
   });
   foliosFidessa = [...foliosProtDirectos, ...nuevosFolios];
 
-  // ---- COLFONDOS: asociación de folios (prioridad de Sergio) ----
-  // 1) El POID ya asoció lo directo en la conciliación. 2) Aquí se recuperan
-  // los folios HUÉRFANOS (COLCCP sin orden emparejada — típicamente la tanda
-  // VWAP que el robot dejó con Parent Order ID fuera del active/trades) que
-  // pertenezcan a una especie+lado que COLFONDOS operó, EXCLUYENDO PROTECCIÓN
-  // (hijas por Notes ∈ SUBCUENTAS y mamás por TCN). Es la "última opción"
-  // (eliminación) solo para lo huérfano; no toca folios ya emparejados a otro
-  // cliente por POID. El día robusto es con Notes=COLFONDOS en el folio.
-  {
-    const colfOrders = new Set();
-    const _addColf = (esp,lado)=>{ if(esp) colfOrders.add(String(esp)+'|'+(String(lado||'').toLowerCase().startsWith('c')?'Compra':'Venta')); };
-    // Las órdenes COLFONDOS salen del EMSX (data mamá) — a mitad de día viven en
-    // el blotter de Bloomberg antes de bajar a Fidessa Trades; también se leen
-    // de Trades por si ya bajaron.
-    Object.values(_fidessaTradesRaw||{}).forEach(t=>{ if(normalizarGrupo(t.grupo)==='COLFONDOS' && t.security) _addColf(nemoCanonico(t.security,'fidessa'), t.lado); });
-    // OJO: _emsxCBCache trae las filas CRUDAS de Supabase. La columna del
-    // cliente es `originate_trader_firm` (NO `firm`, que solo existe en el
-    // objeto que arma la tabla) y el lado es `side` (NO `lado`). Antes se leía
-    // r.firm y r.lado → ambos undefined → esta rama NUNCA aportaba nada y,
-    // cuando llegaba a correr, _addColf convertía el undefined en 'Venta'
-    // siempre. Mismo bug que tenía _ladoOrdenProtPP en PROTECCIÓN.
-    // Además el firm real no siempre normaliza al grupo (en PROTECCIÓN llega
-    // como 'AFP PROTECCION SA'), así que se acepta también por contenido.
-    const _esFirmColf = r => { const f = String(r.originate_trader_firm||r.firm||r.grupo||'').toUpperCase(); return !!f && (normalizarGrupo(f)==='COLFONDOS' || f.includes('COLFONDOS')); };
-    (_emsxCBCache||[]).forEach(r=>{ if(_esFirmColf(r)){ const _tk=r.ticker||r.nombre_completo||''; const _l=_ladoEmsx(r); if(!_l) return; _addColf(nemoCanonico(_tk,'emsx'), _l); _addColf(nemoCanonico(_tk,'fidessa'), _l); } });
-    if(colfOrders.size){
-      const tcnProt = new Set();
-      foliosFidessa.forEach(f=>{ if(f.origen==='proteccion-directo') tcnProt.add(f.folio); });
-      const esSubProt = p => typeof PROTECCION_SUBCUENTAS!=='undefined' && !!PROTECCION_SUBCUENTAS[String(p||'').trim()];
-      foliosFidessa.forEach(f=>{
-        if(f.origen==='proteccion-directo' || f.cliente==='PROTECCION') return; // nunca tocar PROTECCIÓN
-        if(f.cliente!=='COLCCP' && f.cliente!=='COLFONDOS') return;              // solo huérfanos/COLCCP (no otros clientes ya emparejados)
-        if(!colfOrders.has(String(f.especie)+'|'+String(f.lado))) return;       // debe ser una especie+lado que COLFONDOS operó
-        if(esSubProt(f.portafolio) || tcnProt.has(f.folio)) return;             // excluir PROTECCIÓN (hija por Notes o mamá por TCN)
-        f.cliente='COLFONDOS'; f.grupoColfondos=true;
-      });
-    }
-  }
+  // ---- COLFONDOS: NO se adivinan folios por especie ----
+  // Aquí había un bloque que le atribuía a COLFONDOS cualquier folio huérfano
+  // cuya especie+lado él hubiera operado. Eso es un error grave y se quitó
+  // (Sergio, 12-ago): intradía SIEMPRE hay órdenes de otros clientes
+  // trabajando, así que siempre sobran folios sin dueño.
+  // El 12-ago la orden VWAP de MLI en PFGRUPOARG (6.319, aún trabajando) se le
+  // sumaba a COLFONDOS y su reporte habría salido con 67.119 en vez de 60.800.
+  // Un folio se asigna SOLO si su Parent Order ID lleva a una orden real —
+  // directa o por la reasignación de POID, que exige cantidad exacta. Si no,
+  // queda huérfano y visible, que es lo honesto: el cliente que se reporta
+  // tiene que cuadrar contra SU orden, no contra lo que quedó suelto.
+
   // Por defecto TODAS las órdenes de Trades quedan seleccionadas → se ven todos
   // los folios. Si Sergio quiere enviar solo una línea, deselecciona el resto.
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>_tradesConsolidar.add(oid));
@@ -9174,6 +9148,31 @@ async function generarReporte(){
   const seleccionados = esProteccionRep
     ? filtrados.filter(f=>f.origen==='proteccion-directo')
     : (marcados.length > 0 ? marcados : filtrados);
+
+  // GUARDA DE CUADRE: lo que se va a reportar tiene que coincidir con lo que
+  // dicen las órdenes del cliente en Fidessa Trades. Intradía siempre hay
+  // órdenes de otros clientes trabajando, así que un descuadre suele significar
+  // que se coló un folio ajeno — y reportarle a un cliente acciones que no son
+  // suyas es lo más grave que puede hacer esta app.
+  if(!esProteccionRep){
+    const qtyFolios = seleccionados.reduce((a,f)=>a+f.cantidad, 0);
+    const poids = new Set(seleccionados.map(f=>String(f.parentOrderId||'')));
+    let qtyOrdenes = 0;
+    Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
+      if(poids.has(String(oid))) qtyOrdenes += _fidessaTradesRaw[oid].qtyDone || 0;
+    });
+    const huerfanos = seleccionados.filter(f=>!f.parentOrderId || !_fidessaTradesRaw[String(f.parentOrderId)]);
+    if(qtyOrdenes > 0 && qtyFolios !== qtyOrdenes){
+      const qh = huerfanos.reduce((a,f)=>a+f.cantidad,0);
+      alert(`No se generó el reporte: no cuadra contra Fidessa Trades.\n\n` +
+        `Órdenes del cliente: ${fmtInt(qtyOrdenes)}\nFolios a reportar:  ${fmtInt(qtyFolios)}\n` +
+        `Diferencia: ${fmtInt(qtyFolios - qtyOrdenes)}\n\n` +
+        (huerfanos.length ? `${huerfanos.length} folio(s) (${fmtInt(qh)}) no tienen una orden de este cliente que los respalde.\n` +
+          `Suelen ser de otra orden que todavía está trabajando.\n\n` : '') +
+        `Selecciona en Fidessa Trades solo la línea que quieres reportar.`);
+      return;
+    }
+  }
   if(seleccionados.length===0){ alert(esProteccionRep ? 'No hay folios de PROTECCIÓN para reportar. Carga Fidessa Trades + Folios y filtra AFP PROTECCIÓN.' : 'No hay folios para este cliente con los filtros actuales.'); return; }
   if(frenarSiLadoSinOrden(seleccionados)) return;
 
@@ -11631,7 +11630,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-11 22:12 UTC';
+const BUILD_ID = '2026-08-12 14:45 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
