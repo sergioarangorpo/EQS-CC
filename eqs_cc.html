@@ -4384,10 +4384,14 @@ const clientesDB = {
   },
   'FIDUASHMORE': {
     nombre: 'FIDUASHMORE',
-    formatoReporte: 'generico_equity', reparteManual: true,
-    portafoliosDeCategorias: 'FIDUASHMORE', portafolios: [],
+    formatoReporte: 'generico_equity',
+    // Cliente de portafolio ÚNICO, como BTG Cayman: no hay nada que repartir,
+    // toda la orden va a FIDUASHMORE. Antes pedía asignación manual sin razón.
+    reparteManual: false,
+    portafolios: [ {id:'FIDUASHMORE', nombre:'FIDUASHMORE', nit:'', iva:true} ],
+    autoPortafolio: 'FIDUASHMORE',
     fileNombre: 'Fiduashmore',
-    // Comisión SIEMPRE 0.09%.
+    // Siempre 0,09%, en bloque y en pantalla.
     comisionBloque: 0.0009, comisionPantalla: 0.0009,
   },
   'FIDUCIARIA SURA': {
@@ -9249,6 +9253,9 @@ async function generarReporte(){
     ? filtrados.filter(f=>f.origen==='proteccion-directo')
     : (marcados.length > 0 ? marcados : filtrados);
 
+  // Guardián de comisiones: avisa si la tarifa no es la pactada del cliente.
+  if(!revisarComisiones(cliente, seleccionados)) return;
+
   // GUARDA DE CUADRE: lo que se va a reportar tiene que coincidir con lo que
   // dicen las órdenes del cliente en Fidessa Trades. Intradía siempre hay
   // órdenes de otros clientes trabajando, así que un descuadre suele significar
@@ -9666,10 +9673,10 @@ function mostrarAprobacionProteccion(cliente, loteDet){
   const traderPorPort = {};   // portafolio -> trader (editable)
   loteDet.forEach(f=>{
     const k = `${f.especie}|${f.lado}`;
-    if(!porGrupo[k]) porGrupo[k] = { especie:f.especie, lado:f.lado, cantidad:0, precios:new Set(), ports:{}, sinPort:0 };
+    if(!porGrupo[k]) porGrupo[k] = { especie:f.especie, lado:f.lado, cantidad:0, bruto:0, ports:{}, sinPort:0 };
     const g = porGrupo[k];
     g.cantidad += f.cantidad;
-    g.precios.add(Math.round(f.precio*100)/100);
+    g.bruto += f.cantidad * f.precio;   // para el promedio ponderado real
     if(f.portafolio){
       g.ports[f.portafolio] = (g.ports[f.portafolio]||0) + f.cantidad;
       if(!(f.portafolio in traderPorPort)) traderPorPort[f.portafolio] = f.trader || PROTECCION_TRADER_DEFAULT;
@@ -9687,7 +9694,10 @@ function mostrarAprobacionProteccion(cliente, loteDet){
     const cuadra = g.cantidad === eje;
     const faltaPort = g.sinPort > 0;
     if(!cuadra || faltaPort) hayProblemas = true;
-    const precioTxt = [...g.precios].map(p=>fmtRate(p)).join(' · ');
+    // PRECIO PROMEDIO DE EJECUCIÓN, no la lista de precios distintos. Con 300
+    // folios esa lista era ilegible y en varias filas salía vacía; el promedio
+    // ponderado es lo que de verdad sirve para confirmar antes de generar.
+    const precioTxt = g.cantidad > 0 ? fmtRate(g.bruto / g.cantidad) : '—';
     const opcionesTrader = Object.keys(PROTECCION_TRADERS).map(ini=>`<option value="${ini}">${ini} — ${PROTECCION_TRADERS[ini]}</option>`).join('');
     const portsTxt = Object.entries(g.ports).map(([p,q])=>{
       const trSel = `<select data-port="${p}" class="prot-trader-sel" style="background:var(--bg-3);border:1px solid var(--border-strong);border-radius:6px;color:var(--text-0);font-family:var(--mono);font-size:11.5px;padding:5px 8px;">${opcionesTrader}</select>`;
@@ -9966,6 +9976,53 @@ function comisionesPorEspecieLado(folios, pctDe){
   const out = {};
   Object.keys(g).forEach(k=>{ out[k] = comisionPromedioPonderada(g[k], pctDe); });
   return out;
+}
+
+// =====================================================================
+// GUARDIÁN DE COMISIONES
+// ---------------------------------------------------------------------
+// El selector "Comisión del día" es global y se queda con el último valor
+// usado. El 12-ago se reportó FIDUASHMORE con pantalla 0,09% y enseguida
+// PROTECCIÓN salió también a 0,09% cuando su tarifa es 0,08%: el archivo se
+// generó perfecto y con la comisión equivocada, que es la peor combinación.
+// Ahora, antes de generar, se compara la comisión que se va a usar contra la
+// tarifa pactada del cliente y se avisa si no coinciden.
+// =====================================================================
+function tarifasPactadas(cliente){
+  const cfg = getClienteDB(cliente) || {};
+  return {
+    // Algunos clientes lo tienen como comisionCruce y otros como comisionBloque.
+    bloque:   (cfg.comisionBloque != null ? cfg.comisionBloque : cfg.comisionCruce) != null
+                ? (cfg.comisionBloque != null ? cfg.comisionBloque : cfg.comisionCruce) * 100 : null,   // en %
+    pantalla: cfg.comisionPantalla != null ? cfg.comisionPantalla * 100 : null,
+  };
+}
+
+// Devuelve true si se puede seguir (o no había nada que advertir).
+function revisarComisiones(cliente, folios){
+  const t = tarifasPactadas(cliente);
+  const nombre = (getClienteDB(cliente)||{}).nombre || cliente;
+  const usadas = { bloque:new Set(), pantalla:new Set() };
+  (folios||[]).forEach(f=>{
+    // Las especies con override (ECOPETROL/PFCIBEST a pantalla) no cuentan
+    // como desviación: su tarifa distinta es la regla, no un error.
+    if(f.especie==='ECOPETROL' || f.especie==='PFCIBEST') return;
+    if(f.marca === 'bloque') usadas.bloque.add(Number(f.comBloquePct != null ? f.comBloquePct : comisionCrucePct()));
+    else usadas.pantalla.add(Number(comisionPantallaPct()));
+  });
+  const avisos = [];
+  const fmtPct = v => (Math.round(v*10000)/10000) + '%';
+  ['bloque','pantalla'].forEach(tipo=>{
+    if(t[tipo] == null) return;
+    [...usadas[tipo]].forEach(v=>{
+      if(Math.abs(v - t[tipo]) > 1e-9)
+        avisos.push(`${tipo==='bloque'?'Bloque/Cruce':'Pantalla'}: se va a reportar ${fmtPct(v)} y la tarifa de ${nombre} es ${fmtPct(t[tipo])}.`);
+    });
+  });
+  if(avisos.length === 0) return true;
+  return confirm('⚠ OJO CON LA COMISIÓN\n\n' + avisos.join('\n') +
+    '\n\nSuele pasar cuando quedó el selector del cliente anterior.\n' +
+    'Revisa "Comisión del día" antes de seguir.\n\n¿Generar de todos modos?');
 }
 
 async function registrarLoteRVL(cliente, loteDet, version){
@@ -12156,7 +12213,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-12 20:46 UTC';
+const BUILD_ID = '2026-08-12 21:29 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
