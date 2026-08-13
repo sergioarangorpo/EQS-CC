@@ -1946,8 +1946,8 @@
     </div>
     <div style="padding:0 24px 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
       <button class="btn small" onclick="renderInformeDiario()">Actualizar informe</button>
-      <button class="btn small purple" onclick="descargarInformeImagen()">🖼 Descargar imagen</button>
-      <button class="btn small ghost" onclick="copiarInformeImagen()">Copiar al portapapeles</button>
+      <button class="btn small purple" onclick="descargarInformeImagen()">🖼 Descargar imágenes</button>
+      <button class="btn small ghost" onclick="copiarInformeImagen()">Copiar (versión correo)</button>
       <button class="btn small ghost" onclick="guardarCierreDelDia()">Guardar cierre del día</button>
       <span class="field-note" id="cierreStatus"></span>
     </div>
@@ -7251,6 +7251,14 @@ function segmentoDe(nemo){
   return 'CONTINUO';
 }
 
+// Los 3 mayores bloques del día: cada papeleta del All_Trades es un bloque,
+// se ordenan por monto bruto (cantidad x precio) y se toman los primeros.
+// La subasta de cierre SÍ entra: suele ser el momento más importante del día,
+// y en rebalanceos más todavía (Sergio, 13-ago).
+function mayoresBloques(n){
+  return _mercadoTrades.slice().sort((a,b)=> b.monto - a.monto).slice(0, n || 3);
+}
+
 function detectarSubastaCierre(){
   const tarde = _mercadoTrades.filter(t => t.hora >= '15:00');
   if(tarde.length === 0) return null;
@@ -7357,10 +7365,12 @@ function treemapVolumen(items, W, H){
     const cx = r.x + r.w/2, cy = r.y + r.h/2;
     let texto = '';
     if(cabeHorizontal){
-      if(fuente * nombre.length * 0.62 > r.w - 4) fuente = Math.max(6, (r.w - 4) / (nombre.length * 0.62));
+      // Piso de 9px: por debajo de eso el nemo no se lee en el correo, y es
+      // preferible recortarlo que dejarlo microscópico.
+      if(fuente * nombre.length * 0.62 > r.w - 4) fuente = Math.max(9, (r.w - 4) / (nombre.length * 0.62));
       texto = `<text x="${cx.toFixed(1)}" y="${(cy - (mostrarPct?5:0) + fuente/3).toFixed(1)}" text-anchor="middle"
             font-family="Inter,system-ui,sans-serif" font-size="${fuente.toFixed(1)}" font-weight="700"
-            fill="#fff">${nombre}</text>`;
+            fill="#fff">${fuente * nombre.length * 0.62 > r.w ? nombre.slice(0, Math.max(3, Math.floor((r.w-4)/(fuente*0.62)))) : nombre}</text>`;
     }else if(rotar){
       const f = Math.max(6, Math.min(11, (r.h - 4) / (nombre.length * 0.62)));
       texto = `<text x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" text-anchor="middle"
@@ -7369,7 +7379,7 @@ function treemapVolumen(items, W, H){
             fill="#fff">${nombre}</text>`;
     }else{
       // Caja diminuta: el nemo abreviado, para que nada quede anónimo.
-      const f = Math.max(5.5, Math.min(8, r.w / 3.2));
+      const f = Math.max(9, Math.min(11, r.w / 3.2));
       texto = `<text x="${cx.toFixed(1)}" y="${(cy + f/3).toFixed(1)}" text-anchor="middle"
             font-family="Inter,system-ui,sans-serif" font-size="${f.toFixed(1)}" font-weight="700"
             fill="rgba(255,255,255,.95)">${nombre.slice(0,4)}</text>`;
@@ -7479,29 +7489,180 @@ async function guardarCierreDelDia(){
 // Descarga del informe como PNG. Sergio hoy manda una captura de pantalla del
 // Excel; con esto sale el PNG ya recortado y en alta resolución, listo para
 // pegar en el correo. Se usa html2canvas (mismo CDN que ExcelJS).
+// =====================================================================
+// VERSIÓN PARA EL CORREO
+// ---------------------------------------------------------------------
+// Los clientes lo abren desde el celular, y ahí el ancho útil son ~380px.
+// Un informe de 1.600px se reduce a la cuarta parte y la letra queda en 5px:
+// hacerlo MÁS GRANDE lo empeoraba, porque el correo lo comprime igual.
+// Por eso el PNG que se pega va en UNA COLUMNA de 440px con letra grande, y
+// el informe completo va adjunto para quien quiera el detalle desde el PC.
+// =====================================================================
+function informeCompactoHTML(){
+  const num = v => Number(String(v||'').replace(/,/g,'')) || 0;
+  const colcap    = num((document.getElementById('infColcap')||{}).value);
+  const colcapVar = num((document.getElementById('infColcapVar')||{}).value);
+  const usdcop    = usdcopActual();
+  const U = v => usdcop ? '$' + Math.round(v/usdcop).toLocaleString('es-CO') : '';
+  const cierres = _cierresAnteriores || {};
+
+  const stats = Object.values(_mercadoStats).map(d=>{
+    const base = cierres[d.esp] || d.primero;
+    const bYtd = _CIERRE_YTD[d.esp], bMtd = _CIERRE_MTD[d.esp];
+    return { ...d, varPct: base ? (d.ultimo/base - 1)*100 : 0, seg: segmentoDe(d.esp),
+             mtd: bMtd ? (d.ultimo/bMtd - 1)*100 : null,
+             ytd: bYtd ? (d.ultimo/bYtd - 1)*100 : null };
+  });
+  const total   = stats.reduce((a,d)=>a+d.monto, 0);
+  const subasta = detectarSubastaCierre();
+  const volMGC  = stats.filter(d=>d.seg==='MGC').reduce((a,d)=>a+d.monto,0);
+  const volETF  = stats.filter(d=>d.seg==='ETF').reduce((a,d)=>a+d.monto,0);
+  const volCont = total - volMGC - volETF;
+  const cont    = stats.filter(d=>d.seg!=='MGC');
+  const porVol  = cont.slice().sort((a,b)=>b.monto-a.monto);
+  const conMov  = cont.filter(d=>d.trades >= 5);
+  const suben   = conMov.slice().sort((a,b)=>b.varPct-a.varPct).slice(0,3);
+  const bajan   = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,3);
+  const bloques = mayoresBloques(3);
+  const fecha   = new Date().toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const pct = v => `<span style="color:${v>=0?'#22c55e':'#ef4444'};font-weight:700;">${v>=0?'+':''}${v.toFixed(2)}%</span>`;
+  const mm  = v => '$' + (v/1e6).toLocaleString('es-CO',{maximumFractionDigits:0}) + ' MM';
+
+  const fila = d=>`<tr>
+    <td style="padding:7px 6px;font-family:monospace;font-size:15px;">${d.esp}</td>
+    <td style="padding:7px 6px;text-align:right;font-size:15px;">${fmtRate(d.ultimo)}</td>
+    <td style="padding:7px 6px;text-align:right;font-size:15px;">${pct(d.varPct)}</td>
+    <td style="padding:7px 6px;text-align:right;font-size:15px;">${d.mtd!=null?pct(d.mtd):'—'}</td>
+    <td style="padding:7px 6px;text-align:right;font-size:15px;">${d.ytd!=null?pct(d.ytd):'—'}</td>
+    <td style="padding:7px 6px;text-align:right;font-size:15px;">${mm(d.monto)}</td>
+  </tr>`;
+
+  return `<div id="informeCompacto" style="width:440px;background:#0d0f14;color:#e5e7eb;padding:18px;
+      font-family:Inter,system-ui,sans-serif;box-sizing:border-box;">
+    <div style="border-bottom:3px solid #818cf8;padding-bottom:10px;margin-bottom:14px;">
+      <div style="font-size:22px;font-weight:800;">Informe diario de mercado</div>
+      <div style="font-size:13px;opacity:.6;text-transform:capitalize;">${fecha}</div>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-bottom:12px;">
+      <div style="flex:1;background:#161b26;border-radius:8px;padding:10px 12px;">
+        <div style="font-size:12px;opacity:.6;">COLCAP</div>
+        <div style="font-size:24px;font-weight:800;">${colcap?fmtRate(colcap):'—'}</div>
+        <div style="font-size:15px;">${colcap?pct(colcapVar):''}</div>
+      </div>
+      <div style="flex:1;background:#161b26;border-radius:8px;padding:10px 12px;">
+        <div style="font-size:12px;opacity:.6;">Volumen total</div>
+        <div style="font-size:22px;font-weight:800;">${mm(total)}</div>
+        <div style="font-size:15px;color:#f59e0b;">${U(total)} USD</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:14px;font-size:13px;">
+      ${[['Continuo',volCont],['Subasta',subasta?subasta.monto:0],['MGC',volMGC],['ETF',volETF]].map(([l,v])=>`
+        <div style="flex:1;background:#12151d;border-radius:6px;padding:8px;text-align:center;">
+          <div style="opacity:.6;font-size:12px;">${l}</div>
+          <div style="font-weight:700;font-size:14px;">${mm(v)}</div>
+          <div style="opacity:.5;font-size:11px;">${(v/total*100).toFixed(1)}%</div>
+        </div>`).join('')}
+    </div>
+
+    ${treemapVolumen(porVol.slice(0,8).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 404, 230)}
+
+    <div style="font-size:13px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:16px 0 8px;">MAYORES ALZAS Y BAJAS</div>
+    ${suben.concat(bajan).map(d=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:15px;">
+      <span style="width:120px;font-family:monospace;">${d.esp}</span>
+      <span style="width:86px;text-align:right;">${fmtRate(d.ultimo)}</span>
+      <span style="width:74px;text-align:right;">${pct(d.varPct)}</span>
+      ${sparkline(d.serie, d.varPct, 120, 22)}</div>`).join('')}
+
+    <div style="font-size:13px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:16px 0 8px;">DÓNDE ESTUVO EL VOLUMEN</div>
+    ${porVol.slice(0,5).map((d,i)=>{
+      const p = d.monto/total*100;
+      const col = ['#818cf8','#22c55e','#f59e0b','#38bdf8','#f472b6'][i];
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:14px;">
+        <span style="width:112px;font-family:monospace;">${d.esp}</span>
+        <span style="flex:1;background:rgba(255,255,255,.06);border-radius:3px;height:16px;display:block;">
+          <span style="display:block;width:${p.toFixed(1)}%;height:16px;background:${col};border-radius:3px;"></span></span>
+        <span style="width:46px;text-align:right;">${p.toFixed(1)}%</span>
+        <span style="width:78px;text-align:right;">${mm(d.monto)}</span></div>`;
+    }).join('')}
+
+    <div style="font-size:13px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:16px 0 8px;">LOS 3 MAYORES BLOQUES</div>
+    <table style="width:100%;border-collapse:collapse;">
+      <tr style="opacity:.6;font-size:12px;text-align:left;">
+        <th style="padding:4px 6px;">Especie</th><th style="padding:4px 6px;text-align:right;">Cantidad</th>
+        <th style="padding:4px 6px;text-align:right;">Precio</th><th style="padding:4px 6px;text-align:right;">Monto</th>
+        <th style="padding:4px 6px;text-align:right;">USD</th></tr>
+      ${bloques.map(b=>`<tr style="border-top:1px solid #232938;">
+        <td style="padding:7px 6px;font-family:monospace;font-size:14px;">${b.esp}</td>
+        <td style="padding:7px 6px;text-align:right;font-size:14px;">${fmtInt(b.qt)}</td>
+        <td style="padding:7px 6px;text-align:right;font-size:14px;">${fmtRate(b.px)}</td>
+        <td style="padding:7px 6px;text-align:right;font-size:14px;">${mm(b.monto)}</td>
+        <td style="padding:7px 6px;text-align:right;font-size:14px;color:#f59e0b;">${U(b.monto)}</td>
+      </tr>`).join('')}
+    </table>
+
+    <div style="font-size:13px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:16px 0 8px;">RESUMEN DEL CONTINUO</div>
+    <table style="width:100%;border-collapse:collapse;">
+      <tr style="opacity:.6;font-size:12px;text-align:left;">
+        <th style="padding:4px 6px;">Especie</th><th style="padding:4px 6px;text-align:right;">Último</th>
+        <th style="padding:4px 6px;text-align:right;">Día</th><th style="padding:4px 6px;text-align:right;">MTD</th>
+        <th style="padding:4px 6px;text-align:right;">YTD</th><th style="padding:4px 6px;text-align:right;">Volumen</th></tr>
+      ${porVol.slice(0,12).map(fila).join('')}
+    </table>
+
+    ${subasta ? `
+    <div style="font-size:13px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:16px 0 8px;">SUBASTA DE CIERRE · ${subasta.hora}</div>
+    <table style="width:100%;border-collapse:collapse;">
+      <tr style="opacity:.6;font-size:12px;text-align:left;">
+        <th style="padding:4px 6px;">Especie</th><th style="padding:4px 6px;text-align:right;">Cantidad</th>
+        <th style="padding:4px 6px;text-align:right;">Precio</th><th style="padding:4px 6px;text-align:right;">Volumen</th></tr>
+      ${subasta.especies.slice(0,8).map(a=>`<tr style="border-top:1px solid #232938;">
+        <td style="padding:7px 6px;font-family:monospace;font-size:14px;">${a.esp}</td>
+        <td style="padding:7px 6px;text-align:right;font-size:14px;">${fmtInt(a.qty)}</td>
+        <td style="padding:7px 6px;text-align:right;font-size:14px;">${fmtRate(a.precio)}</td>
+        <td style="padding:7px 6px;text-align:right;font-size:14px;">${mm(a.monto)}</td></tr>`).join('')}
+    </table>` : ''}
+
+    <div style="margin-top:16px;padding-top:10px;border-top:1px solid #232938;font-size:12px;opacity:.5;line-height:1.5;">
+      Sergio Arango Restrepo · VP RVL–RVI<br>Mercado de Capitales · Credicorp Capital</div>
+  </div>`;
+}
+
 async function _informeACanvas(){
   const el = document.getElementById('informeLienzo');
   if(!el) throw new Error('genera primero el informe');
   if(typeof html2canvas === 'undefined') throw new Error('no cargó html2canvas (revisa la conexión)');
-  // El informe se ve bien en pantalla pero al pegarlo en el correo Outlook lo
-  // reduce al ancho del mensaje y queda ilegible. La solución es capturarlo
-  // MÁS GRANDE: se ensancha el lienzo y se sube el tamaño de letra antes de la
-  // foto, y se deja como estaba después. Así el PNG sale con letra grande y
-  // aguanta la compresión del correo.
-  const estiloPrevio = el.getAttribute('style') || '';
-  el.style.width = '1600px';
-  el.style.fontSize = '15px';
-  el.classList.add('informe-zoom');
-  await new Promise(r=>setTimeout(r, 60));   // que el navegador reacomode
+  return await html2canvas(el, { backgroundColor:'#0d0f14', scale:2, logging:false, useCORS:true });
+}
+
+// Captura la versión angosta (la del correo). Se monta fuera de la pantalla,
+// se fotografía y se descarta.
+async function _compactoACanvas(){
+  if(typeof html2canvas === 'undefined') throw new Error('no cargó html2canvas (revisa la conexión)');
+  const cont = document.createElement('div');
+  cont.style.cssText = 'position:fixed;left:-9999px;top:0;';
+  cont.innerHTML = informeCompactoHTML();
+  document.body.appendChild(cont);
   try{
-    return await html2canvas(el, {
-      backgroundColor:'#0d0f14', scale:2, logging:false, useCORS:true,
-      width: 1600, windowWidth: 1800,
+    await new Promise(r=>setTimeout(r, 60));
+    // scale 3: el PNG sale a 1.320px de ancho para 440 de diseño, así que se
+    // ve nítido aunque el correo lo reescale.
+    return await html2canvas(cont.firstElementChild, {
+      backgroundColor:'#0d0f14', scale:3, logging:false, useCORS:true, width:440,
     });
-  } finally {
-    el.setAttribute('style', estiloPrevio);
-    el.classList.remove('informe-zoom');
-  }
+  } finally { cont.remove(); }
+}
+
+function _slugHoy(){
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+}
+function _bajarCanvas(canvas, nombre){
+  const a = document.createElement('a');
+  a.href = canvas.toDataURL('image/png');
+  a.download = nombre;
+  a.click();
 }
 
 // El informe sale al cliente: si falta el COLCAP o el dólar, las tarjetas
@@ -7518,28 +7679,31 @@ function informeCompleto(){
   return false;
 }
 
+// Baja LOS DOS: el compacto para pegar en el cuerpo del correo y el completo
+// para adjuntar.
 async function descargarInformeImagen(){
   if(!informeCompleto()) return;
   try{
-    const canvas = await _informeACanvas();
-    const d = new Date();
-    const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
-    const a = document.createElement('a');
-    a.href = canvas.toDataURL('image/png');
-    a.download = `Informe_diario_${slug}.png`;
-    a.click();
+    const slug = _slugHoy();
+    _bajarCanvas(await _compactoACanvas(), `Informe_diario_${slug}.png`);
+    await new Promise(r=>setTimeout(r, 400));   // Chrome no dispara dos descargas seguidas
+    _bajarCanvas(await _informeACanvas(),  `Informe_diario_${slug}_detalle.png`);
+    avisoExito('Dos imágenes descargadas',
+      `<b>Informe_diario_${slug}.png</b> — pégala en el cuerpo del correo (se lee en celular).<br>` +
+      `<b>..._detalle.png</b> — adjúntala para quien quiera el detalle.`);
   }catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
 }
 
+// Copia SOLO la compacta: es la que se pega en el correo.
 async function copiarInformeImagen(){
   if(!informeCompleto()) return;
   try{
-    const canvas = await _informeACanvas();
+    const canvas = await _compactoACanvas();
     const blob = await new Promise(r=>canvas.toBlob(r, 'image/png'));
     await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
-    avisoExito('Informe copiado', 'Pégalo directo en el correo con Ctrl+V.');
+    avisoExito('Informe copiado', 'Pégalo en el correo con Ctrl+V. Es la versión que se lee desde el celular.');
   }catch(e){
-    alert('No se pudo copiar al portapapeles (' + e.message + ').\n\nUsa "Descargar imagen" y adjunta el PNG.');
+    alert('No se pudo copiar al portapapeles (' + e.message + ').\n\nUsa "Descargar imágenes" y adjunta el PNG.');
   }
 }
 
@@ -7589,12 +7753,16 @@ function renderInformeDiario(){
   // Bloque de movimientos + volumen para un segmento dado.
   const bloqueSegmento = (titulo, filtro, nTree)=>{
     const gs = stats.filter(filtro);
+    // Para los mayores bloques hay que filtrar por segmento sobre el trade
+    // crudo, que no trae la clasificación.
+    const filtroSeg = t => filtro({ seg: segmentoDe(t.esp) });
     if(gs.length === 0) return '';
     const totSeg = gs.reduce((a,d)=>a+d.monto,0);
     const conMov = gs.filter(d=>d.trades >= 5);
-    const suben = conMov.slice().sort((a,b)=>b.varPct-a.varPct).slice(0,5);
-    const bajan = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,5);
-    const vol = gs.slice().sort((a,b)=>b.monto-a.monto).slice(0,8);
+    // 3 y 3: en un mercado del tamaño del colombiano, 5 por lado era relleno.
+    const suben = conMov.slice().sort((a,b)=>b.varPct-a.varPct).slice(0,3);
+    const bajan = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,3);
+    const vol = gs.slice().sort((a,b)=>b.monto-a.monto).slice(0,5);
     const linea = d=>`<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;font-size:12px;">
         <span style="width:104px;font-family:var(--mono,monospace);">${d.esp}</span>
         <span style="width:64px;text-align:right;">${pct(d.varPct)}</span>
@@ -7617,6 +7785,21 @@ function renderInformeDiario(){
         <div style="flex:1;min-width:310px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:.4px;opacity:.7;margin-bottom:6px;">DÓNDE ESTUVO EL VOLUMEN</div>
           ${barrasVolumen(vol.map(d=>({nombre:d.esp, valor:d.monto})), totSeg, usdcop)}
+          ${(()=>{ const bl = mayoresBloques(20).filter(filtroSeg).slice(0,3);
+            if(!bl.length) return '';
+            return `<div style="font-size:11px;font-weight:700;letter-spacing:.4px;opacity:.7;margin:14px 0 6px;">LOS 3 MAYORES BLOQUES</div>
+            <table style="width:100%;"><thead><tr>
+              <th>Especie</th><th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Monto COP</th><th class="num">USD</th><th>Hora</th>
+            </tr></thead><tbody>
+            ${bl.map(b=>`<tr>
+              <td class="mono-id">${b.esp}</td>
+              <td class="num">${fmtInt(b.qt)}</td>
+              <td class="num">${fmtRate(b.px)}</td>
+              <td class="num">${fmtMoney(b.monto)}</td>
+              <td class="num" style="color:var(--amber,#f59e0b);">${U(b.monto)}</td>
+              <td style="opacity:.7;">${b.hora}</td>
+            </tr>`).join('')}
+            </tbody></table>`; })()}
         </div>
       </div>
     </div>`;
@@ -7659,7 +7842,7 @@ function renderInformeDiario(){
         RESUMEN DEL CONTINUO${hayHist? '' : ' — variación intradía (aún no hay cierre anterior guardado)'}</div>
       <div class="blotter-wrap"><table style="width:100%;"><thead><tr>
         <th>Especie</th><th class="num">Último</th><th class="num">Var %</th><th class="num">MTD</th><th class="num">YTD</th>
-        <th class="num">Mín</th><th class="num">Máx</th><th class="num">VWAP</th><th class="num">Volumen</th><th>Intradía</th>
+        <th class="num">VWAP</th><th class="num">Volumen COP</th><th class="num">Volumen USD</th><th>Intradía</th>
       </tr></thead><tbody>
       ${porVol.filter(d=>d.seg!=='MGC').slice(0,20).map(d=>`<tr>
         <td class="mono-id">${d.esp}</td>
@@ -7667,10 +7850,9 @@ function renderInformeDiario(){
         <td class="num">${pct(d.varPct)}</td>
         <td class="num">${d.mtd!=null ? pct(d.mtd) : '<span style="opacity:.3;">—</span>'}</td>
         <td class="num">${d.ytd!=null ? pct(d.ytd) : '<span style="opacity:.3;">—</span>'}</td>
-        <td class="num" style="opacity:.7;">${fmtRate(d.min)}</td>
-        <td class="num" style="opacity:.7;">${fmtRate(d.max)}</td>
         <td class="num">${fmtRate(d.monto/d.qty)}</td>
-        <td class="num">${M(d.monto)}${usdcop?`<div style="font-size:11px;color:var(--amber,#f59e0b);">${U(d.monto)}</div>`:''}</td>
+        <td class="num">${M(d.monto)}</td>
+        <td class="num" style="color:var(--amber,#f59e0b);">${U(d.monto)}</td>
         <td>${sparkline(d.serie, d.varPct, 110, 20)}</td>
       </tr>`).join('')}
       </tbody></table></div>
@@ -12383,7 +12565,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-13 19:45 UTC';
+const BUILD_ID = '2026-08-13 20:36 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
