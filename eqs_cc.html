@@ -747,6 +747,7 @@
     <button data-mod="RFI"     onclick="switchModule('RFI')"     class="disabled" disabled>RFI</button>
     <button data-mod="Reportes" onclick="switchModule('Reportes')" class="">Reportes</button>
     <button data-mod="Ayudas"   onclick="switchModule('Ayudas')"   class="">Ayudas</button>
+    <button data-mod="Informe"  onclick="switchModule('Informe')"  class="">Informe diario de mercado</button>
   </div>
 
   <!-- ===== FX MODULE ===== -->
@@ -1863,7 +1864,8 @@
       </div>
       <div class="tb-field">
         <label>USDCOP</label>
-        <input type="text" inputmode="decimal" id="usdcopAyudas" placeholder="4,000.00" oninput="recalcularCanasta()" onblur="formatInputAsNumber(this,2);recalcularCanasta()" style="width:120px;">
+        <input type="text" inputmode="decimal" id="usdcopAyudas" placeholder="4,000.00"
+               oninput="sincronizarUsdcop(this)" onblur="formatInputAsNumber(this,2);sincronizarUsdcop(this)" style="width:120px;">
       </div>
       <div class="tb-field" style="flex:2;">
         <label>&nbsp;</label>
@@ -1920,13 +1922,29 @@
       <div id="spreadResultado" style="margin-top:12px;"></div>
     </div>
 
-    <!-- ===== Informe diario ===== -->
-    <div class="section-label">Informe diario</div>
-    <div style="padding:0 24px 10px;display:flex;align-items:end;gap:10px;flex-wrap:wrap;">
+  </div>
+
+  <!-- ===== INFORME DIARIO DE MERCADO ===== -->
+  <div id="mod-Informe" class="mod-section">
+    <div class="toolbar">
+      <div class="tb-field" style="flex:1;min-width:340px;">
+        <label>Trades del mercado (All_Trades .csv)</label>
+        <input type="file" id="fileMercadoInf" accept=".csv" onchange="cargarTradesMercado(this)" style="font-size:12px;width:100%;">
+      </div>
+      <div class="tb-field">
+        <label>USDCOP</label>
+        <input type="text" inputmode="decimal" id="usdcopInforme" placeholder="4,000.00"
+               oninput="sincronizarUsdcop(this)" onblur="formatInputAsNumber(this,2);sincronizarUsdcop(this)" style="width:120px;"></div>
       <div class="tb-field"><label>COLCAP</label>
         <input type="text" inputmode="decimal" id="infColcap" placeholder="2,372.50" oninput="renderInformeDiario()" onblur="formatInputAsNumber(this,2);renderInformeDiario()" style="width:130px;"></div>
       <div class="tb-field"><label>Variación COLCAP %</label>
         <input type="text" inputmode="decimal" id="infColcapVar" placeholder="0.94" oninput="renderInformeDiario()" style="width:140px;"></div>
+      <div class="tb-field" style="flex:2;">
+        <label>&nbsp;</label>
+        <span class="field-note" id="mercadoStatusInf">Carga el archivo de trades del cierre para armar el informe.</span>
+      </div>
+    </div>
+    <div style="padding:0 24px 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
       <button class="btn small" onclick="renderInformeDiario()">Actualizar informe</button>
       <button class="btn small purple" onclick="descargarInformeImagen()">🖼 Descargar imagen</button>
       <button class="btn small ghost" onclick="copiarInformeImagen()">Copiar al portapapeles</button>
@@ -1997,6 +2015,8 @@ const MARKET_LABELS = {
   RVI: { label:'Mercado NY abierto',  color:'var(--buy)' },
   RFI: { label:'Mercado NY abierto',  color:'var(--buy)' },
   Reportes: { label:'',              color:'var(--text-1)' },
+  Ayudas:   { label:'',              color:'var(--text-1)' },
+  Informe:  { label:'BVC abierto',   color:'var(--buy)' },
 };
 
 function switchModule(mod) {
@@ -2006,6 +2026,9 @@ function switchModule(mod) {
   document.querySelectorAll('.modnav button').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.mod === mod);
   });
+  // Al entrar al informe se repinta con lo que haya cargado, por si el archivo
+  // se subió desde Ayudas.
+  if(mod === 'Informe' && typeof renderInformeDiario === 'function') renderInformeDiario();
   const ml = MARKET_LABELS[mod];
   if(ml) {
     document.getElementById('market-label').textContent = ml.label;
@@ -6718,6 +6741,26 @@ let _mercadoStats = {};        // { nemo: {qty, monto, trades, primero, ultimo, 
 let _mercadoTrades = [];       // trades crudos del día
 let _mercadoRango = null;      // {desde, hasta} para saber si es intradía o cierre
 
+// El USDCOP vive en dos campos (Ayudas e Informe) pero es UN SOLO dato: se
+// escribe en cualquiera y el otro queda igual. Para las canastas es el precio
+// del momento y para el informe el de cierre, pero Sergio los quiere
+// sincronizados: si lo mueve, lo mueve para los dos.
+function sincronizarUsdcop(origen){
+  const v = origen ? origen.value : '';
+  ['usdcopAyudas','usdcopInforme'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el && el !== origen) el.value = v;
+  });
+  if(typeof recalcularCanasta === 'function') recalcularCanasta();
+  if(typeof renderInformeDiario === 'function') renderInformeDiario();
+}
+
+// Lee el USDCOP de donde esté escrito, sin importar en qué módulo.
+function usdcopActual(){
+  const leer = id => Number(String((document.getElementById(id)||{}).value||'').replace(/,/g,'')) || 0;
+  return leer('usdcopInforme') || leer('usdcopAyudas');
+}
+
 function cargarTradesMercado(input){
   const file = input.files && input.files[0];
   if(!file) return;
@@ -6788,9 +6831,15 @@ function procesarTradesMercado(texto){
   _mercadoRango = { desde: horas[0], hasta: horas[horas.length-1] };
   const especies = Object.keys(_preciosMercado).length;
   const cierre = _mercadoRango.hasta >= '15:55';
-  document.getElementById('mercadoStatus').innerHTML =
+  const _txtEstado =
     `${n.toLocaleString('es-CO')} trades · ${especies} especies · de ${_mercadoRango.desde} a ${_mercadoRango.hasta} ` +
     `<span style="color:${cierre?'var(--buy,#22c55e)':'var(--amber,#f59e0b)'};">(${cierre?'parece cierre del día':'parece intradía'})</span>`;
+  // El archivo se puede cargar desde Ayudas o desde el Informe: el estado se
+  // escribe en las dos barras para que siempre se vea qué hay cargado.
+  ['mercadoStatus','mercadoStatusInf'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.innerHTML = _txtEstado;
+  });
   recalcularCanasta();
   pintarPresetsSpread();
   renderInformeDiario();
@@ -6841,7 +6890,7 @@ function recalcularCanasta(){
   const manuales = window._preciosManuales || (window._preciosManuales = {});
   c.filas.forEach(f=>{ if(manuales[f.nemo] != null){ f.precio = manuales[f.nemo]; f.manual = true; f.hora = f.hora || 'manual'; } });
   _canastaActual = c;
-  const usdcop = Number(String((document.getElementById('usdcopAyudas')||{}).value||'').replace(/,/g,'')) || 0;
+  const usdcop = usdcopActual();
 
   const lado = s => c.filas.filter(f=>f.side===s);
   const resumen = s => {
@@ -6917,7 +6966,7 @@ async function cargarCanastasPendientes(){
 async function dejarCanastaPendiente(){
   const c = _canastaActual;
   if(!c || c.filas.length === 0){ alert('No hay canasta para dejar pendiente.'); return; }
-  const usdcop = Number(String((document.getElementById('usdcopAyudas')||{}).value||'').replace(/,/g,'')) || 0;
+  const usdcop = usdcopActual();
   if(!usdcop){ alert('Escribe el USDCOP antes de dejarla pendiente: es lo que define el nocional.'); return; }
   const sinPx = c.filas.filter(f => f.precio == null);
   if(sinPx.length){ alert(`Faltan precios: ${sinPx.map(f=>f.nemo).join(', ')}. Escríbelos antes de dejarla pendiente.`); return; }
@@ -7462,7 +7511,7 @@ function informeCompleto(){
   const falta = [];
   if(!num((document.getElementById('infColcap')||{}).value)) falta.push('el COLCAP');
   if(!String((document.getElementById('infColcapVar')||{}).value||'').trim()) falta.push('la variación del COLCAP');
-  if(!num((document.getElementById('usdcopAyudas')||{}).value)) falta.push('el USDCOP (arriba, en la barra de Ayudas)');
+  if(!usdcopActual()) falta.push('el USDCOP');
   if(falta.length === 0) return true;
   alert('No se puede enviar el informe todavía: falta ' + falta.join(', ') + '.\n\n' +
         'Sin esos datos el informe sale con las tarjetas incompletas y sin los montos en USD.');
@@ -7504,7 +7553,7 @@ function renderInformeDiario(){
   const num = v => Number(String(v||'').replace(/,/g,'')) || 0;
   const colcap    = num((document.getElementById('infColcap')||{}).value);
   const colcapVar = num((document.getElementById('infColcapVar')||{}).value);
-  const usdcop    = num((document.getElementById('usdcopAyudas')||{}).value);
+  const usdcop    = usdcopActual();
   // Ya no hay switch COP/USD: el informe muestra las DOS monedas a la vez, así
   // el mismo archivo sirve para el cliente local y para los de afuera. Los
   // PRECIOS de las acciones siempre van en pesos (así cotizan) y los
@@ -12334,7 +12383,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-12 21:50 UTC';
+const BUILD_ID = '2026-08-13 19:45 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
