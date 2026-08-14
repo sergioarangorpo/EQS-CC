@@ -4660,13 +4660,71 @@ NEMO_TABLE.forEach(r=>{
   if(r.fidessa) _FIDESSA_A_NUAM[r.fidessa.trim().toUpperCase()] = r.nuam;
 });
 
+// Nemos que aparecieron hoy y NO estaban en la tabla. Se deducen y se registran
+// para que el resto de la sesión los trate igual que a los conocidos.
+const _NEMOS_NUEVOS = {};
+
+// Deduce el nemo NUAM de un símbolo desconocido. Fidessa escribe el nemo con
+// un sufijo de plaza (".BGa", ".BG", ".CN"); quitándolo queda el nemo NUAM
+// correcto. Pasa sobre todo con especies del MGC, que se listan seguido.
+function _deducirNemo(raw, fuente){
+  let v = String(raw||'').trim().toUpperCase();
+  if(!v) return '';
+  if(fuente === 'fidessa' || /\.[A-Z]{2,3}$/i.test(v)){
+    v = v.replace(/\.[A-Z]{2,4}$/i, '');           // GRDUCO.BGA -> GRDUCO
+  }
+  if(fuente === 'emsx'){
+    v = v.replace(/\s+(CB|US|UN|LN)?\s*EQUITY$/i, '').trim();
+  }
+  return v;
+}
+
 function nemoCanonico(raw, fuente){
   if(!raw) return '';
   const key = String(raw).trim().toUpperCase();
-  if(fuente==='emsx') return _EMSX_A_NUAM[key] || raw;
-  if(fuente==='fidessa') return _FIDESSA_A_NUAM[key] || raw;
-  // Si no se especifica fuente, probar ambas tablas
-  return _EMSX_A_NUAM[key] || _FIDESSA_A_NUAM[key] || raw;
+  const directo = (fuente==='emsx')    ? _EMSX_A_NUAM[key]
+                : (fuente==='fidessa') ? _FIDESSA_A_NUAM[key]
+                : (_EMSX_A_NUAM[key] || _FIDESSA_A_NUAM[key]);
+  if(directo) return directo;
+
+  // Desconocido: antes se devolvía tal cual y en los reportes salía
+  // "GRDUCO.BGa" en vez de "GRDUCO" (Sergio, 14-ago). Ahora se deduce el nemo,
+  // se registra en las tablas de la sesión y se arma el ticker de Bloomberg
+  // como "<NEMO> CB Equity", que es el formato de la plaza local.
+  const nuam = _deducirNemo(key, fuente);
+  if(!nuam) return raw;
+  // Puede que el nemo deducido SÍ exista en la tabla y lo que no estuviera era
+  // ese símbolo crudo (p. ej. "ECOPETROL CB Equity" cuando la tabla lo tiene
+  // como "ECOPETROL"). En ese caso no es un nemo nuevo: solo se registra el
+  // alias y no se avisa.
+  const yaExiste = NEMO_TABLE.some(n => String(n.nuam).toUpperCase() === nuam);
+  if(yaExiste){
+    if(fuente === 'emsx') _EMSX_A_NUAM[key] = nuam; else _FIDESSA_A_NUAM[key] = nuam;
+    return nuam;
+  }
+  if(!_NEMOS_NUEVOS[nuam]){
+    const entrada = { nuam, fidessa: nuam + '.BGa', emsx: nuam + ' CB Equity', isin: '' };
+    _NEMOS_NUEVOS[nuam] = entrada;
+    NEMO_TABLE.push(entrada);
+    _FIDESSA_A_NUAM[entrada.fidessa.toUpperCase()] = nuam;
+    _FIDESSA_A_NUAM[nuam] = nuam;
+    _EMSX_A_NUAM[entrada.emsx.toUpperCase()] = nuam;
+    _EMSX_A_NUAM[nuam] = nuam;
+    console.warn(`Nemo nuevo detectado: ${nuam} (de "${raw}"). Se usa ${nuam} / ${entrada.emsx}. ` +
+                 'Conviene agregarlo a la hoja NEMO de Bases_de_datos.xlsx.');
+  }
+  // Que también quede mapeado el símbolo crudo que llegó.
+  if(fuente === 'emsx') _EMSX_A_NUAM[key] = nuam; else _FIDESSA_A_NUAM[key] = nuam;
+  return nuam;
+}
+
+// Ticker de Bloomberg para un nemo NUAM. Las especies locales van con
+// "CB Equity"; si el nemo está en la tabla se usa el que ya esté registrado.
+function tickerBloomberg(nemo){
+  const v = String(nemo||'').trim().toUpperCase();
+  if(!v) return '';
+  const e = NEMO_TABLE.find(n => String(n.nuam).toUpperCase() === v);
+  return (e && e.emsx) ? e.emsx : (v + ' CB Equity');
 }
 
 // ISIN por nemo canónico (Nuam). Se arma una vez desde NEMO_TABLE. Si no está,
@@ -6653,6 +6711,15 @@ function procesarFidessa(){
   // del botón "Generar reporte" se apoye en él — ya maneja composites, cruces
   // de doble representación y DMA correctamente, a diferencia de una suma cruda
   // de folios (que doble-cuenta los cruces).
+  // Nemos que no estaban en la base: se dedujeron y funcionan, pero conviene
+  // agregarlos a Bases_de_datos.xlsx para que queden con su ISIN.
+  if(typeof _NEMOS_NUEVOS !== 'undefined' && Object.keys(_NEMOS_NUEVOS).length){
+    const nuevos = Object.keys(_NEMOS_NUEVOS);
+    const el = document.getElementById('fidessaStatus');
+    if(el) el.innerHTML += ` <span style="color:var(--amber,#f59e0b);">⚠ Nemo(s) que no estaban en la base: ${nuevos.join(', ')}. ` +
+      `Se usan como <b>${nuevos.map(n=>n+' / '+n+' CB Equity').join(', ')}</b>; agrégalos a la hoja NEMO para que tengan ISIN.</span>`;
+  }
+
   if(_sinInstruccion.length){
     // No se puede saber de quién es: reportarla como 'TEST' sería atribuirle la
     // operación a un cliente que no existe.
@@ -12827,7 +12894,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-14 17:36 UTC';
+const BUILD_ID = '2026-08-14 17:47 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
