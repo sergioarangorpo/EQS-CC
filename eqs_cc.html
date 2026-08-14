@@ -4103,6 +4103,7 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
   const allCols = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N'];
   for(let rr=1; rr<=100; rr++){ allCols.forEach(col => { ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.paper}}; }); }
 
+
   let r = 1;
   // ---------- HEADER DE MARCA ----------
   const hIni = r, hFin = r+3;
@@ -4258,7 +4259,10 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
   // Autofit de columnas midiendo SOLO las filas de la tabla (encabezado de
   // columnas + datos), no el header de marca ni el footer (que están combinados
   // y ensancharían todo). eqIni-1 es la fila de headers de columna.
-  autofitColumnasRango(ws, eqIni-1, eqFin, ['B','C','D','E','F','G','H','I','J','K','L','M'], {min:8, max:44});
+  // max 78: los nombres de portafolio de Fiduciaria Bancolombia llegan a 72
+  // caracteres ("FONDO ABIERTO POR COMPARTIMENTOS VALORES BANCOLOMBIA" son 52)
+  // y con el techo anterior de 44 salían cortados (Sergio, 14-ago).
+  autofitColumnasRango(ws, eqIni-1, eqFin, ['B','C','D','E','F','G','H','I','J','K','L','M'], {min:8, max:78});
 
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -4692,7 +4696,7 @@ const _sortState = {};
 // "AFP PROTECCION SA", nuestra base trae "PROTECCION") — Security y Lado
 // usan coincidencia exacta porque ya vienen canonizados/normalizados.
 // =====================================================================
-function coincideFiltroRVL({cliente, cuenta, especie, lado}){
+function coincideFiltroRVL({cliente, cuenta, especie, lado, exacto}){
   const fc = document.getElementById('filtroCliente').value;
   const fe = document.getElementById('filtroEspecie').value;
   const fl = document.getElementById('filtroLado').value;
@@ -4700,17 +4704,38 @@ function coincideFiltroRVL({cliente, cuenta, especie, lado}){
   if(fl && lado !== fl) return false;
   if(fe && especie !== fe) return false;
   if(fc){
+    // `exacto` para las fuentes que ya traen el cliente resuelto (folios y
+    // Fidessa Trades): ahí no hay que adivinar nada.
+    if(exacto) return normalizarGrupo(String(cliente||'').trim()) === fc;
     const nombreCompleto = ((getClienteDB(fc)||{}).nombre||'').toUpperCase().trim();
     const a = String(cliente||'').toUpperCase().trim();
     const b = fc.toUpperCase().trim();
-    const matchFirm = a.includes(b) || b.includes(a) || (nombreCompleto && a.includes(nombreCompleto));
+    // El Originating Firm sí se compara de forma flexible, pero por PALABRAS
+    // completas y no por subcadena suelta: "SKANDIA ADMINISTRADORA FU PE CE SA"
+    // tiene que calzar con "FIDUCIARIA SKANDIA" (comparten SKANDIA) sin que
+    // dos nombres se crucen por casualidad.
+    const palabras = t => String(t||'').split(/[^A-Z0-9]+/).filter(x=>x.length >= 4);
+    const pa = palabras(a), pb = palabras(b), pn = palabras(nombreCompleto);
+    const matchFirm = a === b || a.includes(b) || b.includes(a) ||
+      pa.some(x => pb.includes(x)) ||
+      (nombreCompleto && pa.some(x => pn.includes(x)));
     // La cuenta (account) es más confiable que el Originating Firm para
     // órdenes que Sergio digita a mano en Bloomberg por instrucción de chat
     // — ahí el firm queda genérico ("CREDICORP CAPITAL COLOMBIA SA") pero
     // la cuenta sí queda correcta (LV_CO, PORVENIR...). Se normaliza con
     // el mismo alias que usamos para Fidessa (LV_CO -> LARRAIN VIAL PP).
     const cuentaNorm = normalizarGrupo(String(cuenta||'').toUpperCase().trim());
-    const matchCuenta = cuentaNorm && (cuentaNorm===b || cuentaNorm.includes(b) || b.includes(cuentaNorm) || (nombreCompleto && cuentaNorm.includes(nombreCompleto)));
+    // La coincidencia por SUBCADENA solo vale con textos largos. Las cuentas
+    // cortas de Skandia son códigos de fondo ("ES", "H4", "FL") y con
+    // `includes` chocaban por casualidad: "ALIANZA VALORES".includes("ES") es
+    // verdadero, así que al filtrar Alianza aparecían las órdenes de Skandia
+    // (Sergio, 14-ago). Con 4 caracteres o menos se exige igualdad exacta.
+    const cortita = cuentaNorm.length <= 4;
+    const matchCuenta = cuentaNorm && (
+      cuentaNorm === b ||
+      (!cortita && (cuentaNorm.includes(b) || b.includes(cuentaNorm))) ||
+      (!cortita && nombreCompleto && cuentaNorm.includes(nombreCompleto))
+    );
     if(!matchFirm && !matchCuenta) return false;
   }
   return true;
@@ -4935,7 +4960,11 @@ function getFiltrados(){
   let res = foliosFidessa.filter(f=>
     // Coincidencia FLEXIBLE de cliente (ej. filtro "COLFONDOS SA" calza con el
     // grupo "COLFONDOS"); antes usaba === exacto y por eso salía 0 folios.
-    coincideFiltroRVL({cliente: f.cliente, especie: f.especie, lado: f.lado}) &&
+    // Los folios ya traen el cliente RESUELTO (no el firm crudo de EMSX), así
+    // que aquí la comparación es EXACTA. Con la flexible, "AVAL FIDUCIARIA"
+    // calzaba con "FIDUCIARIA SKANDIA" por compartir la palabra FIDUCIARIA y
+    // se colaban folios ajenos (Sergio, 14-ago).
+    coincideFiltroRVL({cliente: f.cliente, especie: f.especie, lado: f.lado, exacto: true}) &&
     // El zoom por orden aplica a TODOS los clientes. Antes COLFONDOS traía una
     // bandera (grupoColfondos) que lo dejaba pasar entero: al seleccionar una
     // sola línea de Trades el cuadro de folios seguía mostrando las 7 órdenes,
@@ -12689,7 +12718,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-14 16:11 UTC';
+const BUILD_ID = '2026-08-14 16:36 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
