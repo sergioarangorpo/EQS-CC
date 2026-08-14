@@ -8748,7 +8748,14 @@ function renderPanelListo(filtrados){
     const item = { orden:o, esp, lado:t.lado, qty:t.qtyDone, qFol, bloque:bloque.length,
                    qBloque: bloque.reduce((a,f)=>a+f.cantidad,0), asignado };
     if(tienePort) listas.push(item); else faltantes.push(item);
-    if(bloque.length) conBloque.push(item);
+    // La decisión de bloque/cruce está PENDIENTE mientras haya algo que decidir,
+    // se haya marcado o no: el aviso sirve justamente ANTES de marcar. Solo se
+    // omite donde no hay nada que elegir — ECOPETROL y PFCIBEST van siempre a
+    // tarifa de pantalla, y algunos clientes tienen tarifa única.
+    const tarifaUnica = cfg.comisionBloque != null && cfg.comisionPantalla != null &&
+                        cfg.comisionBloque === cfg.comisionPantalla;
+    const conOverride = esp === 'ECOPETROL' || esp === 'PFCIBEST';
+    if(!tarifaUnica && !conOverride) conBloque.push(item);
   });
 
   const todoListo = faltantes.length === 0;
@@ -8772,11 +8779,17 @@ function renderPanelListo(filtrados){
       ${faltantes.length ? `<div style="font-size:12.5px;margin-bottom:4px;">
         <b style="color:var(--amber,#f59e0b);">${faltantes.length} a la espera de distribución:</b>
         ${faltantes.map(i=>linea(i) + (i.asignado ? ` (asignado ${fmtInt(i.asignado)} de ${fmtInt(i.qty)})` : '')).join(' · ')}</div>` : ''}
-      ${conBloque.length ? `<div style="font-size:12.5px;">
-        <b style="color:var(--accent,#818cf8);">Bloque/cruce marcado en:</b>
-        ${conBloque.map(i=>`${i.esp} ${fmtInt(i.qBloque)}`).join(' · ')}
-        <span class="field-note">— confirma la comisión de cruce antes de generar</span></div>`
-        : `<div class="field-note" style="font-size:12px;">Ningún folio marcado como bloque/cruce.</div>`}
+      ${conBloque.length ? (()=>{
+        const marcadas = conBloque.filter(i=>i.bloque > 0);
+        const sinMarcar = conBloque.filter(i=>i.bloque === 0);
+        return `<div style="font-size:12.5px;">
+          ${marcadas.length ? `<b style="color:var(--accent,#818cf8);">Marcado como bloque/cruce:</b> ` +
+            marcadas.map(i=>`${i.esp} ${fmtInt(i.qBloque)} de ${fmtInt(i.qty)}`).join(' · ') + '<br>' : ''}
+          ${sinMarcar.length ? `<b style="color:var(--accent,#818cf8);">A la espera de definir bloque/cruce:</b> ` +
+            sinMarcar.map(i=>`${i.esp} ${fmtInt(i.qty)}`).join(' · ') +
+            ` <span class="field-note">— si no marcas nada, todo va a comisión de pantalla</span>` : ''}
+        </div>`; })()
+        : `<div class="field-note" style="font-size:12px;">Nada que definir: tarifa única o especies con tarifa fija.</div>`}
     </div>`;
 }
 
@@ -13017,7 +13030,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-14 19:47 UTC';
+const BUILD_ID = '2026-08-14 19:55 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
