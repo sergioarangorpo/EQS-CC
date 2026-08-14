@@ -4353,10 +4353,11 @@ const clientesDB = {
     portafoliosDeCategorias: 'FIDUCIARIA BANCOLOMBIA',
     portafolios: [], // se llena dinámicamente en getClienteDB
     fileNombre: 'Fiduciaria Bancolombia',
-    // Comisión bloque 0.2% (casi todo lo que operan es bloque). Pantalla se deja
-    // igual salvo que Sergio elija otra en el selector "Comisión del día".
+    // Bloque 0,2% y pantalla 0,1% (confirmado por Sergio el 14-ago). Antes las
+    // dos estaban en 0,2%, así que lo operado en pantalla salía al doble y el
+    // guardián de comisiones no avisaba porque comparaba contra ese mismo 0,2%.
     comisionBloque: 0.002,
-    comisionPantalla: 0.002,
+    comisionPantalla: 0.001,
   },
   // Clientes de reporte genérico equity (misma lógica que FIDUCIARIA BANCOLOMBIA).
   // fileNombre = base del nombre de archivo "Operaciones <fileNombre> yyyymmdd".
@@ -12565,7 +12566,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-13 20:36 UTC';
+const BUILD_ID = '2026-08-14 15:32 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
