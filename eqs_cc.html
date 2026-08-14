@@ -1236,6 +1236,7 @@
               <option value="0.0010">0.10%</option>
               <option value="0.0015" selected>0.15%</option>
               <option value="0.0018">0.18%</option>
+        <option value="0.0020">0.20%</option>
               <option value="otro">Otro (escribir)...</option>
             </select>
           </div>
@@ -1255,6 +1256,7 @@
               <option value="0.0010">0.10%</option>
               <option value="0.0015">0.15%</option>
               <option value="0.0018">0.18%</option>
+        <option value="0.0020">0.20%</option>
               <option value="otro">Otro (escribir)...</option>
             </select>
           </div>
@@ -1948,8 +1950,15 @@
       <button class="btn small" onclick="renderInformeDiario()">Actualizar informe</button>
       <button class="btn small purple" onclick="descargarInformeImagen()">🖼 Descargar imágenes</button>
       <button class="btn small ghost" onclick="copiarInformeImagen()">Copiar (versión correo)</button>
+      <button class="btn small ghost" onclick="copiarTextoBloomberg()">💬 Copiar texto Bloomberg</button>
+      <button class="btn small ghost" onclick="verTextoBloomberg()">Ver texto</button>
       <button class="btn small ghost" onclick="guardarCierreDelDia()">Guardar cierre del día</button>
       <span class="field-note" id="cierreStatus"></span>
+    </div>
+    <div style="padding:0 24px 10px;">
+      <textarea id="bbgTexto" rows="12" readonly style="display:none;width:100%;font-family:var(--mono,monospace);
+        font-size:12px;background:var(--bg-2,#0f1116);color:var(--text-1,#e5e7eb);
+        border:1px solid var(--border,#2a2f3a);border-radius:6px;padding:10px;"></textarea>
     </div>
     <div id="informeDiario" style="padding:0 24px 24px;"></div>
   </div>
@@ -3886,8 +3895,11 @@ async function generarExcelAndes(eqLotes, fxOps){
     t.font = { name:'Calibri', size:9.5, bold:true, color:{argb:C.navy} };
     t.alignment = { horizontal:'left', vertical:'middle' };
     ws.getRow(r).height = 16; r++;
-    // Fila de encabezados de columna: SIDE | SYMBOL | QUANTITY | PRICE.
-    [['B','SIDE','left'],['C','SYMBOL','left'],['D','QUANTITY','right'],['E','PRICE','right']].forEach(([col,txt,al])=>{
+    // SIDE | SYMBOL | QUANTITY | PRICE | VALUE. La columna VALUE trae la SUMA
+    // EXACTA de las operaciones del detalle, no cantidad x precio: con la tasa
+    // a 2 decimales ese producto nunca reproduce la suma (el 13-ago hubo
+    // 10.000 pesos de diferencia) y el total tiene que salir de cada trade.
+    [['B','SIDE','left'],['C','SYMBOL','left'],['D','QUANTITY','right'],['E','PRICE','right'],['F','VALUE','right']].forEach(([col,txt,al])=>{
       const c = ws.getCell(`${col}${r}`);
       c.value = txt;
       c.font = { name:'Calibri', size:8.5, bold:true, color:{argb:C.textMuted} };
@@ -3899,7 +3911,8 @@ async function generarExcelAndes(eqLotes, fxOps){
       ws.getCell(`C${r}`).value = f.nombre;                        // ECOPETROL / USDCOP
       const cCant = ws.getCell(`D${r}`); cCant.value = f.cantidad; cCant.numFmt = f.fmtCant || '#,##0';
       const cPx = ws.getCell(`E${r}`); cPx.value = f.precioProm; cPx.numFmt = f.fmtPrecio || '#,##0.00';
-      [['B','left'],['C','left'],['D','right'],['E','right']].forEach(([col,al])=>{
+      const cVal = ws.getCell(`F${r}`); cVal.value = f.valor; cVal.numFmt = f.fmtValor || '"$"#,##0.00';
+      [['B','left'],['C','left'],['D','right'],['E','right'],['F','right']].forEach(([col,al])=>{
         const cc = ws.getCell(`${col}${r}`);
         cc.font = { name:'Calibri', size:9.5, bold: col==='B', color:{argb: col==='B' ? (f.lado==='Venta'?C.orange:C.navy) : C.textDark} };
         cc.alignment = { horizontal: al, vertical:'middle' };
@@ -3921,16 +3934,19 @@ async function generarExcelAndes(eqLotes, fxOps){
         const k = `${lote.ladoAccion}|${d.security}`;
         if(!eqAgrup[k]) eqAgrup[k] = {lado:lote.ladoAccion, nombre:d.security, cant:0, montoPx:0};
         eqAgrup[k].cant += d.qty;
-        eqAgrup[k].montoPx += d.qty * d.precio;
+        // Idéntico a lo que escribe el detalle: redondear(qty * precio, 2).
+        eqAgrup[k].montoPx += redondear(d.qty * d.precio, 2);
       });
     });
     const eqResumen = Object.values(eqAgrup).map(g=>({
       lado: g.lado==='Compra'?'Compra':'Venta',
       nombre: g.nombre,
       cantidad: g.cant,
-      precioProm: redondear(g.montoPx / g.cant, 2),
+      precioProm: g.cant ? redondear(g.montoPx / g.cant, 2) : 0,   // referencia
+      valor: redondear(g.montoPx, 2),                              // SUMA del detalle
       fmtCant: '#,##0',
       fmtPrecio: '"$"#,##0.00',
+      fmtValor: '"$"#,##0.00',
     }));
     cuadroResumen('RESUMEN EQUITY', eqResumen);
 
@@ -3996,21 +4012,30 @@ async function generarExcelAndes(eqLotes, fxOps){
     }
 
     // Resumen FX: agrupar por lado (Compra/Venta USD).
+    // EL RESUMEN ES LA SUMA EXACTA DEL DETALLE, operación por operación.
+    // Antes se acumulaba con la tasa SIN redondear mientras el detalle
+    // multiplica con la tasa ya redondeada a 2 decimales (que es la que ve el
+    // cliente en la columna Rate), y los dos cuadros no cuadraban: el 13-ago
+    // hubo 10.000 pesos de diferencia. Es regulatorio, tiene que dar al centavo.
     const fxAgrup = {};
     fxOps.forEach(o=>{
-      const rate = tasaDeOp(o);
+      const rate = redondear(tasaDeOp(o), 2);     // idéntico al detalle
+      const usd  = redondear(o.amount, 2);
+      const cop  = redondear(usd * rate, 2);
       const ladoUSD = o.side === 'BUY' ? 'Compra' : 'Venta';
-      if(!fxAgrup[ladoUSD]) fxAgrup[ladoUSD] = {lado:ladoUSD, cant:0, montoPx:0};
-      fxAgrup[ladoUSD].cant += o.amount;
-      fxAgrup[ladoUSD].montoPx += o.amount * rate;
+      if(!fxAgrup[ladoUSD]) fxAgrup[ladoUSD] = {lado:ladoUSD, cant:0, cop:0};
+      fxAgrup[ladoUSD].cant += usd;
+      fxAgrup[ladoUSD].cop  += cop;               // se suman los COP ya calculados
     });
     const fxResumen = Object.values(fxAgrup).map(g=>({
       lado: g.lado,
       nombre: 'USDCOP',
-      cantidad: g.cant,
-      precioProm: redondear(g.montoPx / g.cant, 2),
-      fmtCant: '"$"#,##0',
+      cantidad: redondear(g.cant, 2),
+      precioProm: g.cant ? redondear(g.cop / g.cant, 2) : 0,   // referencia
+      valor: redondear(g.cop, 2),                              // SUMA del detalle
+      fmtCant: '"$"#,##0.00',
       fmtPrecio: '#,##0.00',
+      fmtValor: '"$"#,##0.00',
     }));
     cuadroResumen('RESUMEN FX', fxResumen);
 
@@ -7545,6 +7570,90 @@ async function guardarCierreDelDia(){
 // Por eso el PNG que se pega va en UNA COLUMNA de 440px con letra grande, y
 // el informe completo va adjunto para quien quiera el detalle desde el PC.
 // =====================================================================
+// Texto corto para los chats de Bloomberg. Es TEXTO PLANO (no imagen) porque
+// JAJ lo copia y lo pega en el chat, donde no se pueden mandar imágenes.
+// Todo en USD y en inglés, que es como lo leen los clientes de afuera.
+function textoBloomberg(){
+  const num = v => Number(String(v||'').replace(/,/g,'')) || 0;
+  const colcapVar = num((document.getElementById('infColcapVar')||{}).value);
+  const usdcop = usdcopActual();
+  if(!usdcop) return '';
+  const MM = v => 'USD ' + (v/usdcop/1e6).toFixed(2) + 'MM';
+  const cierres = _cierresAnteriores || {};
+
+  const stats = Object.values(_mercadoStats).map(d=>{
+    const base = cierres[d.esp] || d.primero;
+    return { ...d, varPct: base ? (d.ultimo/base - 1)*100 : 0, seg: segmentoDe(d.esp) };
+  });
+  const total   = stats.reduce((a,d)=>a+d.monto, 0);
+  const subasta = detectarSubastaCierre();
+  const cont    = stats.filter(d=>d.seg !== 'MGC');
+  const porVol  = cont.slice().sort((a,b)=>b.monto-a.monto);
+  const conMov  = cont.filter(d=>d.trades >= 5);
+  const suben   = conMov.slice().sort((a,b)=>b.varPct-a.varPct).slice(0,3);
+  const bajan   = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,3);
+  const bloques = mayoresBloques(3);
+  const pct = v => (v>=0?'+':'') + v.toFixed(2) + '%';
+  // Une una lista en inglés: "A, B and C".
+  const y = arr => arr.length <= 1 ? (arr[0]||'') : arr.slice(0,-1).join(', ') + ' and ' + arr[arr.length-1];
+
+  // Especies en las que Credicorp estuvo activo hoy, según Fidessa, ordenadas
+  // por monto operado y limitadas a las 8 principales: la lista completa puede
+  // pasar de 18 nombres y en un chat de Bloomberg eso no se lee.
+  const montoNuestro = {};
+  Object.values(_fidessaTradesRaw||{}).forEach(t=>{
+    if(!(t.qtyDone > 0)) return;
+    const e = nemoCanonico(t.security,'fidessa');
+    if(e) montoNuestro[e] = (montoNuestro[e]||0) + t.qtyDone * (t.avgPx||0);
+  });
+  const nuestras = Object.keys(montoNuestro)
+    .sort((a,b)=> montoNuestro[b] - montoNuestro[a])
+    .slice(0, 8);
+
+  const L = [];
+  L.push('{CO} COLOMBIA {CO}');
+  L.push(`MKT DATA: COLCAP ${pct(colcapVar)} VOL ${MM(total)}. Most active names: ` +
+         y(porVol.slice(0,3).map(d=>`${d.esp} ${MM(d.monto)}`)) + '.');
+  L.push('WHAT TO WATCH:');
+  L.push(`• Market closed ${colcapVar>=0?'higher':'lower'}, with COLCAP ${colcapVar>=0?'up':'down'} ` +
+         `${Math.abs(colcapVar).toFixed(2)}%, in a session with total turnover of ${MM(total)}.`);
+  L.push(`• Trading activity was led by ${porVol[0].esp}, which traded ${MM(porVol[0].monto)}` +
+         (porVol[1] ? `, followed by ${porVol[1].esp} with ${MM(porVol[1].monto)}` : '') +
+         (porVol[2] ? ` and ${porVol[2].esp} with ${MM(porVol[2].monto)}` : '') + '.');
+  if(subasta) L.push(`• Closing auction volume reached ${MM(subasta.monto)}.`);
+  if(suben.length && bajan.length){
+    L.push(`• Top performers were ` + y(suben.map(d=>`${d.esp} ${pct(d.varPct)}`)) +
+           `. On the downside, ` + y(bajan.map(d=>`${d.esp} ${pct(d.varPct)}`)) + ` were the weakest names.`);
+  }
+  L.push('');
+  if(bloques.length) L.push('Relevant blocks: ' + y(bloques.map(b=>`${b.esp} ${MM(b.monto)}`)) + '.');
+  if(nuestras.length) L.push('CREDICORP IS ACTIVE ON ' + nuestras.join(', '));
+  return L.join('\n');
+}
+
+async function copiarTextoBloomberg(){
+  if(!informeCompleto()) return;
+  const txt = textoBloomberg();
+  if(!txt){ alert('Falta el USDCOP para calcular los montos en dólares.'); return; }
+  try{
+    await navigator.clipboard.writeText(txt);
+    avisoExito('Texto copiado', 'Pégalo en el chat de Bloomberg con Ctrl+V.');
+  }catch(e){
+    // Si el navegador bloquea el portapapeles, se muestra para copiar a mano.
+    const ta = document.getElementById('bbgTexto');
+    if(ta){ ta.value = txt; ta.style.display = 'block'; ta.select(); }
+    else alert(txt);
+  }
+}
+
+function verTextoBloomberg(){
+  const ta = document.getElementById('bbgTexto');
+  if(!ta) return;
+  if(ta.style.display === 'block'){ ta.style.display = 'none'; return; }
+  ta.value = textoBloomberg() || '(falta el USDCOP)';
+  ta.style.display = 'block';
+}
+
 function informeCompactoHTML(){
   const num = v => Number(String(v||'').replace(/,/g,'')) || 0;
   const colcap    = num((document.getElementById('infColcap')||{}).value);
@@ -12718,7 +12827,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-14 16:36 UTC';
+const BUILD_ID = '2026-08-14 17:36 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
