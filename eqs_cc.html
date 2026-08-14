@@ -4427,6 +4427,18 @@ const clientesDB = {
     // (mismo override que PROTECCIÓN y PORVENIR).
     comisionBloque: 0.0015, comisionPantalla: 0.0008,
   },
+  'ALIANZA VALORES': {
+    nombre: 'ALIANZA VALORES',
+    formatoReporte: 'generico_equity',
+    // Portafolio ÚNICO (deceval 143), como BTG Cayman: no hay reparto, toda la
+    // orden va a ALIANZA VALORES S.A.
+    reparteManual: false,
+    portafolios: [ {id:'ALIANZA143', nombre:'ALIANZA VALORES S.A.', nit:'', iva:true, deceval:143} ],
+    autoPortafolio: 'ALIANZA143',
+    fileNombre: 'Alianza Valores',
+    // Siempre 0,1%, en bloque y en pantalla.
+    comisionBloque: 0.001, comisionPantalla: 0.001,
+  },
   'FIDUASHMORE': {
     nombre: 'FIDUASHMORE',
     formatoReporte: 'generico_equity',
@@ -4532,6 +4544,8 @@ const ALIAS_GRUPO = {
   SKANDIA: 'FIDUCIARIA SKANDIA',
   // Somos nosotros mismos en Perú: la orden llega por Mafe y el reporte lo hace
   // el BO, así que NO se reporta desde acá (formato NO en GRUPO_COMISIONES).
+  ALIANZA: 'ALIANZA VALORES',
+  ALIANZAVAL: 'ALIANZA VALORES',
   CREDIBOLSA: 'CREDICORP CAPITAL BOLSA',
   CSI: 'CREDICORP CAPITAL BOLSA',
   BRSE: 'BRADESCO',
@@ -12675,7 +12689,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-14 15:55 UTC';
+const BUILD_ID = '2026-08-14 16:11 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
