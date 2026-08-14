@@ -1185,6 +1185,9 @@
     </div>
   </div>
 
+  <!-- Semáforo de preparación: qué falta para poder generar -->
+  <div id="panelListo" style="margin:0 24px 18px;display:none;"></div>
+
   <div class="grid">
 
     <div class="col-main">
@@ -1347,37 +1350,10 @@
     </div>
   </div>
 
-  <div style="padding:0 24px;">
-    <div class="section-label">Histórico generado hoy <span class="hint" id="historicoHint"></span></div>
-    <div class="blotter-wrap">
-      <div class="blotter-toolbar">
-        <div class="title">Operaciones_CLIENTE (resumen por portafolio)</div>
-        <button class="btn small purple" onclick="exportarDetalle()">Exportar Detalle_operaciones (folio a folio)</button>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Hora</th>
-            <th>Cliente</th>
-            <th>Portafolio</th>
-            <th>Especie</th>
-            <th>Lado</th>
-            <th class="num">Cantidad</th>
-            <th class="num">Precio</th>
-            <th class="num">Com%</th>
-            <th class="num">Com$</th>
-            <th class="num">IVA</th>
-            <th class="num">Monto Neto</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="historyBodyRVL">
-          <tr><td colspan="12" class="empty-state">Aún no hay reportes generados en esta sesión.</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
+  <!-- El cuadro "Histórico generado hoy" se quitó (Sergio, 14-ago): solo
+       mostraba la línea en curso y al pasar a la siguiente parecía que lo
+       asignado se hubiera perdido. El estado real de avance está ahora en el
+       panel de "¿Listo para generar?", arriba, junto al arqueo. -->
   <div id="fidessaReconciliacion" style="display:none;padding:0 24px;"></div>
 
 </div>
@@ -8610,6 +8586,7 @@ function renderFolios(){
   }
   actualizarChkSelectAll(filtrados);
   renderStats(filtrados);
+  renderPanelListo(filtrados);
   renderFolioSummary();
   renderValidadorAlloc();
   actualizarBotonGenerar();
@@ -8723,6 +8700,84 @@ function marcarSeleccionComo(tipo){
     if(f) f.marca = tipo;
   });
   renderFolios();
+}
+
+// =====================================================================
+// ¿ESTOY LISTO PARA GENERAR?
+// ---------------------------------------------------------------------
+// El arqueo de arriba compara CANTIDADES. Esto compara LÍNEAS: cuáles ya
+// tienen su portafolio (por EMSX o por el Notes), cuáles esperan que Sergio
+// las distribuya, y cuáles tienen folios en bloque pendientes de confirmar la
+// comisión. Sustituye al cuadro "Histórico generado hoy", que solo mostraba la
+// línea en curso y daba sensación de que lo asignado se perdía (Sergio, 14-ago).
+// =====================================================================
+function renderPanelListo(filtrados){
+  const cont = document.getElementById('panelListo');
+  if(!cont) return;
+  const cliente = document.getElementById('filtroCliente').value;
+  if(!cliente || !_fidessaTradesRaw){ cont.style.display = 'none'; return; }
+  const cfg = getClienteDB(cliente) || {};
+  if(!cfg.formatoReporte){ cont.style.display = 'none'; return; }
+
+  sincronizarAllocOrdenActiva();
+  const ordenes = Object.keys(_fidessaTradesRaw).filter(o=>{
+    const t = _fidessaTradesRaw[o];
+    return normalizarGrupo(t.grupo) === cliente && (t.qtyDone||0) > 0;
+  });
+  if(!ordenes.length){ cont.style.display = 'none'; return; }
+
+  const folios = foliosParaReportar();
+  const listas = [], faltantes = [], conBloque = [];
+  ordenes.forEach(o=>{
+    const t = _fidessaTradesRaw[o];
+    const esp = nemoCanonico(t.security,'fidessa');
+    const fol = folios.filter(f=>String(f.parentOrderId)===String(o));
+    const qFol = fol.reduce((a,f)=>a+f.cantidad,0);
+    const bloque = fol.filter(f=>f.marca==='bloque');
+    const asignado = (_allocPorOrden[o]||[]).reduce((a,x)=>a+x.cantidad,0);
+    // ¿La línea ya sabe a qué portafolio va?
+    let tienePort = asignado > 0;
+    if(!tienePort){
+      if(cfg.autoPortafolio || !cfg.reparteManual) tienePort = true;
+      if(cfg.formatoReporte === 'skandia'){
+        const fondos = _skFondosEnTexto(String(t.notes||''));
+        tienePort = fondos.length === 1;           // varios -> hay que distribuir
+      }
+      if(cfg.formatoReporte === 'porvenir') tienePort = !!_porvPortDeFolio({parentOrderId:o, notes:t.notes});
+    }
+    const item = { orden:o, esp, lado:t.lado, qty:t.qtyDone, qFol, bloque:bloque.length,
+                   qBloque: bloque.reduce((a,f)=>a+f.cantidad,0), asignado };
+    if(tienePort) listas.push(item); else faltantes.push(item);
+    if(bloque.length) conBloque.push(item);
+  });
+
+  const todoListo = faltantes.length === 0;
+  const color = todoListo ? 'var(--buy,#22c55e)' : 'var(--amber,#f59e0b)';
+  const fondo  = todoListo ? 'rgba(34,197,94,.10)' : 'rgba(245,158,11,.10)';
+  const linea = i => `${i.esp} ${i.lado} ${fmtInt(i.qty)}`;
+
+  cont.style.display = 'block';
+  cont.innerHTML = `
+    <div style="background:${fondo};border:1px solid ${color};border-left:4px solid ${color};
+                border-radius:8px;padding:14px 18px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:${(listas.length||faltantes.length)?'10px':'0'};">
+        <span style="font-size:20px;">${todoListo ? '✓' : '⚠'}</span>
+        <span style="font-size:15px;font-weight:700;color:${color};">
+          ${todoListo ? 'Listo para generar' : `Falta distribuir ${faltantes.length} línea(s)`}</span>
+        <span class="field-note">${ordenes.length} línea(s) de ${cfg.nombre || cliente}</span>
+      </div>
+      ${listas.length ? `<div style="font-size:12.5px;margin-bottom:4px;">
+        <b style="color:var(--buy,#22c55e);">${listas.length} con portafolio definido:</b>
+        ${listas.map(linea).join(' · ')}</div>` : ''}
+      ${faltantes.length ? `<div style="font-size:12.5px;margin-bottom:4px;">
+        <b style="color:var(--amber,#f59e0b);">${faltantes.length} a la espera de distribución:</b>
+        ${faltantes.map(i=>linea(i) + (i.asignado ? ` (asignado ${fmtInt(i.asignado)} de ${fmtInt(i.qty)})` : '')).join(' · ')}</div>` : ''}
+      ${conBloque.length ? `<div style="font-size:12.5px;">
+        <b style="color:var(--accent,#818cf8);">Bloque/cruce marcado en:</b>
+        ${conBloque.map(i=>`${i.esp} ${fmtInt(i.qBloque)}`).join(' · ')}
+        <span class="field-note">— confirma la comisión de cruce antes de generar</span></div>`
+        : `<div class="field-note" style="font-size:12px;">Ningún folio marcado como bloque/cruce.</div>`}
+    </div>`;
 }
 
 function renderStats(filtrados){
@@ -9992,7 +10047,18 @@ async function generarReporte(){
         fs.forEach((f,i)=>{
           const q = (i === fs.length-1) ? restante : Math.round(f.cantidad * a.cantidad / total);
           restante -= q;
-          if(q > 0) partido.push({ ...f, cantidad:q, fondoSk: _SKANDIA_POR_ID[String(a.port.idFondo).toUpperCase()] });
+          // Se conservan comisión y fechas: el generador las lee de estos
+          // campos y al repartir se estaban perdiendo (comisión 0 y fechas
+          // vacías en las 236 filas del 14-ago).
+          if(q > 0) partido.push({
+            ...f, cantidad: q,
+            fondoSk: _SKANDIA_POR_ID[String(a.port.idFondo).toUpperCase()],
+            comisionPct: (f.especie==='ECOPETROL' || f.especie==='PFCIBEST')
+              ? comisionPantallaPct()
+              : (f.marca === 'bloque' ? (f.comBloquePct != null ? f.comBloquePct : comisionCrucePct()) : comisionPantallaPct()),
+            fechaReg: f.fechaReg || document.getElementById('fechaRegistro').value,
+            fechaCum: f.fechaCum || document.getElementById('fechaCumplimiento').value,
+          });
         });
       });
       // Los folios de órdenes SIN reparto siguen su camino normal (fondo del
@@ -11422,8 +11488,14 @@ async function generarReporteSkandia(cliente, loteDet){
   // folio ascendente. (Verificado en Operaciones_SKANDIA_20260810: CIBEST del
   // 606081 al 609772 y luego PFCIBEST, cada bloque ascendente.)
   const sinFondo = new Set();
+  // Orden del archivo: ESPECIE, luego PORTAFOLIO (ID de fondo) y por último
+  // folio. Así el cliente lee cada especie junta y dentro de ella cada fondo
+  // seguido, en vez de folios entremezclados (Sergio, 14-ago).
+  const _idFondoDe = f => f.fondoSk ? String(f.fondoSk.id) : String(_skFondoDeFolio(f).id || '');
   const ordenado = loteDet.slice().sort((a,b)=>
-    String(a.especie).localeCompare(String(b.especie)) || (Number(a.folio) - Number(b.folio)));
+    String(a.especie).localeCompare(String(b.especie), 'es', {sensitivity:'base'}) ||
+    _idFondoDe(a).localeCompare(_idFondoDe(b), 'es', {numeric:true, sensitivity:'base'}) ||
+    (Number(a.folio) - Number(b.folio)));
   const filas = ordenado.map(f => {
     // Si el folio viene de un reparto manual, ese fondo manda sobre el Notes.
     let id, fondo;
@@ -11816,7 +11888,10 @@ async function generarYDescargarReporteRVL(cliente){
 }
 
 function renderHistoryRVL(){
+  // El cuadro "Histórico generado hoy" se quitó de la pantalla; la función
+  // queda porque varios flujos la llaman al terminar de generar.
   const tbody = document.getElementById('historyBodyRVL');
+  if(!tbody) return;
   if(operacionesHistorico.length===0){
     tbody.innerHTML = '<tr><td colspan="12" class="empty-state">Aún no hay reportes generados en esta sesión.</td></tr>';
     return;
@@ -11835,7 +11910,7 @@ function renderHistoryRVL(){
     <td class="num">${fmtMoney(op.montoNeto)}</td>
     <td><button class="icon-btn" title="Corregir operación" onclick="abrirEdicionRVL(${op.id})">✎</button></td>
   </tr>`).join('');
-  document.getElementById('historicoHint').textContent = `(${operacionesHistorico.length} líneas)`;
+  (document.getElementById('historicoHint')||{}).textContent = `(${operacionesHistorico.length} líneas)`;
 }
 
 editingId = null;
@@ -12942,7 +13017,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-14 18:59 UTC';
+const BUILD_ID = '2026-08-14 19:47 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
