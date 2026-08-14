@@ -4417,7 +4417,10 @@ const clientesDB = {
     nombre: 'FIDUCIARIA SKANDIA',
     // Skandia manda el ID Fondo en el Notes de la orden de Fidessa (H4, 92,
     // FL...), así que no hay reparto manual: cada folio ya sabe a qué fondo va.
-    formatoReporte: 'skandia', reparteManual: false,
+    // reparteManual: el fondo suele venir en el Notes, pero una orden puede
+    // traer VARIOS ("H4,ES") y entonces hay que distribuirla a mano. Con esto
+    // el panel de asignación queda disponible y el reparto se guarda por orden.
+    formatoReporte: 'skandia', reparteManual: true,
     portafoliosDeCategorias: 'FIDUCIARIA SKANDIA', portafolios: [],
     fileNombre: 'SKANDIA',
     // Pantalla 0,08% / Cruce 0,15%. ECOPETROL y PFCIBEST siempre 0,08%
@@ -8644,7 +8647,14 @@ function getDisponible(){
 // Guarda el allocation de la orden activa en el store por-orden (para no
 // perderlo). Se llama antes de leer el agregado o de generar.
 function sincronizarAllocOrdenActiva(){
-  if(_ordenActiva){ _allocPorOrden[_ordenActiva] = allocations.slice(); return; }
+  if(_ordenActiva){
+    // No pisar un reparto ya guardado con un arreglo vacío: al cambiar el zoom
+    // `allocations` queda en blanco un instante, y si se sincroniza en ese
+    // momento se borra lo que Sergio acababa de asignar.
+    if(allocations.length === 0 && (_allocPorOrden[_ordenActiva]||[]).length > 0) return;
+    _allocPorOrden[_ordenActiva] = allocations.slice();
+    return;
+  }
   // Sin orden activa (hay VARIAS líneas seleccionadas) la asignación se hacía
   // en el vacío: se escribía en `allocations` pero no se guardaba contra
   // ninguna orden, y al generar salía "ninguna orden tiene el reparto
@@ -9696,6 +9706,73 @@ async function generarReporte(){
   // allocations. Si se hiciera después, _allocPorOrden ya está vacío y el
   // portafolio asignado a mano se perdía (el reporte fallaba pidiendo el
   // Instruction que Porvenir no siempre manda).
+  // SKANDIA: igual que Porvenir, el reparto se calcula ANTES de que se limpien
+  // las allocations más abajo. Si se hiciera después, _allocPorOrden ya está
+  // vacío y el reparto a mano se pierde.
+  window._loteDetSk = null; window._frenoSk = null;
+  if(getClienteDB(cliente).formatoReporte === 'skandia'){
+    // Reparto manual: si Sergio asignó portafolios, ESE reparto manda sobre el
+    // Notes de la orden. Cada folio se parte proporcionalmente, igual que en
+    // COLFONDOS y PORVENIR.
+    sincronizarAllocOrdenActiva();
+    const _portsSk = getClienteDB(cliente).portafolios || [];
+    const _repartoSk = [];
+    Object.keys(_allocPorOrden).forEach(poid=>{
+      (_allocPorOrden[poid]||[]).forEach(a=>{
+        if(!a.cantidad) return;
+        const port = _portsSk.find(p=>p.id===a.portId);
+        if(port) _repartoSk.push({ parentOrderId:poid, port, cantidad:a.cantidad });
+      });
+    });
+    if(_repartoSk.length){
+      const partido = [];
+      _repartoSk.forEach(a=>{
+        const fs = seleccionados.filter(f=>String(f.parentOrderId)===String(a.parentOrderId));
+        const total = fs.reduce((x,f)=>x+f.cantidad,0);
+        if(!total) return;
+        let restante = a.cantidad;
+        fs.forEach((f,i)=>{
+          const q = (i === fs.length-1) ? restante : Math.round(f.cantidad * a.cantidad / total);
+          restante -= q;
+          if(q > 0) partido.push({ ...f, cantidad:q, fondoSk: _SKANDIA_POR_ID[String(a.port.idFondo).toUpperCase()] });
+        });
+      });
+      // Los folios de órdenes SIN reparto siguen su camino normal (fondo del
+      // Notes); solo se reemplazan los de las órdenes repartidas.
+      if(partido.length){
+        const repartidas = new Set(_repartoSk.map(a=>String(a.parentOrderId)));
+        window._loteDetSk = seleccionados.filter(f=>!repartidas.has(String(f.parentOrderId))).concat(partido);
+      }
+    }
+
+    // FRENO: una orden cuyo Notes trae MÁS DE UN fondo ("H4,ES") no se puede
+    // reportar sin repartir: no es un portafolio, son varios.
+    // Solo se revisan las órdenes que NO tienen reparto propio: si Sergio ya
+    // repartió esa línea, no hay nada que exigir.
+    {
+      const conVarios = []; const vistos = new Set();
+      const repartidas = new Set(_repartoSk.map(a=>String(a.parentOrderId)));
+      seleccionados.forEach(f=>{
+        const poid = String(f.parentOrderId||'');
+        if(vistos.has(poid) || repartidas.has(poid)) return;
+        let txt = String(f.portafolio || f.notes || '').trim();
+        if(!txt && poid && _fidessaTradesRaw[poid]) txt = String(_fidessaTradesRaw[poid].notes||'').trim();
+        const fondos = _skFondosEnTexto(txt);
+        if(fondos.length > 1){
+          vistos.add(poid);
+          const q = _fidessaTradesRaw[poid] ? _fidessaTradesRaw[poid].qtyDone : f.cantidad;
+          conVarios.push(`${f.especie} ${fmtInt(q)}: viene con ${fondos.length} fondos (${fondos.map(x=>x.id).join(', ')})`);
+        }
+      });
+      if(conVarios.length){
+        window._frenoSk = 'No se generó el reporte de SKANDIA: hay orden(es) con varios fondos.\n\n' +
+              conVarios.join('\n') + '\n\n' +
+              'Eso no es un portafolio: son varios y hay que distribuirlos.\n' +
+              'Selecciona esa línea en Fidessa Trades y reparte la cantidad en "Asignación a portafolios".';
+      }
+    }
+  }
+
   window._loteDetPorv = null;
   if(getClienteDB(cliente).formatoReporte === 'porvenir'){
     // Reparto por portafolio cuando Porvenir fracciona POR CHAT en vez de
@@ -9783,17 +9860,21 @@ async function generarReporte(){
     renderFidessaTradesPanel();
   } else if(formato === 'skandia'){
     const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
+    const loteDetSk = window._loteDetSk || null;
+    if(window._frenoSk){ alert(window._frenoSk); window._frenoSk = null; return; }
     const ok = await previsualizarReporte({
       titulo: `${getClienteDB(cliente).nombre} — ${etiquetaVersion(version)}`,
       archivo: `Operaciones_SKANDIA_${(fechaReg||'').replace(/-/g,'')}${sufijoVersion(version)?' '+sufijoVersion(version):''}.xlsx  +  BO_Skandia`,
       columnas: ['ID fondo','Folio','Nemo','Tipo','Cantidad','Precio','Com %'],
-      filas: seleccionados.map(f=>[ _skFondoDeFolio(f).id || '—', f.folio, f.especie, f.lado,
-                                    fmtInt(f.cantidad), fmtRate(f.precio), (f.comisionPct||0).toFixed(4)+'%' ]),
+      filas: (loteDetSk || seleccionados).map(f=>[
+        f.fondoSk ? f.fondoSk.id : (_skFondoDeFolio(f).id || '—'),
+        f.folio, f.especie, f.lado, fmtInt(f.cantidad), fmtRate(f.precio),
+        (f.comisionPct != null ? f.comisionPct : 0).toFixed(4)+'%' ]),
       totales: `${seleccionados.length} folio(s) · ${fmtInt(seleccionados.reduce((a,f)=>a+f.cantidad,0))} acciones`,
     });
     if(!ok) return;
     window._sufijoReporte = sufijoVersion(version);
-    await generarReporteSkandia(cliente, loteDet);
+    await generarReporteSkandia(cliente, loteDetSk || loteDet);
     window._sufijoReporte = '';
     const nuevas = await registrarLoteRVL(cliente, loteDet, version);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos Operaciones + BO');
@@ -10663,6 +10744,14 @@ const SKANDIA_FONDOS = [{"deceval": 1434, "nombre": "SKANDIA FONDO DE CESANTIAS 
 const _SKANDIA_POR_ID = {};
 SKANDIA_FONDOS.forEach(f => { _SKANDIA_POR_ID[String(f.id).toUpperCase().trim()] = f; });
 
+// Los 61 fondos entran a la base del cliente para poder repartir a mano cuando
+// una orden trae varios (ej. "H4,ES") o el alloc llega por chat.
+if(typeof clientesDB !== 'undefined' && clientesDB['FIDUCIARIA SKANDIA']){
+  clientesDB['FIDUCIARIA SKANDIA'].portafolios = SKANDIA_FONDOS.map(f=>({
+    id: 'SK_' + f.id, nombre: f.id + ' — ' + f.nombre, nit: '', iva: false, deceval: f.deceval, idFondo: f.id,
+  }));
+}
+
 const SKANDIA_NIT_CONTRAPARTE = '860068182-5';
 
 // Formatos numéricos tal cual los traen los archivos reales.
@@ -10674,6 +10763,20 @@ const _SK_FMT = {
   pct       : '0.00%',
   fecha     : 'dd/mm/yyyy',
 };
+
+// Un Notes/Account puede traer VARIOS fondos ("H4,ES"). Eso NO es un
+// portafolio: son dos y la orden hay que distribuirla. Sin esto la app
+// buscaría un fondo llamado "H4,ES", no lo encontraría —o peor, calzaría con
+// uno parecido— y repartiría mal en silencio (Sergio, 14-ago).
+function _skFondosEnTexto(txt){
+  const partes = String(txt||'').split(/[,;/|+&]|\s{2,}|\s-\s/).map(x=>x.trim()).filter(Boolean);
+  const ids = [];
+  partes.forEach(p=>{
+    const f = _SKANDIA_POR_ID[p.toUpperCase()];
+    if(f && !ids.some(x=>x.id===f.id)) ids.push(f);
+  });
+  return ids;
+}
 
 function _skFondoDeFolio(f){
   // El ID Fondo viene en el Notes de la orden (H4). Si el folio no lo trae,
@@ -11055,7 +11158,13 @@ async function generarReporteSkandia(cliente, loteDet){
   const ordenado = loteDet.slice().sort((a,b)=>
     String(a.especie).localeCompare(String(b.especie)) || (Number(a.folio) - Number(b.folio)));
   const filas = ordenado.map(f => {
-    const {id, fondo} = _skFondoDeFolio(f);
+    // Si el folio viene de un reparto manual, ese fondo manda sobre el Notes.
+    let id, fondo;
+    if(f.fondoSk){
+      fondo = f.fondoSk; id = f.fondoSk.id;
+    }else{
+      ({id, fondo} = _skFondoDeFolio(f));
+    }
     if(!fondo) sinFondo.add(id || '(vacío)');
     const comPct = (Number(f.comisionPct) || 0) / 100;   // 0.08 -> 0.0008
     const bruto  = f.cantidad * f.precio;
@@ -12566,7 +12675,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-14 15:32 UTC';
+const BUILD_ID = '2026-08-14 15:55 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
