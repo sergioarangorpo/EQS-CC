@@ -4465,8 +4465,7 @@ const clientesDB = {
     // reparteManual: el fondo suele venir en el Notes, pero una orden puede
     // traer VARIOS ("H4,ES") y entonces hay que distribuirla a mano. Con esto
     // el panel de asignación queda disponible y el reparto se guarda por orden.
-    formatoReporte: 'skandia', reparteManual: true,
-    portafoliosDeCategorias: 'SKANDIA', portafolios: [],
+    formatoReporte: 'skandia', reparteManual: true, portafolios: [],
     fileNombre: 'Skandia',
     // Pantalla 0,08% / Cruce 0,15%. ECOPETROL y PFCIBEST siempre 0,08%
     // (mismo override que PROTECCIÓN y PORVENIR).
@@ -4478,8 +4477,7 @@ const clientesDB = {
     // reparteManual: el fondo suele venir en el Notes, pero una orden puede
     // traer VARIOS ("H4,ES") y entonces hay que distribuirla a mano. Con esto
     // el panel de asignación queda disponible y el reparto se guarda por orden.
-    formatoReporte: 'skandia', reparteManual: true,
-    portafoliosDeCategorias: 'SKANDIA SEGUROS', portafolios: [],
+    formatoReporte: 'skandia', reparteManual: true, portafolios: [],
     fileNombre: 'Skandia',
     // Pantalla 0,08% / Cruce 0,15%. ECOPETROL y PFCIBEST siempre 0,08%
     // (mismo override que PROTECCIÓN y PORVENIR).
@@ -11004,12 +11002,21 @@ const SKANDIA_FONDOS = [{"deceval": 1434, "nombre": "SKANDIA FONDO DE CESANTIAS 
 const _SKANDIA_POR_ID = {};
 SKANDIA_FONDOS.forEach(f => { _SKANDIA_POR_ID[String(f.id).toUpperCase().trim()] = f; });
 
-// Los 61 fondos entran a la base del cliente para poder repartir a mano cuando
-// una orden trae varios (ej. "H4,ES") o el alloc llega por chat.
-if(typeof clientesDB !== 'undefined' && clientesDB['FIDUCIARIA SKANDIA']){
-  clientesDB['FIDUCIARIA SKANDIA'].portafolios = SKANDIA_FONDOS.map(f=>({
-    id: 'SK_' + f.id, nombre: f.id + ' — ' + f.nombre, nit: '', iva: false, deceval: f.deceval, idFondo: f.id,
-  }));
+// Los fondos entran a la base de los TRES grupos de Skandia (AFP, Seguros y
+// Fiduciaria) para poder repartir a mano cuando una orden trae varios
+// ("H4,ES") o el alloc llega por chat.
+//
+// El nombre se muestra como "ES — SKANDIA FPV STRAT.ACC.CBIA.": lo que Sergio
+// necesita reconocer al asignar es el ID de fondo (ES, H4, MV), no el nombre
+// largo, que además empieza igual en casi todos. Ordenado por ID.
+{
+  const _lista = SKANDIA_FONDOS.slice()
+    .sort((a,b)=> String(a.id).localeCompare(String(b.id), 'es', {numeric:true, sensitivity:'base'}))
+    .map(f=>({ id: 'SK_' + f.id, nombre: f.id + ' — ' + f.nombre,
+               nit: '', iva: false, deceval: f.deceval, idFondo: f.id }));
+  ['FIDUCIARIA SKANDIA','SKANDIA','SKANDIA SEGUROS'].forEach(k=>{
+    if(typeof clientesDB !== 'undefined' && clientesDB[k]) clientesDB[k].portafolios = _lista;
+  });
 }
 
 const SKANDIA_NIT_CONTRAPARTE = '860068182-5';
@@ -12935,7 +12942,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-14 18:04 UTC';
+const BUILD_ID = '2026-08-14 18:59 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
