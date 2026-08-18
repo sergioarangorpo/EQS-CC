@@ -10326,12 +10326,39 @@ async function generarReporte(){
     const ok = await previsualizarReporte({
       titulo: `${getClienteDB(cliente).nombre} — ${etiquetaVersion(version)}`,
       archivo: `Operaciones_SKANDIA_${(fechaReg||'').replace(/-/g,'')}${sufijoVersion(version)?' '+sufijoVersion(version):''}.xlsx  +  BO_Skandia`,
-      columnas: ['ID fondo','Folio','Nemo','Tipo','Cantidad','Precio','Com %'],
-      filas: (loteDetSk || seleccionados).map(f=>[
-        f.fondoSk ? f.fondoSk.id : (_skFondoDeFolio(f).id || '—'),
-        f.folio, f.especie, f.lado, fmtInt(f.cantidad), fmtRate(f.precio),
-        (f.comisionPct != null ? f.comisionPct : 0).toFixed(4)+'%' ]),
-      totales: `${seleccionados.length} folio(s) · ${fmtInt(seleccionados.reduce((a,f)=>a+f.cantidad,0))} acciones`,
+      // CONSOLIDADO por fondo + especie + lado, no folio a folio: con 72 folios
+      // la lista no servía para revisar nada. Y la comisión sale de `loteDet`,
+      // que ya la trae calculada; `seleccionados` son los folios crudos y por
+      // eso salía en 0,0000% (Sergio, 18-ago).
+      columnas: ['ID fondo','Nemo','Tipo','Cantidad','Precio prom.','Com %','Folios'],
+      filas: (()=>{
+        const base = loteDetSk || loteDet;
+        const g = {};
+        base.forEach(f=>{
+          const id = f.fondoSk ? f.fondoSk.id : (_skFondoDeFolio(f).id || '—');
+          const k = id + '|' + f.especie + '|' + f.lado;
+          const a = g[k] || (g[k] = { id, especie:f.especie, lado:f.lado, qty:0, bruto:0, com:0, folios:new Set() });
+          const pct = Number(f.comisionPct) || 0;
+          a.qty += f.cantidad;
+          a.bruto += f.cantidad * f.precio;
+          a.com += f.cantidad * f.precio * pct / 100;
+          a.folios.add(String(f.folio));
+        });
+        return Object.values(g)
+          .sort((x,y)=> String(x.especie).localeCompare(String(y.especie)) || String(x.id).localeCompare(String(y.id)))
+          .map(a=>[ a.id, a.especie, a.lado, fmtInt(a.qty),
+                    fmtRate(a.qty ? a.bruto/a.qty : 0),
+                    (a.bruto ? a.com/a.bruto*100 : 0).toFixed(4)+'%',
+                    String(a.folios.size) ]);
+      })(),
+      totales: (()=>{
+        const base = loteDetSk || loteDet;
+        const q = base.reduce((a,f)=>a+f.cantidad,0);
+        const bruto = base.reduce((a,f)=>a+f.cantidad*f.precio,0);
+        const com = base.reduce((a,f)=>a+f.cantidad*f.precio*(Number(f.comisionPct)||0)/100,0);
+        const nf = new Set(base.map(f=>String(f.folio))).size;
+        return `${fmtInt(q)} acciones · ${nf} folio(s) · bruto ${fmtMoney(bruto)} · comisión ${fmtMoney(com)}`;
+      })(),
     });
     if(!ok) return;
     window._sufijoReporte = sufijoVersion(version);
@@ -13178,7 +13205,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-18 19:16 UTC';
+const BUILD_ID = '2026-08-18 19:25 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
