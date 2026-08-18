@@ -3677,6 +3677,8 @@ async function generarExcelCruce(clienteKey, registrados, trader){
     ws.getRow(rr).height = 18;
     if((rr-eqIni)%2===1){ cols.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}}); }
   }
+
+
   r += 2;
 
   // ================= BLOQUE 2: FX =================
@@ -4248,6 +4250,70 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
   }
   r += 2;
 
+  // ===== DETALLE FOLIO A FOLIO =====
+  // Los clientes locales piden las papeletas de bolsa para confirmar que los
+  // totales de arriba son correctos (Sergio, 14-ago). Va UN SOLO bloque al
+  // final, con las mismas columnas más FOLIO al principio, ordenado por
+  // especie y folio.
+  const _foliosDet = (fileBase.foliosDetalle || []).slice().sort((a,b)=>
+    String(a.especie).localeCompare(String(b.especie), 'es', {sensitivity:'base'}) ||
+    (Number(a.folio) - Number(b.folio)));
+  if(_foliosDet.length){
+    tituloSeccion('DETALLE FOLIO A FOLIO');
+    // 12 columnas (B..M), las mismas del consolidado pero con FOLIO al inicio.
+    // Trade/Settle Date no se repiten: son las mismas de arriba y ocupaban el
+    // espacio que necesita el folio.
+    headerFila(['Folio','Side','Portafolio','Symbol','Quantity','Price','Gross','Commission','Com %','IVA','Net'],
+               ['left','left','left','left','right','right','right','right','right','right','right']);
+    const dIni = r;
+    _foliosDet.forEach(f=>{
+      const precio = redondear(f.precio, 2);
+      const gross = redondear(f.cantidad * precio, 2);
+      const comision = redondear(gross * f.comPct, 3);
+      const iva = redondear(comision * 0.19, 2);
+      const neto = redondear(f.lado === 'Compra' ? gross + comision + iva : gross - comision - iva, 2);
+      ws.getCell(`B${r}`).value = f.folio;
+      ws.getCell(`C${r}`).value = f.lado === 'Compra' ? 'Buy' : 'Sell';
+      ws.getCell(`D${r}`).value = f.portNombre;
+      ws.getCell(`E${r}`).value = f.especie;
+      ws.getCell(`F${r}`).value = f.cantidad;
+      ws.getCell(`G${r}`).value = precio;
+      ws.getCell(`H${r}`).value = gross;
+      ws.getCell(`I${r}`).value = comision;
+      ws.getCell(`J${r}`).value = f.comPct;
+      ws.getCell(`K${r}`).value = iva;
+      ws.getCell(`L${r}`).value = neto;
+      r++;
+    });
+    const dFin = r-1;
+    const colsDet = ['B','C','D','E','F','G','H','I','J','K','L'];
+    for(let rr=dIni; rr<=dFin; rr++){
+      ws.getCell(`F${rr}`).numFmt = '#,##0';
+      ws.getCell(`G${rr}`).numFmt = '"$"#,##0.00';
+      ws.getCell(`H${rr}`).numFmt = '"$"#,##0.00';
+      ws.getCell(`I${rr}`).numFmt = '"$"#,##0.000';
+      ws.getCell(`J${rr}`).numFmt = '0.0000%';
+      ws.getCell(`K${rr}`).numFmt = '"$"#,##0.00';
+      ws.getCell(`L${rr}`).numFmt = '"$"#,##0.00';
+      colsDet.forEach(col=>{
+        ws.getCell(`${col}${rr}`).font = { name:'Calibri', size:9.5, color:{argb:C.textDark} };
+        ws.getCell(`${col}${rr}`).border = { bottom: {style:'hair', color:{argb:C.cardBorder}} };
+        if(['F','G','H','I','J','K','L'].includes(col)) ws.getCell(`${col}${rr}`).alignment = {horizontal:'right'};
+      });
+      ws.getRow(rr).height = 18;
+      if((rr-dIni)%2===1){ colsDet.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}}); }
+    }
+    // Fila de totales, para que el cliente vea que el detalle suma lo mismo.
+    const qTot = _foliosDet.reduce((a,f)=>a+f.cantidad,0);
+    ws.getCell(`E${r}`).value = 'TOTAL';
+    ws.getCell(`F${r}`).value = qTot; ws.getCell(`F${r}`).numFmt = '#,##0';
+    ['E','F'].forEach(col=>{ ws.getCell(`${col}${r}`).font = { name:'Calibri', size:9.5, bold:true, color:{argb:C.textDark} }; });
+    ws.getCell(`F${r}`).alignment = {horizontal:'right'};
+    r += 3;
+    autofitColumnasRango(ws, dIni-1, dFin, colsDet, {min:8, max:78});
+  }
+
+
   // ---------- FOOTER ----------
   allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
   ws.getRow(r).height = 4; r++;
@@ -4264,6 +4330,9 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
   // caracteres ("FONDO ABIERTO POR COMPARTIMENTOS VALORES BANCOLOMBIA" son 52)
   // y con el techo anterior de 44 salían cortados (Sergio, 14-ago).
   autofitColumnasRango(ws, eqIni-1, eqFin, ['B','C','D','E','F','G','H','I','J','K','L','M'], {min:8, max:78});
+
+
+
 
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -7657,7 +7726,7 @@ async function guardarCierreDelDia(){
 // Todo en USD y en inglés, que es como lo leen los clientes de afuera.
 function textoBloomberg(){
   const num = v => Number(String(v||'').replace(/,/g,'')) || 0;
-  const colcapVar = num((document.getElementById('infColcapVar')||{}).value);
+  const colcapVar = leerPct((document.getElementById('infColcapVar')||{}).value);
   const usdcop = usdcopActual();
   if(!usdcop) return '';
   const MM = v => 'USD ' + (v/usdcop/1e6).toFixed(2) + 'MM';
@@ -7739,7 +7808,7 @@ function verTextoBloomberg(){
 function informeCompactoHTML(){
   const num = v => Number(String(v||'').replace(/,/g,'')) || 0;
   const colcap    = num((document.getElementById('infColcap')||{}).value);
-  const colcapVar = num((document.getElementById('infColcapVar')||{}).value);
+  const colcapVar = leerPct((document.getElementById('infColcapVar')||{}).value);
   const usdcop    = usdcopActual();
   const U = v => usdcop ? '$' + Math.round(v/usdcop).toLocaleString('es-CO') : '';
   const cierres = _cierresAnteriores || {};
@@ -7764,7 +7833,16 @@ function informeCompactoHTML(){
   const bloques = mayoresBloques(3);
   const fecha   = new Date().toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   const pct = v => `<span style="color:${v>=0?'#22c55e':'#ef4444'};font-weight:700;">${v>=0?'+':''}${v.toFixed(2)}%</span>`;
+  // Montos en millones, sin decimales: "$67.169 MM" en vez del número completo,
+  // que no cabía en los 440px del correo y dejaba la columna cortada.
   const mm  = v => '$' + (v/1e6).toLocaleString('es-CO',{maximumFractionDigits:0}) + ' MM';
+  // En las tablas el volumen va SIEMPRE en millones, con un decimal cuando el
+  // número es chico. Se probó con "MMM" para los miles de millones y se leía
+  // peor ("$116,1 MMM"): mejor un solo patrón, "$116.144 MM".
+  const mmCorto = v => {
+    const m = v/1e6;
+    return '$' + m.toLocaleString('es-CO', {maximumFractionDigits: m < 10 ? 1 : 0}) + ' MM';
+  };
 
   const fila = d=>`<tr>
     <td style="padding:7px 6px;font-family:monospace;font-size:15px;">${d.esp}</td>
@@ -7772,10 +7850,10 @@ function informeCompactoHTML(){
     <td style="padding:7px 6px;text-align:right;font-size:15px;">${pct(d.varPct)}</td>
     <td style="padding:7px 6px;text-align:right;font-size:15px;">${d.mtd!=null?pct(d.mtd):'—'}</td>
     <td style="padding:7px 6px;text-align:right;font-size:15px;">${d.ytd!=null?pct(d.ytd):'—'}</td>
-    <td style="padding:7px 6px;text-align:right;font-size:15px;">${mm(d.monto)}</td>
+    <td style="padding:7px 6px;text-align:right;font-size:15px;white-space:nowrap;">${mmCorto(d.monto)}</td>
   </tr>`;
 
-  return `<div id="informeCompacto" style="width:440px;background:#0d0f14;color:#e5e7eb;padding:18px;
+  return `<div id="informeCompacto" style="width:470px;background:#0d0f14;color:#e5e7eb;padding:18px;
       font-family:Inter,system-ui,sans-serif;box-sizing:border-box;">
     <div style="border-bottom:3px solid #818cf8;padding-bottom:10px;margin-bottom:14px;">
       <div style="font-size:22px;font-weight:800;">Informe diario de mercado</div>
@@ -7804,7 +7882,7 @@ function informeCompactoHTML(){
         </div>`).join('')}
     </div>
 
-    ${treemapVolumen(porVol.slice(0,8).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 404, 230)}
+    ${treemapVolumen(porVol.slice(0,10).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 434, 240)}
 
     <div style="font-size:13px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:16px 0 8px;">MAYORES ALZAS Y BAJAS</div>
     ${suben.concat(bajan).map(d=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:15px;">
@@ -7846,7 +7924,7 @@ function informeCompactoHTML(){
         <th style="padding:4px 6px;">Especie</th><th style="padding:4px 6px;text-align:right;">Último</th>
         <th style="padding:4px 6px;text-align:right;">Día</th><th style="padding:4px 6px;text-align:right;">MTD</th>
         <th style="padding:4px 6px;text-align:right;">YTD</th><th style="padding:4px 6px;text-align:right;">Volumen</th></tr>
-      ${porVol.slice(0,12).map(fila).join('')}
+      ${porVol.map(fila).join('')}
     </table>
 
     ${subasta ? `
@@ -7855,11 +7933,11 @@ function informeCompactoHTML(){
       <tr style="opacity:.6;font-size:12px;text-align:left;">
         <th style="padding:4px 6px;">Especie</th><th style="padding:4px 6px;text-align:right;">Cantidad</th>
         <th style="padding:4px 6px;text-align:right;">Precio</th><th style="padding:4px 6px;text-align:right;">Volumen</th></tr>
-      ${subasta.especies.slice(0,8).map(a=>`<tr style="border-top:1px solid #232938;">
+      ${subasta.especies.map(a=>`<tr style="border-top:1px solid #232938;">
         <td style="padding:7px 6px;font-family:monospace;font-size:14px;">${a.esp}</td>
         <td style="padding:7px 6px;text-align:right;font-size:14px;">${fmtInt(a.qty)}</td>
         <td style="padding:7px 6px;text-align:right;font-size:14px;">${fmtRate(a.precio)}</td>
-        <td style="padding:7px 6px;text-align:right;font-size:14px;">${mm(a.monto)}</td></tr>`).join('')}
+        <td style="padding:7px 6px;text-align:right;font-size:14px;white-space:nowrap;">${mmCorto(a.monto)}</td></tr>`).join('')}
     </table>` : ''}
 
     <div style="margin-top:16px;padding-top:10px;border-top:1px solid #232938;font-size:12px;opacity:.5;line-height:1.5;">
@@ -7887,7 +7965,7 @@ async function _compactoACanvas(){
     // scale 3: el PNG sale a 1.320px de ancho para 440 de diseño, así que se
     // ve nítido aunque el correo lo reescale.
     return await html2canvas(cont.firstElementChild, {
-      backgroundColor:'#0d0f14', scale:3, logging:false, useCORS:true, width:440,
+      backgroundColor:'#0d0f14', scale:3, logging:false, useCORS:true, width:470,
     });
   } finally { cont.remove(); }
 }
@@ -7945,6 +8023,19 @@ async function copiarInformeImagen(){
   }
 }
 
+// Lee un porcentaje escrito a mano. Aguanta "0.84", "+0.84%", " 0,84 " y
+// "-1,2%": si se escribía con el signo % daba 0,00% y con coma decimal lo
+// tomaba como miles y mostraba 84% (Sergio, 14-ago).
+function leerPct(valor){
+  let v = String(valor||'').trim().replace(/%/g,'').replace(/\s/g,'');
+  if(!v) return 0;
+  // Coma como decimal ("0,84") vs. coma de miles ("1,234.5")
+  if(v.includes(',') && v.includes('.'))      v = v.replace(/,/g,'');
+  else if(v.includes(','))                    v = v.replace(',', '.');
+  const n = parseFloat(v);
+  return isNaN(n) ? 0 : n;
+}
+
 function renderInformeDiario(){
   const cont = document.getElementById('informeDiario');
   if(!cont) return;
@@ -7954,7 +8045,7 @@ function renderInformeDiario(){
   }
   const num = v => Number(String(v||'').replace(/,/g,'')) || 0;
   const colcap    = num((document.getElementById('infColcap')||{}).value);
-  const colcapVar = num((document.getElementById('infColcapVar')||{}).value);
+  const colcapVar = leerPct((document.getElementById('infColcapVar')||{}).value);
   const usdcop    = usdcopActual();
   // Ya no hay switch COP/USD: el informe muestra las DOS monedas a la vez, así
   // el mismo archivo sirve para el cliente local y para los de afuera. Los
@@ -8740,7 +8831,14 @@ function renderPanelListo(filtrados){
     if(!tienePort){
       if(cfg.autoPortafolio || !cfg.reparteManual) tienePort = true;
       if(cfg.formatoReporte === 'skandia'){
-        const fondos = _skFondosEnTexto(String(t.notes||''));
+        // El ID de fondo casi siempre llega en el ACCOUNT DE EMSX (ES, H4, MV),
+        // no en el Notes de Fidessa, que suele venir vacío. El panel miraba
+        // solo el Notes y por eso decía "faltan 5 líneas" cuando 4 ya tenían su
+        // fondo (Sergio, 14-ago). Se usa la misma fuente que el generador.
+        const txt = String(
+          (fol[0] && (fol[0].portafolio || fol[0].notes)) || t.notes || ''
+        ).trim();
+        const fondos = _skFondosEnTexto(txt);
         tienePort = fondos.length === 1;           // varios -> hay que distribuir
       }
       if(cfg.formatoReporte === 'porvenir') tienePort = !!_porvPortDeFolio({parentOrderId:o, notes:t.notes});
@@ -9779,7 +9877,8 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
     const especie = folios[0].especie;
     o.allocations.forEach(a=>{
       if(a.cantidad<=0) return;
-      filasEquity.push({ lado, especie, portNombre: nomPort(a.portId), cantidad:a.cantidad, precio:precioPond, comPct:comOrden });
+      filasEquity.push({ lado, especie, portNombre: nomPort(a.portId), cantidad:a.cantidad,
+                         precio:precioPond, comPct:comOrden, parentOrderId:o.parentOrderId });
     });
   });
   if(filasEquity.length===0){ alert('No hay folios para las órdenes con reparto.'); return; }
@@ -9804,8 +9903,31 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
   });
   if(!ok) return;
 
+  // Detalle folio a folio: los clientes locales lo cotejan contra sus papeletas
+  // de bolsa. Cada folio se reparte entre los portafolios de su orden en la
+  // misma proporción del consolidado, así el detalle suma exactamente igual.
+  const foliosDetalle = [];
+  completas.forEach(o=>{
+    const fol = foliosFidessa.filter(f=>String(f.parentOrderId)===String(o.parentOrderId));
+    const totalOrden = fol.reduce((a,f)=>a+f.cantidad,0);
+    if(!totalOrden) return;
+    filasEquity.filter(x=>String(x.parentOrderId)===String(o.parentOrderId)).forEach(lin=>{
+      let restante = lin.cantidad;
+      fol.forEach((f,i)=>{
+        // El último folio absorbe el redondeo para que la suma dé exacta.
+        const q = (i === fol.length-1) ? restante : Math.round(f.cantidad * lin.cantidad / totalOrden);
+        restante -= q;
+        if(q > 0) foliosDetalle.push({
+          folio: f.folio, especie: f.especie, lado: f.lado, cantidad: q,
+          precio: f.precio, comPct: lin.comPct, portNombre: lin.portNombre,
+        });
+      });
+    });
+  });
+
   await generarExcelGenericoEquity(cfg.nombre, filasEquity, {
     name: nombreArchivo + (sufijoVersion(version) ? ' ' + sufijoVersion(version) : ''), fechaSlug, tdTxt, sdTxt,
+    foliosDetalle,
   });
 
   // Se REGISTRA lo enviado, no se borra nada. Los folios y las órdenes siguen
@@ -13030,7 +13152,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-14 19:55 UTC';
+const BUILD_ID = '2026-08-18 16:56 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
