@@ -9998,6 +9998,10 @@ async function generarReporte(){
     ? filtrados.filter(f=>f.origen==='proteccion-directo')
     : (marcados.length > 0 ? marcados : filtrados);
 
+  // Antes de generar se relee el registro: entre que se abrió la pantalla y se
+  // aprieta el botón, otro usuario pudo haber reportado esa misma línea.
+  try{ await cargarReportesGenerados(); }catch(e){ console.warn('No se pudo refrescar el registro de reportes:', e.message); }
+
   // Guardián de comisiones: avisa si la tarifa no es la pactada del cliente.
   if(!revisarComisiones(cliente, seleccionados)) return;
 
@@ -13205,7 +13209,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-18 19:25 UTC';
+const BUILD_ID = '2026-08-18 19:46 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -13229,6 +13233,15 @@ initDatesRVI();
 setInterval(cargarEmsxDesdeSupabase, 20000);
 setInterval(cargarEmsxCBDesdeSupabase, 20000);
 setInterval(cargarFidessaDesdeSupabase, 20000);
+
+// El registro de reportes es COMPARTIDO: si Miguel genera un reporte, Sergio
+// tiene que verlo sin recargar la página. Antes solo se cargaba al abrir la
+// app, así que una línea reportada por otro seguía apareciendo PENDIENTE y se
+// podía reportar dos veces (Sergio, 18-ago). Cada 30s: no cambia tan seguido
+// como EMSX, pero sí lo suficiente para no trabajar sobre información vieja.
+setInterval(() => {
+  cargarLineasNoReportar().then(cargarReportesGenerados);
+}, 30000);
 
 // Clock
 tickClock();
