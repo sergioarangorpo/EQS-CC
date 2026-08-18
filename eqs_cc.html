@@ -8836,7 +8836,8 @@ function renderPanelListo(filtrados){
         // solo el Notes y por eso decía "faltan 5 líneas" cuando 4 ya tenían su
         // fondo (Sergio, 14-ago). Se usa la misma fuente que el generador.
         const txt = String(
-          (fol[0] && (fol[0].portafolio || fol[0].notes)) || t.notes || ''
+          (fol[0] && (fol[0].portafolio || fol[0].notes)) || t.notes ||
+          _skAccountEmsxDeOrden(o) || ''
         ).trim();
         const fondos = _skFondosEnTexto(txt);
         tienePort = fondos.length === 1;           // varios -> hay que distribuir
@@ -10216,6 +10217,7 @@ async function generarReporte(){
         if(vistos.has(poid) || repartidas.has(poid)) return;
         let txt = String(f.portafolio || f.notes || '').trim();
         if(!txt && poid && _fidessaTradesRaw[poid]) txt = String(_fidessaTradesRaw[poid].notes||'').trim();
+        if(!txt) txt = _skAccountEmsxDeOrden(poid);
         const fondos = _skFondosEnTexto(txt);
         if(fondos.length > 1){
           vistos.add(poid);
@@ -11246,12 +11248,36 @@ function _skFondosEnTexto(txt){
   return ids;
 }
 
+// El ACCOUNT de la orden de EMSX es donde Skandia manda el ID de fondo (H4, ES,
+// MV). Los folios de Fidessa llegan con Client/Book = COLCCP y el Notes vacío,
+// así que sin mirar EMSX no hay forma de saber el fondo. Se enlaza por especie
+// + lado + cantidad, que es lo que comparten ambas fuentes cuando el campo
+// Instructions viene vacío (Sergio, 18-ago).
+function _skAccountEmsxDeOrden(poid){
+  if(!poid || !_fidessaTradesRaw || !_fidessaTradesRaw[String(poid)]) return '';
+  const t = _fidessaTradesRaw[String(poid)];
+  const esp = nemoCanonico(t.security, 'fidessa');
+  const cand = (_emsxCBCache || []).filter(r=>{
+    if(!r.account || r.account === '—') return false;
+    if(nemoCanonico(r.ticker, 'emsx') !== esp) return false;
+    const ladoR = String(r.side||'').toUpperCase().startsWith('B') ? 'Compra' : 'Venta';
+    if(ladoR !== t.lado) return false;
+    return Number(r.filled||0) === Number(t.qtyDone||0);
+  });
+  // Solo si es inequívoca: dos órdenes iguales no se pueden distinguir.
+  return cand.length === 1 ? String(cand[0].account).trim() : '';
+}
+
 function _skFondoDeFolio(f){
-  // El ID Fondo viene en el Notes de la orden (H4). Si el folio no lo trae,
-  // se busca en la orden de Trades a la que pertenece.
+  // El ID Fondo puede venir en el folio, en el Notes de la orden o —lo más
+  // frecuente— en el ACCOUNT de EMSX.
   let id = String(f.portafolio || f.notes || '').trim();
   if(!id && f.parentOrderId && _fidessaTradesRaw && _fidessaTradesRaw[String(f.parentOrderId)]){
     id = String(_fidessaTradesRaw[String(f.parentOrderId)].notes || '').trim();
+  }
+  if(!id || !_SKANDIA_POR_ID[id.toUpperCase()]){
+    const acc = _skAccountEmsxDeOrden(f.parentOrderId);
+    if(acc) id = acc;
   }
   return { id, fondo: _SKANDIA_POR_ID[id.toUpperCase()] || null };
 }
@@ -13152,7 +13178,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-18 16:56 UTC';
+const BUILD_ID = '2026-08-18 19:16 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
