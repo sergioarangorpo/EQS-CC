@@ -4725,11 +4725,12 @@ const GRUPO_COMISIONES_DB = [{"grupo": "COLFONDOS", "book": "COLFONDOS", "report
 function comisionFolioPct(cliente, f){
   const especie = f.especie;
   const marca = f.marca === 'bloque' ? 'bloque' : 'pantalla';
-  // ECOPETROL y PFCIBEST van SIEMPRE a tarifa de pantalla en las AFP.
-  if(especie === 'ECOPETROL' || especie === 'PFCIBEST'){
-    const base = comisionDe(cliente, especie, 'pantalla');
-    return base != null ? base * 100 : comisionPantallaPct();
-  }
+  // NO se codifica aquí ningún override por especie: la tabla maestra ya lo
+  // dice cliente por cliente. PROTECCIÓN y PORVENIR tienen ECOPETROL y
+  // PFCIBEST en 0,08% incluso en bloque (ese es el override), pero COLFONDOS
+  // los cobra a 0,15% como cualquier otro bloque — es el único sin override
+  // (Sergio, 18-ago). Antes había un `if` que mandaba esas dos especies a
+  // pantalla para todos y COLFONDOS salía en 0,08%.
   if(marca !== 'bloque') return comisionPantallaPct();
   // Bloque: si el cliente tiene tarifa variable por especie, esa manda.
   const c = GRUPO_COMISIONES_DB.find(x => x.grupo===cliente || x.book===cliente);
@@ -13238,7 +13239,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-19 17:56 UTC';
+const BUILD_ID = '2026-08-19 18:10 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
