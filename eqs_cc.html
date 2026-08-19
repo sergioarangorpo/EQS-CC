@@ -8873,7 +8873,11 @@ function renderPanelListo(filtrados){
   const cliente = document.getElementById('filtroCliente').value;
   if(!cliente || !_fidessaTradesRaw){ cont.style.display = 'none'; return; }
   const cfg = getClienteDB(cliente) || {};
-  if(!cfg.formatoReporte){ cont.style.display = 'none'; return; }
+  // PROTECCIÓN no tiene `formatoReporte` (su generación va por la pantalla de
+  // aprobación propia), así que el panel no aparecía. Se incluye igual: tiene
+  // órdenes que reportar y el semáforo sirve lo mismo (Sergio, 19-ago).
+  const esProteccion = /PROTECCION/i.test(cliente);
+  if(!cfg.formatoReporte && !esProteccion){ cont.style.display = 'none'; return; }
 
   sincronizarAllocOrdenActiva();
   const ordenes = Object.keys(_fidessaTradesRaw).filter(o=>{
@@ -8908,6 +8912,9 @@ function renderPanelListo(filtrados){
         tienePort = fondos.length === 1;           // varios -> hay que distribuir
       }
       if(cfg.formatoReporte === 'porvenir') tienePort = !!_porvPortDeFolio({parentOrderId:o, notes:t.notes});
+      // PROTECCIÓN: el portafolio llega en cada folio (sub-cuenta del cliente),
+      // así que la línea está lista si sus folios ya lo traen.
+      if(esProteccion) tienePort = fol.length > 0 && fol.every(f=>!!f.portafolio);
     }
     const item = { orden:o, esp, lado:t.lado, qty:t.qtyDone, qFol, bloque:bloque.length,
                    qBloque: bloque.reduce((a,f)=>a+f.cantidad,0), asignado };
@@ -13472,7 +13479,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-19 19:39 UTC';
+const BUILD_ID = '2026-08-19 20:19 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
