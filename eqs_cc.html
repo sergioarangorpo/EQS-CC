@@ -1559,16 +1559,22 @@
   <!-- MODO DE LA OPERACIÓN: cuatro binomios independientes que definen cómo se
        arquea y qué se calcula. Se combinan entre sí (ej. "con margen + RFQE +
        sin costo" es el all-in que cotiza Porvenir). -->
+  <style>
+    /* Los binomios de RVI se ven encendidos/apagados de un vistazo: el activo
+       va en morado sólido y el inactivo en gris tenue. Sin esto no se sabía
+       qué modo estaba puesto (Sergio, 19-ago). */
+    .modo-rvi{ border:1px solid var(--border-strong,#323a4d); background:transparent;
+               color:var(--text-2,#9aa3b2); font-weight:600; }
+    .modo-rvi.active{ background:var(--accent,#818cf8); border-color:var(--accent,#818cf8);
+                      color:#0d0f14; box-shadow:0 0 0 1px rgba(129,140,248,.35); }
+    .modo-rvi.active[data-val="sin"][data-modo="costo"]{ background:var(--amber,#f59e0b); border-color:var(--amber,#f59e0b); }
+    .modo-rvi.active[data-modo="espejo"]{ background:var(--buy,#22c55e); border-color:var(--buy,#22c55e); }
+  </style>
   <div style="padding:0 24px 14px;display:flex;gap:22px;flex-wrap:wrap;align-items:center;">
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="field-note" style="width:66px;">Margen</span>
       <button class="btn small modo-rvi active" data-modo="margen" data-val="con" onclick="setModoRVI('margen','con')">Con margen</button>
       <button class="btn small ghost modo-rvi" data-modo="margen" data-val="sin" onclick="setModoRVI('margen','sin')">Sin margen</button>
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;">
-      <span class="field-note" style="width:52px;">Canal</span>
-      <button class="btn small ghost modo-rvi" data-modo="canal" data-val="emsx" onclick="setModoRVI('canal','emsx')">EMSX</button>
-      <button class="btn small ghost modo-rvi" data-modo="canal" data-val="rfqe" onclick="setModoRVI('canal','rfqe')">RFQE</button>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="field-note" style="width:52px;">Costo</span>
@@ -1671,7 +1677,7 @@
         <div class="field-row">
           <div class="field">
             <label>Price</label>
-            <input type="text" inputmode="decimal" id="tc-price" oninput="calcularRVI()" onblur="fmtInput(this,4);calcularRVI()">
+            <input type="text" inputmode="decimal" id="tc-price" oninput="calcularRVI();renderArqueoRVI()" onblur="fmtInput(this,4);calcularRVI();renderArqueoRVI()">
           </div>
           <div class="field">
             <label>Sec Fee (auto)</label>
@@ -12608,12 +12614,21 @@ function cargarEmsx(){ cargarEmsxDesdeSupabase(); }
 //                      la caja con una sola línea muy grande
 // (Sergio, 19-ago)
 // =====================================================================
-let _modoRVI = { margen:'con', canal:'', costo:'con', espejo:'' };
+// El CANAL ya no se elige: sale del broker de nuestra línea. CCSI, BTGH y TFSC
+// son EMSX; cualquier otro es un market maker por RFQE (Sergio, 19-ago).
+const RVI_BROKERS_EMSX = ['CCSI','BTGH','TFSC'];
+function canalDeBroker(broker){
+  const b = String(broker||'').toUpperCase().trim();
+  if(!b) return '';
+  return RVI_BROKERS_EMSX.some(x=>b.includes(x)) ? 'EMSX' : 'RFQE';
+}
+
+let _modoRVI = { margen:'con', costo:'con', espejo:'' };
 let _rviMarcadas = new Set();
 
 function setModoRVI(grupo, valor){
   // Segundo clic sobre el mismo botón lo apaga (canal y espejo son opcionales).
-  _modoRVI[grupo] = (_modoRVI[grupo] === valor && (grupo==='canal' || grupo==='espejo')) ? '' : valor;
+  _modoRVI[grupo] = (_modoRVI[grupo] === valor && grupo === 'espejo') ? '' : valor;
   document.querySelectorAll('.modo-rvi').forEach(b=>{
     const act = _modoRVI[b.dataset.modo] === b.dataset.val;
     b.classList.toggle('active', act);
@@ -12635,8 +12650,62 @@ function toggleMarcaRVI(id){
     if(_modoRVI.margen === 'sin') _rviMarcadas.clear();
     _rviMarcadas.add(id);
   }
+  volcarLineaEnFormularioRVI();
   renderEmsx();
   renderArqueoRVI();
+}
+
+// EMSX -> TRADE CONFIRMATION -> DISTRIBUCIÓN. Al marcar líneas, el formulario
+// de abajo se llena solo con lo que ya sabe EMSX y el Account entra como
+// portafolio de la distribución. Los campos quedan EDITABLES: sirven de
+// respaldo y para corregir lo que haga falta (Sergio, 19-ago).
+function volcarLineaEnFormularioRVI(){
+  const marcadas = getFiltradas().filter(r=>_rviMarcadas.has(r.id));
+  if(!marcadas.length) return;
+  const esNuestra = r => /CREDICORP/i.test(String(r.firm||''));
+  const cli = marcadas.find(r=>!esNuestra(r)) || marcadas[0];
+  const set = (id, v) => { const e = document.getElementById(id); if(e && v != null && v !== '') e.value = v; };
+
+  // Cliente: se busca en el selector por nombre del Originating Firm.
+  const selCli = document.getElementById('tc-cliente');
+  if(selCli){
+    const buscado = String(cli.firm||'').toUpperCase();
+    const op = [...selCli.options].find(o=>{
+      const t = String(o.textContent||'').toUpperCase();
+      return t && (t === buscado || buscado.includes(t) || t.includes(buscado));
+    });
+    if(op) selCli.value = op.value;
+  }
+  set('tc-symbol', tickerLimpioRVI(cli.especie));
+  set('tc-isin', isinTickerRVI(cli.especie));
+  const selTipo = document.getElementById('tc-tipo');
+  if(selTipo && cli.tipo){
+    const op = [...selTipo.options].find(o=>String(o.value).toUpperCase()===String(cli.tipo).toUpperCase());
+    if(op) selTipo.value = op.value;
+  }
+  const selSide = document.getElementById('tc-side');
+  if(selSide && cli.lado){
+    const op = [...selSide.options].find(o=>String(o.value).toUpperCase()===String(cli.lado).toUpperCase());
+    if(op) selSide.value = op.value;
+  }
+  // Precio: en SIN MARGEN es el de ejecución. En CON MARGEN se deja en blanco
+  // a propósito, porque el precio del cliente lo escribe Sergio.
+  if(_modoRVI.margen === 'sin'){
+    const q = marcadas.reduce((a,r)=>a+(Number(r.qty)||0),0);
+    const pp = q ? marcadas.reduce((a,r)=>a+(Number(r.qty)||0)*(Number(r.avgPr)||0),0)/q : 0;
+    set('tc-price', pp ? pp.toFixed(4) : '');
+  }
+  if(typeof calcularRVI === 'function') calcularRVI();
+
+  // Distribución: si el Account viene de EMSX, se agrega como portafolio.
+  if(typeof distribuciones !== 'undefined' && cli.account && cli.account !== '—'){
+    const yaEsta = distribuciones.some(d=>String(d.account)===String(cli.account));
+    if(!yaEsta){
+      distribuciones.push({ account: cli.account, cantidad: Number(cli.qty)||0 });
+      if(typeof renderDistribuciones === 'function') renderDistribuciones();
+      else if(typeof renderDistribucion === 'function') renderDistribucion();
+    }
+  }
 }
 
 function toggleTodasRVI(marcar){
@@ -12703,20 +12772,40 @@ function renderArqueoRVI(){
   if(!marcadas.length){ cont.style.display='none'; return; }
 
   const esNuestra = r => /CREDICORP/i.test(String(r.firm||''));
-  const cliente = marcadas.filter(r=>!esNuestra(r));
+  const cliente  = marcadas.filter(r=>!esNuestra(r));
   const nuestras = marcadas.filter(esNuestra);
   const q = arr => arr.reduce((a,r)=>a+(Number(r.qty)||0),0);
   const qCli = q(cliente), qNos = q(nuestras);
+  // Si no hay línea marcada como nuestra, la única marcada hace de las dos:
+  // se ejecutó directamente contra el mercado a nombre del cliente.
+  const lineasEjec = nuestras.length ? nuestras : marcadas;
+  const qEjec = q(lineasEjec);
+
+  // El canal sale del broker de NUESTRA línea contra el mercado.
+  const brokers = [...new Set(lineasEjec.map(r=>String(r.broker||'').trim()).filter(Boolean))];
+  const canales = [...new Set(brokers.map(canalDeBroker).filter(Boolean))];
+  const canalTxt = canales.join('/');
+
+  // Precio del cliente: en "sin margen" es el mismo de ejecución; en "con
+  // margen" con UNA sola línea lo escribe Sergio en el campo Price.
+  const precioForm = Number(String((document.getElementById('tc-price')||{}).value||'').replace(/,/g,'')) || 0;
+  const precioEjec = qEjec ? lineasEjec.reduce((a,r)=>a+(Number(r.qty)||0)*(Number(r.avgPr)||0),0)/qEjec : 0;
+  const precioCli = _modoRVI.margen === 'sin' ? precioEjec
+                  : (marcadas.length === 1 ? precioForm
+                  : (qCli ? cliente.reduce((a,r)=>a+(Number(r.qty)||0)*(Number(r.avgPr)||0),0)/qCli : 0));
 
   const avisos = [], oks = [];
   if(_modoRVI.margen === 'sin'){
-    if(marcadas.length === 1) oks.push('1 línea · sin margen');
-    else avisos.push(`Sin margen se reporta UNA sola línea y hay ${marcadas.length} marcadas.`);
+    const precios = [...new Set(marcadas.map(r=>Number(r.avgPr).toFixed(6)))];
+    if(precios.length > 1) avisos.push(`Sin margen pero hay ${precios.length} precios distintos. Revisa el modo.`);
+    else oks.push(`${marcadas.length} línea(s) al mismo precio`);
   }else{
     if(marcadas.length === 1){
-      oks.push('1 línea con margen — el precio del cliente lo escribes tú');
+      if(!precioForm) avisos.push('Falta el PRECIO DEL CLIENTE: escríbelo en el campo Price del Trade Confirmation.');
+      else if(Math.abs(precioForm - precioEjec) < 1e-9) avisos.push('El precio del cliente es igual al de ejecución: no habría margen.');
+      else oks.push(`Margen de precio: ${fmtRateRVI(precioForm)} al cliente vs ${fmtRateRVI(precioEjec)} de ejecución`);
     }else if(!cliente.length || !nuestras.length){
-      avisos.push('Con margen hacen falta las dos patas: la del cliente y la nuestra (Originating Firm CREDICORP).');
+      avisos.push('Con margen y varias líneas hacen falta las dos patas: la del cliente y la nuestra (Originating Firm CREDICORP).');
     }else if(qCli !== qNos){
       avisos.push(`Las cantidades no cuadran: cliente ${fmtInt(qCli)} vs nuestra ejecución ${fmtInt(qNos)} (diferencia ${fmtInt(qNos-qCli)}).`);
     }else{
@@ -12729,22 +12818,34 @@ function renderArqueoRVI(){
   if(_modoRVI.espejo === 'si' && cliente.length && nuestras.length && cliente.length !== nuestras.length){
     avisos.push(`Espejo de alloc: el cliente tiene ${cliente.length} línea(s) y nosotros ${nuestras.length}. Deben partirse igual.`);
   }
-  // Si el Account de EMSX ya trae el portafolio, no hay nada que repartir.
-  const conAccount = cliente.filter(r=>r.account && r.account !== '—');
-  if(conAccount.length === cliente.length && cliente.length){
-    oks.push(`Portafolio ya viene en el Account de EMSX (${[...new Set(conAccount.map(r=>r.account))].join(', ')}) — no hace falta repartir`);
-  }else if(cliente.length){
+  const refCli = cliente[0] || marcadas[0];
+  const conAccount = marcadas.filter(r=>r.account && r.account !== '—');
+  if(conAccount.length === marcadas.length){
+    oks.push(`Portafolio desde el Account de EMSX (${[...new Set(conAccount.map(r=>r.account))].join(', ')})`);
+  }else{
     avisos.push('Falta el portafolio: repártelo en "Distribución por account".');
   }
-  // El costo que se le cobra al cliente, con el mínimo si aplica.
-  if(_modoRVI.costo === 'con' && cliente.length){
-    const r0 = cliente[0];
-    const bruto = (Number(r0.qty)||0) * (Number(r0.avgPr)||0);
-    const calc = comisionContraparteRVI('CCSI', r0.tipo, r0.qty, bruto, isinTickerRVI(r0.especie));
-    const cobra = costoClienteRVI(r0.firm, calc);
-    if(aplicaMinimoRVI(r0.firm) && cobra > calc){
-      oks.push(`Costo al cliente USD ${fmtRateRVI(cobra)} — aplica el mínimo de USD ${RVI_MINIMO_USD} (por acción daría ${fmtRateRVI(calc)})`);
-    }
+
+  // ---- Comisiones, sec fee y utilidad ----
+  const isin = isinTickerRVI(refCli.especie);
+  const grossCli = redondear(qCli || qEjec, 0) * precioCli;
+  const grossNos = qEjec * precioEjec;
+  // Al cliente: 0 si es all-in; si no, la tarifa con el mínimo de USD 20.
+  const comCliCalc = comisionContraparteRVI('CCSI', refCli.tipo, (qCli||qEjec), grossCli, isin);
+  const comCli = _modoRVI.costo === 'sin' ? 0 : costoClienteRVI(refCli.firm, comCliCalc);
+  // CCSI nos cobra a nosotros, y también con mínimo de USD 20.
+  const comNosCalc = comisionContraparteRVI(brokers[0]||'', refCli.tipo, qEjec, grossNos, isin);
+  const comNos = comNosCalc > 0 ? redondear(Math.max(comNosCalc, RVI_MINIMO_USD), 2) : 0;
+  const secFee = secFeeRVI(refCli.tipo, refCli.lado, grossCli, isin);
+  const margenPesos = _modoRVI.margen === 'sin' ? 0
+    : redondear((precioCli - precioEjec) * (qCli || qEjec) * (String(refCli.lado).toUpperCase()==='SELL' ? 1 : -1), 2);
+  const utilidad = redondear(margenPesos + comCli - comNos, 2);
+
+  if(_modoRVI.costo === 'con' && comCli > comCliCalc){
+    oks.push(`Costo al cliente USD ${fmtRateRVI(comCli)} — aplica el mínimo de USD ${RVI_MINIMO_USD} (por tarifa daría ${fmtRateRVI(comCliCalc)})`);
+  }
+  if(comNos > comNosCalc && comNosCalc > 0){
+    oks.push(`${brokers[0]} nos cobra USD ${fmtRateRVI(comNos)} — también con mínimo de USD ${RVI_MINIMO_USD}`);
   }
 
   const listo = avisos.length === 0;
@@ -12752,10 +12853,11 @@ function renderArqueoRVI(){
   const fondo = listo ? 'rgba(34,197,94,.10)' : 'rgba(245,158,11,.10)';
   const modoTxt = [
     _modoRVI.margen === 'con' ? 'con margen' : 'sin margen',
-    _modoRVI.canal ? _modoRVI.canal.toUpperCase() : null,
+    canalTxt || null,
     _modoRVI.costo === 'con' ? 'con costo' : 'all-in',
     _modoRVI.espejo === 'si' ? 'espejo de alloc' : null,
   ].filter(Boolean).join(' · ');
+  const money = v => (v<0?'-':'') + 'USD ' + fmtRateRVI(Math.abs(v));
 
   cont.style.display = 'block';
   cont.innerHTML = `
@@ -12763,14 +12865,22 @@ function renderArqueoRVI(){
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
         <span style="font-size:20px;">${listo?'✓':'⚠'}</span>
         <span style="font-size:15px;font-weight:700;color:${color};">${listo?'Listo para procesar':'Revisa antes de continuar'}</span>
-        <span class="field-note">${marcadas.length} línea(s) marcada(s) · ${modoTxt}</span>
+        <span class="field-note">${marcadas.length} línea(s) · ${modoTxt}</span>
       </div>
       ${cliente.length ? `<div style="font-size:12.5px;margin-bottom:3px;">
-        <b>Cliente:</b> ${cliente.map(r=>`${r.firm} ${r.especie} ${fmtInt(r.qty)} @ ${fmtRateRVI(r.avgPr)}`).join(' · ')}</div>` : ''}
+        <b>Cliente:</b> ${cliente.map(r=>`${r.firm} · ${r.especie} ${fmtInt(r.qty)} @ ${fmtRateRVI(r.avgPr)}`).join(' · ')}</div>` : ''}
       ${nuestras.length ? `<div style="font-size:12.5px;margin-bottom:3px;">
         <b>Nuestra ejecución:</b> ${nuestras.map(r=>`${r.broker||'—'} ${fmtInt(r.qty)} @ ${fmtRateRVI(r.avgPr)}`).join(' · ')}</div>` : ''}
       ${oks.map(t=>`<div style="font-size:12.5px;color:var(--buy,#22c55e);">${t}</div>`).join('')}
-      ${avisos.map(t=>`<div style="font-size:12.5px;color:var(--amber,#f59e0b);">${t}</div>`).join('')}
+      ${avisos.map(t=>`<div style="font-size:12.5px;color:var(--amber,#f59e0b);">⚠ ${t}</div>`).join('')}
+      <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;padding-top:9px;border-top:1px solid rgba(255,255,255,.08);font-size:12.5px;">
+        <span>Margen: <b>${money(margenPesos)}</b></span>
+        <span>+ Comisión cliente: <b>${money(comCli)}</b></span>
+        <span>− ${brokers[0]||'broker'}: <b>${money(comNos)}</b></span>
+        <span style="opacity:.7;">Sec fee: ${money(secFee)}</span>
+        <span style="margin-left:auto;font-size:14px;">Utilidad bruta:
+          <b style="color:${utilidad>0?'var(--buy,#22c55e)':(utilidad<0?'var(--sell,#ef4444)':'var(--amber,#f59e0b)')};">${money(utilidad)}</b></span>
+      </div>
     </div>`;
 }
 
@@ -13479,7 +13589,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-19 20:19 UTC';
+const BUILD_ID = '2026-08-19 22:47 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
