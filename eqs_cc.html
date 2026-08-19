@@ -5372,7 +5372,14 @@ function renderFidessaTradesPanel(){
   const panel = document.getElementById('fidessaTradesPanel');
   if(!_fidessaTradesRaw || Object.keys(_fidessaTradesRaw).length===0){ panel.style.display='none'; return; }
   panel.style.display = '';
-  const filas = ordenarArrayGenerico(Object.entries(_fidessaTradesRaw).map(([folioOrden, t]) => ({folioOrden, ...t})), 'fidessaTrades').filter(f => coincideFiltroRVL({cliente: f.grupo, especie: nemoCanonico(f.security,'fidessa'), lado: f.lado}));
+  // _estadoReporte permite ORDENAR por la columna Reportado, que era el único
+  // <th> fijo de la tabla (Sergio, 19-ago). 0 pendiente · 1 no se reporta · 2 reportado.
+  const _estadoDe = folioOrden => _lineasNoReportar.has(String(folioOrden)) ? 1
+    : (_reportesGenerados.some(r=>String(r.parent_order_id)===String(folioOrden)) ? 2 : 0);
+  const filas = ordenarArrayGenerico(
+      Object.entries(_fidessaTradesRaw).map(([folioOrden, t]) => ({folioOrden, ...t, _estadoReporte: _estadoDe(folioOrden)})),
+      'fidessaTrades')
+    .filter(f => coincideFiltroRVL({cliente: f.grupo, especie: nemoCanonico(f.security,'fidessa'), lado: f.lado}));
   const nSel = _tradesConsolidar.size;
   panel.innerHTML = `
     <div class="section-label" style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
@@ -5391,7 +5398,7 @@ function renderFidessaTradesPanel(){
         ${thOrdenable('fidessaTrades','security','Security',null,'12%')}
         ${thOrdenable('fidessaTrades','qtyDone','Qty Done','num','11%')}
         ${thOrdenable('fidessaTrades','avgPx','Avg Px','num','11%')}
-        <th style="width:13%;" title="Cuántas veces esta línea ya salió en un reporte hoy. Es solo informativo: puedes volver a incluirla cuando el cliente pida el consolidado.">Reportado</th>
+        ${thOrdenable('fidessaTrades','_estadoReporte','Reportado',null,'13%')}
       </tr></thead>
       <tbody>${filas.map(f=>`<tr class="${_tradesConsolidar.has(f.folioOrden)?'row-sel':''}">
         <td style="text-align:center;"><input type="checkbox" ${_tradesConsolidar.has(f.folioOrden)?'checked':''} onclick="toggleTradeConsolidar('${(f.folioOrden||'').replace(/'/g,"\\'")}')"></td>
@@ -10647,16 +10654,21 @@ function mostrarAprobacionProteccion(cliente, loteDet){
   Object.values(_fidessaTradesRaw || {}).forEach(t=>{
     if(normalizarGrupo(t.grupo) !== 'PROTECCION') return;
     const k = `${nemoCanonico(t.security,'fidessa')}|${t.lado}`;
-    ejecutado[k] = (ejecutado[k] || 0) + t.qtyDone;
+    ejecutado[k] = (ejecutado[k] || 0) + t.qtyDone;   // por especie+lado (total)
   });
 
   // Lo que vamos a reportar, agrupado igual. Se guarda también el trader por
   // portafolio para poder editarlo antes de generar.
   const porGrupo = {};
   const traderPorPort = {};   // portafolio -> trader (editable)
+  // Se agrupa por especie + lado + ORD_NUM. El 19-ago hubo DOS órdenes de
+  // PFGRUPOARG, mismo account (VOL-GARGOS), misma compra y distinto Instructions
+  // (11876862 y 11876562): agrupando solo por especie+lado quedaban fundidas y
+  // todo el reporte salía con un único ORD_NUM, el de la primera.
   loteDet.forEach(f=>{
-    const k = `${f.especie}|${f.lado}`;
-    if(!porGrupo[k]) porGrupo[k] = { especie:f.especie, lado:f.lado, cantidad:0, bruto:0, ports:{}, sinPort:0 };
+    const on = String(f.ordNum||'');
+    const k = `${f.especie}|${f.lado}|${on}`;
+    if(!porGrupo[k]) porGrupo[k] = { especie:f.especie, lado:f.lado, ordNum:on, cantidad:0, bruto:0, ports:{}, sinPort:0 };
     const g = porGrupo[k];
     g.cantidad += f.cantidad;
     g.bruto += f.cantidad * f.precio;   // para el promedio ponderado real
@@ -10673,14 +10685,22 @@ function mostrarAprobacionProteccion(cliente, loteDet){
   let hayProblemas = false;
   const filas = Object.keys(porGrupo).sort().map(k=>{
     const g = porGrupo[k];
-    const eje = ejecutado[k] || 0;
-    const cuadra = g.cantidad === eje;
+    // `ejecutado` está indexado por especie|lado (lo que dice Trades) y ahora
+    // el grupo lleva además el ORD_NUM, así que se compara contra la clave sin él.
+    const eje = ejecutado[`${g.especie}|${g.lado}`] || 0;
+    // Cuando una especie+lado tiene VARIOS ORD_NUM, cada fila muestra lo suyo
+    // pero el cuadre se evalúa sobre el total de esa especie+lado.
+    const totalEspecie = Object.values(porGrupo)
+      .filter(x=>x.especie===g.especie && x.lado===g.lado)
+      .reduce((a,x)=>a+x.cantidad, 0);
+    const cuadra = totalEspecie === eje;
     const faltaPort = g.sinPort > 0;
     if(!cuadra || faltaPort) hayProblemas = true;
     // PRECIO PROMEDIO DE EJECUCIÓN, no la lista de precios distintos. Con 300
     // folios esa lista era ilegible y en varias filas salía vacía; el promedio
     // ponderado es lo que de verdad sirve para confirmar antes de generar.
     const precioTxt = g.cantidad > 0 ? fmtRate(g.bruto / g.cantidad) : '—';
+    const ordNumTxt = g.ordNum ? `<div class="field-note" style="font-size:10.5px;">ORD ${g.ordNum}</div>` : '';
     const opcionesTrader = Object.keys(PROTECCION_TRADERS).map(ini=>`<option value="${ini}">${ini} — ${PROTECCION_TRADERS[ini]}</option>`).join('');
     const portsTxt = Object.entries(g.ports).map(([p,q])=>{
       const trSel = `<select data-port="${p}" class="prot-trader-sel" style="background:var(--bg-3);border:1px solid var(--border-strong);border-radius:6px;color:var(--text-0);font-family:var(--mono);font-size:11.5px;padding:5px 8px;">${opcionesTrader}</select>`;
@@ -11010,8 +11030,24 @@ function revisarComisiones(cliente, folios){
 
 async function registrarLoteRVL(cliente, loteDet, version){
   const porOrden = {};
+  // Los folios de DISTRIBUCIÓN de PROTECCIÓN no traen Parent Order ID (van a
+  // una sub-cuenta del cliente, no a una orden), así que se salían del registro
+  // con el `if(!k) return` y sus líneas quedaban PENDIENTE después de haberlas
+  // reportado — le pasó a CEMARGOS el 19-ago. Se resuelve buscando la orden de
+  // Trades del mismo cliente, especie y lado.
+  const _ordenDeFolio = f => {
+    if(f.parentOrderId) return String(f.parentOrderId);
+    const cands = Object.keys(_fidessaTradesRaw||{}).filter(oid=>{
+      const t = _fidessaTradesRaw[oid];
+      return normalizarGrupo(t.grupo) === normalizarGrupo(cliente)
+          && nemoCanonico(t.security,'fidessa') === f.especie
+          && t.lado === f.lado;
+    });
+    // Si hay una sola orden que calce, es esa. Con varias no se adivina.
+    return cands.length === 1 ? cands[0] : '';
+  };
   (loteDet||[]).forEach(f=>{
-    const k = String(f.parentOrderId || '');
+    const k = _ordenDeFolio(f);
     if(!k) return;   // sin línea de Trades no hay nada que registrar
     const o = porOrden[k] || (porOrden[k] = {parentOrderId:k, especie:f.especie, lado:f.lado, cantidad:0, bruto:0, comision:0});
     o.cantidad += Number(f.cantidad)||0;
@@ -11490,7 +11526,7 @@ function confirmarPorvenir(cliente, folios, comUnica, version){
             <th class="num">Giro bruto</th><th class="num">Comisión a reportar</th>
           </tr></thead><tbody>
           ${Object.values(grupos).map(g=>`<tr>
-            <td class="mono-id">${g.especie}</td><td>${g.lado}</td>
+            <td class="mono-id">${g.especie}${ordNumTxt}</td><td>${g.lado}</td>
             <td class="num">${fmtInt(g.cantidad)}</td>
             <td class="num" style="opacity:.75;">${g.qBloque? fmtInt(g.qBloque)+' ('+g.bloques+' folios)' : '—'}</td>
             <td class="num">${fmtMoney(g.bruto)}</td>
@@ -12664,6 +12700,10 @@ function volcarLineaEnFormularioRVI(){
   if(!marcadas.length) return;
   const esNuestra = r => /CREDICORP/i.test(String(r.firm||''));
   const cli = marcadas.find(r=>!esNuestra(r)) || marcadas[0];
+  // getQtyTotal(), calcularRVI() y la distribución trabajan sobre `lineaActiva`.
+  // Al marcar con el checkbox hay que fijarla también, si no el sec fee y la
+  // cantidad disponible quedan en cero (Sergio, 19-ago).
+  lineaActiva = cli.id;
   const set = (id, v) => { const e = document.getElementById(id); if(e && v != null && v !== '') e.value = v; };
 
   // Cliente: se busca en el selector por nombre del Originating Firm.
@@ -12698,12 +12738,20 @@ function volcarLineaEnFormularioRVI(){
   if(typeof calcularRVI === 'function') calcularRVI();
 
   // Distribución: si el Account viene de EMSX, se agrega como portafolio.
+  // El Account de EMSX entra como portafolio de la distribución, con la
+  // cantidad de la línea: si el cliente ya lo mandó, no hay nada que repartir.
   if(typeof distribuciones !== 'undefined' && cli.account && cli.account !== '—'){
     const yaEsta = distribuciones.some(d=>String(d.account)===String(cli.account));
     if(!yaEsta){
-      distribuciones.push({ account: cli.account, cantidad: Number(cli.qty)||0 });
+      distribuciones.push({ account: String(cli.account), cantidad: Number(cli.qty)||0 });
       if(typeof renderDistribuciones === 'function') renderDistribuciones();
-      else if(typeof renderDistribucion === 'function') renderDistribucion();
+    }
+    // El selector de account también se posiciona, por si hay que ajustar.
+    const sel = document.getElementById('nuevo-account');
+    if(sel){
+      const op = [...sel.options].find(o=>String(o.value)===String(cli.account) ||
+                                          String(o.textContent||'').includes(String(cli.account)));
+      if(op) sel.value = op.value;
     }
   }
 }
@@ -13589,7 +13637,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-19 22:47 UTC';
+const BUILD_ID = '2026-08-19 23:44 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
