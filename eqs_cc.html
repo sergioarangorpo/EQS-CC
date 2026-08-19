@@ -3265,8 +3265,14 @@ function crearHojaConMarca(wb, nombreHoja, subtitulo, ficha){
   ws.getRow(headerFilaIni+2).height = 20;
   ws.getRow(headerFilaIni+3).height = 10;
 
+  // OJO con el ancla del logo: ExcelJS DESCARTA la imagen si las coordenadas
+  // son fraccionarias (col 9.3, row hIni+0.4). Tienen que ser ENTERAS, si no el
+  // archivo sale sin logo (Sergio, 19-ago). Ya nos había pasado antes.
   const imgId = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension: 'png' });
-  ws.addImage(imgId, { tl: { col: 6.4, row: headerFilaIni + 1.15 }, ext: { width: 165, height: 24 } });
+  // El título combina B..F (columnas 1..5), así que el logo va en la 7 para no
+  // solaparse: una imagen anclada sobre una celda combinada de la MISMA fila
+  // hace que LibreOffice la descarte al exportar a PDF.
+  ws.addImage(imgId, { tl: { col: 7, row: headerFilaIni + 1 }, ext: { width: 165, height: 24 } });
 
   ws.mergeCells(`B${headerFilaIni+1}:F${headerFilaIni+1}`);
   const tituloCell = ws.getCell(`B${headerFilaIni+1}`);
@@ -3627,7 +3633,7 @@ async function generarExcelCruce(clienteKey, registrados, trader){
   // El logo real es 549×81 (ratio 6.78, muy alargado). Antes estaba en 90×48
   // (ratio 1.88) y salía aplastado/estrecho. Se usa 165×24 = el ratio correcto,
   // igual que en los otros reportes.
-  ws.addImage(imgId, { tl: { col: 8.3, row: hIni + 0.4 }, ext: { width: 165, height: 24 } });
+  ws.addImage(imgId, { tl: { col: 8, row: hIni + 1 }, ext: { width: 165, height: 24 } });
   ws.mergeCells(`B${hIni+1}:H${hIni+1}`);
   const tit = ws.getCell(`B${hIni+1}`);
   tit.value = 'CREDICORP CAPITAL COLOMBIA';
@@ -3854,7 +3860,7 @@ async function generarExcelAndes(eqLotes, fxOps){
   for(let rr=hIni; rr<=hFin; rr++){ allCols.forEach(col => ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}}); }
   ws.getRow(hIni).height = 8; ws.getRow(hIni+1).height = 30; ws.getRow(hIni+2).height = 20; ws.getRow(hIni+3).height = 10;
   const imgId = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension: 'png' });
-  ws.addImage(imgId, { tl: { col: 9.3, row: hIni + 0.4 }, ext: { width: 165, height: 24 } });
+  ws.addImage(imgId, { tl: { col: 9, row: hIni + 1 }, ext: { width: 165, height: 24 } });
   ws.mergeCells(`B${hIni+1}:H${hIni+1}`);
   const tit = ws.getCell(`B${hIni+1}`);
   tit.value = 'CREDICORP CAPITAL COLOMBIA';
@@ -4149,7 +4155,7 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
   for(let rr=hIni; rr<=hFin; rr++){ allCols.forEach(col => ws.getCell(`${col}${rr}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}}); }
   ws.getRow(hIni).height = 8; ws.getRow(hIni+1).height = 30; ws.getRow(hIni+2).height = 20; ws.getRow(hIni+3).height = 10;
   const imgId = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension: 'png' });
-  ws.addImage(imgId, { tl: { col: 9.3, row: hIni + 0.4 }, ext: { width: 165, height: 24 } });
+  ws.addImage(imgId, { tl: { col: 9, row: hIni + 1 }, ext: { width: 165, height: 24 } });
   ws.mergeCells(`B${hIni+1}:H${hIni+1}`);
   const tit = ws.getCell(`B${hIni+1}`);
   tit.value = 'CREDICORP CAPITAL COLOMBIA';
@@ -13381,7 +13387,7 @@ async function generarTradeConfirmationRVI(cliente, filas){
   ws.getRow(1).height = 8; ws.getRow(2).height = 30; ws.getRow(3).height = 20; ws.getRow(4).height = 10;
 
   const imgId = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension:'png' });
-  ws.addImage(imgId, { tl:{col:12.9, row:1.35}, ext:{width:165, height:24} });
+  ws.addImage(imgId, { tl:{col:12, row:1}, ext:{width:165, height:24} });
 
   ws.mergeCells('B2:H2');
   const t = ws.getCell('B2');
@@ -13637,7 +13643,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-19 23:44 UTC';
+const BUILD_ID = '2026-08-19 23:49 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
