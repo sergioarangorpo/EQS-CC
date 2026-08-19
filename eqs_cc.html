@@ -12275,6 +12275,15 @@ const clientesRVI = {
     comETF:0.008, comUCIT:0.08/100, comADR:0.008,
     portafolios:['BBVA PORTAFOLIO'],
   },
+  AVAL_FIDUCIARIA: {
+    nombre:'AVAL FIDUCIARIA SA',
+    // TAX ID tomado del Trade Confirmation del 19-ago.
+    taxId:'860.068.182',
+    comETF:0.004, comUCIT:0.04/100, comADR:0.004,
+    // Los accounts llegan en el ACCOUNT de EMSX (ej. FO-274OQUINTE); no hay
+    // lista fija, así que se deja abierta y se toma la que venga.
+    portafolios:[],
+  },
   SKANDIA_SEGUROS: {
     nombre:'SKANDIA SEGUROS SA',
     // Grupo Skandia (COM RVI): ETF 0,005/acción, UCIT 0,05% del gross.
@@ -12422,11 +12431,15 @@ function confirmarVinculoRVI(){
 
 
 // CCSI: comisión que nos cobran a nosotros
+// Lo que NOS cobra la contraparte por operar afuera. Confirmado por Sergio el
+// 19-ago: ETF 0,003 y ADR 0,005 USD por acción, UCITS 0,04% del gross.
+// Tradition (TFSC) y BTG NY (BTGH) cobran como ETF; los market makers (RFQE)
+// van con 0.
 const CCSI = {
-  comETF:0.003,   // USD/acción
-  comUCIT:0.03/100, // % gross
-  comADR:0.005,   // USD/acción
-  minUSD:20,      // mínimo siempre
+  comETF:0.003,     // USD/acción
+  comUCIT:0.04/100, // % del gross  (estaba en 0,03%)
+  comADR:0.005,     // USD/acción
+  minUSD:20,        // mínimo siempre
 };
 
 // Sec Fee actual NYSE: 0.0000278 × gross (solo para ventas)
@@ -12645,6 +12658,26 @@ function comisionContraparteRVI(broker, tipo, qty, gross, isin){
   return redondear(qty * porAccion, 2);
 }
 
+// ---- Comisión MÍNIMA al cliente ----
+// USD 20 para casi todos. Las tres AFP grandes están exentas: sus volúmenes
+// son tan altos que el mínimo nunca aplicaría, y lo tienen negociado
+// (Sergio, 19-ago). Validado con el Trade Confirmation de AVAL del 19-ago:
+// IAU 3.150 acciones daban 15,75 por acción, pero se cobraron 20.
+const RVI_MINIMO_USD = 20;
+const RVI_SIN_MINIMO = ['PROTECCION', 'COLFONDOS', 'PORVENIR'];
+
+function aplicaMinimoRVI(cliente){
+  const c = String(cliente||'').toUpperCase();
+  return !RVI_SIN_MINIMO.some(x => c.includes(x));
+}
+
+// Costo que se le cobra al CLIENTE, ya con el mínimo aplicado.
+function costoClienteRVI(cliente, calculado){
+  const v = Number(calculado) || 0;
+  if(!aplicaMinimoRVI(cliente)) return redondear(v, 2);
+  return redondear(Math.max(v, RVI_MINIMO_USD), 2);
+}
+
 // ---- SEC fee ----
 // Solo ETFs y ADRs, y SOLO en ventas. Si algo cumple eso y no lo trae, es un
 // error (Sergio, 19-ago). Usa la tasa SEC_FEE_RATE ya declarada arriba.
@@ -12688,6 +12721,23 @@ function renderArqueoRVI(){
   }
   if(_modoRVI.espejo === 'si' && cliente.length && nuestras.length && cliente.length !== nuestras.length){
     avisos.push(`Espejo de alloc: el cliente tiene ${cliente.length} línea(s) y nosotros ${nuestras.length}. Deben partirse igual.`);
+  }
+  // Si el Account de EMSX ya trae el portafolio, no hay nada que repartir.
+  const conAccount = cliente.filter(r=>r.account && r.account !== '—');
+  if(conAccount.length === cliente.length && cliente.length){
+    oks.push(`Portafolio ya viene en el Account de EMSX (${[...new Set(conAccount.map(r=>r.account))].join(', ')}) — no hace falta repartir`);
+  }else if(cliente.length){
+    avisos.push('Falta el portafolio: repártelo en "Distribución por account".');
+  }
+  // El costo que se le cobra al cliente, con el mínimo si aplica.
+  if(_modoRVI.costo === 'con' && cliente.length){
+    const r0 = cliente[0];
+    const bruto = (Number(r0.qty)||0) * (Number(r0.avgPr)||0);
+    const calc = comisionContraparteRVI('CCSI', r0.tipo, r0.qty, bruto, isinTickerRVI(r0.especie));
+    const cobra = costoClienteRVI(r0.firm, calc);
+    if(aplicaMinimoRVI(r0.firm) && cobra > calc){
+      oks.push(`Costo al cliente USD ${fmtRateRVI(cobra)} — aplica el mínimo de USD ${RVI_MINIMO_USD} (por acción daría ${fmtRateRVI(calc)})`);
+    }
   }
 
   const listo = avisos.length === 0;
@@ -12916,20 +12966,28 @@ function calcularComisiones(clienteKey, tipo, qty, price, opts){
   const gross = qty * price;
   opts = opts || {};
 
+  // MÍNIMO DE COMISIÓN AL CLIENTE: USD 20 para casi todos. Las tres AFP
+  // (PROTECCIÓN, COLFONDOS y PORVENIR) están exceptuadas por contrato y pagan
+  // lo que dé la tarifa, sin piso (Sergio, 19-ago).
+  // Es lo que explica el Trade Confirmation de AVAL del 19-ago: 3.150 acciones
+  // de IAU a 0,003 dan 9,45, pero el archivo cobra 20.
+  const SIN_MINIMO = ['PROTECCION','COLFONDOS','PORVENIR'];
+  const minCliente = SIN_MINIMO.includes(clienteKey) ? 0 : (db.minUSD != null ? db.minUSD : 20);
+
   let costCliente, costCCSI, tarifaCCSIusada;
   // Comisión CCSI: si viene una editada (¢/acción o %, según tipo), se usa esa;
   // si no, la de la tabla. Es la que NOS cobran por operar afuera.
   const comCcsiEdit = (opts.comCCSI!=null && isFinite(opts.comCCSI)) ? opts.comCCSI : null;
   if(tipo==='ETF'){
-    costCliente = Math.max(qty * db.comETF, 0);
+    costCliente = Math.max(qty * db.comETF, minCliente);
     tarifaCCSIusada = comCcsiEdit!=null ? comCcsiEdit : CCSI.comETF;
     costCCSI    = Math.max(qty * tarifaCCSIusada, CCSI.minUSD);
   } else if(tipo==='ADR'){
-    costCliente = Math.max(qty * db.comADR, 0);
+    costCliente = Math.max(qty * db.comADR, minCliente);
     tarifaCCSIusada = comCcsiEdit!=null ? comCcsiEdit : CCSI.comADR;
     costCCSI    = Math.max(qty * tarifaCCSIusada, CCSI.minUSD);
   } else { // UCIT
-    costCliente = Math.max(gross * db.comUCIT, 0);
+    costCliente = Math.max(gross * db.comUCIT, minCliente);
     tarifaCCSIusada = comCcsiEdit!=null ? comCcsiEdit : CCSI.comUCIT;
     costCCSI    = Math.max(gross * tarifaCCSIusada, CCSI.minUSD);
   }
@@ -13414,7 +13472,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-19 19:29 UTC';
+const BUILD_ID = '2026-08-19 19:39 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
