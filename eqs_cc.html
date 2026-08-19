@@ -4715,6 +4715,40 @@ const GRUPO_COMISIONES_DB = [{"grupo": "COLFONDOS", "book": "COLFONDOS", "report
 
 // Motor de comisiones (data madre GRUPO_COMISIONES). Uso: comisionDe('PROTECCION','ECOPETROL','bloque').
 // Devuelve la tarifa (fracción, ej 0.0008). marca: 'pantalla' | 'bloque'.
+// Tarifa de UN folio, en unidades de % (0.18 = 0,18%).
+// Manda la tabla maestra GRUPO_COMISIONES cuando el cliente tiene tarifa
+// VARIABLE POR ESPECIE: COLFONDOS cobra 0,15% en bloques de ECOPETROL,
+// PFCIBEST e ICOLCAP y 0,18% en el resto. Esa regla estaba en la tabla desde el
+// principio pero nadie la consultaba: se usaba el valor del selector para todo,
+// y un bloque de GRUPOARGOS salía a 0,15% en vez de 0,18% (Sergio, 18-ago).
+// Si el cliente no tiene regla por especie, manda el selector del día.
+function comisionFolioPct(cliente, f){
+  const especie = f.especie;
+  const marca = f.marca === 'bloque' ? 'bloque' : 'pantalla';
+  // ECOPETROL y PFCIBEST van SIEMPRE a tarifa de pantalla en las AFP.
+  if(especie === 'ECOPETROL' || especie === 'PFCIBEST'){
+    const base = comisionDe(cliente, especie, 'pantalla');
+    return base != null ? base * 100 : comisionPantallaPct();
+  }
+  if(marca !== 'bloque') return comisionPantallaPct();
+  // Bloque: si el cliente tiene tarifa variable por especie, esa manda.
+  const c = GRUPO_COMISIONES_DB.find(x => x.grupo===cliente || x.book===cliente);
+  if(c && c.variable && c.bloque){
+    const v = comisionDe(cliente, especie, 'bloque');
+    if(v != null) return v * 100;
+  }
+  // Cliente de TARIFA ÚNICA declarada en su ficha (Alianza 0,1%, Fiduashmore
+  // 0,09%, BTG y Andes 0,1%): esa manda sobre el selector, que puede haber
+  // quedado en el valor del cliente anterior.
+  const cfg = getClienteDB(cliente) || {};
+  if(cfg.comisionBloque != null && cfg.comisionPantalla != null &&
+     cfg.comisionBloque === cfg.comisionPantalla){
+    return cfg.comisionBloque * 100;
+  }
+  // Si Sergio marcó el folio con una tarifa concreta, esa se respeta.
+  return f.comBloquePct != null ? f.comBloquePct : comisionCrucePct();
+}
+
 function comisionDe(grupoOBook, especie, marca){
   const c = GRUPO_COMISIONES_DB.find(x => x.grupo===grupoOBook || x.book===grupoOBook);
   if(!c || c.base==null) return null;
@@ -10141,8 +10175,7 @@ async function generarReporte(){
       fraccion: f.fraccion, ordNum: f.ordNum,
       trader: f.trader || PROTECCION_TRADER_DEFAULT,
       // Override: ECOPETROL y PFCIBEST SIEMPRE 0,08% en PROTECCIÓN, aunque estén marcados bloque.
-      comisionPct: (f.especie==='ECOPETROL'||f.especie==='PFCIBEST') ? comisionPantallaPct()
-                 : (f.marca === 'bloque' ? (f.comBloquePct != null ? f.comBloquePct : comisionCrucePct()) : comisionPantallaPct()),
+      comisionPct: comisionFolioPct(cliente, f),
     };
     detalleHistorico.push(fila);
     loteDet.push(fila);
@@ -10193,9 +10226,7 @@ async function generarReporte(){
           if(q > 0) partido.push({
             ...f, cantidad: q,
             fondoSk: _SKANDIA_POR_ID[String(a.port.idFondo).toUpperCase()],
-            comisionPct: (f.especie==='ECOPETROL' || f.especie==='PFCIBEST')
-              ? comisionPantallaPct()
-              : (f.marca === 'bloque' ? (f.comBloquePct != null ? f.comBloquePct : comisionCrucePct()) : comisionPantallaPct()),
+            comisionPct: comisionFolioPct(cliente, f),
             fechaReg: f.fechaReg || document.getElementById('fechaRegistro').value,
             fechaCum: f.fechaCum || document.getElementById('fechaCumplimiento').value,
           });
@@ -10295,9 +10326,7 @@ async function generarReporte(){
     // La comisión de cada folio se calcula aquí igual que en el generador:
     // `f.comisionPct` solo existe dentro del lote ya armado, así que en la
     // confirmación hay que derivarla de la marca del folio.
-    const _pctFolio = f => (f.especie==='ECOPETROL' || f.especie==='PFCIBEST')
-      ? comisionPantallaPct()
-      : (f.marca === 'bloque' ? (f.comBloquePct != null ? f.comBloquePct : comisionCrucePct()) : comisionPantallaPct());
+    const _pctFolio = f => comisionFolioPct(cliente, f);
     const comUnica = comisionesPorEspecieLado(seleccionados, _pctFolio);
     const _registrarPorv = () => loteDetPorv || loteDet;
     const ok = await confirmarPorvenir(cliente, seleccionados, comUnica, version);
@@ -13209,7 +13238,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-18 19:46 UTC';
+const BUILD_ID = '2026-08-19 17:56 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
