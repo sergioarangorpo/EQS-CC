@@ -12905,8 +12905,19 @@ function renderArqueoRVI(){
   const comNosCalc = comisionContraparteRVI(brokers[0]||'', refCli.tipo, qEjec, grossNos, isin);
   const comNos = comNosCalc > 0 ? redondear(Math.max(comNosCalc, RVI_MINIMO_USD), 2) : 0;
   const secFee = secFeeRVI(refCli.tipo, refCli.lado, grossCli, isin);
-  const margenPesos = _modoRVI.margen === 'sin' ? 0
-    : redondear((precioCli - precioEjec) * (qCli || qEjec) * (String(refCli.lado).toUpperCase()==='SELL' ? 1 : -1), 2);
+  // MARGEN: siempre a favor nuestro cuando el precio del cliente nos beneficia.
+  //   COMPRA del cliente  -> compramos barato y le vendemos más caro: (cli - ejec)
+  //   VENTA  del cliente  -> le compramos barato y vendemos más caro: (ejec - cli)
+  // Antes el signo estaba invertido: una compra a 642,30 revendida a 642,301
+  // aparecía como pérdida de 5 USD en vez de ganancia (Sergio, 20-ago).
+  // Y si falta el precio del cliente el margen se deja en 0, en vez de calcular
+  // contra cero y mostrar millones que no existen.
+  const hayPrecioCli = precioCli > 0;
+  const margenPesos = (_modoRVI.margen === 'sin' || !hayPrecioCli) ? 0
+    : redondear((String(refCli.lado).toUpperCase() === 'SELL'
+        ? (precioEjec - precioCli)      // el cliente vende: le pagamos menos
+        : (precioCli - precioEjec)      // el cliente compra: le cobramos más
+      ) * (qCli || qEjec), 2);
   const utilidad = redondear(margenPesos + comCli - comNos, 2);
 
   if(_modoRVI.costo === 'con' && comCli > comCliCalc){
@@ -13671,7 +13682,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-20 21:33 UTC';
+const BUILD_ID = '2026-08-20 21:50 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
