@@ -7938,10 +7938,10 @@ function informeCompactoHTML(){
     const suben = conMov.slice().sort((a,b)=>b.varPct-a.varPct).slice(0,3);
     const bajan = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,3);
     const linea = d=>`<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px;font-size:17px;">
-        <span style="width:150px;font-family:monospace;">${d.esp}</span>
-        <span style="width:104px;text-align:right;">${fmtRate(d.ultimo)}</span>
-        <span style="width:92px;text-align:right;">${pct(d.varPct)}</span>
-        ${sparkline(d.serie, d.varPct, 130, 26)}</div>`;
+        <span style="width:128px;font-family:monospace;">${d.esp}</span>
+        <span style="width:96px;text-align:right;">${fmtRate(d.ultimo)}</span>
+        <span style="width:84px;text-align:right;">${pct(d.varPct)}</span>
+        ${sparkline(d.serie, d.varPct, 150, 26)}</div>`;
     const paleta = ['#818cf8','#22c55e','#f59e0b','#38bdf8','#f472b6'];
     return `
     <div style="border:1px solid #2a2f3a;border-radius:10px;padding:18px;margin-top:20px;">
@@ -7950,18 +7950,18 @@ function informeCompactoHTML(){
         <div style="font-size:15px;opacity:.65;">${mm(totSeg)} COP${usdcop?' · <span style="color:#f59e0b;">'+U(totSeg)+' USD</span>':''} · ${gs.length} especies · ${(totSeg/total*100).toFixed(1)}% del día</div>
       </div>
       ${treemapVolumen(vol.concat(gs.slice().sort((a,b)=>b.monto-a.monto).slice(5,12))
-          .map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 856, 190)}
-      <div style="display:flex;gap:26px;flex-wrap:wrap;margin-top:16px;">
-        <div style="flex:1;min-width:390px;">
+          .map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 596, 200)}
+      <div style="margin-top:16px;">
+        <div style="margin-bottom:16px;">
           <div style="font-size:15px;font-weight:700;letter-spacing:.4px;opacity:.7;margin-bottom:8px;">MAYORES ALZAS Y BAJAS</div>
           ${suben.concat(bajan).map(linea).join('')}
         </div>
-        <div style="flex:1;min-width:390px;">
+        <div>
           <div style="font-size:15px;font-weight:700;letter-spacing:.4px;opacity:.7;margin-bottom:8px;">DÓNDE ESTUVO EL VOLUMEN</div>
           ${vol.map((d,i)=>{
             const p = d.monto/totSeg*100;
             return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px;font-size:16px;">
-              <span style="width:142px;font-family:monospace;">${d.esp}</span>
+              <span style="width:124px;font-family:monospace;">${d.esp}</span>
               <span style="flex:1;background:rgba(255,255,255,.06);border-radius:3px;height:19px;display:block;">
                 <span style="display:block;width:${p.toFixed(1)}%;height:19px;background:${paleta[i%5]};border-radius:3px;"></span></span>
               <span style="width:58px;text-align:right;">${p.toFixed(1)}%</span>
@@ -7984,7 +7984,7 @@ function informeCompactoHTML(){
   </tr>`;
   const th = (t,al) => `<th style="padding:7px 8px;text-align:${al||'left'};font-size:14px;opacity:.6;font-weight:600;">${t}</th>`;
 
-  return `<div id="informeCompacto" style="width:900px;background:#0d0f14;color:#e5e7eb;padding:26px;
+  return `<div id="informeCompacto" style="width:680px;background:#0d0f14;color:#e5e7eb;padding:26px;
       font-family:Inter,system-ui,sans-serif;box-sizing:border-box;">
 
     <div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:4px solid #818cf8;padding-bottom:14px;margin-bottom:20px;">
@@ -7999,10 +7999,10 @@ function informeCompactoHTML(){
       </div>
     </div>
 
-    <div style="display:flex;gap:12px;margin-bottom:20px;">
+    <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;">
       ${[['Volumen total',total],['Mercado continuo',volCont],['Subasta de cierre',subasta?subasta.monto:0],
          ['MGC',volMGC],['ETFs',volETF]].map(([lab,v])=>`
-        <div style="flex:1;background:#161b26;border-radius:9px;padding:13px 15px;">
+        <div style="flex:1 1 calc(33.33% - 7px);background:#161b26;border-radius:9px;padding:12px 14px;">
           <div style="font-size:14px;opacity:.6;margin-bottom:3px;">${lab}</div>
           <div style="font-size:21px;font-weight:800;">${mm(v)}</div>
           ${usdcop?`<div style="font-size:15px;color:#f59e0b;">${U(v)}</div>`:''}
@@ -8012,7 +8012,7 @@ function informeCompactoHTML(){
 
     <div style="font-size:16px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:10px;">
       MAPA DEL MERCADO — tamaño por volumen, color por variación</div>
-    ${treemapVolumen(porVol.slice(0,20).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 848, 300)}
+    ${treemapVolumen(porVol.slice(0,20).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 626, 300)}
 
     ${bloqueSeg('MERCADO CONTINUO', d=>d.seg==='CONTINUO')}
     ${bloqueSeg('MERCADO GLOBAL COLOMBIANO (MGC)', d=>d.seg==='MGC')}
@@ -8079,7 +8079,7 @@ async function _compactoACanvas(){
     // scale 3: el PNG sale a 1.320px de ancho para 440 de diseño, así que se
     // ve nítido aunque el correo lo reescale.
     return await html2canvas(cont.firstElementChild, {
-      backgroundColor:'#0d0f14', scale:2, logging:false, useCORS:true, width:900,
+      backgroundColor:'#0d0f14', scale:2, logging:false, useCORS:true, width:680,
     });
   } finally { cont.remove(); }
 }
@@ -13810,7 +13810,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-20 22:02 UTC';
+const BUILD_ID = '2026-08-20 22:26 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
