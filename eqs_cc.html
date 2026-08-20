@@ -13397,10 +13397,138 @@ async function exportarPDF(){
   const clientes=[...new Set(filas.map(h=>h.cliente))];
   if(clientes.length>1){ alert('Marcaste operaciones de varios clientes ('+clientes.join(', ')+'). La Trade Confirmation es por cliente — filtra por un cliente en el histórico y exporta solo esas.'); return; }
   const cliente=clientes[0];
-  await generarTradeConfirmationRVI(cliente, filas);
+  // PORVENIR tiene proforma propia (26 columnas). Ya está mapeada, así que se
+  // usa la suya en vez de la estándar (Sergio, 20-ago).
   if(/PORVENIR/i.test(cliente)){
-    alert('Ojo: PORVENIR usa una proforma propia que todavía no tenemos. Su archivo salió en el formato estándar — revísalo antes de enviarlo.');
+    const d = new Date();
+    const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+    await generarTradeConfirmationPorvenirRVI(cliente, filas, { fechaSlug: slug });
+    return;
   }
+  await generarTradeConfirmationRVI(cliente, filas);
+}
+
+// =====================================================================
+// PORVENIR — proforma extendida de RVI (26 columnas)
+// ---------------------------------------------------------------------
+// Es el único cliente con formato propio: título en A1:D2, logo en F1 y los
+// encabezados en la fila 5 con fondo negro y letra blanca (Sergio, 20-ago).
+// FX Rate, Settle Currency y todas las comisiones intermedias van en cero:
+// nunca traen dato.
+// =====================================================================
+const PORVENIR_RVI_CUENTAS = [{"nombre": "PORV. SA-FVP60 DIVER DINAMICO", "num": "614601602"}, {"nombre": "PORV. SA-FVP8 DIVERSI EXTREMO", "num": "614601610"}, {"nombre": "PORV. SA-FVP 9 DIVERSI BASICO", "num": "614601629"}, {"nombre": "PORV. SA-FVP113 DIVER CONSERV", "num": "614601637"}, {"nombre": "PORV. SA-FVP RF INTER DOLAR", "num": "614601645"}, {"nombre": "PORV. SA-FVP MANOS ESTUD 2016", "num": "614601653"}, {"nombre": "PORV SA-FVP184 GEN SOSTENIBLE", "num": "614601688"}, {"nombre": "PORV. SA-FVP 183 RENOVAR", "num": "614601696"}, {"nombre": "PORV. SA-FVP186 LARGO PL 2030", "num": "614601718"}, {"nombre": "PORV. SA-FVP192 ACCION EUROPA", "num": "614601742"}, {"nombre": "PORVENIR S.A CES. LP", "num": "614601807"}, {"nombre": "PORVENIR S.A CES. CP", "num": "614601815"}, {"nombre": "PORVENIR SA-FPO MAYOR RIESGO", "num": "614601823"}, {"nombre": "PORVENIR S.A. FPO MODERADO", "num": "614601831"}, {"nombre": "PORVENIR SA-FPO CONSERVADOR", "num": "614601858"}, {"nombre": "AFP PORVENIR", "num": "614601866"}, {"nombre": "PORVENIR SA-P.A. FONPET 2012", "num": "614601874"}, {"nombre": "FNDO ESP PORVENIR RETIRO PROG", "num": "614601882"}, {"nombre": "PORV. SA-FVP ALT LARG PL 2022", "num": "614603605"}, {"nombre": "PORV. SA-FVP ALT EF COLOM PES", "num": "614603613"}, {"nombre": "PORV SA-FVP 156 RF ALTO VALOR", "num": "614603621"}, {"nombre": "PORV SA-FVP139 PREM RIES BAJO", "num": "614603648"}, {"nombre": "PORV. SA-FVP 83 SMURFITKAPPA", "num": "614603656"}, {"nombre": "PORV. SA-FVP ALTERNA ARQUIMED", "num": "614603664"}, {"nombre": "PORV. SA-FVP  ALT LIQDZ PORV.", "num": "614603672"}, {"nombre": "PORV. SA-FVP ALT ESPECIAL PRO", "num": "614603680"}, {"nombre": "PORV. SA-FVP173 ALTER FND FUT", "num": "614603699"}, {"nombre": "PORV. SA-FVP 172 ARAS", "num": "614603702"}, {"nombre": "PORV. SA-FVP ALTERNA FIJOMES", "num": "614603710"}, {"nombre": "PORV. SA-FVP178 ALT PREF PLUS", "num": "614603729"}, {"nombre": "PORV SA-FVP ALTER ESP ADVISOR", "num": "614603737"}, {"nombre": "PORV. SA-FVP 191 ACC TECH+", "num": "614603745"}, {"nombre": "PORV. SA-FVP2024 REN FIJA2024", "num": "614603753"}, {"nombre": "PORV. SA-FVP 196 SANTA BELLA", "num": "614603761"}, {"nombre": "PORV. SA-FVP 201 SINERGIA", "num": "614603788"}, {"nombre": "PORV. SA-FVP 200 AZULA", "num": "614603796"}, {"nombre": "PORV. SA-FVP ALTNA RF 7 AAOS", "num": "614603818"}, {"nombre": "PORV SA-FVP RF180DIAS22 VO193", "num": "614603826"}, {"nombre": "PORV. SA-FVP ALTER ACC USD", "num": "614604490"}, {"nombre": "PORVENIR SA-P.A. MUN. CALI 2", "num": "614604504"}, {"nombre": "PORVENIR SA-MUN. MANIZALES 2", "num": "614604512"}, {"nombre": "PORV. SA-FVP 202 ASEE", "num": "614604520"}, {"nombre": "PORV. SA-FVP46 ACCI CITIGROUP", "num": "614604539"}, {"nombre": "PORV. SA-FVP 5 ACC INTER DOL", "num": "614604547"}, {"nombre": "PORV. SA-FVP79 ACC INTER PESO", "num": "614604555"}, {"nombre": "FPV SMURTFITKAPPA", "num": "614604559"}, {"nombre": "FPV CSERVAR US", "num": "614604563"}, {"nombre": "CRYPTO PORVENIR", "num": "614604564"}];
+
+// SEDOL y nombre largo por ticker. Sin esto esas dos columnas irían vacías.
+const RVI_SEDOL_DESC = {"ACWI": {"sedol": "B2QKQH6", "desc": "iShares MSCI ACWI ETF"}, "BOTZ": {"sedol": "BD37KB9", "desc": "Global X Robotics & Artificial Intelligence"}, "EMB": {"sedol": "B2B1JH5", "desc": "Emerging Markets Bond ETF Bond Index"}, "ESGE": {"sedol": "BD06LN8", "desc": "iShares ESG Aware MSCI EM ETF"}, "EZU": {"sedol": "2670605", "desc": "iShares MSCI Eurozone ETF"}, "FXI": {"sedol": "B0357H7", "desc": "iShares China Large-Cap ETF"}, "IEMG": {"sedol": "B8NDCB6", "desc": "iShares Core MSCI Emerging Markets ETF"}, "IVV": {"sedol": "2593025", "desc": "iShares Core S&P 500 ETF"}, "JNK": {"sedol": "BJLV5H6", "desc": "SPDR Bloomberg High Yield Bond ETF"}, "MCHI": {"sedol": "B5LX1Z4", "desc": "iShares MSCI China ETF"}, "QCLN": {"sedol": "B1RMJP3", "desc": "Clean Edge Green Energy Index Fund"}, "QQQ": {"sedol": "BDQYP67", "desc": "Invesco QQQ Trust Series 1"}, "SPY": {"sedol": "2840215", "desc": "SPDR S&P 500 ETF Trust"}, "SUAS": {"sedol": "BYVJRR9", "desc": "MSCI USA SRI UCITS ETF"}, "VWO": {"sedol": "B06HMH5", "desc": "Vanguard FTSE Emerging Markets ETF"}, "XLB": {"sedol": "2436841", "desc": "Materials Select Sector SPDR Trust"}, "XLC": {"sedol": "BFXHC51", "desc": "Communication Services Select Sector SPDR"}, "XLE": {"sedol": "2402466", "desc": "Energy Select Sector SPDR Fund"}, "XLF": {"sedol": "2364038", "desc": "Financial Select Sector SPDR Fund"}, "XLI": {"sedol": "2502139", "desc": "Industrial Select Sector SPDR Fund"}, "XLK": {"sedol": "2369709", "desc": "Technology Select Sector SPDR Fund"}, "XLP": {"sedol": "2369389", "desc": "Consumer Staples Select Sector SPDR"}, "XLRE": {"sedol": "BYZ65Y9", "desc": "Real Estate Select Sector SPDR Fund"}, "XLV": {"sedol": "2371823", "desc": "Health Care Select Sector SPDR Fund"}, "XLY": {"sedol": "2424341", "desc": "Consumer Discretionary Select Sector SPDR"}, "VOO": {"sedol": "BF2GMJ3", "desc": "Vanguard S&P 500 ETF"}, "EEMA": {"sedol": "B7KTHQ0", "desc": "iShares MSCI Emerging Market Asia"}, "XLU": {"sedol": "2371812", "desc": "Utilities Select Sector SPDR"}, "RSP": {"sedol": "BZ03230", "desc": "Invesco S&P 500 Equal Weight ETF Class USD"}, "EEM": {"sedol": "2582409", "desc": "iShares MSCI Emerging Market"}, "SPEM": {"sedol": "B1VQ3D7", "desc": "SPDR Portfolio Emerging Marks"}, "BBJP": {"sedol": "BNNM0M5", "desc": "JPMORGAN BETABUILDERS JAPAN"}, "SPLG": {"sedol": "B0Q4NL7", "desc": "SPDR Portfolio S&P 500 ETF"}, "IJPA": {"sedol": "B4L5YX2", "desc": "Ishares Core MSCI Japan"}, "SDIA": {"sedol": "BYXYYP9", "desc": "Ishares USD Short Duration"}, "IEMB": {"sedol": "B2NXVM8", "desc": "Ishares JPM USD BND"}, "EWJ": {"sedol": "BDR7G84", "desc": "Ishares MSCI Japan ETF"}, "ECH": {"sedol": "B29FC81", "desc": "ISHARES MSCI CHILE ETF"}, "AAXJ": {"sedol": "B3B9631", "desc": "Ishares MSCI All Country Asia"}, "UC65": {"sedol": "BGCZKF9", "desc": "UBS ETF MSCI Japan UKD"}, "ILF": {"sedol": "2812980", "desc": "Ishares Latin America 40 ETF"}, "IWF": {"sedol": "2679839", "desc": "Ishares Rusell 1000 Growth"}, "STHY": {"sedol": "B7N22D8", "desc": "PIMCO US Short-Term High Yield Corporate Bond UCITS"}, "EWW": {"sedol": "2373818", "desc": "iShares MSCI Mexico ETF"}, "QQQM": {"sedol": "BMXZ8S9", "desc": "Invesco Nasdaq 100 ETF"}, "CSPX": {"sedol": "B50YWZ5", "desc": "Ishares Core S&P 500 ETF"}, "EMXC": {"sedol": "BYXKYV3", "desc": "iShares MSCI Emerging Markets ex China ETF"}, "ZROZ": {"sedol": "B54YDP8", "desc": "PIMCO 25+ Year Zero Coupon US Treasury Index ETF"}, "XAID": {"sedol": "BMY62Y5", "desc": "X ARTIFICIAL INTEL BIG DA 1C"}, "AIQ": {"sedol": "BF5MLP7", "desc": "GLOBAL X ART INTEL & TECH"}, "VTWO": {"sedol": "B48MJP3", "desc": "Vanguard Russell 2000 ETF"}, "SPYM": {"sedol": "B0Q4NL7", "desc": "State Street SPDR Portfolio S&P 500 ETF"}, "EWY": {"sedol": "2592561", "desc": "iShares MSCI South Korea ETF"}, "IBIT": {"sedol": "BQ9CHK7", "desc": "ISHARES BITCOIN TRUST ETF"}, "ICHN": {"sedol": "BJ5JPG5", "desc": "Ishares MSCI China USD Acc"}, "XMJD": {"sedol": "B24CWK9", "desc": "Xtrackers MSCI Japan ETF 1C"}};
+
+function sedolDeTicker(sym){
+  const t = tickerLimpioRVI(sym);
+  return (RVI_SEDOL_DESC[t] || {}).sedol || '';
+}
+function descripcionDeTicker(sym){
+  const t = tickerLimpioRVI(sym);
+  return (RVI_SEDOL_DESC[t] || {}).desc || '';
+}
+// El nombre del portafolio que llega de EMSX ("FPO MODERADO") se busca contra
+// la lista oficial ("PORVENIR S.A. FPO MODERADO") para sacar el Account #.
+function cuentaPorvenirRVI(nombre){
+  const norm = t => String(t||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9]/g,'');
+  const objetivo = norm(nombre);
+  if(!objetivo) return null;
+  return PORVENIR_RVI_CUENTAS.find(c=>norm(c.nombre)===objetivo)
+      || PORVENIR_RVI_CUENTAS.find(c=>norm(c.nombre).includes(objetivo))
+      || PORVENIR_RVI_CUENTAS.find(c=>objetivo.includes(norm(c.nombre)))
+      || null;
+}
+
+// Proforma EXTENDIDA de Porvenir: 26 columnas, título en A1:D2, logo en F1 y
+// encabezados en la fila 5 (fondo negro, letra blanca, negrita, tamaño 11).
+async function generarTradeConfirmationPorvenirRVI(cliente, filas, opciones){
+  const opts = opciones || {};
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Credicorp Capital Colombia — Equity Sales';
+  const ws = wb.addWorksheet('Trade Confirmation', {
+    pageSetup: { orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 },
+    views: [{ showGridLines:false }],
+  });
+
+  const H = ['Account','Account #','Trade Date','Settle Date','Side','Security','Security Description',
+             'SEDOL','ISIN','FillQty','Trading Currency','AvgPr','FX Rate','Settle Currency',
+             'Gross Px Settle Curr','Gross Amount','Commission','Research Comm.','Exec Broker Comm',
+             'Clearing Broker Comm','Stamp Duty','Sales Tax','Exchange Fee','Clearing Fee','Net Amount','Notes'];
+
+  // Título A1:D2, tamaño 20.
+  ws.mergeCells('A1:D2');
+  const t = ws.getCell('A1');
+  t.value = 'TRADE CONFIRMATION';
+  t.font = { name:'Calibri', size:20, bold:true };
+  t.alignment = { horizontal:'left', vertical:'middle' };
+
+  // Logo en F1. Coordenadas ENTERAS: con fraccionarias ExcelJS descarta la imagen.
+  try{
+    const imgId = wb.addImage({ base64: LOGO_CREDICORP_B64, extension:'png' });
+    ws.addImage(imgId, { tl:{ col:5, row:0 }, ext:{ width:120, height:40 } });
+  }catch(e){ console.warn('No se pudo insertar el logo:', e.message); }
+
+  // Encabezados en la fila 5.
+  H.forEach((h,i)=>{
+    const c = ws.getCell(5, i+1);
+    c.value = h;
+    c.font = { name:'Calibri', size:11, bold:true, color:{argb:'FFFFFFFF'} };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF000000'} };
+    c.alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+  });
+  ws.getRow(5).height = 30;
+
+  let r = 6;
+  filas.forEach(f=>{
+    const cuenta = cuentaPorvenirRVI(f.portafolio || f.account);
+    const qty = Number(f.cantidad) || 0;
+    const px = Number(f.precio) || 0;
+    const gross = redondear(qty * px, 4);
+    const com = redondear(Number(f.comision)||0, 2);
+    const secFee = redondear(Number(f.secFee)||0, 2);
+    // Neto: en compra se suma lo que se paga de más; en venta se resta.
+    const neto = String(f.lado).toUpperCase()==='SELL'
+      ? redondear(gross - com - secFee, 4)
+      : redondear(gross + com + secFee, 4);
+    const v = [
+      cuenta ? cuenta.nombre : (f.portafolio || f.account || ''),
+      cuenta ? cuenta.num : '',
+      f.fechaTrade, f.fechaSettle,
+      String(f.lado).toUpperCase()==='SELL' ? 'Sell' : 'Buy',
+      tickerLimpioRVI(f.especie),
+      descripcionDeTicker(f.especie),
+      sedolDeTicker(f.especie),
+      f.isin || isinTickerRVI(f.especie) || '',
+      qty, 'USD', px,
+      0,            // FX Rate: nunca trae dato
+      'USD',
+      px,           // Gross Px Settle Curr = AvgPr (misma moneda)
+      gross,
+      com,
+      0, 0, 0, 0, 0, 0, 0,   // Research, Exec, Clearing, Stamp, Sales Tax, Exchange, Clearing Fee
+      neto,
+      f.trader || '',
+    ];
+    v.forEach((val,i)=>{ ws.getCell(r, i+1).value = val; });
+    // Formatos: fechas dd/mm/yyyy, cantidades y montos con separador.
+    [3,4].forEach(c=>{ ws.getCell(r,c).numFmt = 'dd/mm/yyyy'; });
+    ws.getCell(r,10).numFmt = '#,##0.00';
+    [12,15].forEach(c=>{ ws.getCell(r,c).numFmt = '#,##0.0000'; });
+    [13,16,17,18,19,20,21,22,23,24,25].forEach(c=>{ ws.getCell(r,c).numFmt = '#,##0.0000;-#,##0.0000;"-"'; });
+    for(let c=1;c<=26;c++) ws.getCell(r,c).font = { name:'Calibri', size:11 };
+    r++;
+  });
+
+  autofitColumnas(ws, {min:9, max:44});
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `TRADE_CONFIRMATION_PORVENIR_${(opts.fechaSlug||'')}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 async function generarTradeConfirmationRVI(cliente, filas){
@@ -13682,7 +13810,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-20 21:50 UTC';
+const BUILD_ID = '2026-08-20 22:02 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
