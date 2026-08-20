@@ -1703,7 +1703,7 @@
         </div>
         <div class="field-row">
           <div class="field" style="flex:1 1 100%;">
-            <label>Comisión CCSI (¢/acción o % según tipo) — la que nos cobran</label>
+            <label>Comisión Broker (¢/acción o % según tipo) — la que nos cobran</label>
             <input type="text" inputmode="decimal" id="tc-com-ccsi" oninput="calcularRVI()" onblur="fmtInput(this,4);calcularRVI()" placeholder="0.003">
           </div>
         </div>
@@ -1757,28 +1757,29 @@
             <div class="rc-value" id="rc-cost">—</div>
           </div>
           <div class="rate-card teal">
-            <div class="rc-label">Comisión CCSI</div>
+            <div class="rc-label">Comisión Broker</div>
             <div class="rc-value" id="rc-ccsi">—</div>
           </div>
         </div>
 
         <div class="rate-cards">
           <div class="rate-card">
-            <div class="rc-label">Gross Amount</div>
-            <div class="rc-value" id="rc-gross">—</div>
+            <div class="rc-label">Net Amount Cliente</div>
+            <div class="rc-value" id="rc-net">—</div>
           </div>
           <div class="rate-card">
-            <div class="rc-label">Net Amount (cliente)</div>
-            <div class="rc-value" id="rc-net">—</div>
+            <div class="rc-label">Net Amount Nosotros</div>
+            <div class="rc-value" id="rc-net-nosotros">—</div>
           </div>
         </div>
 
+        <div class="result-row"><span class="label">Gross Amount</span><span class="value" id="rc-gross">—</span></div>
         <div class="result-row"><span class="label">Tarifa cliente (tabla)</span><span class="value" id="rc-tarifa-cliente">—</span></div>
-        <div class="result-row"><span class="label">Tarifa CCSI</span><span class="value" id="rc-tarifa-ccsi">—</span></div>
+        <div class="result-row"><span class="label">Tarifa Broker</span><span class="value" id="rc-tarifa-ccsi">—</span></div>
         <div class="divider"></div>
         <div class="result-row"><span class="label">Margen de precio</span><span class="value" id="rc-margen">—</span></div>
         <div class="result-row"><span class="label">+ Comisión cliente</span><span class="value" id="rc-mas-cost">—</span></div>
-        <div class="result-row"><span class="label">− Comisión CCSI</span><span class="value" id="rc-menos-ccsi">—</span></div>
+        <div class="result-row"><span class="label">− Comisión Broker</span><span class="value" id="rc-menos-ccsi">—</span></div>
         <div class="result-row total"><span class="label">Utilidad bruta</span><span class="value" id="rc-utilidad">—</span></div>
       </div>
 
@@ -12697,111 +12698,95 @@ function toggleMarcaRVI(id){
   renderArqueoRVI();
 }
 
-// EMSX -> TRADE CONFIRMATION -> DISTRIBUCIÓN. Al marcar líneas, el formulario
-// de abajo se llena solo con lo que ya sabe EMSX y el Account entra como
-// portafolio de la distribución. Los campos quedan EDITABLES: sirven de
-// respaldo y para corregir lo que haga falta (Sergio, 19-ago).
+// EMSX -> TRADE CONFIRMATION -> DISTRIBUCIÓN. Al marcar líneas con el checkbox
+// se llena el formulario de abajo, igual que al hacer clic en la fila. Se
+// reusa seleccionarLinea() —que ya sabe poblar todo, incluida la distribución
+// y el sec fee— en vez de duplicar esa lógica: la primera versión escribía
+// `cantidad` donde el módulo espera `qty` y la distribución salía vacía
+// (Sergio, 19-ago).
+// Traduce el Originating Firm de EMSX ("AVAL FIDUCIARIA SA") a la clave de la
+// tabla de clientes RVI ("AVAL_FIDUCIARIA"). Compara por palabras propias, sin
+// las genéricas, que es lo mismo que se hizo en RVL.
+function claveClienteRVI(firm){
+  const norm = t => String(t||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const GEN = ['FIDUCIARIA','SEGUROS','ADMINISTRADORA','FONDO','FONDOS','PENSIONES','CESANTIAS',
+               'SOCIEDAD','SA','S.A','SAS','CAPITAL','GRUPO','BANCO','COLOMBIA','AFP','VALORES'];
+  const pal = t => norm(t).split(/[^A-Z0-9]+/).filter(x=>x.length>=3 && !GEN.includes(x));
+  const pf = pal(firm);
+  if(!pf.length) return '';
+  if(typeof clientesRVI === 'undefined') return '';
+  // 1) coincidencia exacta con la clave  2) por palabra propia del nombre
+  const claves = Object.keys(clientesRVI);
+  const exacta = claves.find(k => norm(k).replace(/_/g,' ') === norm(firm));
+  if(exacta) return exacta;
+  return claves.find(k => {
+    const pk = pal(String(k).replace(/_/g,' ') + ' ' + (clientesRVI[k].nombre||''));
+    return pk.some(x => pf.includes(x));
+  }) || '';
+}
+
 function volcarLineaEnFormularioRVI(){
   const marcadas = getFiltradas().filter(r=>_rviMarcadas.has(r.id));
   if(!marcadas.length) return;
   const esNuestra = r => /CREDICORP/i.test(String(r.firm||''));
+  // La línea que va al Trade Confirmation es la del CLIENTE; la nuestra contra
+  // el broker solo alimenta el margen y el reporte del BO.
   const cli = marcadas.find(r=>!esNuestra(r)) || marcadas[0];
-  // getQtyTotal(), calcularRVI() y la distribución trabajan sobre `lineaActiva`.
-  // Al marcar con el checkbox hay que fijarla también, si no el sec fee y la
-  // cantidad disponible quedan en cero (Sergio, 19-ago).
-  lineaActiva = cli.id;
-  const set = (id, v) => { const e = document.getElementById(id); if(e && v != null && v !== '') e.value = v; };
+  seleccionarLinea(cli.id);
 
-  // Cliente: se busca en el selector por nombre del Originating Firm.
+  // Si el cliente no quedó puesto, se busca en la tabla RVI por el Originating
+  // Firm. Sin esto el selector queda vacío y TODO el cuadro de comisiones se
+  // apaga: `calcularRVI` se corta cuando no hay cliente (Sergio, 19-ago).
   const selCli = document.getElementById('tc-cliente');
-  if(selCli){
-    const buscado = String(cli.firm||'').toUpperCase();
-    const op = [...selCli.options].find(o=>{
-      const t = String(o.textContent||'').toUpperCase();
-      return t && (t === buscado || buscado.includes(t) || t.includes(buscado));
-    });
-    if(op) selCli.value = op.value;
+  if(selCli && !selCli.value){
+    const clave = claveClienteRVI(cli.firm);
+    if(clave){
+      // Si el selector aún no tiene la opción, se agrega para poder elegirla.
+      if(![...selCli.options].some(o=>o.value===clave)){
+        const o = document.createElement('option');
+        o.value = clave;
+        o.textContent = (clientesRVI[clave] && clientesRVI[clave].nombre) || clave;
+        selCli.appendChild(o);
+      }
+      selCli.value = clave;
+      if(typeof onCambioCliente === 'function') onCambioCliente();
+    }
   }
-  set('tc-symbol', tickerLimpioRVI(cli.especie));
-  set('tc-isin', isinTickerRVI(cli.especie));
-  const selTipo = document.getElementById('tc-tipo');
-  if(selTipo && cli.tipo){
-    const op = [...selTipo.options].find(o=>String(o.value).toUpperCase()===String(cli.tipo).toUpperCase());
-    if(op) selTipo.value = op.value;
-  }
-  const selSide = document.getElementById('tc-side');
-  if(selSide && cli.lado){
-    const op = [...selSide.options].find(o=>String(o.value).toUpperCase()===String(cli.lado).toUpperCase());
-    if(op) selSide.value = op.value;
-  }
-  // Precio: en SIN MARGEN es el de ejecución. En CON MARGEN se deja en blanco
-  // a propósito, porque el precio del cliente lo escribe Sergio.
-  if(_modoRVI.margen === 'sin'){
-    const q = marcadas.reduce((a,r)=>a+(Number(r.qty)||0),0);
-    const pp = q ? marcadas.reduce((a,r)=>a+(Number(r.qty)||0)*(Number(r.avgPr)||0),0)/q : 0;
-    set('tc-price', pp ? pp.toFixed(4) : '');
+  // En CON MARGEN el precio del cliente lo escribe Sergio: se deja vacío para
+  // que el arqueo lo exija en vez de heredar el de ejecución.
+  if(_modoRVI.margen === 'con' && marcadas.length === 1){
+    const p = document.getElementById('tc-price');
+    if(p) p.value = '';
   }
   if(typeof calcularRVI === 'function') calcularRVI();
-
-  // Distribución: si el Account viene de EMSX, se agrega como portafolio.
-  // El Account de EMSX entra como portafolio de la distribución, con la
-  // cantidad de la línea: si el cliente ya lo mandó, no hay nada que repartir.
-  if(typeof distribuciones !== 'undefined' && cli.account && cli.account !== '—'){
-    const yaEsta = distribuciones.some(d=>String(d.account)===String(cli.account));
-    if(!yaEsta){
-      distribuciones.push({ account: String(cli.account), cantidad: Number(cli.qty)||0 });
-      if(typeof renderDistribuciones === 'function') renderDistribuciones();
-    }
-    // El selector de account también se posiciona, por si hay que ajustar.
-    const sel = document.getElementById('nuevo-account');
-    if(sel){
-      const op = [...sel.options].find(o=>String(o.value)===String(cli.account) ||
-                                          String(o.textContent||'').includes(String(cli.account)));
-      if(op) sel.value = op.value;
-    }
-  }
+  if(typeof renderDistribuciones === 'function') renderDistribuciones();
 }
 
-function toggleTodasRVI(marcar){
-  if(_modoRVI.margen === 'sin'){
-    alert('En modo SIN MARGEN se reporta una sola línea.\n\nMarca la que vas a procesar, o cambia a CON MARGEN.');
-    document.getElementById('chkAllRVI').checked = false;
-    return;
-  }
-  _rviMarcadas = marcar ? new Set(getFiltradas().map(r=>r.id)) : new Set();
-  renderEmsx();
-  renderArqueoRVI();
-}
-
-// ---- Comisión que nos cobra la contraparte ----
+// ---- Comisión que cobra la contraparte ----
 // CCSI (Credicorp Capital LLC) siempre cobra; Tradition (TFSC) y BTG NY (BTGH)
 // cobran como ETF. Los Market Makers van por RFQE con comisión 0.
 const RVI_BROKERS_CON_COSTO = ['CCSI','TFSC','BTGH'];
 function comisionContraparteRVI(broker, tipo, qty, gross, isin){
   const b = String(broker||'').toUpperCase().trim();
   if(!RVI_BROKERS_CON_COSTO.some(x=>b.includes(x))) return 0;   // market maker
-  // UCITS se reconoce por el ISIN: los irlandeses (IE...) y luxemburgueses (LU)
-  // no son US, y se cobran como % del gross en vez de por acción.
+  // UCITS se reconoce por el ISIN: irlandeses (IE) y luxemburgueses (LU) no son
+  // US y se cobran como % del gross en vez de por acción.
   const esUcits = /^(IE|LU)/i.test(String(isin||''));
   if(esUcits) return redondear(gross * 0.0004, 2);              // 0,04% del gross
   const porAccion = String(tipo||'').toUpperCase() === 'ADR' ? 0.005 : 0.003;
   return redondear(qty * porAccion, 2);
 }
 
-// ---- Comisión MÍNIMA al cliente ----
-// USD 20 para casi todos. Las tres AFP grandes están exentas: sus volúmenes
-// son tan altos que el mínimo nunca aplicaría, y lo tienen negociado
-// (Sergio, 19-ago). Validado con el Trade Confirmation de AVAL del 19-ago:
-// IAU 3.150 acciones daban 15,75 por acción, pero se cobraron 20.
+// ---- Comisión MÍNIMA: USD 20 ----
+// Aplica al cliente y también a lo que nos cobra el broker. Las tres AFP
+// grandes están exentas por volumen (Sergio, 19-ago). Validado con el Trade
+// Confirmation de AVAL: IAU 3.150 daban 9,45 por acción y se cobraron 20.
 const RVI_MINIMO_USD = 20;
 const RVI_SIN_MINIMO = ['PROTECCION', 'COLFONDOS', 'PORVENIR'];
-
 function aplicaMinimoRVI(cliente){
   const c = String(cliente||'').toUpperCase();
   return !RVI_SIN_MINIMO.some(x => c.includes(x));
 }
-
-// Costo que se le cobra al CLIENTE, ya con el mínimo aplicado.
 function costoClienteRVI(cliente, calculado){
   const v = Number(calculado) || 0;
   if(!aplicaMinimoRVI(cliente)) return redondear(v, 2);
@@ -12809,13 +12794,13 @@ function costoClienteRVI(cliente, calculado){
 }
 
 // ---- SEC fee ----
-// Solo ETFs y ADRs, y SOLO en ventas. Si algo cumple eso y no lo trae, es un
-// error (Sergio, 19-ago). Usa la tasa SEC_FEE_RATE ya declarada arriba.
+// Solo ETFs y ADRs, y SOLO en ventas de instrumentos US. Reproduce exacto el
+// 5,48 del Trade Confirmation de IAU (265.954,50 x SEC_FEE_RATE).
 function secFeeRVI(tipo, lado, gross, isin){
   const t = String(tipo||'').toUpperCase();
   if(t !== 'ETF' && t !== 'ADR') return 0;
   if(String(lado||'').toUpperCase() !== 'SELL') return 0;
-  if(!/^US/i.test(String(isin||''))) return 0;    // solo instrumentos US
+  if(!/^US/i.test(String(isin||''))) return 0;
   return redondear(gross * SEC_FEE_RATE, 2);
 }
 
@@ -12991,8 +12976,11 @@ function seleccionarLinea(id){
   if(linea.cliente && clientesRVI[linea.cliente]){
     document.getElementById('tc-cliente').value = linea.cliente;
   }
-  document.getElementById('tc-symbol').value = linea.especie;
-  document.getElementById('tc-isin').value = linea.isin;
+  // El símbolo va LIMPIO ("IAU", no "IAU US Equity") y el ISIN se deduce de la
+  // tabla si la línea de EMSX no lo trae: así no queda "undefined" en el
+  // archivo (Sergio, 19-ago).
+  document.getElementById('tc-symbol').value = tickerLimpioRVI(linea.especie);
+  document.getElementById('tc-isin').value = linea.isin || isinTickerRVI(linea.especie) || '';
   document.getElementById('tc-tipo').value = linea.tipo;
   document.getElementById('tc-side').value = linea.lado;
   document.getElementById('tc-price').value = fmtRateRVI(linea.avgPr,4);
@@ -13207,6 +13195,17 @@ function calcularRVI(){
   document.getElementById('rc-cost').textContent = fmtMoneyRVI(c.costCliente,2);
   document.getElementById('rc-ccsi').textContent = fmtMoneyRVI(c.costCCSI,2);
   document.getElementById('rc-net').textContent = fmtMoneyRVI(netCliente,2);
+  // NET AMOUNT NOSOTROS: lo que giramos/recibimos contra el broker. Se calcula
+  // con NUESTRO precio de ejecución (el del vínculo, o el mismo del cliente si
+  // no hay margen) y la comisión que nos cobra el broker. La diferencia contra
+  // el neto del cliente es la utilidad de la operación (Sergio, 19-ago).
+  const _vinc = precioNuestroVinculo(lineaActiva);
+  const _pxNuestro = (_vinc && _vinc.precio) ? _vinc.precio : price;
+  const _grossNuestro = redondear(qty * _pxNuestro, 2);
+  const _netNuestro = lado==='Sell' ? _grossNuestro - c.costCCSI - secFee
+                                    : _grossNuestro + c.costCCSI;
+  const _elNetNos = document.getElementById('rc-net-nosotros');
+  if(_elNetNos) _elNetNos.textContent = fmtMoneyRVI(_netNuestro, 2);
   // Desglose de utilidad.
   const elMargen = document.getElementById('rc-margen');
   const elMas = document.getElementById('rc-mas-cost');
@@ -13643,7 +13642,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-19 23:49 UTC';
+const BUILD_ID = '2026-08-20 00:00 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
