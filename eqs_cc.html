@@ -6967,6 +6967,25 @@ function procesarFidessa(){
 // señales más, que sí son fiables:
 //   - el ticker de Bloomberg termina en "CB Equity"
 //   - el broker es CVAL, que solo opera local
+// Busca el nemo a partir del ISIN, para las órdenes en las que EMSX no mandó
+// el ticker. La tabla ISIN ya existe y se recorre al revés.
+function nemoDeIsin(isin){
+  const v = String(isin||'').toUpperCase().trim();
+  if(!v) return '';
+  try{
+    // _ISIN_POR_NUAM es { NEMO: ISIN }; se recorre al revés.
+    if(typeof _ISIN_POR_NUAM !== 'undefined'){
+      const k = Object.keys(_ISIN_POR_NUAM).find(x => String(_ISIN_POR_NUAM[x]).toUpperCase() === v);
+      if(k) return k;
+    }
+    if(typeof ISIN_RVI !== 'undefined'){
+      const k = Object.keys(ISIN_RVI).find(x => String(ISIN_RVI[x]).toUpperCase() === v);
+      if(k) return k;
+    }
+  }catch(e){}
+  return '';
+}
+
 function esLineaLocalCB(row){
   if(!row) return false;
   const ex = String(row.exchange||'').toUpperCase().trim();
@@ -8632,7 +8651,12 @@ function renderEmsxCBTable(){
     horaTxt: row.order_time ? new Date(row.order_time).toLocaleTimeString('es-CO',{timeZone:'America/Bogota', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}) : '—',
     firm: row.originate_trader_firm||'CREDICORP CAPITAL COLOMBIA SA',
     account: row.account||'—',
-    ticker: nemoCanonico(row.ticker, 'emsx') || row.nombre_completo || '',
+    // Si EMSX no mandó el ticker (pasa en algunas órdenes PARTFILL, como la de
+    // ISA del 24-ago), se intenta con el nombre completo y luego con el ISIN.
+    // Como último recurso se marca con '?' en vez de dejar la celda muda: así
+    // se ve que la orden existe pero le falta el dato.
+    ticker: nemoCanonico(row.ticker, 'emsx') || row.nombre_completo
+            || (row.isin ? nemoDeIsin(row.isin) : '') || '⚠ sin especie',
     lado: (row.side||'').toUpperCase().startsWith('B')?'Compra':'Venta',
     filled: Number(row.filled)||0,
     avgPrice: Number(row.avg_price)||0,
@@ -13977,7 +14001,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-24 19:43 UTC';
+const BUILD_ID = '2026-08-24 19:49 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
