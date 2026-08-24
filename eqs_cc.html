@@ -1617,6 +1617,7 @@
               <th class="sortable" onclick="aplicarOrdenGenerico('rvi','broker')">Broker<span class="sort-arrow" id="arrow-rvi-broker"></span></th>
               <th class="sortable" onclick="aplicarOrdenGenerico('rvi','account')">Account<span class="sort-arrow" id="arrow-rvi-account"></span></th>
               <th class="sortable" onclick="aplicarOrdenGenerico('rvi','status')">Estado<span class="sort-arrow" id="arrow-rvi-status"></span></th>
+              <th class="sortable" onclick="aplicarOrdenGenerico('rvi','_reportado')" title="Si la línea ya salió en una Trade Confirmation de hoy.">Reportado<span class="sort-arrow" id="arrow-rvi-_reportado"></span></th>
             </tr>
           </thead>
           <tbody id="emsx-body"></tbody>
@@ -8517,6 +8518,30 @@ function proximaVersion(cliente, modulo){
 }
 
 // Registra las líneas de un envío. Solo inserta las que aún no están.
+// Registra en el módulo Reportes lo que se exportó en RVI. Antes solo RVL y FX
+// alimentaban ese registro, así que una Trade Confirmation generada no dejaba
+// rastro y la línea seguía apareciendo como pendiente (Sergio, 24-ago).
+async function registrarLoteRVI(cliente, filas){
+  if(!filas || !filas.length) return;
+  const version = proximaVersion(cliente, 'RVI');
+  // La unidad de RVI es la LÍNEA DE EMSX. Cada fila del histórico lleva el id
+  // de la línea que la originó; si no lo trae, se usa la combinación
+  // símbolo+lado como identificador estable del día.
+  const lineas = filas.map(f=>({
+    parentOrderId: String(f.emsxId || f.lineaId || (String(f.symbol||f.especie||'') + '|' + String(f.side||f.lado||''))),
+    especie: f.symbol || f.especie || '',
+    lado: f.side || f.lado || '',
+    cantidad: Number(f.qty != null ? f.qty : f.cantidad) || 0,
+    precio: Number(f.price != null ? f.price : f.precio) || 0,
+    comision: Number(f.cost != null ? f.cost : f.comision) || 0,
+  }));
+  const nuevas = await registrarReporte('RVI', cliente, lineas, version);
+  await cargarReportesGenerados();
+  renderEmsx();
+  if(typeof renderModuloReportes === 'function') renderModuloReportes();
+  return nuevas;
+}
+
 async function registrarReporte(modulo, cliente, lineas, version){
   const yaEstan = new Set(_reportesGenerados
     .filter(r => r.cliente === cliente && r.modulo === modulo)
@@ -12843,6 +12868,28 @@ function secFeeRVI(tipo, lado, gross, isin){
   return redondear(gross * SEC_FEE_RATE, 2);
 }
 
+// Mismo lenguaje visual que la columna Reportado de RVL: ámbar PENDIENTE,
+// verde ● REPORTADO. Reemplaza al "✓ procesado" que iba pegado al estado de
+// EMSX y se confundía con él (Sergio, 24-ago).
+function vecesReportadaRVI(linea){
+  const id = String(linea.id);
+  const alt = String(linea.especie||'') + '|' + String(linea.lado||'');
+  return (_reportesGenerados||[]).filter(r =>
+    r.modulo === 'RVI' && (String(r.parent_order_id) === id || String(r.parent_order_id) === alt)
+  ).length;
+}
+
+function badgeReporteRVI(linea){
+  const n = vecesReportadaRVI(linea);
+  if(n === 0){
+    return '<span style="color:var(--amber,#f59e0b);font-size:10px;letter-spacing:.3px;" ' +
+           'title="Todavía no ha salido en ninguna Trade Confirmation de hoy.">PENDIENTE</span>';
+  }
+  const veces = n > 1 ? ` (${n})` : '';
+  return `<span style="color:var(--buy,#22c55e);font-size:10px;letter-spacing:.3px;" ` +
+         `title="Ya salió en ${n} Trade Confirmation(es) de hoy.">● REPORTADO${veces}</span>`;
+}
+
 function renderArqueoRVI(){
   const cont = document.getElementById('arqueoRVI');
   if(!cont) return;
@@ -12975,11 +13022,12 @@ function renderArqueoRVI(){
 
 function renderEmsx(){
   let data = getFiltradas();
-  data = ordenarArrayGenerico(data.map(r=>({...r, gross: r.qty*r.avgPr})), 'rvi');
+  // _reportado permite ordenar por la columna Reportado: 0 pendiente, 1+ ya salió.
+  data = ordenarArrayGenerico(data.map(r=>({...r, gross: r.qty*r.avgPr, _reportado: vecesReportadaRVI(r)})), 'rvi');
   const tbody = document.getElementById('emsx-body');
   document.getElementById('emsx-count').textContent = data.length+' líneas';
   if(!data.length){
-    tbody.innerHTML='<tr><td colspan="12" class="empty-state">Sin líneas que coincidan con los filtros.</td></tr>';
+    tbody.innerHTML='<tr><td colspan="13" class="empty-state">Sin líneas que coincidan con los filtros.</td></tr>';
     return;
   }
   const idsAfueraVinculadas = new Set(Object.values(_rviVinculos).flat());
@@ -13007,8 +13055,8 @@ function renderEmsx(){
       <td class="mono-id">${r.account||'—'}</td>
       <td>
         <span class="status-badge ${(r.status||'').toUpperCase()==='FILLED' ? 'filled' : 'pending'}" title="Estado en EMSX">${r.status || '—'}</span>
-        ${r.procesado ? ' <span class="status-badge filled" title="Trade Confirmation ya generado">✓ procesado</span>' : ''}
       </td>
+      <td>${badgeReporteRVI(r)}</td>
     </tr>`;
   }).join('');
 }
@@ -13323,6 +13371,9 @@ function generarTC(){
 
     historial.unshift({
       id: tcId+Math.random(),
+      // Id de la línea de EMSX que originó la operación: es la unidad que
+      // registra el módulo Reportes, igual que el Parent Order ID en RVL.
+      emsxId: lineaActiva,
       hora, cliente:db.nombre, account:d.account, side:lado, symbol, isin,
       qty:d.qty, price, gross:grossAcc, cost:costAcc, secFee:secFeeAcc, net:netAcc,
       ccsi:ccsiAcc, tradeDate, settleDate, tipo,
@@ -13424,9 +13475,11 @@ async function exportarPDF(){
     const d = new Date();
     const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
     await generarTradeConfirmationPorvenirRVI(cliente, filas, { fechaSlug: slug });
+    await registrarLoteRVI(cliente, filas);
     return;
   }
   await generarTradeConfirmationRVI(cliente, filas);
+  await registrarLoteRVI(cliente, filas);
 }
 
 // =====================================================================
@@ -13889,7 +13942,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-24 18:49 UTC';
+const BUILD_ID = '2026-08-24 19:25 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
