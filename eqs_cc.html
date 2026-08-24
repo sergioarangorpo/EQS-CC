@@ -12339,7 +12339,11 @@ const clientesRVI = {
     nombre:'SOCIEDAD ADMINISTRADORA PORVENIR SA',
     taxId:'830.114.379',
     comETF:0.004, comUCIT:0.04/100, comADR:0.004,
-    portafolios:['PORVENIR MODERADO','PORVENIR MAYOR RIESGO','PORVENIR RETIRO'],
+    // Los portafolios se llenan más abajo con las 48 CUENTAS de la proforma
+    // (PORVENIR_RVI_CUENTAS): son las mismas que hay que poner en el archivo,
+    // con su Account #. Antes había tres nombres inventados y no aparecía
+    // Cesantías (Sergio, 24-ago).
+    portafolios:[],
     esPorvenir:true,
   },
   ALLIANZ: {
@@ -13438,6 +13442,34 @@ const PORVENIR_RVI_CUENTAS = [{"nombre": "PORV. SA-FVP60 DIVER DINAMICO", "num":
 // SEDOL y nombre largo por ticker. Sin esto esas dos columnas irían vacías.
 const RVI_SEDOL_DESC = {"ACWI": {"sedol": "B2QKQH6", "desc": "iShares MSCI ACWI ETF"}, "BOTZ": {"sedol": "BD37KB9", "desc": "Global X Robotics & Artificial Intelligence"}, "EMB": {"sedol": "B2B1JH5", "desc": "Emerging Markets Bond ETF Bond Index"}, "ESGE": {"sedol": "BD06LN8", "desc": "iShares ESG Aware MSCI EM ETF"}, "EZU": {"sedol": "2670605", "desc": "iShares MSCI Eurozone ETF"}, "FXI": {"sedol": "B0357H7", "desc": "iShares China Large-Cap ETF"}, "IEMG": {"sedol": "B8NDCB6", "desc": "iShares Core MSCI Emerging Markets ETF"}, "IVV": {"sedol": "2593025", "desc": "iShares Core S&P 500 ETF"}, "JNK": {"sedol": "BJLV5H6", "desc": "SPDR Bloomberg High Yield Bond ETF"}, "MCHI": {"sedol": "B5LX1Z4", "desc": "iShares MSCI China ETF"}, "QCLN": {"sedol": "B1RMJP3", "desc": "Clean Edge Green Energy Index Fund"}, "QQQ": {"sedol": "BDQYP67", "desc": "Invesco QQQ Trust Series 1"}, "SPY": {"sedol": "2840215", "desc": "SPDR S&P 500 ETF Trust"}, "SUAS": {"sedol": "BYVJRR9", "desc": "MSCI USA SRI UCITS ETF"}, "VWO": {"sedol": "B06HMH5", "desc": "Vanguard FTSE Emerging Markets ETF"}, "XLB": {"sedol": "2436841", "desc": "Materials Select Sector SPDR Trust"}, "XLC": {"sedol": "BFXHC51", "desc": "Communication Services Select Sector SPDR"}, "XLE": {"sedol": "2402466", "desc": "Energy Select Sector SPDR Fund"}, "XLF": {"sedol": "2364038", "desc": "Financial Select Sector SPDR Fund"}, "XLI": {"sedol": "2502139", "desc": "Industrial Select Sector SPDR Fund"}, "XLK": {"sedol": "2369709", "desc": "Technology Select Sector SPDR Fund"}, "XLP": {"sedol": "2369389", "desc": "Consumer Staples Select Sector SPDR"}, "XLRE": {"sedol": "BYZ65Y9", "desc": "Real Estate Select Sector SPDR Fund"}, "XLV": {"sedol": "2371823", "desc": "Health Care Select Sector SPDR Fund"}, "XLY": {"sedol": "2424341", "desc": "Consumer Discretionary Select Sector SPDR"}, "VOO": {"sedol": "BF2GMJ3", "desc": "Vanguard S&P 500 ETF"}, "EEMA": {"sedol": "B7KTHQ0", "desc": "iShares MSCI Emerging Market Asia"}, "XLU": {"sedol": "2371812", "desc": "Utilities Select Sector SPDR"}, "RSP": {"sedol": "BZ03230", "desc": "Invesco S&P 500 Equal Weight ETF Class USD"}, "EEM": {"sedol": "2582409", "desc": "iShares MSCI Emerging Market"}, "SPEM": {"sedol": "B1VQ3D7", "desc": "SPDR Portfolio Emerging Marks"}, "BBJP": {"sedol": "BNNM0M5", "desc": "JPMORGAN BETABUILDERS JAPAN"}, "SPLG": {"sedol": "B0Q4NL7", "desc": "SPDR Portfolio S&P 500 ETF"}, "IJPA": {"sedol": "B4L5YX2", "desc": "Ishares Core MSCI Japan"}, "SDIA": {"sedol": "BYXYYP9", "desc": "Ishares USD Short Duration"}, "IEMB": {"sedol": "B2NXVM8", "desc": "Ishares JPM USD BND"}, "EWJ": {"sedol": "BDR7G84", "desc": "Ishares MSCI Japan ETF"}, "ECH": {"sedol": "B29FC81", "desc": "ISHARES MSCI CHILE ETF"}, "AAXJ": {"sedol": "B3B9631", "desc": "Ishares MSCI All Country Asia"}, "UC65": {"sedol": "BGCZKF9", "desc": "UBS ETF MSCI Japan UKD"}, "ILF": {"sedol": "2812980", "desc": "Ishares Latin America 40 ETF"}, "IWF": {"sedol": "2679839", "desc": "Ishares Rusell 1000 Growth"}, "STHY": {"sedol": "B7N22D8", "desc": "PIMCO US Short-Term High Yield Corporate Bond UCITS"}, "EWW": {"sedol": "2373818", "desc": "iShares MSCI Mexico ETF"}, "QQQM": {"sedol": "BMXZ8S9", "desc": "Invesco Nasdaq 100 ETF"}, "CSPX": {"sedol": "B50YWZ5", "desc": "Ishares Core S&P 500 ETF"}, "EMXC": {"sedol": "BYXKYV3", "desc": "iShares MSCI Emerging Markets ex China ETF"}, "ZROZ": {"sedol": "B54YDP8", "desc": "PIMCO 25+ Year Zero Coupon US Treasury Index ETF"}, "XAID": {"sedol": "BMY62Y5", "desc": "X ARTIFICIAL INTEL BIG DA 1C"}, "AIQ": {"sedol": "BF5MLP7", "desc": "GLOBAL X ART INTEL & TECH"}, "VTWO": {"sedol": "B48MJP3", "desc": "Vanguard Russell 2000 ETF"}, "SPYM": {"sedol": "B0Q4NL7", "desc": "State Street SPDR Portfolio S&P 500 ETF"}, "EWY": {"sedol": "2592561", "desc": "iShares MSCI South Korea ETF"}, "IBIT": {"sedol": "BQ9CHK7", "desc": "ISHARES BITCOIN TRUST ETF"}, "ICHN": {"sedol": "BJ5JPG5", "desc": "Ishares MSCI China USD Acc"}, "XMJD": {"sedol": "B24CWK9", "desc": "Xtrackers MSCI Japan ETF 1C"}};
 
+// Las 48 cuentas entran como portafolios del cliente en RVI: son las que se
+// escriben en la proforma y las que hay que poder elegir en la distribución.
+if(typeof clientesRVI !== 'undefined' && clientesRVI.PORVENIR){
+  clientesRVI.PORVENIR.portafolios = PORVENIR_RVI_CUENTAS.map(c=>c.nombre);
+}
+
+// Los portafolios son LOS MISMOS en RVL y RVI: el cliente no cambia de fondos
+// por operar afuera. Las listas de RVI estaban recortadas —COLFONDOS tenía 5
+// de 21 y Skandia 5 de 61— así que se traen de la base de RVL, que es la
+// completa y la que se mantiene actualizada (Sergio, 24-ago).
+{
+  const equivalencias = {
+    COLFONDOS: 'COLFONDOS',
+    PROTECCION: 'PROTECCION',
+    SKANDIA: 'SKANDIA',
+    SKANDIA_SEGUROS: 'SKANDIA SEGUROS',
+    AVAL_FIDUCIARIA: 'AVAL FIDUCIARIA',
+  };
+  Object.keys(equivalencias).forEach(kRvi=>{
+    if(typeof clientesRVI === 'undefined' || !clientesRVI[kRvi]) return;
+    const cfg = (typeof getClienteDB === 'function') ? getClienteDB(equivalencias[kRvi]) : null;
+    const ports = (cfg && cfg.portafolios) ? cfg.portafolios : [];
+    if(ports.length > (clientesRVI[kRvi].portafolios||[]).length){
+      clientesRVI[kRvi].portafolios = ports.map(p=>p.nombre || String(p));
+    }
+  });
+}
+
 function sedolDeTicker(sym){
   const t = tickerLimpioRVI(sym);
   return (RVI_SEDOL_DESC[t] || {}).sedol || '';
@@ -13827,7 +13859,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-24 16:33 UTC';
+const BUILD_ID = '2026-08-24 16:41 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
