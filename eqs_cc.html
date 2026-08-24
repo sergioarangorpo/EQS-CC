@@ -4572,6 +4572,19 @@ const clientesDB = {
     // (mismo override que PROTECCIÓN y PORVENIR).
     comisionBloque: 0.0015, comisionPantalla: 0.0008,
   },
+  'CREDICORPFFMM': {
+    nombre: 'CREDICORP CAPITAL',
+    // Asset management propio. Bajo el mismo CLIENT/BOOK conviven CUATRO
+    // macrogrupos con muralla china entre ellos: se distinguen por el Notes de
+    // Fidessa (= Account de EMSX) y se reportan SIEMPRE por separado.
+    formatoReporte: 'credicorpffmm',
+    reparteManual: false,
+    portafolios: [],
+    fileNombre: 'Operaciones',
+    // 0,1% sin excepciones: no hay override de ECOPETROL ni PFCIBEST.
+    comisionBloque: 0.001, comisionPantalla: 0.001,
+    iva: true,
+  },
   'ALIANZA VALORES': {
     nombre: 'ALIANZA VALORES',
     formatoReporte: 'generico_equity',
@@ -4766,6 +4779,109 @@ const GRUPO_COMISIONES_DB = [{"grupo": "COLFONDOS", "book": "COLFONDOS", "report
 // principio pero nadie la consultaba: se usaba el valor del selector para todo,
 // y un bloque de GRUPOARGOS salía a 0,15% en vez de 0,18% (Sergio, 18-ago).
 // Si el cliente no tiene regla por especie, manda el selector del día.
+// Genera el archivo de CREDICORPFFMM: 13 columnas, título en A4, encabezados
+// en la fila 5 y datos desde la 6. Una fila por FOLIO, con el TCN de 6 dígitos.
+async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  const cfgMacro = CCFFMM_MACROGRUPOS[macro];
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Credicorp Capital Colombia — Equity Sales';
+  const ws = wb.addWorksheet('Hoja1', {
+    pageSetup: { orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 },
+    views: [{ showGridLines:false }],
+  });
+
+  ws.getCell('A4').value = 'CONFIRMACION OPERACIÓN ACC';
+  ws.getCell('A4').font = { name:'Calibri', size:11, bold:true };
+
+  const H = ['OPERACIÓN','CUMPLIMIENTO','POSTURA','NOMBRE','CANTIDAD','PRECIO','VALOR BRUTO',
+             'COMISION','IVA','VALOR NETO','FOLIOS','ISIN','FONDO'];
+  H.forEach((h,i)=>{
+    const c = ws.getCell(5, i+1);
+    c.value = h;
+    c.font = { name:'Calibri', size:11, bold:true };
+  });
+
+  // Orden: especie, luego folio. Así el cliente lee cada especie junta.
+  const filas = loteDet.slice().sort((a,b)=>
+    String(a.especie).localeCompare(String(b.especie), 'es', {sensitivity:'base'}) ||
+    (Number(a.folio) - Number(b.folio)));
+
+  let r = 6;
+  filas.forEach(f=>{
+    const qty = Number(f.cantidad)||0;
+    const px = Number(f.precio)||0;
+    const bruto = redondear(qty * px, 2);
+    // 0,1% SIEMPRE, sin override de ninguna especie.
+    const com = redondear(bruto * 0.001, 4);
+    const iva = redondear(com * 0.19, 4);
+    const neto = f.lado === 'Venta' ? redondear(bruto - com - iva, 2)
+                                    : redondear(bruto + com + iva, 2);
+    // En FIDUCIARIA el FONDO es el portafolio de la línea (viene del Notes);
+    // en los otros tres es fijo.
+    const fondo = cfgMacro.fondo || f.portafolio || f.notes || '';
+    // Las fechas van como Date real para que Excel las muestre como fecha. Si
+    // el folio no las trae, se toman de los campos del formulario.
+    const aFecha = x => {
+      if(x instanceof Date) return x;
+      const m = String(x||'').match(/^(\d{4})-(\d{2})-(\d{2})/);
+      return m ? new Date(Number(m[1]), Number(m[2])-1, Number(m[3])) : null;
+    };
+    const fReg = aFecha(f.fechaReg) || aFecha((document.getElementById('fechaRegistro')||{}).value);
+    const fCum = aFecha(f.fechaCum) || aFecha((document.getElementById('fechaCumplimiento')||{}).value);
+    const v = [
+      fReg, fCum,
+      f.lado === 'Venta' ? 'V' : 'C',
+      f.especie, qty, px, bruto, com, iva, neto,
+      Number(f.folio),                      // TCN completo de 6 dígitos
+      f.isin || isinDeNemo(f.especie) || '',
+      fondo,
+    ];
+    v.forEach((val,i)=>{ ws.getCell(r, i+1).value = val; });
+    [1,2].forEach(c=>{ ws.getCell(r,c).numFmt = 'yyyy-mm-dd'; });
+    ws.getCell(r,5).numFmt = '#,##0';
+    [6,7,10].forEach(c=>{ ws.getCell(r,c).numFmt = '#,##0.00'; });
+    [8,9].forEach(c=>{ ws.getCell(r,c).numFmt = '#,##0.0000'; });
+    for(let c=1;c<=13;c++) ws.getCell(r,c).font = { name:'Calibri', size:11 };
+    r++;
+  });
+
+  autofitColumnasRango(ws, 5, r-1, ['A','B','C','D','E','F','G','H','I','J','K','L','M'], {min:9, max:44});
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Operaciones_${cfgMacro.archivo}_${fechaSlug}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// =====================================================================
+// CREDICORPFFMM — cuatro macrogrupos con muralla china
+// ---------------------------------------------------------------------
+// El Notes de Fidessa (que es el Account cuando la orden viene de EMSX) dice a
+// cuál pertenece cada línea. Se reportan por SEPARADO por regulación local
+// (Sergio, 24-ago).
+// =====================================================================
+const CCFFMM_MACROGRUPOS = {
+  ACC_COLOMBIA: { nombre:'ACCIONES COLOMBIA', archivo:'CC_AM',        fondo:'CREDICORP CAPITAL ACCIONES' },
+  ACC_GLOBALES: { nombre:'ACCIONES GLOBALES', archivo:'ACC_GLOBALES', fondo:'CREDICORP CAPITAL ACCIONES GLOBALES' },
+  CRGS:         { nombre:'CRGS',              archivo:'GRSG',         fondo:'CRGS' },
+  FIDUCIARIA:   { nombre:'FIDUCIARIA',        archivo:'FIDUCIARIA',   fondo:null },   // el fondo es el portafolio de cada línea
+};
+
+// Clasifica una línea por su Notes. Devuelve la clave del macrogrupo, o '' si
+// el Notes viene vacío — en ese caso NO se asume Fiduciaria: se avisa, porque
+// puede ser que simplemente se olvidó marcar.
+function macrogrupoCCFFMM(notes){
+  const t = String(notes||'').trim().toUpperCase();
+  if(!t) return '';
+  if(/ACC(IONES)?\s+COLOMBIA/.test(t)) return 'ACC_COLOMBIA';
+  if(/ACC(IONES)?\s+GLOBALES/.test(t)) return 'ACC_GLOBALES';
+  if(/^CRGS$/.test(t)) return 'CRGS';
+  return 'FIDUCIARIA';   // el resto son portafolios de la fiduciaria
+}
+
 function comisionFolioPct(cliente, f){
   const especie = f.especie;
   const marca = f.marca === 'bloque' ? 'bloque' : 'pantalla';
@@ -5401,6 +5517,7 @@ function renderFidessaTradesPanel(){
       <table style="width:100%;min-width:1050px;table-layout:fixed;"><thead><tr>
         <th style="width:32px;text-align:center;"><input type="checkbox" id="chkTodosTrades" ${filas.length>0 && filas.every(f=>_tradesConsolidar.has(f.folioOrden))?'checked':''} onclick="toggleTodosTrades(this.checked)" title="Seleccionar todas las órdenes"></th>
         ${thOrdenable('fidessaTrades','folioOrden','Parent Order ID',null,'16%')}
+        ${thOrdenable('fidessaTrades','notes','Account',null,'12%')}
         ${thOrdenable('fidessaTrades','grupo','Client/Book',null,'27%')}
         ${thOrdenable('fidessaTrades','lado','Lado',null,'8%')}
         ${thOrdenable('fidessaTrades','security','Security',null,'12%')}
@@ -5411,6 +5528,7 @@ function renderFidessaTradesPanel(){
       <tbody>${filas.map(f=>`<tr class="${_tradesConsolidar.has(f.folioOrden)?'row-sel':''}">
         <td style="text-align:center;"><input type="checkbox" ${_tradesConsolidar.has(f.folioOrden)?'checked':''} onclick="toggleTradeConsolidar('${(f.folioOrden||'').replace(/'/g,"\\'")}')"></td>
         <td class="mono-id">${f.folioOrden}</td>
+        <td class="mono-id" style="font-size:11px;" title="Notes de Fidessa. Es el mismo dato que el Account de EMSX cuando la orden llega de allá.">${f.notes || '—'}</td>
         <td style="cursor:pointer;text-decoration:underline dotted;white-space:normal;line-height:1.3;" onclick="filtrarPorClienteRVL('${(f.grupo||'').replace(/'/g,"\\'")}')" title="Filtrar por este cliente">${f.grupo||'—'}</td>
         <td>${f.lado}</td>
         <td class="mono-id">${nemoCanonico(f.security, 'fidessa')}</td>
@@ -9048,7 +9166,43 @@ function renderPanelListo(filtrados){
     if(!tarifaUnica && !conOverride) conBloque.push(item);
   });
 
-  const todoListo = faltantes.length === 0;
+  // CREDICORPFFMM: lo que importa no es el portafolio sino el MACROGRUPO. Se
+  // muestra cuál se detectó y se avisa si hay mezcla, que es lo que impide
+  // generar por muralla china.
+  let avisoMacro = '';
+  if(cfg.formatoReporte === 'credicorpffmm'){
+    const cuenta = {};
+    let sinMarca = 0;
+    folios.forEach(f=>{
+      const notes = String(f.notes || f.portafolio || '').trim()
+                 || String((_fidessaTradesRaw[String(f.parentOrderId)]||{}).notes || '').trim();
+      const k = macrogrupoCCFFMM(notes);
+      if(!k){ sinMarca++; return; }
+      cuenta[k] = cuenta[k] || { n:0, ports:new Set() };
+      cuenta[k].n++;
+      if(k === 'FIDUCIARIA') cuenta[k].ports.add(notes);
+    });
+    const claves = Object.keys(cuenta);
+    if(sinMarca){
+      avisoMacro = `<div style="font-size:12.5px;color:var(--amber,#f59e0b);">` +
+        `⚠ ${sinMarca} folio(s) SIN marca de macrogrupo en el Account. Revísalo en Fidessa.</div>`;
+    }else if(claves.length > 1){
+      avisoMacro = `<div style="font-size:12.5px;color:var(--amber,#f59e0b);">` +
+        `⚠ Hay folios de ${claves.length} macrogrupos: ` +
+        claves.map(k=>`<b>${CCFFMM_MACROGRUPOS[k].nombre}</b> (${cuenta[k].n})`).join(' y ') +
+        `. Por muralla china van en reportes separados — deja seleccionadas solo las de uno.</div>`;
+    }else if(claves.length === 1){
+      const k = claves[0];
+      const ports = [...cuenta[k].ports];
+      avisoMacro = `<div style="font-size:13px;color:var(--buy,#22c55e);">` +
+        `<b>Macrogrupo detectado: ${CCFFMM_MACROGRUPOS[k].nombre}</b> — ${cuenta[k].n} folio(s)` +
+        `<span class="field-note"> · archivo Operaciones_${CCFFMM_MACROGRUPOS[k].archivo}</span>` +
+        (ports.length ? `<div class="field-note" style="font-size:12px;">Portafolios: ${ports.join(' · ')}</div>` : '') +
+        `</div>`;
+    }
+  }
+
+  const todoListo = faltantes.length === 0 && !/⚠/.test(avisoMacro);
   const color = todoListo ? 'var(--buy,#22c55e)' : 'var(--amber,#f59e0b)';
   const fondo  = todoListo ? 'rgba(34,197,94,.10)' : 'rgba(245,158,11,.10)';
   const linea = i => `${i.esp} ${i.lado} ${fmtInt(i.qty)}`;
@@ -9060,7 +9214,8 @@ function renderPanelListo(filtrados){
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:${(listas.length||faltantes.length)?'10px':'0'};">
         <span style="font-size:20px;">${todoListo ? '✓' : '⚠'}</span>
         <span style="font-size:15px;font-weight:700;color:${color};">
-          ${todoListo ? 'Listo para generar' : `Falta distribuir ${faltantes.length} línea(s)`}</span>
+          ${todoListo ? 'Listo para generar'
+            : (faltantes.length ? `Falta distribuir ${faltantes.length} línea(s)` : 'Revisa antes de generar')}</span>
         <span class="field-note">${ordenes.length} línea(s) de ${cfg.nombre || cliente}</span>
       </div>
       ${listas.length ? `<div style="font-size:12.5px;margin-bottom:4px;">
@@ -10509,6 +10664,64 @@ async function generarReporte(){
     const nuevas = await registrarLoteRVL(cliente, loteDet, version);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'CREDICORPCAPITAL-PORVENIR + Archivo plano');
     renderFidessaTradesPanel();
+  } else if(formato === 'credicorpffmm'){
+    // Cada línea trae su macrogrupo en el Notes. Si hay mezcla se FRENA: por
+    // muralla china no pueden ir en el mismo archivo (Sergio, 24-ago).
+    const porMacro = {};
+    const sinMarca = [];
+    seleccionados.forEach(f=>{
+      const notes = String(f.notes || f.portafolio || '').trim()
+                 || String((_fidessaTradesRaw[String(f.parentOrderId)]||{}).notes || '').trim();
+      const k = macrogrupoCCFFMM(notes);
+      if(!k){ sinMarca.push(f.especie + ' folio ' + f.folio); return; }
+      (porMacro[k] = porMacro[k] || []).push({ ...f, notes });
+    });
+    if(sinMarca.length){
+      alert('No se generó el reporte: hay folio(s) SIN marca de macrogrupo en el Account.\n\n' +
+            [...new Set(sinMarca)].slice(0,10).join('\n') +
+            (sinMarca.length>10 ? `\n… y ${sinMarca.length-10} más` : '') +
+            '\n\nSin esa marca no se sabe a qué macrogrupo pertenecen. Revísalo en Fidessa.');
+      return;
+    }
+    const macros = Object.keys(porMacro);
+    if(macros.length > 1){
+      alert('No se generó el reporte: marcaste líneas de ' + macros.length + ' macrogrupos.\n\n' +
+            macros.map(k=>`   ${CCFFMM_MACROGRUPOS[k].nombre}: ${porMacro[k].length} folio(s)`).join('\n') +
+            '\n\nPor muralla china van en reportes SEPARADOS. Deja seleccionadas solo las de uno.');
+      return;
+    }
+    const macro = macros[0];
+    const cfgMacro = CCFFMM_MACROGRUPOS[macro];
+    const _slug = String(fechaReg||'').replace(/-/g,'') ||
+      (()=>{ const d=new Date(); return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`; })();
+    const lote = porMacro[macro];
+    const version = proximaVersion(cfgMacro.nombre, 'RVL');
+    const qTot = lote.reduce((a,f)=>a+f.cantidad,0);
+    const brutoTot = lote.reduce((a,f)=>a+f.cantidad*f.precio,0);
+    const ok = await previsualizarReporte({
+      titulo: `CREDICORP CAPITAL — ${cfgMacro.nombre} — ${etiquetaVersion(version)}`,
+      archivo: `Operaciones_${cfgMacro.archivo}_${_slug}.xlsx`,
+      columnas: ['Especie','Lado','Cantidad','Precio prom.','Bruto','Folios','Fondo'],
+      filas: (()=>{
+        const g = {};
+        lote.forEach(f=>{
+          const fondo = cfgMacro.fondo || f.notes || '';
+          const k = f.especie + '|' + f.lado + '|' + fondo;
+          const a = g[k] || (g[k] = {especie:f.especie, lado:f.lado, fondo, qty:0, bruto:0, n:0});
+          a.qty += f.cantidad; a.bruto += f.cantidad*f.precio; a.n++;
+        });
+        return Object.values(g)
+          .sort((x,y)=>String(x.especie).localeCompare(String(y.especie)) || String(x.fondo).localeCompare(String(y.fondo)))
+          .map(a=>[a.especie, a.lado, fmtInt(a.qty), fmtRate(a.qty?a.bruto/a.qty:0), fmtMoney(a.bruto), String(a.n), a.fondo]);
+      })(),
+      totales: `<b style="color:var(--accent,#818cf8);">Macrogrupo: ${cfgMacro.nombre}</b> · ` +
+               `${lote.length} folio(s) · ${fmtInt(qTot)} acciones · bruto ${fmtMoney(brutoTot)} · ` +
+               `comisión 0,1% + IVA 19%`,
+    });
+    if(!ok) return;
+    await generarExcelCCFFMM(macro, lote, _slug);
+    await registrarLoteRVL(cfgMacro.nombre, lote, version);
+
   } else if(formato === 'skandia'){
     const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
     const loteDetSk = window._loteDetSk || null;
@@ -13066,6 +13279,7 @@ function renderArqueoRVI(){
         <b>Cliente:</b> ${cliente.map(r=>`${r.firm} · ${r.especie} ${fmtInt(r.qty)} @ ${fmtRateRVI(r.avgPr)}`).join(' · ')}</div>` : ''}
       ${nuestras.length ? `<div style="font-size:12.5px;margin-bottom:3px;">
         <b>Nuestra ejecución:</b> ${nuestras.map(r=>`${r.broker||'—'} ${fmtInt(r.qty)} @ ${fmtRateRVI(r.avgPr)}`).join(' · ')}</div>` : ''}
+      ${avisoMacro}
       ${oks.map(t=>`<div style="font-size:12.5px;color:var(--buy,#22c55e);">${t}</div>`).join('')}
       ${avisos.map(t=>`<div style="font-size:12.5px;color:var(--amber,#f59e0b);">⚠ ${t}</div>`).join('')}
       <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;padding-top:9px;border-top:1px solid rgba(255,255,255,.08);font-size:12.5px;">
@@ -14001,7 +14215,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-24 19:49 UTC';
+const BUILD_ID = '2026-08-24 21:49 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
