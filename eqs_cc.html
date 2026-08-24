@@ -12794,6 +12794,12 @@ function volcarLineaEnFormularioRVI(){
 // ---- Comisión que cobra la contraparte ----
 // CCSI (Credicorp Capital LLC) siempre cobra; Tradition (TFSC) y BTG NY (BTGH)
 // cobran como ETF. Los Market Makers van por RFQE con comisión 0.
+// Brokers que NOS cobran comisión. Lo que define es el CANAL, no la casa:
+//   TFSC = Tradition por EMSX  -> COBRA (tarifa de ETF)
+//   TFSR = Tradition por RFQE  -> CERO, es market maker
+// Los dos códigos son de Tradition y se diferencian en una letra, así que ojo
+// al tocar esta lista (Sergio, 24-ago).
+// El mínimo de USD 20 aplica a los tres que cobran.
 const RVI_BROKERS_CON_COSTO = ['CCSI','TFSC','BTGH'];
 function comisionContraparteRVI(broker, tipo, qty, gross, isin){
   const b = String(broker||'').toUpperCase().trim();
@@ -13174,21 +13180,26 @@ function calcularComisiones(clienteKey, tipo, qty, price, opts){
   const minCliente = SIN_MINIMO.includes(clienteKey) ? 0 : (db.minUSD != null ? db.minUSD : 20);
 
   let costCliente, costCCSI, tarifaCCSIusada;
-  // Comisión CCSI: si viene una editada (¢/acción o %, según tipo), se usa esa;
-  // si no, la de la tabla. Es la que NOS cobran por operar afuera.
+  // Comisión del BROKER: si viene una editada (¢/acción o %, según tipo), se
+  // usa esa; si no, la de la tabla. Es la que NOS cobran por operar afuera.
   const comCcsiEdit = (opts.comCCSI!=null && isFinite(opts.comCCSI)) ? opts.comCCSI : null;
+  // Solo CCSI, BTGH y TFSC cobran. Los MARKET MAKERS (RFQE) van con CERO, y no
+  // les aplica el mínimo de USD 20: el 20-ago un trade contra un market maker
+  // mostraba 20 de comisión de broker que no existía (Sergio).
+  const brokerCobra = !opts.broker || RVI_BROKERS_CON_COSTO.some(x=>String(opts.broker).toUpperCase().includes(x));
+  const minBroker = brokerCobra ? CCSI.minUSD : 0;
   if(tipo==='ETF'){
     costCliente = Math.max(qty * db.comETF, minCliente);
-    tarifaCCSIusada = comCcsiEdit!=null ? comCcsiEdit : CCSI.comETF;
-    costCCSI    = Math.max(qty * tarifaCCSIusada, CCSI.minUSD);
+    tarifaCCSIusada = brokerCobra ? (comCcsiEdit!=null ? comCcsiEdit : CCSI.comETF) : 0;
+    costCCSI    = brokerCobra ? Math.max(qty * tarifaCCSIusada, minBroker) : 0;
   } else if(tipo==='ADR'){
     costCliente = Math.max(qty * db.comADR, minCliente);
-    tarifaCCSIusada = comCcsiEdit!=null ? comCcsiEdit : CCSI.comADR;
-    costCCSI    = Math.max(qty * tarifaCCSIusada, CCSI.minUSD);
+    tarifaCCSIusada = brokerCobra ? (comCcsiEdit!=null ? comCcsiEdit : CCSI.comADR) : 0;
+    costCCSI    = brokerCobra ? Math.max(qty * tarifaCCSIusada, minBroker) : 0;
   } else { // UCIT
     costCliente = Math.max(gross * db.comUCIT, minCliente);
-    tarifaCCSIusada = comCcsiEdit!=null ? comCcsiEdit : CCSI.comUCIT;
-    costCCSI    = Math.max(gross * tarifaCCSIusada, CCSI.minUSD);
+    tarifaCCSIusada = brokerCobra ? (comCcsiEdit!=null ? comCcsiEdit : CCSI.comUCIT) : 0;
+    costCCSI    = brokerCobra ? Math.max(gross * tarifaCCSIusada, minBroker) : 0;
   }
   // Margen de precio: (precio cliente − precio nuestro) × qty, con el signo
   // según el lado. En compra ganamos si el cliente paga MÁS que lo que
@@ -13224,6 +13235,9 @@ function calcularRVI(){
 
   const c = calcularComisiones(clienteKey, tipo, qty, price, {
     comCCSI: parseNum(document.getElementById('tc-com-ccsi').value),
+    // El broker decide si hay comisión: CCSI/BTGH/TFSC cobran, los market
+    // makers (RFQE) van con cero.
+    broker: (emsxData.find(r=>r.id===lineaActiva)||{}).broker || '',
     precioNuestro: (precioNuestroVinculo(lineaActiva)||{}).precio,
     lado,
   });
@@ -13284,6 +13298,9 @@ function generarTC(){
   const vincPrecio = (precioNuestroVinculo(lineaActiva)||{}).precio;
   const c          = calcularComisiones(clienteKey, tipo, qty, price, {
     comCCSI: parseNum(document.getElementById('tc-com-ccsi').value),
+    // El broker decide si hay comisión: CCSI/BTGH/TFSC cobran, los market
+    // makers (RFQE) van con cero.
+    broker: (emsxData.find(r=>r.id===lineaActiva)||{}).broker || '',
     precioNuestro: vincPrecio,
     lado,
   });
@@ -13810,7 +13827,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-20 22:26 UTC';
+const BUILD_ID = '2026-08-24 16:33 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
