@@ -3590,6 +3590,189 @@ async function generarReporteExcel(){
 // cerraron por lado). Reutiliza el formato de marca genérico (header navy con
 // logo, barra naranja, secciones) — NO el formato propio de MLI. Sin el bloque
 // de "totales FX" de arriba, por pedido de Sergio.
+// =====================================================================
+// MLI / CITI — Equity + FX Confirmation (formato del broker)
+// ---------------------------------------------------------------------
+// Es el formato que MLI pidió mantener. Panel de FX en celdas fijas arriba,
+// totales, y el detalle de equity desde la fila 15. El diseño es nuestro; las
+// celdas de información y su contenido NO se tocan (Sergio, 24-ago).
+//   MT VALUE  = suma de los NET VALUE del lado. Por regulación tiene que
+//               coincidir con lo que se cierra en FX.
+//   USD VALUE = MT VALUE / FX RATE
+//   NOT TODAY = ese lado no operó hoy
+//   TAX RATE  = 'ALL IN': la comisión va embebida en el precio
+// =====================================================================
+async function generarExcelCruceMLI(clienteKey, registrados, trader){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  if(!registrados || registrados.length===0){ alert('No hay lados registrados para el reporte del cruce.'); return; }
+
+  const hoyDate = new Date();
+  const C = REPORTE_COLOR;
+  const nombreCliente = (getClienteDB(clienteKey) && getClienteDB(clienteKey).nombre) || clienteKey;
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'EQS CC — Credicorp Capital';
+  wb.created = hoyDate;
+  const ws = wb.addWorksheet('Hoja1', {
+    pageSetup: { orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 },
+    views: [{ showGridLines:false }],
+  });
+  ws.columns = [ {width:13},{width:13},{width:10},{width:14},{width:16},{width:12},
+                 {width:14},{width:17},{width:15},{width:12},{width:18},{width:3} ];
+  const COLS = ['A','B','C','D','E','F','G','H','I','J','K'];
+  for(let rr=1; rr<=90; rr++){ COLS.concat(['L']).forEach(c=> ws.getCell(c+rr).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.paper}}); }
+
+  // ---------- Marca Credicorp ----------
+  for(let rr=1; rr<=2; rr++){ COLS.concat(['L']).forEach(c=> ws.getCell(c+rr).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.navy}}); }
+  ws.getRow(1).height = 26; ws.getRow(2).height = 6;
+  ws.mergeCells('A1:D1');
+  const marca = ws.getCell('A1');
+  marca.value = 'CREDICORP CAPITAL COLOMBIA · EQUITY SALES';
+  marca.font = { name:'Calibri', size:13, bold:true, color:{argb:C.white} };
+  marca.alignment = { horizontal:'left', vertical:'middle', indent:1 };
+  try{
+    const imgId = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension:'png' });
+    ws.addImage(imgId, { tl:{ col:9, row:0 }, ext:{ width:165, height:24 } });
+  }catch(e){ console.warn('logo:', e.message); }
+
+  ws.getCell('F3').value = nombreCliente;
+  ws.getCell('F3').font = { name:'Calibri', size:14, bold:true, color:{argb:C.navy} };
+
+  // ---------- Panel FX ----------
+  // Cliente COMPRA acciones -> nosotros vendemos COP ("SELLS COP").
+  // Cliente VENDE acciones  -> "BUYS COP". El lado que no operó dice NOT TODAY.
+  const porLado = {};
+  registrados.forEach(l=>{ porLado[l.ladoAccion === 'Compra' ? 'BUY' : 'SELL'] = l; });
+
+  ws.getCell('A6').value = 'TRADER';
+  ws.getCell('A6').font = { name:'Calibri', size:11, bold:true, color:{argb:C.navy} };
+  ws.getCell('B6').value = trader || '';
+  ws.getCell('B6').font = { name:'Calibri', size:11 };
+
+  [['F7','FX RATE'],['F8','USD VALUE'],['F9','FX SD'],['F10','MT VALUE']].forEach(function(par){
+    ws.getCell(par[0]).value = par[1];
+    ws.getCell(par[0]).font = { name:'Calibri', size:11, bold:true, color:{argb:C.navy} };
+  });
+
+  function netoDeLado(lado){
+    if(!lado) return null;
+    return lado.detalle.reduce(function(a,d){
+      const gross = redondear(d.gross, 2);
+      const com = redondear(d.gross * MLI_COMISION_ALL_IN, 2);
+      return a + (lado.ladoAccion === 'Compra' ? gross + com : gross - com);
+    }, 0);
+  }
+
+  [{col:'G', titulo:'SELLS COP', lado:porLado.SELL},
+   {col:'H', titulo:'BUYS COP',  lado:porLado.BUY }].forEach(function(x){
+    const cT = ws.getCell(x.col + '6');
+    cT.value = x.titulo;
+    cT.font = { name:'Calibri', size:11, bold:true, color:{argb:C.white} };
+    cT.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
+    cT.alignment = { horizontal:'center' };
+    if(!x.lado){
+      ws.getCell(x.col + '7').value = 0;
+      ws.getCell(x.col + '8').value = 0;
+      ws.getCell(x.col + '10').value = 'NOT TODAY';
+      ws.getCell(x.col + '10').font = { name:'Calibri', size:11, italic:true, color:{argb:C.textMuted} };
+      return;
+    }
+    const mt = redondear(netoDeLado(x.lado), 2);
+    const tasa = Number(x.lado.tasaFinalCliente) || 0;
+    ws.getCell(x.col + '7').value = tasa;
+    ws.getCell(x.col + '7').numFmt = '#,##0.00';
+    ws.getCell(x.col + '8').value = tasa ? redondear(mt / tasa, 2) : 0;
+    ws.getCell(x.col + '8').numFmt = '#,##0.00';
+    // FX SD: compras T+1 para que la plata llegue a Colombia, ventas T+3,
+    // T+2 en el caso normal. Sale del cierre del propio FX.
+    ws.getCell(x.col + '9').value = x.lado.fxSD || 'T+2';
+    ws.getCell(x.col + '9').alignment = { horizontal:'right' };
+    ws.getCell(x.col + '10').value = mt;
+    ws.getCell(x.col + '10').numFmt = '#,##0.00';
+  });
+
+  const totBuy = netoDeLado(porLado.BUY), totSell = netoDeLado(porLado.SELL);
+  [['12','TOTAL BUYS VALUE', totBuy], ['13','TOTAL SELLS VALUE', totSell]].forEach(function(x){
+    ws.getCell('J' + x[0]).value = x[1];
+    ws.getCell('J' + x[0]).font = { name:'Calibri', size:11, bold:true, color:{argb:C.navy} };
+    const cV = ws.getCell('K' + x[0]);
+    if(x[2] == null){
+      cV.value = 'NOT TODAY';
+      cV.font = { name:'Calibri', size:11, italic:true, color:{argb:C.textMuted} };
+    }else{
+      cV.value = redondear(x[2], 2);
+      cV.numFmt = '#,##0.00';
+      cV.font = { name:'Calibri', size:11, bold:true };
+    }
+  });
+
+  // ---------- Detalle de equity ----------
+  ws.getCell('A14').value = 'TODAY';
+  ws.getCell('A14').font = { name:'Calibri', size:11, bold:true, color:{argb:C.navy} };
+  ws.getCell('B14').value = hoyDate;
+  ws.getCell('B14').numFmt = 'yyyy-mm-dd';
+  ws.getCell('C14').value = 'EQUITY TRADES CONFIRM';
+  ws.getCell('C14').font = { name:'Calibri', size:12, bold:true, color:{argb:C.navy} };
+
+  ['TD','SD','SIDE','TICKER','ISIN ','QUANTITY','PRICE','GROSS VALUE','COMMISION','TAX RATE','NET VALUE']
+   .forEach(function(h,i){
+    const c = ws.getCell(15, i+1);
+    c.value = h;
+    c.font = { name:'Calibri', size:11, bold:true, color:{argb:C.white} };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
+    c.alignment = { horizontal: i>=5 ? 'right' : 'left', vertical:'middle' };
+  });
+  ws.getRow(15).height = 20;
+
+  let r = 16;
+  const dIni = r;
+  registrados.forEach(function(lado){
+    lado.detalle.forEach(function(d){
+      const gross = redondear(d.gross, 2);
+      const comision = redondear(d.gross * MLI_COMISION_ALL_IN, 2);
+      const neto = redondear(lado.ladoAccion === 'Compra' ? gross + comision : gross - comision, 2);
+      ws.getCell(r,1).value = lado.tradeDate;
+      ws.getCell(r,2).value = lado.settleDate;
+      ws.getCell(r,3).value = lado.ladoAccion === 'Compra' ? 'BUY' : 'SELL';
+      ws.getCell(r,4).value = d.security;
+      ws.getCell(r,5).value = isinDeNemo(d.security);
+      ws.getCell(r,6).value = d.qty;
+      ws.getCell(r,7).value = redondear(d.precio, 2);
+      ws.getCell(r,8).value = gross;
+      ws.getCell(r,9).value = comision;
+      ws.getCell(r,10).value = 'ALL IN';
+      ws.getCell(r,11).value = neto;
+      r++;
+    });
+  });
+  const dFin = r-1;
+  for(let rr=dIni; rr<=dFin; rr++){
+    [1,2].forEach(function(c){ ws.getCell(rr,c).numFmt = 'yyyy-mm-dd'; });
+    ws.getCell(rr,6).numFmt = '#,##0';
+    [7,8,9,11].forEach(function(c){ ws.getCell(rr,c).numFmt = '#,##0.00'; });
+    for(let c=1;c<=11;c++){
+      ws.getCell(rr,c).font = { name:'Calibri', size:11 };
+      ws.getCell(rr,c).border = { bottom:{style:'hair', color:{argb:C.cardBorder}} };
+      if(c>=6) ws.getCell(rr,c).alignment = { horizontal:'right' };
+    }
+    ws.getRow(rr).height = 17;
+    if((rr-dIni)%2===1){ for(let c=1;c<=11;c++) ws.getCell(rr,c).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}}; }
+  }
+
+  const rFin = dFin + 1;
+  COLS.forEach(function(c){ ws.getCell(c + rFin).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.orange}}; });
+  ws.getRow(rFin).height = 4;
+
+  const nomArchivo = 'Trade_Confirmation_' + clienteKey + '_' + String(trader||'').replace(/\s+/g,'_') + '_' +
+    hoyDate.getFullYear() + String(hoyDate.getMonth()+1).padStart(2,'0') + String(hoyDate.getDate()).padStart(2,'0') + '.xlsx';
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  const a = document.createElement('a');
+  a.href = url; a.download = nomArchivo;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 async function generarExcelCruce(clienteKey, registrados, trader){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
   if(!registrados || registrados.length===0){ alert('No hay lados registrados para el reporte del cruce.'); return; }
@@ -5887,7 +6070,12 @@ function mostrarPanelExcelCruce(cli, reg, trader){
 function generarExcelCrucePendiente(){
   if(!_cruceExcelPendiente){ alert('No hay un cruce pendiente para generar.'); return; }
   const {cli, reg, trader} = _cruceExcelPendiente;
-  generarExcelCruce(cli, reg, trader);
+  // MLI y CITI usan el formato que pidió el broker; los demás, el estándar.
+  if(/^(MLI|CITI)/i.test(String(cli)) || /MERRILL|CITIGROUP/i.test(String((getClienteDB(cli)||{}).nombre||''))){
+    generarExcelCruceMLI(cli, reg, trader);
+  }else{
+    generarExcelCruce(cli, reg, trader);
+  }
 }
 
 function cerrarPanelExcelCruce(){
@@ -14215,7 +14403,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-24 21:49 UTC';
+const BUILD_ID = '2026-08-24 22:38 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
