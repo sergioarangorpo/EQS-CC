@@ -6960,6 +6960,23 @@ function procesarFidessa(){
 }
 
 // =====================================================================
+// ¿Es una línea de la BOLSA DE COLOMBIA? Lo normal es que EMSX mande
+// exchange = 'CB', pero ese campo llega vacío en algunas órdenes (el 24-ago una
+// de ISA quedó sin él y se coló en el blotter de RVI, con precios en pesos
+// leídos como dólares; a la vez no aparecía en RVL). Por eso se miran dos
+// señales más, que sí son fiables:
+//   - el ticker de Bloomberg termina en "CB Equity"
+//   - el broker es CVAL, que solo opera local
+function esLineaLocalCB(row){
+  if(!row) return false;
+  const ex = String(row.exchange||'').toUpperCase().trim();
+  if(ex === 'CB') return true;
+  if(ex) return false;                       // trae otro exchange: es de afuera
+  if(/\bCB\s+EQUITY$/i.test(String(row.ticker||''))) return true;
+  if(String(row.broker||'').toUpperCase().trim() === 'CVAL') return true;
+  return false;
+}
+
 // BLOOMBERG (EMSX, exchange=CB) — mismo bridge que alimenta a RVI, pero
 // filtrado a lo que se operó en la Bolsa de Colombia. Por ahora se muestra
 // aparte para comparar a ojo contra Fidessa Trades/Folios — el cruce
@@ -8584,7 +8601,11 @@ async function cargarEmsxCBDesdeSupabase(){
   try{
     const hoyDate = new Date();
     const inicioHoy = new Date(hoyDate.getFullYear(), hoyDate.getMonth(), hoyDate.getDate(), 0, 0, 0).toISOString(); // medianoche LOCAL convertida correctamente a UTC, sin ambigüedad de zona horaria
-    const data = await supaFetch('emsx_orders', `exchange=eq.CB&order_time=gte.${inicioHoy}&order=order_time.desc&limit=500`);
+    // Se pide TODO lo del día y se filtra en memoria con esLineaLocalCB: con
+    // `exchange=eq.CB` en la consulta, una orden sin ese campo no llegaba
+    // nunca — se perdía en RVL y aparecía en RVI (Sergio, 24-ago).
+    const _todas = await supaFetch('emsx_orders', `order_time=gte.${inicioHoy}&order=order_time.desc&limit=500`);
+    const data = _todas.filter(esLineaLocalCB);
     const descartadas = data.filter(row => !esEstadoActivo(row.status, row.filled));
     if(descartadas.length){
       // Deja rastro en consola de lo que se está ocultando y por qué, para no
@@ -12642,7 +12663,7 @@ async function cargarEmsxDesdeSupabase(){
     // RVI solo se queda con lo que NO es bolsa de Colombia — eso es de RVL.
     // Y de eso, solo lo que sigue vivo (Working/Filled/Partial) — una orden
     // cancelada con saldo cero ya no sirve de nada en el blotter.
-    const paraRVI = data.filter(row => (row.exchange||'').toUpperCase() !== 'CB');
+    const paraRVI = data.filter(row => !esLineaLocalCB(row));
     const idsCancelados = new Set(paraRVI.filter(row => !esEstadoActivo(row.status, row.filled)).map(row=>row.id));
     // Si algo que ya teníamos en pantalla se acaba de cancelar, se quita —
     // no solo se actualiza su estado, se elimina del todo.
@@ -12939,6 +12960,20 @@ function renderArqueoRVI(){
   }
   if(_modoRVI.margen === 'sin' && _modoRVI.costo === 'sin'){
     avisos.push('Sin margen y sin costo: la operación no dejaría nada. Revisa el modo.');
+  }
+  // Última red: si una línea LOCAL se coló en RVI, frenar. Sus precios están en
+  // pesos y saldrían leídos como dólares en el Trade Confirmation.
+  const locales = marcadas.filter(r=>
+    String(r.broker||'').toUpperCase().trim() === 'CVAL' ||
+    /\bCB\s+EQUITY$/i.test(String(r.especie||'')) ||
+    String(r.exchange||'').toUpperCase() === 'CB');
+  if(locales.length){
+    avisos.push(`${locales.map(r=>r.especie).join(', ')} es de la Bolsa de Colombia (broker CVAL): va en RVL, no acá. Sus precios están en pesos.`);
+  }
+  // Tipo sin definir: no se puede calcular la comisión ni el sec fee.
+  const sinTipo = marcadas.filter(r=>!r.tipo || String(r.tipo).trim()==='?' );
+  if(sinTipo.length){
+    avisos.push(`Falta el tipo de instrumento (ETF/ADR/UCITS) en ${sinTipo.map(r=>r.especie||'—').join(', ')}.`);
   }
   if(_modoRVI.espejo === 'si' && cliente.length && nuestras.length && cliente.length !== nuestras.length){
     avisos.push(`Espejo de alloc: el cliente tiene ${cliente.length} línea(s) y nosotros ${nuestras.length}. Deben partirse igual.`);
@@ -13942,7 +13977,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-24 19:25 UTC';
+const BUILD_ID = '2026-08-24 19:43 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
