@@ -4490,7 +4490,10 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
     // 12 columnas (B..M), las mismas del consolidado pero con FOLIO al inicio.
     // Trade/Settle Date no se repiten: son las mismas de arriba y ocupaban el
     // espacio que necesita el folio.
-    headerFila(['Folio','Side','Portafolio','Symbol','Quantity','Price','Gross','Commission','Com %','IVA','Net'],
+    // Symbol ANTES de Portafolio: así la columna Portafolio del detalle queda
+    // justo debajo de la del consolidado y el autofit las ajusta parejo
+    // (Sergio, 25-ago).
+    headerFila(['Folio','Side','Symbol','Portafolio','Quantity','Price','Gross','Commission','Com %','IVA','Net'],
                ['left','left','left','left','right','right','right','right','right','right','right']);
     const dIni = r;
     _foliosDet.forEach(f=>{
@@ -4501,8 +4504,8 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
       const neto = redondear(f.lado === 'Compra' ? gross + comision + iva : gross - comision - iva, 2);
       ws.getCell(`B${r}`).value = f.folio;
       ws.getCell(`C${r}`).value = f.lado === 'Compra' ? 'Buy' : 'Sell';
-      ws.getCell(`D${r}`).value = f.portNombre;
-      ws.getCell(`E${r}`).value = f.especie;
+      ws.getCell(`D${r}`).value = f.especie;
+      ws.getCell(`E${r}`).value = f.portNombre;
       ws.getCell(`F${r}`).value = f.cantidad;
       ws.getCell(`G${r}`).value = precio;
       ws.getCell(`H${r}`).value = gross;
@@ -14497,7 +14500,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-25 19:15 UTC';
+const BUILD_ID = '2026-08-25 19:25 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
