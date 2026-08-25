@@ -9337,7 +9337,15 @@ function renderPanelListo(filtrados){
     const fol = folios.filter(f=>String(f.parentOrderId)===String(o));
     const qFol = fol.reduce((a,f)=>a+f.cantidad,0);
     const bloque = fol.filter(f=>f.marca==='bloque');
-    const asignado = (_allocPorOrden[o]||[]).reduce((a,x)=>a+x.cantidad,0);
+    // El reparto puede estar en DOS sitios: `_allocPorOrden` (guardado por
+    // orden, cuando se hizo zoom en una línea) o `allocations` (el panel de la
+    // derecha, cuando hay una sola orden y se asignó sin hacer zoom). El panel
+    // miraba solo el primero y decía "falta distribuir" con el reparto ya
+    // hecho y la Diferencia en 0 (Sergio, 25-ago).
+    let asignado = (_allocPorOrden[o]||[]).reduce((a,x)=>a+x.cantidad,0);
+    if(!asignado && ordenes.length === 1){
+      asignado = (allocations||[]).reduce((a,x)=>a+(Number(x.cantidad)||0),0);
+    }
     // ¿La línea ya sabe a qué portafolio va?
     let tienePort = asignado > 0;
     if(!tienePort){
@@ -14500,7 +14508,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-25 19:25 UTC';
+const BUILD_ID = '2026-08-25 19:35 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
