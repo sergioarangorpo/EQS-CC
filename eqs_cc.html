@@ -9783,8 +9783,12 @@ function poblarSelectorNuevoPortafolio(){
 }
 
 function _refrescarPanelTrasAlloc(){
+  // SOLO repinta el panel. NO sincroniza: `renderAllocations` también corre
+  // cuando la app limpia o autoinicializa las allocations, y sincronizar ahí
+  // guardaba un reparto falso — el 25-ago mandó los 156.600 completos a
+  // Cesantías cuando iban repartidos entre dos portafolios. El guardado real
+  // ocurre al generar, que es cuando `allocations` refleja lo que Sergio puso.
   try{
-    if(typeof sincronizarAllocOrdenActiva === 'function') sincronizarAllocOrdenActiva();
     if(typeof renderPanelListo === 'function') renderPanelListo(getFiltrados());
   }catch(e){ /* el panel es informativo: nunca debe tumbar la asignación */ }
 }
@@ -14549,7 +14553,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-25 19:51 UTC';
+const BUILD_ID = '2026-08-25 20:13 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
