@@ -5334,6 +5334,17 @@ function ordenarArrayGenerico(arr, tablaId){
   });
 }
 
+// Portafolios de VALORES_AM abiertos después de la última carga de
+// Bases_de_datos.xlsx. Se agregan aquí para no bloquear el reporte; conviene
+// pasarlos al Excel maestro (Sergio, 25-ago).
+const VALORES_AM_NUEVOS = [
+  { deceval: 2474798, nombre: 'FIDUBANCOLOMBIA P.A. ABEL TAMAYO FIERRO GIDGLOB' },
+  { deceval: 4047199, nombre: 'FIDUBANCOLOMBIA P.A. DANVAMI' },
+  { deceval: 4228023, nombre: 'FIDUBANCOLOMBIA P.A. JM ARCOIRIS' },
+  { deceval: 4246520, nombre: 'FIDUBANCOLOMBIA P.A. VALURE' },
+  { deceval: 4352995, nombre: 'FIDUBANCOLOMBIA P.A. INVERLASER' },
+];
+
 function construirClientesDBDesdeCategorias(){
   const porGrupo = {};
   CATEGORIAS_DB.forEach(c=>{
@@ -5412,6 +5423,10 @@ function getClienteDB(key){
   }
   return cfg;
 }
+
+// Los portafolios nuevos se agregan DESPUÉS de que getClienteDB haya cargado
+// los de CATEGORIAS_DB.
+if(typeof agregarPortafoliosNuevosVAM === 'function') agregarPortafoliosNuevosVAM();
 
 // Folios crudos de Fidessa (simulando lo que vimos hoy en COR para ECOPETROL/COLFONDOS,
 // más unos folios de PROTECCION/CELSIA para validar el filtro)
@@ -9826,7 +9841,7 @@ ${texto}
   const ports = ((clientesRVI[cli]&&clientesRVI[cli].portafolios)||[]).map(n=>({id:n, nombre:n}));
   _allocInterpretadoRVI = ordenes.map(o=>{
     const lineas = (o.lineas||[]).map(l=>{
-      const m = matchPortafolio(l.portafolio, ports);
+      const m = matchPortafolioPorDeceval(l, ports) || matchPortafolio(l.portafolio, ports);
       return { portTexto:l.portafolio, cantidad:Number(l.cantidad)||0, account: m?m.portNombre:null, match: !!m };
     });
     const suma = lineas.reduce((s,l)=>s+l.cantidad,0);
@@ -9899,6 +9914,16 @@ function normPort(s){
 // Intenta casar el texto de un portafolio con uno de la base del cliente.
 // Devuelve {portId, portNombre} o null. Match por: (1) número de alternativa
 // especial (701/704/...), (2) inclusión de palabras clave, (3) mayor solape.
+// Empareja una línea del alloc con el portafolio del cliente. Si la línea trae
+// DECEVAL, ese manda: es único y no tiene variantes de escritura, mientras que
+// el nombre llega como "P.A. ABC" y en la base está como
+// "FIDUCOLOMBIA P.A. ABC" (Sergio, 25-ago).
+function matchPortafolioPorDeceval(linea, ports){
+  const d = String(linea && linea.deceval || '').replace(/\D/g,'');
+  if(!d) return null;
+  return ports.find(p => String(p.deceval) === d) || null;
+}
+
 function matchPortafolio(portTexto, ports){
   const t = normPort(portTexto);
   // (1) alternativa especial por número/código (701, 704, N10, N12...)
@@ -9993,7 +10018,7 @@ function mapearOrdenesAlloc(ordenesRaw, cliente){
   const ports = getClienteDB(cliente).portafolios;
   return (ordenesRaw||[]).map(o=>{
     const lineas = (o.lineas||[]).map(l=>{
-      const m = matchPortafolio(l.portafolio, ports);
+      const m = matchPortafolioPorDeceval(l, ports) || matchPortafolio(l.portafolio, ports);
       return { portTexto:l.portafolio, cantidad:Number(l.cantidad)||0,
                portId: m?m.portId:null, portNombre: m?m.portNombre:null, match: !!m };
     });
@@ -10020,7 +10045,72 @@ function mapearOrdenesAlloc(ordenesRaw, cliente){
 // La especie se reconoce porque calza con un nemo conocido; el separador puede
 // ser x, X, : o =. El lado sale del signo cuando está, y si no, de la orden de
 // Fidessa, que es la fuente buena de todas formas.
+
+// Alloc TABULAR de VALORES_AM: una fila por portafolio con columnas
+//   OPERACIÓN · Especie · CANTIDAD · ESPECIAL · Portafolio · NIT · DECEVAL · Portafolio
+// El emparejamiento se hace por DECEVAL, que es único y no tiene variantes de
+// escritura (el nombre llega como "P.A. ABC" y en la base es
+// "FIDUCOLOMBIA P.A. ABC"). La columna ESPECIAL se ignora: no aporta.
+// Se llama DESPUÉS de construir clientesDB: si se hace antes, la lista de
+// portafolios todavía no existe y se reemplazaría por estos cinco.
+function agregarPortafoliosNuevosVAM(){
+  // OJO: getClienteDB carga los 121 portafolios desde CATEGORIAS_DB solo si la
+  // lista está VACÍA. Si se agregan los nuevos antes, la lista deja de estar
+  // vacía y los 121 nunca se cargan. Por eso se llama getClienteDB primero.
+  const cfg = (typeof getClienteDB === 'function') ? getClienteDB('FIDUCIARIA BANCOLOMBIA') : null;
+  if(!cfg || !cfg.nombre) return;
+  cfg.portafolios = cfg.portafolios || [];
+  VALORES_AM_NUEVOS.forEach(n=>{
+    if(!cfg.portafolios.some(p=>String(p.deceval)===String(n.deceval))){
+      cfg.portafolios.push({ id:'DEC_'+n.deceval, nombre:n.nombre, deceval:n.deceval, nit:'', iva:true });
+    }
+  });
+}
+
+function parsearAllocTabular(texto){
+  const num = s => parseInt(String(s).replace(/[.,\s]/g,''),10) || 0;
+  const filas = [];
+  String(texto||'').split(/\r?\n/).forEach(l=>{
+    const t = l.trim();
+    if(!t || /^OPERACI/i.test(t)) return;                 // encabezado
+    // Separadores: tabulador o 2+ espacios.
+    const c = t.split(/\t|\s{2,}/).map(x=>x.trim()).filter(Boolean);
+    if(c.length < 6) return;
+    const lado = /^(VENTA|SELL|V)$/i.test(c[0]) ? 'Venta'
+               : (/^(COMPRA|BUY|C)$/i.test(c[0]) ? 'Compra' : null);
+    if(!lado) return;
+    const especie = nemoCanonico(c[1], 'fidessa') || c[1];
+    const cantidad = num(c[2]);
+    // El DECEVAL es el número largo (7 dígitos) que NO es el NIT.
+    let deceval = '', nombre = '';
+    for(let i = c.length-1; i >= 3; i--){
+      const v = String(c[i]).replace(/[.\-\s]/g,'');
+      if(/^\d{4,8}$/.test(v) && v.length <= 8 && !/^8\d{8,}/.test(v)){ deceval = v; nombre = c[i+1] || ''; break; }
+    }
+    if(!cantidad || !deceval) return;
+    filas.push({ lado, especie, cantidad, deceval, nombre });
+  });
+  if(!filas.length) return null;
+  // Se agrupa por especie + lado: cada grupo es una "orden".
+  const g = {};
+  filas.forEach(f=>{
+    const k = f.especie + '|' + f.lado;
+    g[k] = g[k] || { especie:f.especie, lado:f.lado, cantidadTotal:0, lineas:[] };
+    g[k].cantidadTotal += f.cantidad;
+    g[k].lineas.push({ portafolio:f.nombre, cantidad:f.cantidad, deceval:f.deceval });
+  });
+  return Object.values(g);
+}
+
 function parsearAllocLocal(texto){
+  // Primero se intenta el formato TABULAR (VALORES_AM). Si no calza, sigue el
+  // parser de líneas sueltas que usa COLFONDOS.
+  const tab = parsearAllocTabular(texto);
+  if(tab && tab.length) return tab;
+  return parsearAllocLocalLineas(texto);
+}
+
+function parsearAllocLocalLineas(texto){
   const num = s => parseInt(String(s).replace(/[.,\s]/g,''),10);
   const lineas = texto.split(/\r?\n/).map(l=>l.trim());
   const ordenes = [];
@@ -14403,7 +14493,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-24 22:38 UTC';
+const BUILD_ID = '2026-08-25 18:47 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
