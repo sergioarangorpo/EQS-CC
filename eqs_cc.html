@@ -9921,7 +9921,11 @@ function normPort(s){
 function matchPortafolioPorDeceval(linea, ports){
   const d = String(linea && linea.deceval || '').replace(/\D/g,'');
   if(!d) return null;
-  return ports.find(p => String(p.deceval) === d) || null;
+  const p = (ports||[]).find(x => String(x.deceval) === d);
+  // MISMA forma que devuelve matchPortafolio: {portId, portNombre}. Devolver el
+  // objeto crudo hacía que el match se viera vacío y todos los portafolios
+  // salieran como "elige portafolio" (Sergio, 25-ago).
+  return p ? { portId: p.id, portNombre: p.nombre } : null;
 }
 
 function matchPortafolio(portTexto, ports){
@@ -14493,7 +14497,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-25 18:47 UTC';
+const BUILD_ID = '2026-08-25 19:15 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
