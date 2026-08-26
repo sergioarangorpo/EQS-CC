@@ -13545,6 +13545,25 @@ function renderArqueoRVI(){
   if(locales.length){
     avisos.push(`${locales.map(r=>r.especie).join(', ')} es de la Bolsa de Colombia (broker CVAL): va en RVL, no acá. Sus precios están en pesos.`);
   }
+  // Las dos patas deben tener la MISMA cantidad. Si difieren mucho, algo llegó
+  // mal de EMSX: el 26-ago una orden de COLFONDOS de 122.400 XLF quedó
+  // guardada como 1.278 porque un mensaje de ruta pisó el total de la orden.
+  // El arqueo de arriba ya compara cantidades, pero esto avisa aunque solo se
+  // marque una pata, comparando contra el resto del blotter (Sergio).
+  marcadas.forEach(r=>{
+    const gemelas = getFiltradas().filter(x=>
+      x.id !== r.id &&
+      String(x.especie||'') === String(r.especie||'') &&
+      String(x.lado||'') === String(r.lado||''));
+    gemelas.forEach(g=>{
+      const a = Number(r.qty)||0, b = Number(g.qty)||0;
+      if(a && b && a !== b && Math.abs(a-b)/Math.max(a,b) > 0.02){
+        avisos.push(`${r.especie}: esta línea dice ${fmtInt(a)} y hay otra de ${fmtInt(b)}. ` +
+                    `Verifica contra Bloomberg antes de reportar.`);
+      }
+    });
+  });
+
   // Tipo sin definir: no se puede calcular la comisión ni el sec fee.
   const sinTipo = marcadas.filter(r=>!r.tipo || String(r.tipo).trim()==='?' );
   if(sinTipo.length){
@@ -13617,7 +13636,6 @@ function renderArqueoRVI(){
         <b>Cliente:</b> ${cliente.map(r=>`${r.firm} · ${r.especie} ${fmtInt(r.qty)} @ ${fmtRateRVI(r.avgPr)}`).join(' · ')}</div>` : ''}
       ${nuestras.length ? `<div style="font-size:12.5px;margin-bottom:3px;">
         <b>Nuestra ejecución:</b> ${nuestras.map(r=>`${r.broker||'—'} ${fmtInt(r.qty)} @ ${fmtRateRVI(r.avgPr)}`).join(' · ')}</div>` : ''}
-      ${avisoMacro}
       ${oks.map(t=>`<div style="font-size:12.5px;color:var(--buy,#22c55e);">${t}</div>`).join('')}
       ${avisos.map(t=>`<div style="font-size:12.5px;color:var(--amber,#f59e0b);">⚠ ${t}</div>`).join('')}
       <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;padding-top:9px;border-top:1px solid rgba(255,255,255,.08);font-size:12.5px;">
@@ -14553,7 +14571,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-25 20:13 UTC';
+const BUILD_ID = '2026-08-26 19:37 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
