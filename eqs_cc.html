@@ -5340,6 +5340,29 @@ function ordenarArrayGenerico(arr, tablaId){
 // Portafolios de VALORES_AM abiertos después de la última carga de
 // Bases_de_datos.xlsx. Se agregan aquí para no bloquear el reporte; conviene
 // pasarlos al Excel maestro (Sergio, 25-ago).
+// AVAL FIDUCIARIA: el portafolio nuevo y el renombre post-fusión. Los nombres
+// viejos decían "FIDUBOGOTA", que es anterior a la fusión (Sergio, 26-ago).
+const AVAL_FIDU_NUEVOS = [
+  { deceval: 1127, nombre: 'AVAL FIDUCIARIA META CRECIMIENTO' },
+];
+function normalizarNombresAvalFidu(){
+  const cfg = (typeof getClienteDB === 'function') ? getClienteDB('AVAL FIDUCIARIA') : null;
+  if(!cfg || !cfg.nombre) return;
+  cfg.portafolios = cfg.portafolios || [];
+  // FIDUBOGOTA -> AVAL FIDUCIARIA, y FIC/PA sueltos también quedan con la marca.
+  cfg.portafolios.forEach(p=>{
+    let n = String(p.nombre||'').trim();
+    n = n.replace(/^FIDUBOGOTA\s+/i, 'AVAL FIDUCIARIA ');
+    if(!/^AVAL FIDUCIARIA/i.test(n)) n = 'AVAL FIDUCIARIA ' + n;
+    p.nombre = n;
+  });
+  AVAL_FIDU_NUEVOS.forEach(n=>{
+    if(!cfg.portafolios.some(x=>String(x.deceval)===String(n.deceval))){
+      cfg.portafolios.push({ id:'DEC_'+n.deceval, nombre:n.nombre, deceval:n.deceval, nit:'', iva:true });
+    }
+  });
+}
+
 const VALORES_AM_NUEVOS = [
   { deceval: 2474798, nombre: 'FIDUBANCOLOMBIA P.A. ABEL TAMAYO FIERRO GIDGLOB' },
   { deceval: 4047199, nombre: 'FIDUBANCOLOMBIA P.A. DANVAMI' },
@@ -5430,6 +5453,7 @@ function getClienteDB(key){
 // Los portafolios nuevos se agregan DESPUÉS de que getClienteDB haya cargado
 // los de CATEGORIAS_DB.
 if(typeof agregarPortafoliosNuevosVAM === 'function') agregarPortafoliosNuevosVAM();
+if(typeof normalizarNombresAvalFidu === 'function') normalizarNombresAvalFidu();
 
 // Folios crudos de Fidessa (simulando lo que vimos hoy en COR para ECOPETROL/COLFONDOS,
 // más unos folios de PROTECCION/CELSIA para validar el filtro)
@@ -14571,7 +14595,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-26 19:37 UTC';
+const BUILD_ID = '2026-08-27 16:08 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
