@@ -2044,6 +2044,21 @@
       <span>Reportes generados hoy</span>
       <span class="field-note" id="reportesResumen">—</span>
     </div>
+
+    <!-- Barra de carga al COR: al cierre salen varios clientes a la vez y
+         bajarlos uno por uno es un desgaste (Sergio, 27-ago). -->
+    <div style="margin:0 24px 16px;padding:12px 16px;background:var(--bg-2,#161b26);
+                border:1px solid var(--border,#232938);border-radius:8px;
+                display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+      <span style="font-size:13px;font-weight:700;">Carga al COR</span>
+      <button class="btn small ghost" onclick="seleccionarCOR('pendientes')">Pendientes de cargar</button>
+      <button class="btn small ghost" onclick="seleccionarCOR('todos')">Todos los de hoy</button>
+      <button class="btn small ghost" onclick="seleccionarCOR('ninguno')">Limpiar</button>
+      <span class="field-note" id="corSeleccion" style="flex:1;min-width:180px;">Marca los clientes que vas a subir.</span>
+      <button class="btn purple" id="btnCorMultiple" onclick="descargarCORSeleccionados()" disabled>
+        📥 Descargar seleccionados</button>
+    </div>
+
     <div style="padding:0 24px 24px;">
       <div id="repRVL"></div>
       <div id="repRVI"></div>
@@ -9038,6 +9053,190 @@ function horaLocal(iso){
   return d.toLocaleTimeString('es-CO', {timeZone:'America/Bogota', hour12:false});
 }
 
+// =====================================================================
+// CARGA AL COR — archivo de complementación masiva
+// ---------------------------------------------------------------------
+// Antes el COR era la fuente: se bajaba de ahí y las macros armaban los
+// reportes del cliente. Ahora la app va primero, así que lo que se le confirma
+// al cliente y lo que viaja a la bolsa salen del MISMO sitio (Sergio, 27-ago).
+//
+// Una fila por FOLIO x PORTAFOLIO. El folio del COR son 18 dígitos:
+//   yyyymmdd + 0100 (mercado continuo) u 0700 (MGC) + los 6 del TCN.
+// La comisión va como número sin %, que es como la lee el COR (0.08 = 0,08%).
+// =====================================================================
+const COR_COLUMNAS = ['cliente','dv_cliente','EspecialFiduciario','Nemotecnico','Folio',
+  'CantidadFraccion','precio','Comision','usuarioBolsa','C/V','Fraccion','deceval',
+  'medioverificable','fechaFoliio','usuariocomercial','idorioncomercial','nombreordenante'];
+
+let _cargasCOR = [];
+
+async function cargarRegistroCOR(){
+  try{ _cargasCOR = await supaFetch('cargas_cor', `fecha=eq.${_hoyISO()}&order=generado_en.desc&limit=1000`) || []; }
+  catch(e){ _cargasCOR = []; }
+}
+
+function vecesCargadoCOR(modulo, cliente){
+  return _cargasCOR.filter(c=>c.modulo===modulo && c.cliente===cliente).length;
+}
+
+function badgeCargaCOR(modulo, cliente){
+  const n = vecesCargadoCOR(modulo, cliente);
+  if(!n) return '<span style="color:var(--amber,#f59e0b);font-size:10px;letter-spacing:.3px;" ' +
+                'title="Todavía no se ha bajado el archivo del COR para este cliente.">SIN CARGAR</span>';
+  return `<span style="color:var(--buy,#22c55e);font-size:10px;letter-spacing:.3px;" ` +
+         `title="Ya se bajó ${n} vez(ces). Puedes volver a bajarlo: manda la última.">● CARGADO${n>1?' ('+n+')':''}</span>`;
+}
+
+// El folio del COR: yyyymmdd + segmento + TCN de 6 dígitos.
+function folioCOR(tcn, especie, fechaISO){
+  const f = String(fechaISO || _hoyISO()).replace(/-/g,'');
+  // MGC son las que terminan en CO (más NUCO); el resto va por continuo.
+  const seg = (typeof segmentoDe === 'function' && segmentoDe(especie) === 'MGC') ? '0700' : '0100';
+  return f + seg + String(tcn).padStart(6,'0');
+}
+
+function seleccionarCOR(modo){
+  document.querySelectorAll('.chk-cor').forEach(ch=>{
+    if(modo === 'ninguno') ch.checked = false;
+    else if(modo === 'todos') ch.checked = true;
+    else if(modo === 'pendientes') ch.checked = vecesCargadoCOR(ch.dataset.mod, ch.dataset.cli) === 0;
+  });
+  renderResumenSeleccionCOR();
+}
+
+function renderResumenSeleccionCOR(){
+  const sel = [...document.querySelectorAll('.chk-cor')].filter(ch=>ch.checked);
+  const el = document.getElementById('corSeleccion');
+  const btn = document.getElementById('btnCorMultiple');
+  if(btn) btn.disabled = sel.length === 0;
+  if(!el) return;
+  el.textContent = sel.length === 0
+    ? 'Marca los clientes que vas a subir.'
+    : `${sel.length} cliente(s): ${sel.map(ch=>ch.dataset.cli).join(' · ')}`;
+}
+
+function descargarCORSeleccionados(){
+  const sel = [...document.querySelectorAll('.chk-cor')].filter(ch=>ch.checked)
+    .map(ch=>({ modulo: ch.dataset.mod, cliente: ch.dataset.cli }));
+  if(!sel.length){ alert('Marca al menos un cliente.'); return; }
+  descargarCOR(sel);
+}
+
+// Arma las filas del COR a partir de lo que ya se reportó. Se apoya en los
+// folios de Fidessa, que son los que llevan el TCN y el reparto por portafolio.
+function filasCORDeCliente(modulo, cliente){
+  const lineas = _reportesGenerados.filter(r=>r.modulo===modulo && r.cliente===cliente);
+  if(!lineas.length) return [];
+  const poids = new Set(lineas.map(r=>String(r.parent_order_id)));
+  // Se busca la clave del cliente para poder leer sus portafolios.
+  const claveCli = Object.keys(clientesDB).find(k=>(getClienteDB(k).nombre||k) === cliente) || cliente;
+  const cfg = getClienteDB(claveCli);
+  const ports = cfg.portafolios || [];
+  const alloc = {};   // parentOrderId -> [{portId, cantidad}]
+  Object.keys(_allocPorOrden||{}).forEach(o=>{ if(poids.has(String(o))) alloc[o] = _allocPorOrden[o]; });
+
+  const filas = [];
+  const folios = (foliosFidessa||[]).filter(f=>poids.has(String(f.parentOrderId)));
+  // Agrupado por orden, para repartir cada folio entre los portafolios.
+  const porOrden = {};
+  folios.forEach(f=>{ (porOrden[f.parentOrderId] = porOrden[f.parentOrderId] || []).push(f); });
+
+  Object.keys(porOrden).forEach(oid=>{
+    const fol = porOrden[oid].slice().sort((a,b)=>Number(a.folio)-Number(b.folio));
+    const total = fol.reduce((a,f)=>a+f.cantidad,0);
+    // Reparto de la orden: si no hay allocation, todo va al portafolio del folio.
+    let reparto = (alloc[oid]||[]).filter(a=>a.cantidad>0)
+      .map(a=>{ const p = ports.find(x=>x.id===a.portId) || {}; return { port:p, cantidad:a.cantidad }; });
+    if(!reparto.length){
+      reparto = [{ port: ports.find(p=>p.id===cfg.autoPortafolio) || ports[0] || {}, cantidad: total }];
+    }
+    fol.forEach(f=>{
+      let n = 0;
+      let restante = f.cantidad;
+      reparto.forEach((a,i)=>{
+        // Cada folio se parte entre los portafolios en la misma proporción.
+        const q = (i === reparto.length-1) ? restante : Math.round(f.cantidad * a.cantidad / total);
+        restante -= q;
+        if(q <= 0) return;
+        n++;
+        const pct = (typeof comisionFolioPct === 'function') ? comisionFolioPct(claveCli, f) : 0;
+        filas.push({
+          cliente: a.port.orion || '',            // Código Orión — llega con la tabla de Miguel
+          dv_cliente: a.port.dv || '',
+          EspecialFiduciario: a.port.especialFid || '',
+          Nemotecnico: f.especie,
+          Folio: folioCOR(f.folio, f.especie, f.fechaReg),
+          CantidadFraccion: q,
+          precio: f.precio,
+          Comision: Number(pct.toFixed(4)),       // 0.08 = 0,08%, sin el signo
+          usuarioBolsa: '',
+          'C/V': f.lado === 'Venta' ? 'V' : 'C',
+          Fraccion: n,
+          deceval: a.port.deceval || '',
+          medioverificable: 5,
+          fechaFoliio: new Date(),
+          usuariocomercial: 'SARANGO',
+          idorioncomercial: 'SAR',
+          nombreordenante: '',
+          _cliente: cliente,
+        });
+      });
+    });
+  });
+  return filas;
+}
+
+async function descargarCOR(seleccion){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  let filas = [];
+  const resumen = [];
+  // Ordenado POR CLIENTE, para que sea legible si alguien lo abre.
+  seleccion.forEach(({modulo, cliente})=>{
+    const f = filasCORDeCliente(modulo, cliente);
+    if(f.length){ filas = filas.concat(f); resumen.push({modulo, cliente, n:f.length}); }
+  });
+  if(!filas.length){
+    alert('No se encontraron folios para esos clientes.\n\n' +
+          'El archivo del COR se arma con los folios de Fidessa: revisa que estén cargados.');
+    return;
+  }
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Hoja1');
+  COR_COLUMNAS.forEach((h,i)=>{
+    const c = ws.getCell(1, i+1);
+    c.value = h;
+    c.font = { name:'Calibri', size:11, bold:true };
+  });
+  filas.forEach((f,i)=>{
+    COR_COLUMNAS.forEach((col,c)=>{ ws.getCell(i+2, c+1).value = f[col]; });
+    ws.getCell(i+2, 14).numFmt = 'dd/mm/yyyy';
+  });
+  autofitColumnas(ws, {min:9, max:26});
+  const d = new Date();
+  const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  const nombre = resumen.length === 1
+    ? `COMPLEMENTACION_MASIVO_${slug}_${String(resumen[0].cliente).replace(/[^A-Za-z0-9]+/g,'_').slice(0,24)}.xlsx`
+    : `COMPLEMENTACION_MASIVO_${slug}.xlsx`;
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  const a = document.createElement('a');
+  a.href = url; a.download = nombre;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  // Registro: admite repetir, con consecutivo. Manda la última.
+  try{
+    const filasReg = resumen.map(r=>({
+      fecha: _hoyISO(), modulo: r.modulo, cliente: r.cliente,
+      version: vecesCargadoCOR(r.modulo, r.cliente) + 1,
+      n_filas: r.n, generado_por: 'SAR',
+    }));
+    await guardarEnLotesSupabase('cargas_cor', filasReg);
+    await cargarRegistroCOR();
+    renderModuloReportes();
+  }catch(e){ console.warn('No se pudo registrar la carga al COR:', e.message); }
+}
+
 function renderModuloReportes(){
   const resumen = document.getElementById('reportesResumen');
   if(!document.getElementById('repRVL')) return;
@@ -9068,9 +9267,18 @@ function renderModuloReportes(){
             const ultima = Math.max(...rs.map(r=>Number(r.version)||1));
             return `
             <div class="blotter-wrap" style="margin-bottom:14px;">
-              <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);">
-                <strong>${cli}</strong>
-                <span class="field-note">${etiquetaVersion(ultima)} · ${rs.length} línea(s) · ${fmtInt(qty)} · comisión ${fmtMoney(com)}</span>
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);gap:10px;">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                  <input type="checkbox" class="chk chk-cor" data-mod="${mod}" data-cli="${String(cli).replace(/"/g,'&quot;')}"
+                         onclick="renderResumenSeleccionCOR()">
+                  <strong>${cli}</strong>
+                </label>
+                <span style="display:flex;align-items:center;gap:10px;">
+                  <span class="field-note">${etiquetaVersion(ultima)} · ${rs.length} línea(s) · ${fmtInt(qty)} · comisión ${fmtMoney(com)}</span>
+                  ${badgeCargaCOR(mod, cli)}
+                  ${mod === 'RVL' ? `<button class="btn small purple" title="Descargar el archivo de complementación para subir al COR"
+                     onclick="descargarCOR([{modulo:'${mod}', cliente:'${String(cli).replace(/'/g,"\\'")}'}])">📥 COR</button>` : ''}
+                </span>
               </div>
               <table><thead><tr>
                 <th>Hora</th><th>Parent Order ID</th><th>Especie</th><th>Lado</th>
@@ -14915,7 +15123,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-27 19:13 UTC';
+const BUILD_ID = '2026-08-27 20:59 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
