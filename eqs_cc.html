@@ -2007,7 +2007,11 @@
     <div class="toolbar">
       <div class="tb-field" style="flex:1;min-width:340px;">
         <label>Trades del mercado (All_Trades .csv)</label>
-        <input type="file" id="fileMercadoInf" accept=".csv" onchange="cargarTradesMercado(this)" style="font-size:12px;width:100%;">
+        <input type="file" id="fileMercadoInf" accept=".csv" multiple onchange="cargarTradesMercado(this)"
+               style="font-size:12px;width:100%;"
+               title="Puedes cargar VARIOS días de una: el más reciente arma el informe y los anteriores se guardan como cierre para la variación diaria.">
+        <div class="field-note" style="font-size:11px;margin-top:3px;">
+          Puedes seleccionar varios días a la vez — el más reciente arma el informe y los anteriores quedan guardados como cierre.</div>
       </div>
       <div class="tb-field">
         <label>USDCOP</label>
@@ -15190,7 +15194,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-27 21:29 UTC';
+const BUILD_ID = '2026-08-27 21:32 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
