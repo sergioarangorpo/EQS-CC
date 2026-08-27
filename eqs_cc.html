@@ -1938,6 +1938,67 @@
       <div id="spreadResultado" style="margin-top:12px;"></div>
     </div>
 
+    <!-- ===== MAESTROS: portafolios y especies =====
+         Antes había que pedirle a Claude que los agregara a mano; ahora se
+         crean aquí y quedan en Supabase, así los ven todos (Sergio, 27-ago). -->
+    <div class="card" style="margin-top:18px;">
+      <div class="section-label">Portafolio nuevo</div>
+      <div class="field-note" style="margin-bottom:10px;">
+        Cuando un cliente abre un portafolio que todavía no está en la base.
+        El DECEVAL es el identificador: no cambia y es por el que se cruza el allocation.</div>
+      <div class="field-row">
+        <div class="field"><label>DECEVAL</label>
+          <input type="text" id="mpDeceval" placeholder="4352995" style="width:130px;"></div>
+        <div class="field"><label>Client/Book</label>
+          <select id="mpClientBook" style="width:220px;"></select></div>
+        <div class="field" style="flex:1;"><label>Nombre del portafolio</label>
+          <input type="text" id="mpNombre" placeholder="FIDUBANCOLOMBIA P.A. INVERLASER"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Especial fiduciario <span class="field-note">(opcional)</span></label>
+          <input type="text" id="mpEspecial" placeholder="27" style="width:130px;"></div>
+        <div class="field"><label>IVA</label>
+          <select id="mpIva" style="width:130px;">
+            <option value="1">Sí — 19%</option>
+            <option value="0">No (FPV/FPO)</option>
+          </select></div>
+        <div class="field" style="align-self:flex-end;">
+          <button class="btn purple" onclick="guardarPortafolioMaestro()">Guardar portafolio</button></div>
+      </div>
+      <div id="mpEstado" class="field-note" style="margin-top:8px;"></div>
+      <div id="mpLista" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="section-label">Especie nueva</div>
+      <div class="field-note" style="margin-bottom:10px;">
+        El mercado define los tickers: RVL arma <b>NEMO CB Equity</b> y <b>NEMO.BGa</b>;
+        RVI arma <b>NEMO US Equity</b> o <b>NEMO LN Equity</b>. No hay que escribirlos.</div>
+      <div class="field-row">
+        <div class="field"><label>Especie</label>
+          <input type="text" id="meEspecie" placeholder="EMXC" style="width:130px;text-transform:uppercase;"></div>
+        <div class="field"><label>ISIN</label>
+          <input type="text" id="meIsin" placeholder="US46434G7640" style="width:180px;text-transform:uppercase;"></div>
+        <div class="field"><label>SEDOL</label>
+          <input type="text" id="meSedol" placeholder="BYXKYV3" style="width:140px;text-transform:uppercase;"></div>
+        <div class="field"><label>Mercado</label>
+          <select id="meMercado" style="width:200px;" onchange="previsualizarTickersMaestro()">
+            <option value="RVL">RVL — Bolsa de Colombia</option>
+            <option value="RVI_US">RVI — US Equity</option>
+            <option value="RVI_LN">RVI — LN Equity</option>
+          </select></div>
+      </div>
+      <div class="field-row">
+        <div class="field" style="flex:1;"><label>Descripción <span class="field-note">(para la proforma de Porvenir)</span></label>
+          <input type="text" id="meDesc" placeholder="iShares MSCI Emerging Markets ex China ETF"></div>
+        <div class="field" style="align-self:flex-end;">
+          <button class="btn purple" onclick="guardarEspecieMaestro()">Guardar especie</button></div>
+      </div>
+      <div id="meTickers" class="field-note" style="margin-top:8px;"></div>
+      <div id="meEstado" class="field-note" style="margin-top:4px;"></div>
+      <div id="meLista" style="margin-top:12px;"></div>
+    </div>
+
   </div>
 
   <!-- ===== INFORME DIARIO DE MERCADO ===== -->
@@ -5369,6 +5430,204 @@ function ordenarArrayGenerico(arr, tablaId){
 const AVAL_FIDU_NUEVOS = [
   { deceval: 1127, nombre: 'AVAL FIDUCIARIA META CRECIMIENTO' },
 ];
+// =====================================================================
+// MAESTROS EDITABLES — portafolios y especies (Ayudas)
+// ---------------------------------------------------------------------
+// Viven en Supabase y se cargan al arrancar ENCIMA de lo que trae
+// Bases_de_datos.xlsx: la app manda sobre el Excel, que ya quedó
+// desactualizado en los dos sentidos (Sergio, 27-ago).
+// =====================================================================
+let _maestroPortafolios = [];
+let _maestroEspecies = [];
+
+async function cargarMaestros(){
+  try{
+    _maestroPortafolios = await supaFetch('maestro_portafolios', 'order=creado_en.desc&limit=2000') || [];
+  }catch(e){ console.warn('maestro_portafolios:', e.message); _maestroPortafolios = []; }
+  try{
+    _maestroEspecies = await supaFetch('maestro_especies', 'order=creado_en.desc&limit=2000') || [];
+  }catch(e){ console.warn('maestro_especies:', e.message); _maestroEspecies = []; }
+  aplicarMaestroEspecies();
+  renderListasMaestro();
+}
+
+// Las especies entran a las mismas tablas que ya usa la app, para que
+// funcionen en todos lados sin tocar nada más.
+function aplicarMaestroEspecies(){
+  _maestroEspecies.forEach(e=>{
+    const nemo = String(e.especie||'').toUpperCase().trim();
+    if(!nemo) return;
+    const t = tickersDeMercado(nemo, e.mercado);
+    if(typeof _ISIN_POR_NUAM !== 'undefined' && e.isin) _ISIN_POR_NUAM[nemo] = e.isin;
+    if(typeof ISIN_RVI !== 'undefined' && e.isin && e.mercado !== 'RVL') ISIN_RVI[nemo] = e.isin;
+    if(typeof RVI_SEDOL_DESC !== 'undefined' && (e.sedol || e.descripcion)){
+      RVI_SEDOL_DESC[nemo] = { sedol: e.sedol||'', desc: e.descripcion||'' };
+    }
+    if(typeof _EMSX_A_NUAM !== 'undefined'){
+      _EMSX_A_NUAM[t.bloomberg.toUpperCase()] = nemo;
+      _EMSX_A_NUAM[nemo] = nemo;
+    }
+    if(typeof _FIDESSA_A_NUAM !== 'undefined' && t.fidessa){
+      _FIDESSA_A_NUAM[t.fidessa.toUpperCase()] = nemo;
+      _FIDESSA_A_NUAM[nemo] = nemo;
+    }
+    if(typeof NEMO_TABLE !== 'undefined' && !NEMO_TABLE.some(x=>String(x.nuam).toUpperCase()===nemo)){
+      NEMO_TABLE.push({ nuam:nemo, fidessa:t.fidessa||'', emsx:t.bloomberg, isin:e.isin||'' });
+    }
+  });
+}
+
+// De la especie + mercado salen los dos tickers, así no hay que escribirlos.
+function tickersDeMercado(nemo, mercado){
+  const n = String(nemo||'').toUpperCase().trim();
+  if(mercado === 'RVI_US') return { bloomberg: n + ' US Equity', fidessa: '' };
+  if(mercado === 'RVI_LN') return { bloomberg: n + ' LN Equity', fidessa: '' };
+  return { bloomberg: n + ' CB Equity', fidessa: n + '.BGa' };
+}
+
+// Abre Ayudas con la especie precargada. Se llama desde el aviso de nemo
+// desconocido en RVL/RVI.
+function abrirAltaEspecie(nemo, mercado){
+  switchModule('Ayudas');
+  const e = document.getElementById('meEspecie');
+  const m = document.getElementById('meMercado');
+  if(e) e.value = String(nemo||'').toUpperCase();
+  if(m && mercado) m.value = mercado;
+  previsualizarTickersMaestro();
+  const card = document.getElementById('meEspecie');
+  if(card && card.scrollIntoView) card.scrollIntoView({behavior:'smooth', block:'center'});
+  if(document.getElementById('meIsin')) document.getElementById('meIsin').focus();
+}
+
+// Igual para un portafolio que aparece en un alloc y no está en la base.
+function abrirAltaPortafolio(deceval, clientBook, nombre){
+  switchModule('Ayudas');
+  const d = document.getElementById('mpDeceval');
+  const b = document.getElementById('mpClientBook');
+  const n = document.getElementById('mpNombre');
+  if(d) d.value = String(deceval||'').replace(/\D/g,'');
+  if(b && clientBook){
+    const clave = (typeof grupoDeTrade === 'function') ? grupoDeTrade(clientBook,'') : clientBook;
+    if([...b.options].some(o=>o.value===clave)) b.value = clave;
+  }
+  if(n) n.value = nombre || '';
+  if(d && d.scrollIntoView) d.scrollIntoView({behavior:'smooth', block:'center'});
+  if(n) n.focus();
+}
+
+function previsualizarTickersMaestro(){
+  const n = (document.getElementById('meEspecie').value||'').toUpperCase().trim();
+  const m = document.getElementById('meMercado').value;
+  const el = document.getElementById('meTickers');
+  if(!el) return;
+  if(!n){ el.textContent = ''; return; }
+  const t = tickersDeMercado(n, m);
+  el.innerHTML = `Se va a registrar como <b>${t.bloomberg}</b>` +
+    (t.fidessa ? ` y <b>${t.fidessa}</b> en Fidessa` : ' (RVI: no llega por Fidessa)');
+}
+
+async function guardarPortafolioMaestro(){
+  const est = document.getElementById('mpEstado');
+  const deceval = String(document.getElementById('mpDeceval').value||'').replace(/\D/g,'').trim();
+  const book    = document.getElementById('mpClientBook').value;
+  const nombre  = String(document.getElementById('mpNombre').value||'').trim();
+  const especial= String(document.getElementById('mpEspecial').value||'').trim();
+  const iva     = document.getElementById('mpIva').value === '1';
+  if(!deceval || !book || !nombre){
+    est.innerHTML = '<span style="color:var(--amber,#f59e0b);">Faltan DECEVAL, Client/Book o nombre.</span>';
+    return;
+  }
+  const yaEsta = _maestroPortafolios.find(p=>String(p.deceval)===deceval);
+  if(yaEsta && !confirm(`El DECEVAL ${deceval} ya existe como "${yaEsta.nombre}".\n\n` +
+      'Los decevales NO cambian: si vas a corregirlo, asegúrate de que es un error de digitación ' +
+      'y no otro portafolio.\n\n¿Actualizarlo de todas formas?')) return;
+  est.textContent = 'Guardando…';
+  const fila = { deceval, client_book:book, nombre, especial_fid:especial||null, iva,
+                 creado_por: (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
+                 actualizado_en: new Date().toISOString() };
+  try{
+    await guardarEnLotesSupabase('maestro_portafolios', [fila]);
+    await cargarMaestros();
+    aplicarMaestroPortafolios();
+    est.innerHTML = `<span style="color:var(--buy,#22c55e);">Guardado: ${nombre}</span>`;
+    ['mpDeceval','mpNombre','mpEspecial'].forEach(id=>{ document.getElementById(id).value=''; });
+  }catch(e){
+    est.innerHTML = `<span style="color:var(--sell,#ef4444);">No se pudo guardar: ${e.message}</span>`;
+  }
+}
+
+async function guardarEspecieMaestro(){
+  const est = document.getElementById('meEstado');
+  const especie = String(document.getElementById('meEspecie').value||'').toUpperCase().trim();
+  const isin    = String(document.getElementById('meIsin').value||'').toUpperCase().trim();
+  const sedol   = String(document.getElementById('meSedol').value||'').toUpperCase().trim();
+  const mercado = document.getElementById('meMercado').value;
+  const desc    = String(document.getElementById('meDesc').value||'').trim();
+  if(!especie){ est.innerHTML = '<span style="color:var(--amber,#f59e0b);">Falta la especie.</span>'; return; }
+  const ya = _maestroEspecies.find(e=>String(e.especie).toUpperCase()===especie);
+  if(ya && !confirm(`${especie} ya está registrada (ISIN ${ya.isin||'—'}).\n\n¿Actualizarla?`)) return;
+  est.textContent = 'Guardando…';
+  try{
+    await guardarEnLotesSupabase('maestro_especies', [{ especie, isin:isin||null, sedol:sedol||null,
+      mercado, descripcion: desc||null, creado_por:(typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
+      actualizado_en: new Date().toISOString() }]);
+    await cargarMaestros();
+    est.innerHTML = `<span style="color:var(--buy,#22c55e);">Guardada: ${especie}</span>`;
+    ['meEspecie','meIsin','meSedol','meDesc'].forEach(id=>{ document.getElementById(id).value=''; });
+    previsualizarTickersMaestro();
+  }catch(e){
+    est.innerHTML = `<span style="color:var(--sell,#ef4444);">No se pudo guardar: ${e.message}</span>`;
+  }
+}
+
+// Los portafolios del maestro entran a la base del cliente que les toque.
+function aplicarMaestroPortafolios(){
+  _maestroPortafolios.forEach(p=>{
+    const clave = (typeof grupoDeTrade === 'function') ? grupoDeTrade(p.client_book, '') : p.client_book;
+    const cfg = (typeof clientesDB !== 'undefined') ? clientesDB[clave] : null;
+    if(!cfg) return;
+    cfg.portafolios = cfg.portafolios || [];
+    if(!cfg.portafolios.some(x=>String(x.deceval)===String(p.deceval))){
+      cfg.portafolios.push({ id:'DEC_'+p.deceval, nombre:p.nombre, deceval:p.deceval,
+                             nit:p.nit||'', iva:p.iva !== false, especialFid:p.especial_fid||'' });
+    }
+  });
+}
+
+function renderListasMaestro(){
+  const lp = document.getElementById('mpLista');
+  if(lp){
+    lp.innerHTML = !_maestroPortafolios.length
+      ? '<div class="field-note">Todavía no se ha agregado ningún portafolio desde aquí.</div>'
+      : `<div class="field-note" style="margin-bottom:6px;">${_maestroPortafolios.length} portafolio(s) agregados desde la app:</div>` +
+        _maestroPortafolios.slice(0,12).map(p=>
+          `<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--border,#232938);">
+            <span class="mono-id">${p.deceval}</span> · ${p.nombre}
+            <span class="field-note">· ${p.client_book}${p.especial_fid?' · esp. '+p.especial_fid:''}</span></div>`).join('');
+  }
+  const le = document.getElementById('meLista');
+  if(le){
+    le.innerHTML = !_maestroEspecies.length
+      ? '<div class="field-note">Todavía no se ha agregado ninguna especie desde aquí.</div>'
+      : `<div class="field-note" style="margin-bottom:6px;">${_maestroEspecies.length} especie(s) agregadas desde la app:</div>` +
+        _maestroEspecies.slice(0,12).map(e=>{
+          const t = tickersDeMercado(e.especie, e.mercado);
+          return `<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--border,#232938);">
+            <span class="mono-id">${e.especie}</span> · ${t.bloomberg}
+            <span class="field-note">· ISIN ${e.isin||'—'} · SEDOL ${e.sedol||'—'}</span></div>`;
+        }).join('');
+  }
+}
+
+// El desplegable de Client/Book se arma con los clientes que ya existen.
+function poblarClientBookMaestro(){
+  const sel = document.getElementById('mpClientBook');
+  if(!sel || typeof clientesDB === 'undefined') return;
+  const claves = Object.keys(clientesDB).sort();
+  sel.innerHTML = '<option value="">Selecciona…</option>' +
+    claves.map(k=>`<option value="${k}">${(clientesDB[k].nombre)||k}</option>`).join('');
+}
+
 function normalizarNombresAvalFidu(){
   const cfg = (typeof getClienteDB === 'function') ? getClienteDB('AVAL FIDUCIARIA') : null;
   if(!cfg || !cfg.nombre) return;
@@ -6357,6 +6616,8 @@ const _CONFLICTO_POR_TABLA = {
   fidessa_trades: 'folio_orden',
   fidessa_folios: 'id',
   emsx_orders: 'id',
+  maestro_portafolios: 'deceval',
+  maestro_especies: 'especie',
 };
 async function guardarEnLotesSupabase(tabla, filas, tamanoLote=200){
   const conflicto = _CONFLICTO_POR_TABLA[tabla] || '';
@@ -7284,8 +7545,13 @@ function procesarFidessa(){
   if(typeof _NEMOS_NUEVOS !== 'undefined' && Object.keys(_NEMOS_NUEVOS).length){
     const nuevos = Object.keys(_NEMOS_NUEVOS);
     const el = document.getElementById('fidessaStatus');
-    if(el) el.innerHTML += ` <span style="color:var(--amber,#f59e0b);">⚠ Nemo(s) que no estaban en la base: ${nuevos.join(', ')}. ` +
-      `Se usan como <b>${nuevos.map(n=>n+' / '+n+' CB Equity').join(', ')}</b>; agrégalos a la hoja NEMO para que tengan ISIN.</span>`;
+    // El aviso trae un botón que abre el formulario de Ayudas con lo que la app
+    // ya dedujo: así se completa el ISIN y el SEDOL en el momento, sin tener
+    // que acordarse después (Sergio, 27-ago).
+    if(el) el.innerHTML += ` <span style="color:var(--amber,#f59e0b);">⚠ Nemo(s) sin ISIN en la base: ` +
+      `<b>${nuevos.join(', ')}</b> — se usan como ${nuevos.map(n=>n+' CB Equity').join(', ')}. ` +
+      `<button class="btn small purple" style="margin-left:6px;" onclick="abrirAltaEspecie('${nuevos[0]}','RVL')">` +
+      `Agregar a la base</button></span>`;
   }
 
   if(_sinInstruccion.length){
@@ -14649,7 +14915,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-27 18:52 UTC';
+const BUILD_ID = '2026-08-27 19:13 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
