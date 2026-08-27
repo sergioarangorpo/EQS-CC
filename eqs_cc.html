@@ -8526,16 +8526,25 @@ async function cargarCierreAnterior(){
   }
 }
 
-async function guardarCierreDelDia(){
+// `opts.fecha` permite guardar el cierre de un día ANTERIOR: al cargar varios
+// archivos, cada uno debe quedar con SU fecha. Sin esto todos se guardaban con
+// la de hoy y el del 26-ago pisó al del 27 (Sergio, 27-ago).
+// `opts.silencioso` evita las confirmaciones cuando se cargan varios de una.
+async function guardarCierreDelDia(opts){
+  opts = opts || {};
+  const _fechaCierre = opts.fecha || (typeof _mercadoFechaArchivo !== 'undefined' && _mercadoFechaArchivo) || _hoyISO();
   const st = document.getElementById('cierreStatus');
-  if(Object.keys(_mercadoStats).length === 0){ alert('Carga primero el archivo All_Trades.'); return; }
+  if(Object.keys(_mercadoStats).length === 0){
+    if(!opts.silencioso) alert('Carga primero el archivo All_Trades.');
+    return;
+  }
   const horaMax = _mercadoRango ? _mercadoRango.hasta : '';
-  if(horaMax < '15:55' && !confirm(`El archivo llega hasta las ${horaMax}, o sea que NO parece el cierre del día.\n\nGuardarlo como cierre dejaría precios parciales en la historia y la variación de mañana saldría mal.\n\n¿Guardar de todos modos?`)) return;
+  if(horaMax < '15:55' && !opts.silencioso && !confirm(`El archivo llega hasta las ${horaMax}, o sea que NO parece el cierre del día.\n\nGuardarlo como cierre dejaría precios parciales en la historia y la variación de mañana saldría mal.\n\n¿Guardar de todos modos?`)) return;
   const subasta = detectarSubastaCierre();
   const enSubasta = {};
   if(subasta) subasta.especies.forEach(a=>{ enSubasta[a.esp] = a; });
   const filas = Object.values(_mercadoStats).map(d=>({
-    fecha: _hoyISO(), nemo: d.esp,
+    fecha: _fechaCierre, nemo: d.esp,
     ultimo: d.ultimo, primero: d.primero, maximo: d.max, minimo: d.min,
     cantidad: d.qty, monto: d.monto, trades: d.trades,
     vwap: d.qty ? d.monto/d.qty : 0,
@@ -15194,7 +15203,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-27 21:32 UTC';
+const BUILD_ID = '2026-08-27 21:43 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
