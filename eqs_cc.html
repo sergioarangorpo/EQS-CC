@@ -1876,7 +1876,8 @@
     <div class="toolbar">
       <div class="tb-field" style="flex:1;min-width:340px;">
         <label>Trades del mercado (All_Trades .csv)</label>
-        <input type="file" id="fileMercado" accept=".csv" onchange="cargarTradesMercado(this)" style="font-size:12px;width:100%;">
+        <input type="file" id="fileMercado" accept=".csv" multiple onchange="cargarTradesMercado(this)" style="font-size:12px;width:100%;"
+               title="Puedes cargar varios días de una: el más reciente arma el informe y los anteriores quedan guardados como cierre de su día.">
       </div>
       <div class="tb-field">
         <label>USDCOP</label>
@@ -7785,19 +7786,68 @@ function usdcopActual(){
   return leer('usdcopInforme') || leer('usdcopAyudas');
 }
 
-function cargarTradesMercado(input){
-  const file = input.files && input.files[0];
-  if(!file) return;
-  const lector = new FileReader();
-  lector.onload = e => {
-    try{
-      procesarTradesMercado(String(e.target.result));
-    }catch(err){
-      document.getElementById('mercadoStatus').textContent = 'No se pudo leer el archivo: ' + err.message;
-    }
-  };
-  lector.readAsText(file, 'utf-8');
+// La fecha NO viene dentro del CSV (solo trae la hora), pero sí en el nombre:
+// "All_Trades_26811_030243" es el 11-ago-2026 — año 26, mes 8, día 11.
+// El nombre trae la fecha pegada: "All_Trades_26811_030243.csv" es 11-ago-2026
+// (AA + M + DD). Con 6 dígitos el mes lleva dos: "261211" es 11-dic-2026.
+// El patrón anterior separaba mal y devolvía null, así que los días previos
+// nunca se guardaban como cierre (Sergio, 27-ago).
+function fechaDeNombreAllTrades(nombre){
+  const m = String(nombre||'').match(/All_Trades_(\d{5,6})_/i);
+  if(!m) return null;
+  const b = m[1];
+  const aa = 2000 + Number(b.slice(0,2));
+  const mm = b.length === 6 ? Number(b.slice(2,4)) : Number(b.slice(2,3));
+  const dd = b.length === 6 ? Number(b.slice(4,6)) : Number(b.slice(3,5));
+  if(mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  return `${aa}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
 }
+
+// Se pueden cargar VARIOS días a la vez. Sirve cuando alguien más sacó el
+// informe y no lo guardó en la app: se cargan los archivos de esos días y
+// cada uno queda como cierre de SU fecha, no de hoy (Sergio, 27-ago).
+async function cargarTradesMercado(input){
+  const files = [...(input.files||[])];
+  if(!files.length) return;
+  const st = document.getElementById('mercadoStatus');
+  // Del más viejo al más reciente: el último en procesarse es el que queda en
+  // pantalla y arma el informe.
+  const conFecha = files.map(f=>({ file:f, fecha: fechaDeNombreAllTrades(f.name) }))
+    .sort((a,b)=> String(a.fecha||'').localeCompare(String(b.fecha||'')));
+  const leer = f => new Promise((res,rej)=>{
+    const l = new FileReader();
+    l.onload = e => res(String(e.target.result));
+    l.onerror = () => rej(new Error('no se pudo leer ' + f.name));
+    l.readAsText(f, 'utf-8');
+  });
+  const guardados = [], fallaron = [];
+  for(let i=0; i<conFecha.length; i++){
+    const {file, fecha} = conFecha[i];
+    try{
+      const texto = await leer(file);
+      procesarTradesMercado(texto);
+      const esElUltimo = (i === conFecha.length - 1);
+      // Los días anteriores se guardan como cierre en silencio; el último se
+      // deja en pantalla para armar el informe.
+      if(!esElUltimo && fecha){
+        await guardarCierreDelDia({ fecha, silencioso:true });
+        guardados.push(fecha);
+      }else if(fecha){
+        _mercadoFechaArchivo = fecha;
+      }
+    }catch(err){ fallaron.push(file.name + ': ' + err.message); }
+  }
+  if(st && (guardados.length || fallaron.length)){
+    st.innerHTML = (guardados.length
+        ? `<span style="color:var(--buy,#22c55e);">Cierre guardado de: ${guardados.join(', ')}.</span> `
+        : '') +
+      (fallaron.length ? `<span style="color:var(--sell,#ef4444);">No se pudo leer ${fallaron.join(' · ')}</span>` : '');
+  }
+  await cargarCierreAnterior();
+  renderInformeDiario();
+}
+
+let _mercadoFechaArchivo = null;
 
 function procesarTradesMercado(texto){
   // El export trae una primera línea suelta ("8620 Records exported.") antes
@@ -9135,6 +9185,18 @@ function filasCORDeCliente(modulo, cliente){
   const alloc = {};   // parentOrderId -> [{portId, cantidad}]
   Object.keys(_allocPorOrden||{}).forEach(o=>{ if(poids.has(String(o))) alloc[o] = _allocPorOrden[o]; });
 
+  // La comisión sale de LO QUE SE LE REPORTÓ AL CLIENTE, no de un recálculo:
+  // el COR y la confirmación tienen que decir lo mismo. Recalcular hacía que
+  // Andes saliera con 0,08% cuando su tarifa es 0,1% (Sergio, 27-ago).
+  const comPorOrden = {};
+  lineas.forEach(r=>{
+    const q = Number(r.cantidad) || 0;
+    const c = Number(r.comision) || 0;
+    const px = Number(r.precio) || 0;
+    // `comision` viene en pesos: se vuelve porcentaje sobre el bruto.
+    if(q && px) comPorOrden[String(r.parent_order_id)] = c / (q * px) * 100;
+  });
+
   const filas = [];
   const folios = (foliosFidessa||[]).filter(f=>poids.has(String(f.parentOrderId)));
   // Agrupado por orden, para repartir cada folio entre los portafolios.
@@ -9159,7 +9221,12 @@ function filasCORDeCliente(modulo, cliente){
         restante -= q;
         if(q <= 0) return;
         n++;
-        const pct = (typeof comisionFolioPct === 'function') ? comisionFolioPct(claveCli, f) : 0;
+        // 1) la del reporte  2) la del folio  3) el recálculo, como último recurso
+        let pct = comPorOrden[String(oid)];
+        if(pct == null || !isFinite(pct) || pct <= 0) pct = Number(f.comisionPct);
+        if(pct == null || !isFinite(pct) || pct <= 0){
+          pct = (typeof comisionFolioPct === 'function') ? comisionFolioPct(claveCli, f) : 0;
+        }
         filas.push({
           cliente: a.port.orion || '',            // Código Orión — llega con la tabla de Miguel
           dv_cliente: a.port.dv || '',
@@ -15123,7 +15190,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-27 20:59 UTC';
+const BUILD_ID = '2026-08-27 21:29 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
