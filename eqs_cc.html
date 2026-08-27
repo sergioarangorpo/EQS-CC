@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -4772,6 +4771,19 @@ const clientesDB = {
     comisionBloque: 0.001, comisionPantalla: 0.001,
     iva: true,
   },
+  'ALLIANZ SEGUROS DE VIDA S.A.': {
+    nombre: 'ALLIANZ SEGUROS DE VIDA S.A.',
+    // Portafolio ÚNICO, como BTG Cayman y Alianza Valores: no hay reparto.
+    // De los tres Allianz de la base solo aplica el 3904871 (Sergio, 27-ago).
+    formatoReporte: 'generico_equity',
+    reparteManual: false,
+    portafolios: [ {id:'DEC_3904871', nombre:'FONDO VOLUNTARIO DE PENSIONES ALLIANZ S.A.',
+                    deceval:3904871, nit:'', iva:false} ],
+    autoPortafolio: 'DEC_3904871',
+    fileNombre: 'Allianz Seguros',
+    // De GRUPO_COMISIONES: base 0,08% en pantalla y 0,15% en bloque.
+    comisionBloque: 0.0015, comisionPantalla: 0.0008,
+  },
   'ALIANZA VALORES': {
     nombre: 'ALIANZA VALORES',
     formatoReporte: 'generico_equity',
@@ -4896,6 +4908,9 @@ const ALIAS_GRUPO = {
   // AVAL FIDUCIARIA llega con varias escrituras según la fuente: AVAL_FIDU en
   // el Client/Book de Fidessa, "AVAL FIDUCIARIA SA" en el firm de EMSX, y el
   // nombre viejo FIDUBOGOTA de antes de la fusión (Sergio, 26-ago).
+  ALLIANZ_SEG_CO: 'ALLIANZ SEGUROS DE VIDA S.A.',
+  'ALLIANZ SEGUROS SA': 'ALLIANZ SEGUROS DE VIDA S.A.',
+  'ALLIANZ SEGUROS': 'ALLIANZ SEGUROS DE VIDA S.A.',
   'AVAL FIDUCIARIA SA': 'AVAL FIDUCIARIA',
   'AVAL FIDU': 'AVAL FIDUCIARIA',
   AVALFIDU: 'AVAL FIDUCIARIA',
@@ -14634,7 +14649,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-27 16:56 UTC';
+const BUILD_ID = '2026-08-27 18:52 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
