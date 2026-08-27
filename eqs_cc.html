@@ -4892,6 +4892,14 @@ const ALIAS_GRUPO = {
   // El CLIENT/BOOK "SKANDIA" a secas es la AFP, que ya existe con esa clave.
   // Somos nosotros mismos en Perú: la orden llega por Mafe y el reporte lo hace
   // el BO, así que NO se reporta desde acá (formato NO en GRUPO_COMISIONES).
+  // AVAL FIDUCIARIA llega con varias escrituras según la fuente: AVAL_FIDU en
+  // el Client/Book de Fidessa, "AVAL FIDUCIARIA SA" en el firm de EMSX, y el
+  // nombre viejo FIDUBOGOTA de antes de la fusión (Sergio, 26-ago).
+  'AVAL FIDUCIARIA SA': 'AVAL FIDUCIARIA',
+  'AVAL FIDU': 'AVAL FIDUCIARIA',
+  AVALFIDU: 'AVAL FIDUCIARIA',
+  FIDUBOGOTA: 'AVAL FIDUCIARIA',
+  'FIDUCIARIA BOGOTA': 'AVAL FIDUCIARIA',
   ALIANZA: 'ALIANZA VALORES',
   ALIANZAVAL: 'ALIANZA VALORES',
   CREDIBOLSA: 'CREDICORP CAPITAL BOLSA',
@@ -14595,7 +14603,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-27 16:08 UTC';
+const BUILD_ID = '2026-08-27 16:22 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
