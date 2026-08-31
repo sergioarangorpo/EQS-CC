@@ -9375,10 +9375,10 @@ function renderModuloReportes(){
                 </span>
               </div>
               <table><thead><tr>
-                <!-- El Parent Order ID solo es un dato real en RVL; en RVI y FX
-                     es un identificador interno del registro y no aporta nada,
-                     así que en su lugar va el PORTAFOLIO (Sergio, 31-ago). -->
-                <th>Hora</th><th>${mod === 'RVL' ? 'Parent Order ID' : 'Portafolio'}</th>
+                <!-- El Parent Order ID no aporta en ningún módulo: en RVI y FX
+                     es un identificador interno y en RVL tampoco se consulta.
+                     La columna muestra el PORTAFOLIO en los tres (Sergio, 31-ago). -->
+                <th>Hora</th><th>Portafolio</th>
                 <th>Especie</th><th>Lado</th>
                 <th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Comisión</th>
                 <th>Envío</th>
@@ -9386,7 +9386,7 @@ function renderModuloReportes(){
               ${rs.map(r=>`<tr>
                 <td>${horaLocal(r.generado_en)}</td>
                 <td class="mono-id" style="font-size:11px;white-space:normal;line-height:1.4;">${
-                  mod === 'RVL' ? r.parent_order_id : (r.portafolios || '—')}</td>
+                  r.portafolios || (mod === 'FX' ? cli : '—')}</td>
                 <td class="mono-id">${r.especie||'—'}</td>
                 <td>${r.lado||'—'}</td>
                 <td class="num">${fmtInt(r.cantidad)}</td>
@@ -15520,7 +15520,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 20:18 UTC';
+const BUILD_ID = '2026-08-31 20:24 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
