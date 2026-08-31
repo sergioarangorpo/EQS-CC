@@ -10796,10 +10796,24 @@ function parsearAllocLocalLineas(texto){
     const canon = nemoCanonico(v, 'fidessa');
     if(canon && canon !== v) return canon;
     // ¿existe tal cual en la tabla de nemos?
-    return (typeof NEMO_TABLE !== 'undefined' && NEMO_TABLE.some(n=>n.nuam === v)) ? v : null;
+    if(typeof NEMO_TABLE !== 'undefined' && NEMO_TABLE.some(n=>n.nuam === v)) return v;
+    // Tickers de RVI (ETFs, ADRs, UCITS): los allocations de COLFONDOS por chat
+    // también llegan con INDA, SPY, EMXC... y antes no se reconocían, así que
+    // el alloc entero se descartaba (Sergio, 31-ago).
+    if(typeof ISIN_RVI !== 'undefined' && ISIN_RVI[v]) return v;
+    if(typeof RVI_SEDOL_DESC !== 'undefined' && RVI_SEDOL_DESC[v]) return v;
+    // Un ticker de 2 a 5 letras que no está en ninguna tabla igual se acepta:
+    // es una especie nueva de RVI y la app avisa después para agregarla.
+    if(/^[A-Z]{2,5}$/.test(v) && !['FPO','FPV','FDO','LP','CP','ALLOC'].includes(v)) return v;
+    return null;
   };
 
-  lineas.forEach(l=>{
+  lineas.forEach(l0=>{
+    // Los mensajes de Bloomberg vienen con la HORA al principio
+    // ("08:32:07 -454.000 INDA alloc:"). Se quita antes de analizar: con ella
+    // ninguno de los patrones calzaba y el alloc entero se descartaba
+    // (Sergio, 31-ago).
+    const l = String(l0||'').replace(/^\d{1,2}:\d{2}(?::\d{2})?\s*/, '').trim();
     if(!l || /^-{3,}$/.test(l)) return;            // separadores "----"
     // ---- Cabecera con cantidad: "-203.950 ICOLCAP alloc:" o "+4.000 CIBEST"
     const mC = l.match(/^([+-])?\s*([\d.,]{3,})\s+([A-Za-zÁÉÍÓÚÑ0-9]{2,})\b(.*)$/);
@@ -15203,7 +15217,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-27 21:43 UTC';
+const BUILD_ID = '2026-08-31 16:33 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
