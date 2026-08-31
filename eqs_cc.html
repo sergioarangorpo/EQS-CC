@@ -9563,7 +9563,13 @@ async function registrarReporte(modulo, cliente, lineas, version){
   if(nuevas.length === 0) return 0;   // reenvío puro: nada nuevo que registrar
   const filas = nuevas.map(l => ({
     fecha: _hoyISO(), modulo, cliente,
-    parent_order_id: String(l.parentOrderId),
+    // En RVI el identificador incluye el PORTAFOLIO: las cinco filas del reparto
+    // comparten especie y lado, y el índice único de la tabla es
+    // (fecha, modulo, cliente, parent_order_id) — sin distinguirlas, cada una
+    // sobrescribía a la anterior y quedaba UNA sola (Sergio, 31-ago).
+    parent_order_id: modulo === 'RVI' && l.portafolios
+      ? String(l.parentOrderId) + '#' + String(l.portafolios)
+      : String(l.parentOrderId),
     especie: l.especie || '', lado: l.lado || '',
     cantidad: Number(l.cantidad) || 0,
     precio: Number(l.precio) || 0,
@@ -14296,7 +14302,8 @@ function vecesReportadaRVI(linea){
   const alt = esp + '|' + String(linea.lado||'');
   const suyas = (_reportesGenerados||[]).filter(r=>{
     if(r.modulo !== 'RVI') return false;
-    const poid = String(r.parent_order_id||'');
+    // El identificador de RVI lleva el portafolio después de '#'.
+    const poid = String(r.parent_order_id||'').split('#')[0];
     if(poid === id || poid === alt) return true;
     // Por si el registro viejo guardó el id de EMSX: se compara por especie.
     return String(r.especie||'').toUpperCase() === esp &&
@@ -15464,7 +15471,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 19:04 UTC';
+const BUILD_ID = '2026-08-31 19:21 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
