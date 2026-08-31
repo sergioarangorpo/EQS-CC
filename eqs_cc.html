@@ -14956,7 +14956,7 @@ function renderHistorial(){
     <td class="num">${fmtRateRVI(h.secFee,4)}</td>
     <td class="num">${fmtMoneyRVI(h.net,2)}</td>
     <td class="num">${fmtMoneyRVI(h.ccsi,2)}</td>
-    <td><button class="icon-btn" title="Corregir" onclick="abrirEdicionRVI(${h.id})">✎</button></td>
+    <td><button class="icon-btn" title="Corregir" onclick="abrirEdicionRVI('${String(h.id).replace(/'/g,"\\'")}')">✎</button></td>
   </tr>`).join('');
   document.getElementById('histHint').textContent=`(${filas.length}${filtro?' de '+historial.length:''} línea${filas.length!==1?'s':''}${filtro?' · '+filtro:''})`;
 }
@@ -14988,8 +14988,11 @@ async function exportarPDF(){
   // Solo las operaciones MARCADAS en el histórico, y de UN solo cliente: la TC
   // es por cliente (nadie ve los trades de otro). Así puedes filtrar por cliente,
   // dejar todas o solo algunas (p.ej. las que aún no has enviado — caso Colfondos).
-  const marcadas=[...document.querySelectorAll('.hist-check:checked')].map(c=>Number(c.dataset.id));
-  const filas=historial.filter(h=>marcadas.includes(h.id));
+  // Los ids se comparan como TEXTO: los que vienen de Supabase son cadenas y
+  // los locales números, así que Number(...) daba NaN y no encontraba nada —
+  // por eso pedía marcar operaciones aunque estuvieran marcadas (Sergio, 31-ago).
+  const marcadas=new Set([...document.querySelectorAll('.hist-check:checked')].map(c=>String(c.dataset.id)));
+  const filas=historial.filter(h=>marcadas.has(String(h.id)));
   if(!filas.length){ alert('Marca al menos una operación en el histórico (casillas) para exportar.'); return; }
   const clientes=[...new Set(filas.map(h=>h.cliente))];
   if(clientes.length>1){ alert('Marcaste operaciones de varios clientes ('+clientes.join(', ')+'). La Trade Confirmation es por cliente — filtra por un cliente en el histórico y exporta solo esas.'); return; }
@@ -15353,7 +15356,11 @@ async function generarTradeConfirmationRVI(cliente, filas){
     r += (i === 1 ? 2 : 1);
   });
 
-  const fecha = (filas[0].tradeDate || new Date().toISOString().slice(0,10)).replace(/[^0-9]/g,'');
+  // La fecha puede venir como Date (operación recién creada) o como texto
+  // (recuperada de Supabase). Se normaliza antes de usarla en el nombre.
+  const _td = filas[0].tradeDate;
+  const fecha = String(_td instanceof Date ? _td.toISOString().slice(0,10)
+                     : (_td || new Date().toISOString().slice(0,10))).replace(/[^0-9]/g,'');
   // Nombre de archivo: "Trade Confirmation <Cliente> yyyymmdd" (title case, sin sufijo SA).
   const nombreCliente = cliente.replace(/\s+S\.?A\.?$/i,'').toLowerCase().replace(/\b[a-záéíóúñ]/g, c=>c.toUpperCase());
   // Autofit de columnas al contenido de la tabla (encabezado + filas), sin tocar
@@ -15372,7 +15379,7 @@ async function generarTradeConfirmationRVI(cliente, filas){
 // EDICIÓN
 // =====================================================================
 function abrirEdicionRVI(id){
-  const h=historial.find(x=>x.id===id);
+  const h=historial.find(x=>String(x.id)===String(id));
   if(!h) return;
   editingId=id;
   document.getElementById('edit-price-rvi').value=fmtRateRVI(h.price,4);
@@ -15387,7 +15394,7 @@ function cerrarEdicionRVI(){
 }
 
 function guardarEdicionRVI(){
-  const h=historial.find(x=>x.id===editingId);
+  const h=historial.find(x=>String(x.id)===String(editingId));
   if(!h) return;
   const nuevoPrice=parseNum(document.getElementById('edit-price-rvi').value)||h.price;
   const nuevoTipo=document.getElementById('edit-tipo-rvi').value;
@@ -15471,7 +15478,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 19:21 UTC';
+const BUILD_ID = '2026-08-31 19:36 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
