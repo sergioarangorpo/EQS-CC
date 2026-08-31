@@ -9549,10 +9549,16 @@ async function registrarLoteRVI(cliente, filas){
 }
 
 async function registrarReporte(modulo, cliente, lineas, version){
-  const yaEstan = new Set(_reportesGenerados
+  // En RVL el Parent Order ID identifica la línea y no se repite, así que se
+  // descartan las ya registradas. En RVI, en cambio, una misma línea repartida
+  // en cinco portafolios son CINCO filas con el mismo identificador: aplicarles
+  // el mismo filtro dejaba una sola y el reporte se veía incompleto
+  // (Sergio, 31-ago). Ahí se guardan todas.
+  const dedup = modulo !== 'RVI';
+  const yaEstan = new Set(dedup ? _reportesGenerados
     .filter(r => r.cliente === cliente && r.modulo === modulo)
-    .map(r => String(r.parent_order_id)));
-  const nuevas = lineas.filter(l => !yaEstan.has(String(l.parentOrderId)));
+    .map(r => String(r.parent_order_id)) : []);
+  const nuevas = dedup ? lineas.filter(l => !yaEstan.has(String(l.parentOrderId))) : lineas;
   if(nuevas.length === 0) return 0;   // reenvío puro: nada nuevo que registrar
   const filas = nuevas.map(l => ({
     fecha: _hoyISO(), modulo, cliente,
@@ -15405,7 +15411,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 18:46 UTC';
+const BUILD_ID = '2026-08-31 18:53 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
