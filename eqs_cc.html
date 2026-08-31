@@ -1807,7 +1807,8 @@
             <thead>
               <tr>
                 <th style="width:28px;text-align:center;"><input type="checkbox" checked onclick="toggleTodosHist(this)" title="Marcar/desmarcar todas"></th>
-                <th>Hora</th>
+                <!-- La HORA se quitó: no aporta y le robaba ancho a las
+                     columnas que sí se revisan (Sergio, 31-ago). -->
                 <th>Cliente</th>
                 <th>Account</th>
                 <th>Side</th>
@@ -1819,12 +1820,12 @@
                 <th class="num">Cost</th>
                 <th class="num">Sec Fee</th>
                 <th class="num">Net</th>
-                <th class="num">Com CCSI</th>
-                <th></th>
+                <th class="num" title="Comisión que nos cobra el broker">Com broker</th>
+                <th style="width:34px;"></th>
               </tr>
             </thead>
             <tbody id="hist-body">
-              <tr><td colspan="15" class="empty-state">Aún no hay confirmaciones generadas.</td></tr>
+              <tr><td colspan="14" class="empty-state">Aún no hay confirmaciones generadas.</td></tr>
             </tbody>
           </table>
         </div>
@@ -14830,13 +14831,12 @@ function renderHistorial(){
   const coincide=h=>{ if(!fN) return true; const hN=norm(h.cliente); return hN.includes(fN)||fN.includes(hN); };
   const filas=historial.filter(coincide);
   if(!filas.length){
-    tbody.innerHTML='<tr><td colspan="15" class="empty-state">'+(historial.length?'No hay confirmaciones de este cliente.':'Aún no hay confirmaciones generadas.')+'</td></tr>';
+    tbody.innerHTML='<tr><td colspan="14" class="empty-state">'+(historial.length?'No hay confirmaciones de este cliente.':'Aún no hay confirmaciones generadas.')+'</td></tr>';
     document.getElementById('histHint').textContent = historial.length?`(${historial.length} en total)`:'';
     return;
   }
   tbody.innerHTML=filas.map(h=>`<tr>
     <td style="text-align:center;"><input type="checkbox" class="hist-check" data-id="${h.id}" checked></td>
-    <td class="mono-id">${h.hora}</td>
     <td>${h.cliente}</td>
     <td>${h.account}</td>
     <td><span class="side-badge ${h.side==='Buy'?'buy':'sell'}">${h.side}</span></td>
@@ -14844,7 +14844,7 @@ function renderHistorial(){
     <td class="mono-id">${h.isin}</td>
     <td class="num">${fmtInt(h.qty)}</td>
     <td class="num">${fmtRateRVI(h.price,4)}</td>
-    <td class="num">${fmtMoneyRVI(h.gross,0)}</td>
+    <td class="num">${fmtMoneyRVI(h.gross,2)}</td>
     <td class="num">${fmtMoneyRVI(h.cost,2)}</td>
     <td class="num">${fmtRateRVI(h.secFee,4)}</td>
     <td class="num">${fmtMoneyRVI(h.net,2)}</td>
@@ -15047,7 +15047,11 @@ async function generarTradeConfirmationPorvenirRVI(cliente, filas, opciones){
       px,           // Gross Px Settle Curr = AvgPr (misma moneda)
       gross,
       com,
-      0, 0, 0, 0, 0, 0, 0,   // Research, Exec, Clearing, Stamp, Sales Tax, Exchange, Clearing Fee
+      0, 0, 0, 0, 0,   // Research, Exec Broker, Clearing Broker, Stamp Duty, Sales Tax
+      secFee,          // Exchange Fee = el SEC fee. Iba en cero aunque el neto
+                       // sí lo descontaba, así que el archivo no cuadraba
+                       // consigo mismo (Sergio, 31-ago).
+      0,               // Clearing Fee
       neto,
       f.trader || '',
     ];
@@ -15360,7 +15364,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 17:06 UTC';
+const BUILD_ID = '2026-08-31 17:34 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
