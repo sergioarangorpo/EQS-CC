@@ -1799,9 +1799,18 @@
           <span class="hint" id="histHint"></span>
         </div>
         <div class="blotter-wrap">
-          <div class="blotter-toolbar">
+          <div class="blotter-toolbar" style="gap:10px;flex-wrap:wrap;">
             <div class="title">Trade Confirmations enviadas</div>
-            <span class="hint" style="font-size:11px;">Filtra por Cliente arriba · marca las que vas a enviar</span>
+            <!-- Filtro propio del histórico: solo lista los clientes que YA
+                 tienen operaciones, no todos los del catálogo (Sergio, 31-ago). -->
+            <select id="filtroHistCliente" onchange="renderHistorial()"
+                    style="font-size:12px;padding:3px 8px;max-width:280px;">
+              <option value="">Todos los clientes</option>
+            </select>
+            <button class="btn small ghost" onclick="marcarSoloClienteHist()"
+                    title="Marca solo las operaciones del cliente filtrado y desmarca el resto">
+              Marcar solo este cliente</button>
+            <span class="hint" style="font-size:11px;flex:1;">marca las que vas a enviar</span>
           </div>
           <table>
             <thead>
@@ -14928,11 +14937,40 @@ async function cargarHistoricoRVI(){
   }catch(e){ console.warn('No se pudo cargar el histórico de RVI:', e.message); }
 }
 
+// Llena el desplegable con los clientes que TIENEN operaciones hoy.
+function poblarFiltroHistorial(){
+  const sel = document.getElementById('filtroHistCliente');
+  if(!sel) return;
+  const previo = sel.value;
+  const clientes = [...new Set(historial.map(h=>h.cliente).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">Todos los clientes</option>' +
+    clientes.map(c=>{
+      const n = historial.filter(h=>h.cliente===c).length;
+      return `<option value="${String(c).replace(/"/g,'&quot;')}">${c} (${n})</option>`;
+    }).join('');
+  if(clientes.includes(previo)) sel.value = previo;
+}
+
+// Deja marcadas SOLO las del cliente filtrado: al exportar no se pueden mezclar
+// clientes, y desmarcar a mano una por una es un desgaste.
+function marcarSoloClienteHist(){
+  const f = (document.getElementById('filtroHistCliente')||{}).value || '';
+  if(!f){ alert('Elige primero un cliente en el filtro.'); return; }
+  document.querySelectorAll('.hist-check').forEach(c=>{
+    const h = historial.find(x=>String(x.id)===String(c.dataset.id));
+    c.checked = !!h && h.cliente === f;
+  });
+}
+
 function renderHistorial(){
+  poblarFiltroHistorial();
   const tbody=document.getElementById('hist-body');
   // Filtra por el MISMO filtro Cliente de arriba (vincula blotter + histórico).
   // Match flexible (ignora "SA"/tildes) para que "SKANDIA SEGUROS SA" case bien.
-  const filtro=(document.getElementById('filtroClienteRVI')||{}).value||'';
+  // Manda el filtro propio del histórico; si está en "Todos", se respeta el
+  // filtro Cliente de arriba para no romper el flujo anterior.
+  const filtro=((document.getElementById('filtroHistCliente')||{}).value)
+            || ((document.getElementById('filtroClienteRVI')||{}).value) || '';
   const norm=s=>String(s||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\bS\.?A\.?\b/g,'').replace(/\s+/g,' ').trim();
   const fN=norm(filtro);
   const coincide=h=>{ if(!fN) return true; const hN=norm(h.cliente); return hN.includes(fN)||fN.includes(hN); };
@@ -15478,7 +15516,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 19:36 UTC';
+const BUILD_ID = '2026-08-31 20:07 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
