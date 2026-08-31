@@ -9527,29 +9527,18 @@ async function registrarLoteRVI(cliente, filas){
   // (Sergio, 31-ago).
   // Se agrupa por línea de EMSX, sumando el reparto: así el módulo Reportes
   // muestra la cantidad total y no una fila por portafolio.
-  const porLinea = {};
-  filas.forEach(f=>{
+  // UNA FILA POR PORTAFOLIO: es lo que se le envió al cliente y lo que hay que
+  // poder revisar. Agruparlas en una sola escondía el reparto (Sergio, 31-ago).
+  const lineas = filas.map(f=>{
     const esp = String(f.symbol || f.especie || '').toUpperCase();
     const lado = String(f.side || f.lado || '');
-    const k = esp + '|' + lado;
-    const a = porLinea[k] || (porLinea[k] = { especie:esp, lado, cantidad:0, bruto:0, comision:0, ports:[] });
-    const q = Number(f.qty != null ? f.qty : f.cantidad) || 0;
-    const px = Number(f.price != null ? f.price : f.precio) || 0;
-    a.cantidad += q;
-    a.bruto += q * px;
-    a.comision += Number(f.cost != null ? f.cost : f.comision) || 0;
-    if(f.account) a.ports.push(`${f.account} ${fmtInt(q)}`);
-  });
-  const lineas = Object.keys(porLinea).map(k=>{
-    const a = porLinea[k];
     return {
-      parentOrderId: k,
-      especie: a.especie, lado: a.lado,
-      cantidad: a.cantidad,
-      precio: a.cantidad ? a.bruto / a.cantidad : 0,
-      comision: a.comision,
-      // El reparto queda en el registro para poder ver qué se envió.
-      portafolios: a.ports.join(' · '),
+      parentOrderId: esp + '|' + lado,   // estable: no depende del id de EMSX
+      especie: esp, lado,
+      cantidad: Number(f.qty != null ? f.qty : f.cantidad) || 0,
+      precio: Number(f.price != null ? f.price : f.precio) || 0,
+      comision: Number(f.cost != null ? f.cost : f.comision) || 0,
+      portafolios: f.account || '',
     };
   });
   const nuevas = await registrarReporte('RVI', cliente, lineas, version);
@@ -14286,14 +14275,17 @@ function vecesReportadaRVI(linea){
   const id = String(linea.id);
   const esp = tickerLimpioRVI(linea.especie).toUpperCase();
   const alt = esp + '|' + String(linea.lado||'');
-  return (_reportesGenerados||[]).filter(r=>{
+  const suyas = (_reportesGenerados||[]).filter(r=>{
     if(r.modulo !== 'RVI') return false;
     const poid = String(r.parent_order_id||'');
     if(poid === id || poid === alt) return true;
     // Por si el registro viejo guardó el id de EMSX: se compara por especie.
     return String(r.especie||'').toUpperCase() === esp &&
            String(r.lado||'') === String(linea.lado||'');
-  }).length;
+  });
+  // Se cuentan ENVÍOS (versiones distintas), no filas: una línea repartida en
+  // cinco portafolios son cinco filas pero UN solo envío.
+  return new Set(suyas.map(r=>Number(r.version)||1)).size;
 }
 
 function badgeReporteRVI(linea){
@@ -15401,7 +15393,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 17:51 UTC';
+const BUILD_ID = '2026-08-31 18:02 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
