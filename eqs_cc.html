@@ -1454,6 +1454,9 @@
     <div class="edit-actions" style="margin-top:16px;">
       <button class="btn ghost" onclick="document.getElementById('modalPegarAllocRVI').style.display='none';">Cerrar</button>
       <button class="btn primary" id="btnAplicarAllocRVI" style="display:none;" onclick="aplicarAllocInterpretadoRVI()">Aprobar y aplicar</button>
+      <button class="btn purple" id="btnAplicarTodasRVI" style="display:none;" onclick="aplicarTodasLasEspeciesRVI()"
+              title="Procesa TODAS las especies del mensaje de una: cruza cada una con su línea de EMSX, le pone el precio del chat y la guarda al histórico.">
+        Procesar todas las especies</button>
     </div>
   </div>
 </div>
@@ -10472,6 +10475,8 @@ function abrirPegarAllocIARVI(){
   document.getElementById('allocInterpretadoBodyRVI').innerHTML = '';
   document.getElementById('btnAplicarAllocRVI').style.display = 'none';
   _allocInterpretadoRVI = null;
+  const _bt = document.getElementById('btnAplicarTodasRVI');
+  if(_bt) _bt.style.display = 'none';
   document.getElementById('modalPegarAllocRVI').style.display = 'flex';
 }
 async function interpretarAllocIARVI(){
@@ -10537,7 +10542,64 @@ function pintarAllocInterpretadoRVI(){
   });
   body.innerHTML = h;
   document.getElementById('btnAplicarAllocRVI').style.display = 'inline-block';
+  // Con VARIAS especies aparece el botón de lote: procesarlas de a una obliga a
+  // repetir todo el flujo cinco veces (Sergio, 31-ago).
+  const _bt = document.getElementById('btnAplicarTodasRVI');
+  if(_bt) _bt.style.display = (_allocInterpretadoRVI && _allocInterpretadoRVI.length > 1) ? 'inline-block' : 'none';
 }
+// Procesa TODAS las especies del alloc de una: Porvenir manda por chat cinco
+// nombres a la vez y hacerlo de a uno —guardar, volver, pegar, guardar— es un
+// desgaste. Cada especie se cruza con su línea de EMSX por cantidad, se le pone
+// el precio del cliente (si vino en el chat) y se guarda al histórico
+// (Sergio, 31-ago).
+async function aplicarTodasLasEspeciesRVI(){
+  if(!_allocInterpretadoRVI || !_allocInterpretadoRVI.length) return;
+  const preciosCli = parsearPreciosChat(document.getElementById('allocPegarTextoRVI').value) || {};
+  const cli = document.getElementById('tc-cliente').value;
+  if(!cli){ alert('Selecciona primero el cliente.'); return; }
+
+  const hechas = [], sinLinea = [], sinPrecio = [];
+  for(const orden of _allocInterpretadoRVI){
+    const esp = String(orden.especie||'').toUpperCase();
+    // La línea de EMSX del CLIENTE: misma especie y misma cantidad total.
+    const cand = (typeof emsxData !== 'undefined' ? emsxData : []).filter(r=>
+      tickerLimpioRVI(r.especie).toUpperCase() === esp &&
+      Number(r.qty) === Number(orden.cantidadTotal));
+    if(!cand.length){ sinLinea.push(`${esp} ${fmtInt(orden.cantidadTotal)}`); continue; }
+    // Si hay dos (la del cliente y la nuestra), se toma la del cliente.
+    const linea = cand.find(r=>!/CREDICORP/i.test(String(r.firm||''))) || cand[0];
+
+    seleccionarLinea(linea.id);
+    document.getElementById('tc-cliente').value = cli;
+    if(typeof onCambioCliente === 'function') onCambioCliente();
+
+    // Precio del cliente: del chat si vino, si no el de la ejecución.
+    const px = preciosCli[esp];
+    if(px) document.getElementById('tc-price').value = String(px);
+    else sinPrecio.push(esp);
+
+    // Distribución por account.
+    const asignadas = orden.lineas.filter(l=>l.account);
+    if(!asignadas.length){ sinLinea.push(`${esp} (sin account)`); continue; }
+    const porAcc = {};
+    asignadas.forEach(l=>{ porAcc[l.account] = (porAcc[l.account]||0) + l.cantidad; });
+    distribuciones = Object.keys(porAcc).map(a=>({account:a, qty:porAcc[a]}));
+    renderDistribuciones();
+    calcularRVI();
+    generarTC();   // guarda la operación en el histórico de hoy
+    hechas.push(`${esp} ${fmtInt(orden.cantidadTotal)} en ${asignadas.length} portafolio(s)`);
+  }
+
+  const _modal = document.getElementById('modalPegarAllocRVI');
+  if(_modal) _modal.style.display = 'none';
+  let msg = `Se procesaron ${hechas.length} especie(s):\n\n` + hechas.map(h=>'   '+h).join('\n');
+  if(sinPrecio.length) msg += `\n\nSIN PRECIO DEL CLIENTE (quedaron con el de ejecución):\n   ${sinPrecio.join(', ')}` +
+    `\nSi hubo margen, corrígelo en el histórico antes de exportar.`;
+  if(sinLinea.length) msg += `\n\nNO SE ENCONTRÓ LÍNEA DE EMSX PARA:\n   ${sinLinea.join('\n   ')}`;
+  msg += '\n\nRevisa el histórico de hoy y exporta la Trade Confirmation.';
+  alert(msg);
+}
+
 function aplicarAllocInterpretadoRVI(){
   if(!_allocInterpretadoRVI || !_allocInterpretadoRVI.length) return;
   const total = getQtyTotal();
@@ -10570,6 +10632,11 @@ function abrirPegarAllocIA(){
 // Normaliza un nombre de portafolio para comparar (sin tildes, mayúsculas,
 // sin palabras de relleno). Sirve para el match difuso local.
 function normPort(s){
+  // Se normaliza el género de las terminaciones para que "DIVERSIFICADA BASICA"
+  // calce con "DIVERSI BASICO": el trader escribe en femenino y la base está en
+  // masculino (Sergio, 31-ago).
+  s = String(s||'').replace(/([A-Za-zÁÉÍÓÚÑ]{3,})A\b/g, '$1O');
+
   return String(s||'')
     .toUpperCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // quitar tildes
@@ -10780,7 +10847,77 @@ function parsearAllocLocal(texto){
   // parser de líneas sueltas que usa COLFONDOS.
   const tab = parsearAllocTabular(texto);
   if(tab && tab.length) return tab;
+  // Matriz (Porvenir): especies en columnas, portafolios en filas.
+  const mat = parsearAllocMatriz(texto);
+  if(mat && mat.length) return mat;
   return parsearAllocLocalLineas(texto);
+}
+
+// Alloc en MATRIZ: especies en las columnas, portafolios en las filas. Es como
+// manda Porvenir sus órdenes por chat (Sergio, 31-ago):
+//
+//                              XLY     XLC    IEMG   AAXJ   BBJP
+//   VOL. DIVERSIFICADA BASICA  2,500   2,480    -      -      -
+//   VOL. DIVERSIFICADA EXTREMO   -       -    1,760  1,290  3,650
+//
+// El guión es cero. Cada especie sale como una orden con su propio reparto.
+function parsearAllocMatriz(texto){
+  const num = s => { const v = String(s).replace(/[.,\s]/g,''); return /^\d+$/.test(v) ? parseInt(v,10) : 0; };
+  const lineas = String(texto||'').split(/\r?\n/)
+    .map(l=>String(l||'').replace(/^\d{1,2}:\d{2}(?::\d{2})?\s*/, '').trim())
+    .filter(Boolean);
+
+  // La cabecera es la línea con 2+ tickers y ningún número.
+  let iCab = -1, especies = null;
+  for(let i=0; i<lineas.length; i++){
+    const c = lineas[i].split(/\t|\s{2,}/).map(x=>x.trim()).filter(Boolean);
+    if(c.length < 2) continue;
+    if(c.some(x=>/\d/.test(x))) continue;                 // trae números: no es cabecera
+    if(c.every(x=>/^[A-Z]{2,6}$/.test(x.toUpperCase()))){
+      iCab = i; especies = c.map(x=>x.toUpperCase());
+      break;
+    }
+  }
+  if(iCab < 0 || !especies) return null;
+
+  // Filas siguientes: nombre del portafolio + una cantidad por especie.
+  const porEspecie = {};
+  especies.forEach(e=>{ porEspecie[e] = { especie:e, cantidadTotal:0, lineas:[], sinTotal:true }; });
+  let hubo = false;
+  for(let i=iCab+1; i<lineas.length; i++){
+    const c = lineas[i].split(/\t|\s{2,}/).map(x=>x.trim()).filter(x=>x !== '');
+    if(c.length < 2) continue;
+    const nombre = c[0];
+    if(/^\d/.test(nombre)) continue;                       // fila de totales
+    const valores = c.slice(1);
+    // Debe traer una celda por especie (el guión cuenta como cero).
+    if(valores.length < especies.length) continue;
+    especies.forEach((e,k)=>{
+      const q = num(valores[k]);
+      if(q > 0){
+        porEspecie[e].lineas.push({ portafolio:nombre, cantidad:q });
+        porEspecie[e].cantidadTotal += q;
+        hubo = true;
+      }
+    });
+  }
+  if(!hubo) return null;
+  return especies.map(e=>porEspecie[e]).filter(o=>o.lineas.length);
+}
+
+// Precios del cliente pegados aparte: "XLY 116.81" una por línea. Devuelve
+// { XLY: 116.81, ... } para llenar el precio de cada Trade Confirmation.
+function parsearPreciosChat(texto){
+  const r = {};
+  String(texto||'').split(/\r?\n/).forEach(l0=>{
+    const l = String(l0||'').replace(/^\d{1,2}:\d{2}(?::\d{2})?\s*/, '').trim();
+    const m = l.match(/^([A-Za-z]{2,6})\s+([\d]+[.,]?\d*)\s*$/);
+    if(m){
+      const px = Number(String(m[2]).replace(',','.'));
+      if(px > 0) r[m[1].toUpperCase()] = px;
+    }
+  });
+  return Object.keys(r).length ? r : null;
 }
 
 function parsearAllocLocalLineas(texto){
@@ -14658,7 +14795,12 @@ function generarTC(){
 
   // Marcar línea como procesada
   const linea = emsxData.find(r=>r.id===lineaActiva);
-  if(linea){ linea.procesado=true; linea.account=distribuciones.map(d=>d.account).join(' / '); linea.clienteReporte=(historial[historial.length-1]||{}).cliente||''; }
+  if(linea){
+    linea.procesado=true;
+    // Antes se pegaba la lista completa de portafolios y la columna quedaba
+    // ilegible. Con más de uno basta decir que fue fraccionado (Sergio, 31-ago).
+    linea.account = distribuciones.length > 1 ? 'Fraccionado'
+                  : (distribuciones[0] ? distribuciones[0].account : linea.account); linea.clienteReporte=(historial[historial.length-1]||{}).cliente||''; }
 
   poblarFiltrosRVI();
   renderHistorial();
@@ -15218,7 +15360,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 16:41 UTC';
+const BUILD_ID = '2026-08-31 17:06 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
