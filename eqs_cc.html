@@ -6642,6 +6642,7 @@ const _CONFLICTO_POR_TABLA = {
   emsx_orders: 'id',
   maestro_portafolios: 'deceval',
   maestro_especies: 'especie',
+  rvi_historico: 'id',
 };
 async function guardarEnLotesSupabase(tabla, filas, tamanoLote=200){
   const conflicto = _CONFLICTO_POR_TABLA[tabla] || '';
@@ -14838,8 +14839,17 @@ function generarTC(){
       hora, cliente:db.nombre, account:d.account, side:lado, symbol, isin,
       qty:d.qty, price, gross:grossAcc, cost:costAcc, secFee:secFeeAcc, net:netAcc,
       ccsi:ccsiAcc, tradeDate, settleDate, tipo,
+      // Datos de NUESTRA pata, para la planilla del BO. `lineaActiva` es el id;
+      // la línea en sí se busca aquí porque `linea` se declara más abajo.
+      broker: ((emsxData.find(r=>r.id===lineaActiva))||{}).broker || '',
+      precioNuestro: price,
     });
   });
+
+  // El histórico se guarda en Supabase: antes vivía solo en memoria y al
+  // recargar la página se perdía lo generado (le pasó a Porvenir el 31-ago).
+  // Además es la materia prima de la planilla del BO.
+  guardarHistoricoRVI().catch(e=>console.warn('No se pudo guardar el histórico:', e.message));
 
   // Marcar línea como procesada
   const linea = emsxData.find(r=>r.id===lineaActiva);
@@ -14868,6 +14878,49 @@ function generarTC(){
 function toggleTodosHist(cb){
   document.querySelectorAll('.hist-check').forEach(c=> c.checked = cb.checked);
 }
+// Sube a Supabase lo que haya en el histórico de hoy. El upsert por id evita
+// duplicados, así que se puede llamar en cada guardado.
+async function guardarHistoricoRVI(){
+  if(!historial.length) return;
+  const filas = historial.map(h=>({
+    id: String(h.id), fecha: _hoyISO(), hora: h.hora || '',
+    cliente: h.cliente || '', account: h.account || '', side: h.side || '',
+    symbol: h.symbol || '', isin: h.isin || '',
+    qty: Number(h.qty)||0, price: Number(h.price)||0, gross: Number(h.gross)||0,
+    cost: Number(h.cost)||0, sec_fee: Number(h.secFee)||0, net: Number(h.net)||0,
+    ccsi: Number(h.ccsi)||0, tipo: h.tipo || '',
+    emsx_id: h.emsxId != null ? String(h.emsxId) : null,
+    trade_date: h.tradeDate instanceof Date ? h.tradeDate.toISOString().slice(0,10) : (h.tradeDate||null),
+    settle_date: h.settleDate instanceof Date ? h.settleDate.toISOString().slice(0,10) : (h.settleDate||null),
+    broker: h.broker || '', precio_nuestro: Number(h.precioNuestro)||0,
+    creado_por: 'SAR',
+  }));
+  await guardarEnLotesSupabase('rvi_historico', filas);
+}
+
+// Recupera el histórico del día al abrir la app, para que un refresco no borre
+// lo ya generado.
+async function cargarHistoricoRVI(){
+  try{
+    const filas = await supaFetch('rvi_historico', `fecha=eq.${_hoyISO()}&order=creado_en.asc&limit=1000`) || [];
+    if(!filas.length) return;
+    const yaEstan = new Set(historial.map(h=>String(h.id)));
+    filas.forEach(f=>{
+      if(yaEstan.has(String(f.id))) return;
+      historial.push({
+        id: f.id, hora: f.hora, cliente: f.cliente, account: f.account, side: f.side,
+        symbol: f.symbol, isin: f.isin, qty: Number(f.qty), price: Number(f.price),
+        gross: Number(f.gross), cost: Number(f.cost), secFee: Number(f.sec_fee),
+        net: Number(f.net), ccsi: Number(f.ccsi), tipo: f.tipo,
+        emsxId: f.emsx_id, tradeDate: f.trade_date, settleDate: f.settle_date,
+        broker: f.broker, precioNuestro: Number(f.precio_nuestro),
+      });
+    });
+    if(typeof renderHistorial === 'function') renderHistorial();
+    console.log('RVI: ' + filas.length + ' operación(es) recuperadas del histórico');
+  }catch(e){ console.warn('No se pudo cargar el histórico de RVI:', e.message); }
+}
+
 function renderHistorial(){
   const tbody=document.getElementById('hist-body');
   // Filtra por el MISMO filtro Cliente de arriba (vincula blotter + histórico).
@@ -15411,7 +15464,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 18:53 UTC';
+const BUILD_ID = '2026-08-31 19:04 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -15419,6 +15472,12 @@ try{
 }catch(e){}
 
 cargarLineasNoReportar().then(cargarReportesGenerados);
+// Histórico de RVI y registro de cargas al COR: los dos viven en Supabase para
+// que sobrevivan a un refresco de la página.
+if(typeof cargarHistoricoRVI === 'function') cargarHistoricoRVI();
+if(typeof cargarRegistroCOR === 'function'){
+  cargarRegistroCOR().then(()=>{ if(typeof renderModuloReportes === 'function') renderModuloReportes(); });
+}
 cargarCanastasPendientes();
 cargarCierreAnterior();
 cargarEmsxCBDesdeSupabase();
