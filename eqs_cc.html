@@ -14313,7 +14313,8 @@ function renderEmsx(){
     let badge = '';
     if(tieneVinculo) badge = ` <span class="status-badge filled" title="Vinculada con ${_rviVinculos[r.id].length} ejecución(es) de afuera">🔗 ${_rviVinculos[r.id].length}</span>`;
     else if(esAfueraVinc) badge = ` <span class="status-badge filled" title="Ejecución de afuera vinculada a una línea de cliente">🔗</span>`;
-    else if(esCliente) badge = ` <span class="status-badge pending" title="Línea de cliente — puedes vincular tu ejecución de afuera">cliente</span>`;
+    // La etiqueta "cliente" se quitó: no aportaba nada y ensuciaba la columna
+    // (Sergio, 31-ago). El Originating Firm ya dice de quién es la línea.
     return `
     <tr class="clickable ${lineaActiva===r.id?'row-active':''} ${r.procesado?'':'opacity-pending'}" onclick="seleccionarLinea(${r.id})">
       <td><input type="checkbox" class="chk" ${_rviMarcadas.has(r.id)?'checked':''}
@@ -15217,7 +15218,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 16:33 UTC';
+const BUILD_ID = '2026-08-31 16:41 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
