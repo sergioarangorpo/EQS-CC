@@ -1572,16 +1572,19 @@
                       color:#0d0f14; box-shadow:0 0 0 1px rgba(129,140,248,.35); }
     .modo-rvi.active[data-val="sin"][data-modo="costo"]{ background:var(--amber,#f59e0b); border-color:var(--amber,#f59e0b); }
     .modo-rvi.active[data-modo="espejo"]{ background:var(--buy,#22c55e); border-color:var(--buy,#22c55e); }
+    /* Sin elegir, el binomio parpadea en ámbar: es la decisión que define todo
+       lo que viene después. */
+    .modo-rvi.pendiente{ border-color:var(--amber,#f59e0b); color:var(--amber,#f59e0b); }
   </style>
   <div style="padding:0 24px 14px;display:flex;gap:22px;flex-wrap:wrap;align-items:center;">
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="field-note" style="width:66px;">Margen</span>
-      <button class="btn small modo-rvi active" data-modo="margen" data-val="con" onclick="setModoRVI('margen','con')">Con margen</button>
+      <button class="btn small modo-rvi" data-modo="margen" data-val="con" onclick="setModoRVI('margen','con')">Con margen</button>
       <button class="btn small ghost modo-rvi" data-modo="margen" data-val="sin" onclick="setModoRVI('margen','sin')">Sin margen</button>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="field-note" style="width:52px;">Costo</span>
-      <button class="btn small modo-rvi active" data-modo="costo" data-val="con" onclick="setModoRVI('costo','con')">Con costo</button>
+      <button class="btn small modo-rvi" data-modo="costo" data-val="con" onclick="setModoRVI('costo','con')">Con costo</button>
       <button class="btn small ghost modo-rvi" data-modo="costo" data-val="sin" onclick="setModoRVI('costo','sin')">Sin costo (all-in)</button>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
@@ -2074,7 +2077,9 @@
       <button class="btn small ghost" onclick="seleccionarCOR('ninguno')">Limpiar</button>
       <span class="field-note" id="corSeleccion" style="flex:1;min-width:180px;">Marca los clientes que vas a subir.</span>
       <button class="btn purple" id="btnCorMultiple" onclick="descargarCORSeleccionados()" disabled>
-        📥 Descargar seleccionados</button>
+        📥 COR (RVL)</button>
+      <button class="btn purple" id="btnBoMultiple" onclick="descargarBOSeleccionados()" disabled>
+        📥 Planilla BO (RVI)</button>
     </div>
 
     <div style="padding:0 24px 24px;">
@@ -9185,7 +9190,9 @@ function renderResumenSeleccionCOR(){
   const sel = [...document.querySelectorAll('.chk-cor')].filter(ch=>ch.checked);
   const el = document.getElementById('corSeleccion');
   const btn = document.getElementById('btnCorMultiple');
-  if(btn) btn.disabled = sel.length === 0;
+  if(btn) btn.disabled = !sel.some(ch=>ch.dataset.mod === 'RVL');
+  const btnBo = document.getElementById('btnBoMultiple');
+  if(btnBo) btnBo.disabled = !sel.some(ch=>ch.dataset.mod === 'RVI');
   if(!el) return;
   el.textContent = sel.length === 0
     ? 'Marca los clientes que vas a subir.'
@@ -9280,6 +9287,151 @@ function filasCORDeCliente(modulo, cliente){
   return filas;
 }
 
+// =====================================================================
+// PLANILLA DEL BACK OFFICE — RVI
+// ---------------------------------------------------------------------
+// Es el paralelo del archivo del COR en RVL: muestra al BO lo que hicimos.
+// Como somos POSICIÓN PROPIA, cada operación son DOS patas — le compramos al
+// cliente y le vendemos al broker (o al revés) — y el lado va desde NUESTRA
+// perspectiva: si el cliente vende, nosotros COMPRA (Sergio, 31-ago).
+// Cada línea calcula su propio gross, cost, sec fee y neto sobre su cantidad.
+// =====================================================================
+const BO_COLUMNAS = ['TIPO OP','CLIENTE','PORTFOLIO','NEMO','ISIN','PP B/S','TD','SD',
+                     'VLR/NM','PL','GROSS AMOUNT','COST','SEC FEE','NET AMOUNT'];
+
+// US o LN según el ISIN: evita tener que distinguir ADR de ETF.
+function tipoOpBO(isin){
+  return /^(IE|LU|GB)/i.test(String(isin||'')) ? 'LN' : 'US';
+}
+
+function filasBODeCliente(cliente){
+  const ops = historial.filter(h=>h.cliente === cliente);
+  if(!ops.length) return [];
+  const filas = [];
+  const fmtF = v => v instanceof Date ? v : (v ? new Date(v) : new Date());
+
+  // ---- Pata del CLIENTE ----
+  // El lado se invierte: lo que el cliente vende, nosotros lo compramos.
+  ops.forEach(h=>{
+    const qty = Number(h.qty)||0, px = Number(h.price)||0;
+    const gross = redondear(qty * px, 4);
+    const cost = redondear(Number(h.cost)||0, 4);
+    const secFee = redondear(Number(h.secFee)||0, 4);
+    const lado = String(h.side||'').toUpperCase() === 'SELL' ? 'COMPRA' : 'VENTA';
+    filas.push({
+      'TIPO OP': tipoOpBO(h.isin), 'CLIENTE': cliente, 'PORTFOLIO': h.account || '',
+      'NEMO': h.symbol || '', 'ISIN': h.isin || '', 'PP B/S': lado,
+      'TD': fmtF(h.tradeDate), 'SD': fmtF(h.settleDate),
+      'VLR/NM': qty, 'PL': px,
+      'GROSS AMOUNT': gross, 'COST': cost, 'SEC FEE': secFee,
+      'NET AMOUNT': redondear(Number(h.net)||0, 4),
+    });
+  });
+
+  // ---- NUESTRA pata contra el broker ----
+  // Con ESPEJO se parte igual que el cliente; sin espejo va consolidada por
+  // especie, que es como la ejecutamos afuera.
+  const porBroker = {};
+  ops.forEach(h=>{
+    const brk = String(h.broker||'').toUpperCase() || 'CCSI';
+    const k = brk + '|' + (h.symbol||'') + '|' + (h.espejo ? h.account : '');
+    const a = porBroker[k] || (porBroker[k] = {
+      broker: brk, symbol: h.symbol, isin: h.isin, side: h.side,
+      tradeDate: h.tradeDate, settleDate: h.settleDate,
+      px: Number(h.precioNuestro) || Number(h.price) || 0,
+      tipo: h.tipo, qty: 0, comUnit: 0, espejo: !!h.espejo, account: h.account,
+    });
+    a.qty += Number(h.qty)||0;
+    // La comisión unitaria que se escribió al registrar.
+    if(!a.comUnit && Number(h.comBrokerUnit)) a.comUnit = Number(h.comBrokerUnit);
+  });
+
+  Object.values(porBroker).forEach(a=>{
+    const gross = redondear(a.qty * a.px, 4);
+    const cobra = RVI_BROKERS_CON_COSTO.some(x=>a.broker.includes(x));
+    let cost = 0;
+    if(cobra){
+      cost = a.comUnit
+        ? (a.comUnit < 0.01 && a.comUnit > 0 && String(a.isin||'').match(/^(IE|LU)/i)
+            ? redondear(gross * a.comUnit, 4) : redondear(a.qty * a.comUnit, 4))
+        : redondear(comisionContraparteRVI(a.broker, a.tipo, a.qty, gross, a.isin), 4);
+      cost = redondear(Math.max(cost, RVI_MINIMO_USD), 4);
+    }
+    const secFee = redondear(secFeeRVI(a.tipo, a.side, gross, a.isin), 4);
+    // Nuestro lado es el CONTRARIO al del cliente frente a nosotros: si le
+    // compramos al cliente, se lo vendemos al broker.
+    const lado = String(a.side||'').toUpperCase() === 'SELL' ? 'VENTA' : 'COMPRA';
+    const neto = lado === 'VENTA' ? redondear(gross - cost - secFee, 4)
+                                  : redondear(gross + cost + secFee, 4);
+    filas.push({
+      'TIPO OP': tipoOpBO(a.isin), 'CLIENTE': a.broker, 'PORTFOLIO': a.broker,
+      'NEMO': a.symbol || '', 'ISIN': a.isin || '', 'PP B/S': lado,
+      'TD': a.tradeDate instanceof Date ? a.tradeDate : new Date(a.tradeDate || Date.now()),
+      'SD': a.settleDate instanceof Date ? a.settleDate : new Date(a.settleDate || Date.now()),
+      'VLR/NM': a.qty, 'PL': a.px,
+      'GROSS AMOUNT': gross, 'COST': cost, 'SEC FEE': secFee, 'NET AMOUNT': neto,
+    });
+  });
+  return filas;
+}
+
+async function descargarPlanillaBO(clientes){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  let filas = [];
+  const resumen = [];
+  clientes.forEach(cli=>{
+    const f = filasBODeCliente(cli);
+    if(f.length){ filas = filas.concat(f); resumen.push({cliente:cli, n:f.length}); }
+  });
+  if(!filas.length){
+    alert('No se encontraron operaciones de esos clientes en el histórico de hoy.');
+    return;
+  }
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Hoja1');
+  BO_COLUMNAS.forEach((h,i)=>{
+    const c = ws.getCell(1, i+1);
+    c.value = h;
+    c.font = { name:'Calibri', size:11, bold:true, color:{argb:'FFFFFFFF'} };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF13294B'} };
+    c.alignment = { horizontal:'center', vertical:'middle' };
+  });
+  ws.getRow(1).height = 20;
+  filas.forEach((f,i)=>{
+    const r = i + 2;
+    BO_COLUMNAS.forEach((col,c)=>{ ws.getCell(r, c+1).value = f[col]; });
+    [7,8].forEach(c=>{ ws.getCell(r,c).numFmt = 'dd/mm/yyyy'; });
+    ws.getCell(r, 9).numFmt = '#,##0';
+    [10,11,12,13,14].forEach(c=>{ ws.getCell(r,c).numFmt = '#,##0.0000'; });
+    for(let c=1;c<=14;c++) ws.getCell(r,c).font = { name:'Calibri', size:10 };
+  });
+  autofitColumnas(ws, {min:9, max:32});
+  const d = new Date();
+  const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  const a = document.createElement('a');
+  a.href = url; a.download = `PLANILLA_${slug}.xlsx`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  try{
+    await guardarEnLotesSupabase('cargas_cor', resumen.map(r=>({
+      fecha: _hoyISO(), modulo: 'BO', cliente: r.cliente,
+      version: vecesCargadoCOR('BO', r.cliente) + 1, n_filas: r.n, generado_por: 'SAR',
+    })));
+    await cargarRegistroCOR();
+    renderModuloReportes();
+  }catch(e){ console.warn('No se pudo registrar la planilla:', e.message); }
+}
+
+function descargarBOSeleccionados(){
+  const sel = [...document.querySelectorAll('.chk-cor')].filter(ch=>ch.checked && ch.dataset.mod === 'RVI')
+    .map(ch=>ch.dataset.cli);
+  if(!sel.length){ alert('Marca al menos un cliente de RVI.'); return; }
+  descargarPlanillaBO(sel);
+}
+
 async function descargarCOR(seleccion){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
   let filas = [];
@@ -9369,9 +9521,11 @@ function renderModuloReportes(){
                 </label>
                 <span style="display:flex;align-items:center;gap:10px;">
                   <span class="field-note">${etiquetaVersion(ultima)} · ${rs.length} línea(s) · ${fmtInt(qty)} · comisión ${fmtMoney(com)}</span>
-                  ${badgeCargaCOR(mod, cli)}
+                  ${mod === 'FX' ? '' : badgeCargaCOR(mod === 'RVI' ? 'BO' : mod, cli)}
                   ${mod === 'RVL' ? `<button class="btn small purple" title="Descargar el archivo de complementación para subir al COR"
                      onclick="descargarCOR([{modulo:'${mod}', cliente:'${String(cli).replace(/'/g,"\\'")}'}])">📥 COR</button>` : ''}
+                  ${mod === 'RVI' ? `<button class="btn small purple" title="Descargar la planilla del Back Office con las dos patas"
+                     onclick="descargarPlanillaBO(['${String(cli).replace(/'/g,"\\'")}'])">📥 Planilla BO</button>` : ''}
                 </span>
               </div>
               <table><thead><tr>
@@ -10601,6 +10755,18 @@ async function aplicarTodasLasEspeciesRVI(){
   const preciosCli = parsearPreciosChat(document.getElementById('allocPegarTextoRVI').value) || {};
   const cli = document.getElementById('tc-cliente').value;
   if(!cli){ alert('Selecciona primero el cliente.'); return; }
+  // El tipo de operación se pide UNA vez para todo el lote: son del mismo
+  // mensaje del trader, así que comparten modo (Sergio, 31-ago).
+  if(!_modoRVI.margen || !_modoRVI.costo){
+    alert('Falta elegir el tipo de operación antes de procesar el lote.\n\n' +
+          (!_modoRVI.margen ? '   • Con margen o Sin margen\n' : '') +
+          (!_modoRVI.costo  ? '   • Con costo o Sin costo (all-in)\n' : '') +
+          '\nEstán en los botones de arriba del blotter.');
+    return;
+  }
+  // El modo se conserva durante todo el lote y se resetea al final: generarTC()
+  // lo limpia después de cada operación.
+  const _modoLote = { ...(_modoRVI) };
 
   const hechas = [], sinLinea = [], sinPrecio = [];
   for(const orden of _allocInterpretadoRVI){
@@ -10629,6 +10795,8 @@ async function aplicarTodasLasEspeciesRVI(){
     asignadas.forEach(l=>{ porAcc[l.account] = (porAcc[l.account]||0) + l.cantidad; });
     distribuciones = Object.keys(porAcc).map(a=>({account:a, qty:porAcc[a]}));
     renderDistribuciones();
+    // Se restaura el modo del lote: generarTC() lo limpia al terminar cada una.
+    _modoRVI = { ..._modoLote };
     calcularRVI();
     generarTC();   // guarda la operación en el histórico de hoy
     hechas.push(`${esp} ${fmtInt(orden.cantidadTotal)} en ${asignadas.length} portafolio(s)`);
@@ -14147,7 +14315,10 @@ function canalDeBroker(broker){
   return RVI_BROKERS_EMSX.some(x=>b.includes(x)) ? 'EMSX' : 'RFQE';
 }
 
-let _modoRVI = { margen:'con', costo:'con', espejo:'' };
+// Arranca VACÍO a propósito: el modo define cómo se arquea, qué se calcula y
+// cómo sale la planilla del BO, así que no puede venir con un supuesto. Se
+// resetea después de cada operación guardada (Sergio, 31-ago).
+let _modoRVI = { margen:'', costo:'', espejo:'' };
 let _rviMarcadas = new Set();
 
 function setModoRVI(grupo, valor){
@@ -14217,6 +14388,19 @@ function claveClienteRVI(firm){
 }
 
 function volcarLineaEnFormularioRVI(){
+  // Con MARKET MAKER la comisión es cero y se pone sola; con broker que cobra
+  // se deja VACÍA para que Sergio la escriba (ADR y ETF tienen tarifas
+  // distintas y la app no puede adivinar cuál aplica).
+  setTimeout(()=>{
+    const ln = emsxData.find(r=>r.id===lineaActiva);
+    const brk = String((ln||{}).broker||'').toUpperCase();
+    const el = document.getElementById('tc-com-ccsi');
+    if(!el || !brk) return;
+    const cobra = RVI_BROKERS_CON_COSTO.some(x=>brk.includes(x));
+    if(!cobra){ el.value = '0'; if(typeof calcularRVI === 'function') calcularRVI(); }
+    else if(!String(el.value||'').trim()){ el.placeholder = 'obligatoria — ETF 0.003 · ADR 0.005'; }
+  }, 0);
+
   const marcadas = getFiltradas().filter(r=>_rviMarcadas.has(r.id));
   if(!marcadas.length) return;
   const esNuestra = r => /CREDICORP/i.test(String(r.firm||''));
@@ -14343,6 +14527,31 @@ function renderArqueoRVI(){
   if(!cont) return;
   const marcadas = getFiltradas().filter(r=>_rviMarcadas.has(r.id));
   if(!marcadas.length){ cont.style.display='none'; return; }
+
+  // ANTES QUE NADA: sin tipo de operación no se puede arquear, porque el margen,
+  // la comisión y la línea del BO dependen de él. Preseleccionarlo hacía que la
+  // app asumiera algo que podía no ser cierto (Sergio, 31-ago).
+  if(!_modoRVI.margen || !_modoRVI.costo){
+    const faltan = [];
+    if(!_modoRVI.margen) faltan.push('<b>Con margen</b> o <b>Sin margen</b>');
+    if(!_modoRVI.costo)  faltan.push('<b>Con costo</b> o <b>Sin costo (all-in)</b>');
+    cont.style.display = 'block';
+    cont.innerHTML = `
+      <div style="background:rgba(245,158,11,.12);border:1px solid var(--amber,#f59e0b);
+                  border-left:4px solid var(--amber,#f59e0b);border-radius:8px;padding:14px 18px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:20px;">⚠</span>
+          <span style="font-size:15px;font-weight:700;color:var(--amber,#f59e0b);">
+            Elige primero el tipo de operación</span>
+        </div>
+        <div style="font-size:12.5px;margin-top:6px;line-height:1.6;">
+          Falta marcar ${faltan.join(' y ')} en los botones de arriba.<br>
+          De eso dependen el margen, la comisión y la línea del BO.</div>
+      </div>`;
+    const _btn = document.getElementById('btn-generar');
+    if(_btn) _btn.disabled = true;
+    return;
+  }
 
   const esNuestra = r => /CREDICORP/i.test(String(r.firm||''));
   const cliente  = marcadas.filter(r=>!esNuestra(r));
@@ -14819,6 +15028,36 @@ function calcularRVI(){
 // GENERAR TRADE CONFIRMATION
 // =====================================================================
 function generarTC(){
+  // FRENO DURO: sin tipo de operación no se guarda. De él dependen el margen,
+  // la comisión y la línea del BO (Sergio, 31-ago).
+  if(!_modoRVI.margen || !_modoRVI.costo){
+    alert('Falta elegir el tipo de operación antes de guardar.\n\n' +
+          (!_modoRVI.margen ? '   • Con margen o Sin margen\n' : '') +
+          (!_modoRVI.costo  ? '   • Con costo o Sin costo (all-in)\n' : '') +
+          '\nEstán en los botones de arriba del blotter.');
+    return;
+  }
+  // La comisión del broker es OBLIGATORIA cuando el broker cobra: de ella sale
+  // el COST de nuestra pata en la planilla del BO, y no se puede deducir del
+  // tipo porque ADR y ETF tienen tarifas distintas.
+  {
+    const _ln = emsxData.find(r=>r.id===lineaActiva);
+    const _brk = String((_ln||{}).broker||'').toUpperCase();
+    const _cobra = _brk && RVI_BROKERS_CON_COSTO.some(x=>_brk.includes(x));
+    const _el = document.getElementById('tc-com-ccsi');
+    const _val = _el ? String(_el.value||'').trim() : '';
+    if(_cobra && (!_val || parseNum(_val) <= 0)){
+      alert(`Falta la comisión del broker (${_brk}).\n\n` +
+            'Escríbela en el campo "Comisión Broker" del panel del medio:\n' +
+            '   ETF    0.003 por acción\n' +
+            '   ADR    0.005 por acción\n' +
+            '   UCITS  0.0004 (0,04% del gross)\n\n' +
+            'De ahí sale el costo de nuestra pata en la planilla del BO.');
+      if(_el) _el.focus();
+      return;
+    }
+  }
+
   const clienteKey = document.getElementById('tc-cliente').value;
   const tipo       = document.getElementById('tc-tipo').value;
   const lado       = document.getElementById('tc-side').value;
@@ -14844,7 +15083,12 @@ function generarTC(){
   const tcId       = Date.now();
 
   // Una TC por account distribuido
-  distribuciones.forEach(d=>{
+    // Nuestro precio de ejecución: si hay una línea NUESTRA marcada se usa la
+  // suya; si no, la misma del cliente (no hubo margen). Va al histórico para
+  // poder armar nuestra pata en la planilla del BO.
+  const _nuestraMarcada = getFiltradas().filter(r=>_rviMarcadas.has(r.id) && /CREDICORP/i.test(String(r.firm||'')))[0];
+  const precioNuestroBO = _nuestraMarcada ? Number(_nuestraMarcada.avgPr) : price;
+distribuciones.forEach(d=>{
     const grossAcc  = d.qty * price;
     const costAcc   = tipo==='UCIT' ? grossAcc*db.comUCIT : d.qty*db.comETF;
     const secFeeAcc = lado==='Sell' ? grossAcc*SEC_FEE_RATE : 0;
@@ -14862,7 +15106,11 @@ function generarTC(){
       // Datos de NUESTRA pata, para la planilla del BO. `lineaActiva` es el id;
       // la línea en sí se busca aquí porque `linea` se declara más abajo.
       broker: ((emsxData.find(r=>r.id===lineaActiva))||{}).broker || '',
-      precioNuestro: price,
+      precioNuestro: precioNuestroBO,
+      // El modo con el que se registró: el espejo decide si nuestra pata se
+      // parte igual que la del cliente o va consolidada.
+      espejo: _modoRVI.espejo === 'si',
+      comBrokerUnit: parseNum((document.getElementById('tc-com-ccsi')||{}).value) || 0,
     });
   });
 
@@ -14870,6 +15118,13 @@ function generarTC(){
   // recargar la página se perdía lo generado (le pasó a Porvenir el 31-ago).
   // Además es la materia prima de la planilla del BO.
   guardarHistoricoRVI().catch(e=>console.warn('No se pudo guardar el histórico:', e.message));
+
+  // El modo se resetea: cada operación se decide por separado y arrastrar el
+  // de la anterior es justo lo que lleva a arquear mal (Sergio, 31-ago).
+  _modoRVI = { margen:'', costo:'', espejo:'' };
+  document.querySelectorAll('.modo-rvi').forEach(b=>b.classList.remove('active'));
+  const _cc = document.getElementById('tc-com-ccsi');
+  if(_cc) _cc.value = '';
 
   // Marcar línea como procesada
   const linea = emsxData.find(r=>r.id===lineaActiva);
@@ -14913,6 +15168,7 @@ async function guardarHistoricoRVI(){
     trade_date: h.tradeDate instanceof Date ? h.tradeDate.toISOString().slice(0,10) : (h.tradeDate||null),
     settle_date: h.settleDate instanceof Date ? h.settleDate.toISOString().slice(0,10) : (h.settleDate||null),
     broker: h.broker || '', precio_nuestro: Number(h.precioNuestro)||0,
+    espejo: !!h.espejo, com_broker_unit: Number(h.comBrokerUnit)||0,
     creado_por: 'SAR',
   }));
   await guardarEnLotesSupabase('rvi_historico', filas);
@@ -14934,6 +15190,7 @@ async function cargarHistoricoRVI(){
         net: Number(f.net), ccsi: Number(f.ccsi), tipo: f.tipo,
         emsxId: f.emsx_id, tradeDate: f.trade_date, settleDate: f.settle_date,
         broker: f.broker, precioNuestro: Number(f.precio_nuestro),
+        espejo: !!f.espejo, comBrokerUnit: Number(f.com_broker_unit)||0,
       });
     });
     if(typeof renderHistorial === 'function') renderHistorial();
@@ -15520,7 +15777,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 20:24 UTC';
+const BUILD_ID = '2026-08-31 21:12 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
