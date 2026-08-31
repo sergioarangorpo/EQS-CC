@@ -9375,19 +9375,23 @@ function renderModuloReportes(){
                 </span>
               </div>
               <table><thead><tr>
-                <th>Hora</th><th>Parent Order ID</th><th>Especie</th><th>Lado</th>
+                <!-- El Parent Order ID solo es un dato real en RVL; en RVI y FX
+                     es un identificador interno del registro y no aporta nada,
+                     así que en su lugar va el PORTAFOLIO (Sergio, 31-ago). -->
+                <th>Hora</th><th>${mod === 'RVL' ? 'Parent Order ID' : 'Portafolio'}</th>
+                <th>Especie</th><th>Lado</th>
                 <th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Comisión</th>
-                <th>Portafolios</th><th>Envío</th>
+                <th>Envío</th>
               </tr></thead><tbody>
               ${rs.map(r=>`<tr>
                 <td>${horaLocal(r.generado_en)}</td>
-                <td class="mono-id">${r.parent_order_id}</td>
+                <td class="mono-id" style="font-size:11px;white-space:normal;line-height:1.4;">${
+                  mod === 'RVL' ? r.parent_order_id : (r.portafolios || '—')}</td>
                 <td class="mono-id">${r.especie||'—'}</td>
                 <td>${r.lado||'—'}</td>
                 <td class="num">${fmtInt(r.cantidad)}</td>
                 <td class="num">${fmtRate(r.precio)}</td>
                 <td class="num">${fmtMoney(r.comision)}</td>
-                <td style="font-size:11px;white-space:normal;line-height:1.4;">${r.portafolios || '—'}</td>
                 <td>${sufijoVersion(Number(r.version)||1) || '—'}</td>
               </tr>`).join('')}
               </tbody></table>
@@ -15516,7 +15520,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 20:07 UTC';
+const BUILD_ID = '2026-08-31 20:18 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
