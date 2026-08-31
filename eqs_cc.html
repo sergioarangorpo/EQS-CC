@@ -14164,8 +14164,13 @@ function toggleMarcaRVI(id){
 // las genéricas, que es lo mismo que se hizo en RVL.
 function claveClienteRVI(firm){
   const norm = t => String(t||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-  const GEN = ['FIDUCIARIA','SEGUROS','ADMINISTRADORA','FONDO','FONDOS','PENSIONES','CESANTIAS',
-               'SOCIEDAD','SA','S.A','SAS','CAPITAL','GRUPO','BANCO','COLOMBIA','AFP','VALORES'];
+  // Palabras que NO identifican a nadie: las comparten varios clientes. Sin
+  // ellas, "SKANDIA SEGUROS DE VIDA S.A." calzaba con SURAMERICANA por
+  // compartir SEGUROS y VIDA — y el reporte habría salido al cliente
+  // equivocado (Sergio, 31-ago).
+  const GEN = ['FIDUCIARIA','SEGUROS','SEGURO','VIDA','ADMINISTRADORA','FONDO','FONDOS',
+               'PENSIONES','CESANTIAS','SOCIEDAD','SA','S.A','SAS','CAPITAL','GRUPO',
+               'BANCO','COLOMBIA','AFP','VALORES','INVERSIONES','GENERALES'];
   const pal = t => norm(t).split(/[^A-Z0-9]+/).filter(x=>x.length>=3 && !GEN.includes(x));
   const pf = pal(firm);
   if(!pf.length) return '';
@@ -14174,6 +14179,11 @@ function claveClienteRVI(firm){
   const claves = Object.keys(clientesRVI);
   const exacta = claves.find(k => norm(k).replace(/_/g,' ') === norm(firm));
   if(exacta) return exacta;
+  // Coincidencia por NOMBRE COMPLETO antes que por palabras sueltas: la AFP y
+  // Seguros de Skandia comparten la palabra SKANDIA, así que sin esto las dos
+  // caían en la misma clave (Sergio, 31-ago).
+  const porNombre = claves.find(k => norm(clientesRVI[k].nombre||'') === norm(firm));
+  if(porNombre) return porNombre;
   return claves.find(k => {
     const pk = pal(String(k).replace(/_/g,' ') + ' ' + (clientesRVI[k].nombre||''));
     return pk.some(x => pf.includes(x));
@@ -15395,7 +15405,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 18:25 UTC';
+const BUILD_ID = '2026-08-31 18:46 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
