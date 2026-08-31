@@ -9366,7 +9366,8 @@ function renderModuloReportes(){
               </div>
               <table><thead><tr>
                 <th>Hora</th><th>Parent Order ID</th><th>Especie</th><th>Lado</th>
-                <th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Comisión</th><th>Envío</th>
+                <th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Comisión</th>
+                <th>Portafolios</th><th>Envío</th>
               </tr></thead><tbody>
               ${rs.map(r=>`<tr>
                 <td>${horaLocal(r.generado_en)}</td>
@@ -9376,6 +9377,7 @@ function renderModuloReportes(){
                 <td class="num">${fmtInt(r.cantidad)}</td>
                 <td class="num">${fmtRate(r.precio)}</td>
                 <td class="num">${fmtMoney(r.comision)}</td>
+                <td style="font-size:11px;white-space:normal;line-height:1.4;">${r.portafolios || '—'}</td>
                 <td>${sufijoVersion(Number(r.version)||1) || '—'}</td>
               </tr>`).join('')}
               </tbody></table>
@@ -9519,14 +9521,37 @@ async function registrarLoteRVI(cliente, filas){
   // La unidad de RVI es la LÍNEA DE EMSX. Cada fila del histórico lleva el id
   // de la línea que la originó; si no lo trae, se usa la combinación
   // símbolo+lado como identificador estable del día.
-  const lineas = filas.map(f=>({
-    parentOrderId: String(f.emsxId || f.lineaId || (String(f.symbol||f.especie||'') + '|' + String(f.side||f.lado||''))),
-    especie: f.symbol || f.especie || '',
-    lado: f.side || f.lado || '',
-    cantidad: Number(f.qty != null ? f.qty : f.cantidad) || 0,
-    precio: Number(f.price != null ? f.price : f.precio) || 0,
-    comision: Number(f.cost != null ? f.cost : f.comision) || 0,
-  }));
+  // Identificador ESTABLE: especie + lado. El id de EMSX lo asigna Supabase y
+  // puede cambiar al recargar la orden, y entonces el registro dejaba de
+  // encontrarla y la línea volvía a "PENDIENTE" pese a estar reportada
+  // (Sergio, 31-ago).
+  // Se agrupa por línea de EMSX, sumando el reparto: así el módulo Reportes
+  // muestra la cantidad total y no una fila por portafolio.
+  const porLinea = {};
+  filas.forEach(f=>{
+    const esp = String(f.symbol || f.especie || '').toUpperCase();
+    const lado = String(f.side || f.lado || '');
+    const k = esp + '|' + lado;
+    const a = porLinea[k] || (porLinea[k] = { especie:esp, lado, cantidad:0, bruto:0, comision:0, ports:[] });
+    const q = Number(f.qty != null ? f.qty : f.cantidad) || 0;
+    const px = Number(f.price != null ? f.price : f.precio) || 0;
+    a.cantidad += q;
+    a.bruto += q * px;
+    a.comision += Number(f.cost != null ? f.cost : f.comision) || 0;
+    if(f.account) a.ports.push(`${f.account} ${fmtInt(q)}`);
+  });
+  const lineas = Object.keys(porLinea).map(k=>{
+    const a = porLinea[k];
+    return {
+      parentOrderId: k,
+      especie: a.especie, lado: a.lado,
+      cantidad: a.cantidad,
+      precio: a.cantidad ? a.bruto / a.cantidad : 0,
+      comision: a.comision,
+      // El reparto queda en el registro para poder ver qué se envió.
+      portafolios: a.ports.join(' · '),
+    };
+  });
   const nuevas = await registrarReporte('RVI', cliente, lineas, version);
   await cargarReportesGenerados();
   renderEmsx();
@@ -9547,6 +9572,9 @@ async function registrarReporte(modulo, cliente, lineas, version){
     cantidad: Number(l.cantidad) || 0,
     precio: Number(l.precio) || 0,
     comision: Number(l.comision) || 0,
+    // Reparto por portafolio, para que el módulo Reportes muestre lo que de
+    // verdad se envió y no solo la línea (Sergio, 31-ago).
+    portafolios: l.portafolios || null,
     version, generado_en: new Date().toISOString(),
   }));
   try{
@@ -14252,11 +14280,20 @@ function secFeeRVI(tipo, lado, gross, isin){
 // verde ● REPORTADO. Reemplaza al "✓ procesado" que iba pegado al estado de
 // EMSX y se confundía con él (Sergio, 24-ago).
 function vecesReportadaRVI(linea){
+  // Se compara con el TICKER LIMPIO: el registro guarda "INDA" y la línea de
+  // EMSX trae "INDA US Equity". Sin limpiarlo no casaban y la línea volvía a
+  // PENDIENTE después de reportarla (Sergio, 31-ago).
   const id = String(linea.id);
-  const alt = String(linea.especie||'') + '|' + String(linea.lado||'');
-  return (_reportesGenerados||[]).filter(r =>
-    r.modulo === 'RVI' && (String(r.parent_order_id) === id || String(r.parent_order_id) === alt)
-  ).length;
+  const esp = tickerLimpioRVI(linea.especie).toUpperCase();
+  const alt = esp + '|' + String(linea.lado||'');
+  return (_reportesGenerados||[]).filter(r=>{
+    if(r.modulo !== 'RVI') return false;
+    const poid = String(r.parent_order_id||'');
+    if(poid === id || poid === alt) return true;
+    // Por si el registro viejo guardó el id de EMSX: se compara por especie.
+    return String(r.especie||'').toUpperCase() === esp &&
+           String(r.lado||'') === String(linea.lado||'');
+  }).length;
 }
 
 function badgeReporteRVI(linea){
@@ -15364,7 +15401,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 17:34 UTC';
+const BUILD_ID = '2026-08-31 17:51 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
