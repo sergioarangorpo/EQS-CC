@@ -14207,9 +14207,11 @@ function volcarLineaEnFormularioRVI(){
       if(typeof onCambioCliente === 'function') onCambioCliente();
     }
   }
-  // En CON MARGEN el precio del cliente lo escribe Sergio: se deja vacío para
-  // que el arqueo lo exija en vez de heredar el de ejecución.
-  if(_modoRVI.margen === 'con' && marcadas.length === 1){
+  // El precio se deja vacío SOLO cuando la línea marcada es NUESTRA: ahí el
+  // precio del cliente no existe en EMSX y hay que escribirlo (el all-in de
+  // Porvenir por chat). Si la línea es del CLIENTE, su precio ya ES el del
+  // cliente y pedirlo de nuevo solo agrega margen de error (Sergio, 31-ago).
+  if(_modoRVI.margen === 'con' && marcadas.length === 1 && esNuestra(cli)){
     const p = document.getElementById('tc-price');
     if(p) p.value = '';
   }
@@ -15393,7 +15395,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 18:02 UTC';
+const BUILD_ID = '2026-08-31 18:25 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
