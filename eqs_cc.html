@@ -11801,7 +11801,12 @@ async function generarReporte(){
   // sub-cuenta. Pedirles reparto era frenar por algo que no aplica.
   const _fmtCli = (getClienteDB(cliente)||{}).formatoReporte;
   const _necesitaAlloc = _fmtCli === 'colfondos' || _fmtCli === 'andes_fxequity';
-  if(!esProteccionRep && _necesitaAlloc && (getClienteDB(cliente).portafolios||[]).length > 0 && allocations.length === 0){
+  // `allocations` es el reparto de la ORDEN ACTIVA y está vacío cuando hay varias
+  // marcadas. Lo que importa es si las órdenes del lote ya tienen su reparto
+  // guardado (Sergio, 01-sep).
+  const _yaRepartido = allocations.length > 0 ||
+    getOrdenesConAlloc(false).some(o=>o.completa && (o.allocations||[]).length > 0);
+  if(!esProteccionRep && _necesitaAlloc && (getClienteDB(cliente).portafolios||[]).length > 0 && !_yaRepartido){
     // Cliente de portafolio único (ANDES): toda la cantidad va ahí, no hay
     // nada que repartir ni que buscar en EMSX.
     const _cfgAuto = getClienteDB(cliente);
@@ -11813,7 +11818,7 @@ async function generarReporte(){
       }
     }
   }
-  if(!esProteccionRep && _necesitaAlloc && (getClienteDB(cliente).portafolios||[]).length > 0 && allocations.length === 0){
+  if(!esProteccionRep && _necesitaAlloc && (getClienteDB(cliente).portafolios||[]).length > 0 && !_yaRepartido){
     const auto = allocDesdeEmsx(cliente, seleccionados);
     if(auto.ok){
       allocations = auto.allocations.map(a=>({ portId:a.portafolio.id, cantidad:a.cantidad }));
@@ -11838,23 +11843,43 @@ async function generarReporte(){
   const loteOps = [];
   const loteDet = [];
 
-  allocations.forEach(a=>{
-    if(a.cantidad<=0) return;
-    const port = ports.find(p=>p.id===a.portId);
-    const montoBruto = a.cantidad * ppp;
-    const comisionMonto = montoBruto * comisionEfectiva;
-    const ivaMonto = port.iva ? comisionMonto*0.19 : 0;
-    const montoNeto = lado==='Compra' ? montoBruto + comisionMonto + ivaMonto : montoBruto - comisionMonto - ivaMonto;
+  // El consolidado se arma ORDEN POR ORDEN, cada una con SU especie, SU precio
+  // y SU reparto. Antes usaba una sola `especie` (la del filtro) y todas las
+  // `allocations` juntas, así que con varias líneas marcadas repartía las tres
+  // especies entre todos los portafolios y escribía la especie de la primera en
+  // todas — el archivo salía cruzado (Sergio, 01-sep).
+  const _ordenesDelLote = getOrdenesConAlloc(false);
+  _ordenesDelLote.forEach(o=>{
+    const foliosOrden = seleccionados.filter(f=>String(f.parentOrderId) === String(o.parentOrderId));
+    if(!foliosOrden.length) return;
+    const qOrden = foliosOrden.reduce((x,f)=>x+f.cantidad, 0);
+    if(!qOrden) return;
+    const pppOrden = foliosOrden.reduce((x,f)=>x+f.cantidad*f.precio, 0) / qOrden;
+    const espOrden = foliosOrden[0].especie;
+    const ladoOrden = foliosOrden[0].lado;
+    // Comisión ponderada de ESA orden, con la tarifa que tenga cada folio.
+    const comOrden = foliosOrden.reduce((x,f)=>x + f.cantidad*(comisionFolioPct(cliente, f)/100), 0) / qOrden;
 
-    const fila = {
-      id: Date.now() + Math.random(),
-      loteId,
-      hora, cliente: getClienteDB(cliente).nombre, portafolio: port, especie, lado,
-      cantidad: a.cantidad, precio: ppp, comPct: comisionEfectiva, comMonto: comisionMonto,
-      ivaMonto, montoNeto, fechaReg, fechaCum,
-    };
-    operacionesHistorico.unshift({...fila, portafolio: port.nombre});
-    loteOps.push(fila);
+    (o.allocations||[]).forEach(a=>{
+      if(a.cantidad<=0) return;
+      const port = ports.find(p=>p.id===a.portId);
+      if(!port) return;
+      const montoBruto = a.cantidad * pppOrden;
+      const comisionMonto = montoBruto * comOrden;
+      const ivaMonto = port.iva ? comisionMonto*0.19 : 0;
+      const montoNeto = ladoOrden==='Compra' ? montoBruto + comisionMonto + ivaMonto
+                                             : montoBruto - comisionMonto - ivaMonto;
+      const fila = {
+        id: Date.now() + Math.random(),
+        loteId,
+        hora, cliente: getClienteDB(cliente).nombre, portafolio: port,
+        especie: espOrden, lado: ladoOrden,
+        cantidad: a.cantidad, precio: pppOrden, comPct: comOrden, comMonto: comisionMonto,
+        ivaMonto, montoNeto, fechaReg, fechaCum,
+      };
+      operacionesHistorico.unshift({...fila, portafolio: port.nombre});
+      loteOps.push(fila);
+    });
   });
 
   seleccionados.forEach(f=>{
@@ -15875,7 +15900,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 16:58 UTC';
+const BUILD_ID = '2026-09-01 17:17 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
