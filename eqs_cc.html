@@ -9328,8 +9328,12 @@ function tipoOpBO(isin){
 }
 
 function filasBODeCliente(cliente){
-  const ops = historial.filter(h=>h.cliente === cliente);
+  let ops = historial.filter(h=>h.cliente === cliente);
   if(!ops.length) return [];
+  // La planilla del BO tiene que decir LO MISMO que el Trade Confirmation que
+  // se le envió al cliente. Aval va con precios a 2 decimales, así que su pata
+  // se recalcula igual — si no, los dos archivos no coinciden (Sergio, 01-sep).
+  if(usaDosDecimalesRVI(cliente)) ops = ops.map(recalcularDosDecimales);
   const filas = [];
   const fmtF = v => v instanceof Date ? v : (v ? new Date(v) : new Date());
 
@@ -15997,7 +16001,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 19:24 UTC';
+const BUILD_ID = '2026-09-01 19:36 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
