@@ -10420,11 +10420,15 @@ function renderValidadorAlloc(){
     // QUE SE MARCÓ (`comBloquePct`), no la del selector actual: al pasar de
     // PFCIBEST (0,15%) a GEB (0,18%) el resumen recalculaba las dos con 0,18%
     // y la de PFCIBEST se veía cambiada (Sergio, 01-sep).
+    // OJO CON LA ESCALA: `comBloque`/`comPantalla` son DECIMALES (0.0018) y
+    // `f.comBloquePct` es PORCENTAJE (0.18). Mezclarlas daba comisiones cien
+    // veces mayores — 16,55% en vez de 0,1655% (Sergio, 01-sep).
     const comOrden = qtyOrden>0 ? folios.reduce((s,f)=>{
-      const pct = f.marca==='bloque'
-        ? (tarifaUnica != null ? tarifaUnica : (f.comBloquePct != null ? f.comBloquePct : comBloque))
+      const dec = f.marca==='bloque'
+        ? (tarifaUnica != null ? tarifaUnica
+           : (f.comBloquePct != null ? f.comBloquePct/100 : comBloque))
         : comPantalla;
-      return s + f.cantidad*pct;
+      return s + f.cantidad*dec;
     }, 0)/qtyOrden : 0;
     const lado = folios[0].lado;
     const especie = folios[0].especie;
@@ -15871,7 +15875,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 16:49 UTC';
+const BUILD_ID = '2026-09-01 16:58 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
