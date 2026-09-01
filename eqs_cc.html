@@ -15269,7 +15269,11 @@ function generarTC(){
   const precioNuestroBO = _nuestraMarcada ? Number(_nuestraMarcada.avgPr) : price;
 distribuciones.forEach(d=>{
     const grossAcc  = d.qty * price;
-    const costAcc   = tipo==='UCIT' ? grossAcc*db.comUCIT : d.qty*db.comETF;
+    // El MÍNIMO DE USD 20 también aplica al cliente, no solo a lo que nos cobra
+    // el broker: la línea de abajo sí lo aplicaba y esta no, así que el archivo
+    // salía con 10,96 en vez de 20 (Sergio, 01-sep). Exentas las tres AFP.
+    const _costCalc = tipo==='UCIT' ? grossAcc*db.comUCIT : d.qty*db.comETF;
+    const costAcc   = costoClienteRVI(db.nombre || clienteKey, _costCalc);
     const secFeeAcc = lado==='Sell' ? grossAcc*SEC_FEE_RATE : 0;
     const netAcc    = lado==='Sell' ? grossAcc-costAcc-secFeeAcc : grossAcc+costAcc;
     const ccsiAcc   = Math.max(tipo==='UCIT' ? grossAcc*CCSI.comUCIT : d.qty*CCSI.comETF, CCSI.minUSD);
@@ -15993,7 +15997,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 19:20 UTC';
+const BUILD_ID = '2026-09-01 19:24 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
