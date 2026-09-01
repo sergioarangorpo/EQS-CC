@@ -10368,7 +10368,7 @@ function renderValidadorAlloc(){
   const cfg = cliente ? getClienteDB(cliente) : null;
   if(!cfg || !cfg.reparteManual){ wrap.style.display='none'; return; }
 
-  const ordenes = getOrdenesConAlloc();
+  const ordenes = getOrdenesConAlloc(true);
   if(ordenes.length===0){ wrap.style.display='none'; return; }
   wrap.style.display='';
 
@@ -10398,17 +10398,24 @@ function renderValidadorAlloc(){
     const lado = folios[0].lado;
     const especie = folios[0].especie;
     // Repartir a cada portafolio en proporción a su cantidad asignada.
+    // La clave lleva PORTAFOLIO + ESPECIE + LADO: agrupar solo por portafolio
+    // juntaba GEB y PFCIBEST del mismo fondo en una fila y mostraba la especie
+    // de la primera con la cantidad de las dos (Sergio, 01-sep).
     o.allocations.forEach(a=>{
-      if(!acc[a.portId]) acc[a.portId] = {cant:0, bruto:0, com:0, lado, especie};
+      const k = a.portId + '|' + especie + '|' + lado;
+      if(!acc[k]) acc[k] = {cant:0, bruto:0, com:0, lado, especie, portId:a.portId};
       const bruto = a.cantidad * precioPond;
-      acc[a.portId].cant += a.cantidad;
-      acc[a.portId].bruto += bruto;
-      acc[a.portId].com += bruto * comOrden;
+      acc[k].cant += a.cantidad;
+      acc[k].bruto += bruto;
+      acc[k].com += bruto * comOrden;
     });
   });
 
-  const filas = Object.keys(acc).map(portId=>{
-    const d = acc[portId];
+  // La clave ahora es portafolio|especie|lado, así que el portId se lee del
+  // propio objeto.
+  const filas = Object.keys(acc).map(k=>{
+    const d = acc[k];
+    const portId = d.portId;
     const precio = d.cant>0 ? d.bruto/d.cant : 0;
     const comPct = d.bruto>0 ? d.com/d.bruto : 0;
     // Los clientes de reporte genérico equity (ALLIANZ, METLIFE, etc.) llevan
@@ -10514,7 +10521,11 @@ function sincronizarAllocOrdenActiva(){
 
 // Devuelve TODAS las órdenes con reparto guardado + la activa. Cada entrada:
 // { parentOrderId, qtyOrden, allocations:[{portId,cantidad}], sumaAsignada, completa }.
-function getOrdenesConAlloc(){
+// `todas` = true ignora la selección de Fidessa Trades y devuelve TODO lo que
+// el cliente tenga asignado. Lo usa el resumen: mientras no se genere el Excel,
+// hay que poder ver todo lo repartido aunque se esté trabajando otra especie
+// (Sergio, 01-sep). Para generar sigue mandando la selección.
+function getOrdenesConAlloc(todas){
   sincronizarAllocOrdenActiva();
   const out = [];
   // Clientes de PORTAFOLIO AUTOMÁTICO (BTG Cayman, Andes...): no hay reparto
@@ -10539,7 +10550,7 @@ function getOrdenesConAlloc(){
   // Antes esta función recogía TODAS las órdenes del cliente con folios y el
   // reporte salía completo aunque hubiera una sola línea marcada.
   poids.forEach(poid=>{
-    if(_tradesConsolidar.size > 0 && !_tradesConsolidar.has(String(poid))) poids.delete(poid);
+    if(!todas && _tradesConsolidar.size > 0 && !_tradesConsolidar.has(String(poid))) poids.delete(poid);
     // Marcada a mano como no reportable: no entra al archivo aunque esté
     // seleccionada. Que el letrero diga "NO SE REPORTA" y luego saliera en el
     // Excel sería peor que no tener la marca.
@@ -11687,6 +11698,8 @@ async function generarReporte(){
 
   // Guardián de comisiones: avisa si la tarifa no es la pactada del cliente.
   if(!revisarComisiones(cliente, seleccionados)) return;
+  // Aviso si quedan líneas repartidas fuera del archivo.
+  if(!revisarAsignadasFuera()) return;
 
   // GUARDA DE CUADRE: lo que se va a reportar tiene que coincidir con lo que
   // dicen las órdenes del cliente en Fidessa Trades. Intradía siempre hay
@@ -12661,6 +12674,29 @@ function tarifasPactadas(cliente){
                 ? (cfg.comisionBloque != null ? cfg.comisionBloque : cfg.comisionCruce) * 100 : null,   // en %
     pantalla: cfg.comisionPantalla != null ? cfg.comisionPantalla * 100 : null,
   };
+}
+
+// Avisa si hay MÁS líneas asignadas de las que se van a reportar. Pasa cuando
+// se prepara todo el cliente y luego se genera con una sola marcada: el resto
+// del reparto sigue vivo pero no entra al archivo (Sergio, 01-sep).
+// Devuelve true si se puede seguir.
+function revisarAsignadasFuera(){
+  const enElArchivo = getOrdenesConAlloc(false);
+  const todas = getOrdenesConAlloc(true);
+  if(todas.length <= enElArchivo.length) return true;
+  const dentro = new Set(enElArchivo.map(o=>String(o.parentOrderId)));
+  const fuera = todas.filter(o=>!dentro.has(String(o.parentOrderId)));
+  if(!fuera.length) return true;
+  const detalle = fuera.map(o=>{
+    const t = (_fidessaTradesRaw||{})[o.parentOrderId] || {};
+    const esp = t.security ? nemoCanonico(t.security,'fidessa') : '—';
+    return `   • ${esp} ${t.lado||''} ${fmtInt(o.qtyOrden||0)}`;
+  }).join('\n');
+  return confirm(
+    `Tienes ${fuera.length} línea(s) más ya repartidas que NO van en este archivo:\n\n` +
+    detalle +
+    `\n\nSe va a generar solo con las ${enElArchivo.length} que están marcadas ` +
+    `en Fidessa Trades.\n\n¿Seguir así?`);
 }
 
 // Devuelve true si se puede seguir (o no había nada que advertir).
@@ -15804,7 +15840,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 15:46 UTC';
+const BUILD_ID = '2026-09-01 16:20 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
