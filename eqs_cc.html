@@ -741,6 +741,7 @@
 
   <!-- ===== NAV (shared) ===== -->
   <div class="modnav">
+    <button data-mod="Dashboard" onclick="switchModule('Dashboard')" class="">Dashboard</button>
     <button data-mod="FX"      onclick="switchModule('FX')"      class="active">FX</button>
     <button data-mod="RVL"     onclick="switchModule('RVL')"     class="">RVL</button>
     <button data-mod="RVI"     onclick="switchModule('RVI')"     class="">RVI</button>
@@ -748,6 +749,51 @@
     <button data-mod="Reportes" onclick="switchModule('Reportes')" class="">Reportes</button>
     <button data-mod="Ayudas"   onclick="switchModule('Ayudas')"   class="">Ayudas</button>
     <button data-mod="Informe"  onclick="switchModule('Informe')"  class="">Informe diario de mercado</button>
+  </div>
+
+  <!-- ===== DASHBOARD ===== -->
+  <div id="mod-Dashboard" class="mod-section">
+    <div style="padding:0 24px 24px;">
+
+      <div class="section-label" style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <span>Cómo va el día</span>
+        <span class="field-note" id="dashHora">—</span>
+      </div>
+
+      <!-- Pendientes: lo que falta por hacer, no solo lo hecho -->
+      <div id="dashPendientes" style="margin-bottom:16px;"></div>
+
+      <!-- Una tarjeta por mercado -->
+      <div id="dashMercados" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;"></div>
+
+      <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
+        <!-- Clientes: filtro de todo lo demás -->
+        <div style="flex:0 0 260px;min-width:230px;">
+          <div class="card" style="padding:12px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:8px;">
+              CLIENTES DEL DÍA</div>
+            <div id="dashClientes"></div>
+          </div>
+        </div>
+        <!-- Volumen y comisión por cliente -->
+        <div style="flex:1;min-width:420px;">
+          <div class="card" style="padding:14px 16px;margin-bottom:14px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:10px;">
+              VOLUMEN POR CLIENTE</div>
+            <div id="dashVolumen"></div>
+          </div>
+          <div class="card" style="padding:14px 16px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:4px;">
+              LO QUE GANAMOS</div>
+            <div class="field-note" style="font-size:11px;margin-bottom:10px;">
+              Comisión en RVL y FX; en RVI la utilidad completa (comisión + margen − broker).
+              Los clientes de tarifa variable aparecen solo cuando ya se reportó.</div>
+            <div id="dashComision"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
   </div>
 
   <!-- ===== FX MODULE ===== -->
@@ -2151,6 +2197,9 @@ function switchModule(mod) {
   // Al entrar al informe se repinta con lo que haya cargado, por si el archivo
   // se subió desde Ayudas.
   if(mod === 'Informe' && typeof renderInformeDiario === 'function') renderInformeDiario();
+  // El dashboard se recalcula al entrar: lee de los otros módulos, así que
+  // tiene que estar fresco cada vez.
+  if(mod === 'Dashboard' && typeof renderDashboard === 'function') renderDashboard();
   const ml = MARKET_LABELS[mod];
   if(ml) {
     document.getElementById('market-label').textContent = ml.label;
@@ -9538,6 +9587,273 @@ async function descargarCOR(seleccion){
   }catch(e){ console.warn('No se pudo registrar la carga al COR:', e.message); }
 }
 
+// =====================================================================
+// DASHBOARD — cómo va el día
+// ---------------------------------------------------------------------
+// Volumen por mercado y por cliente, y lo que ganamos. Cada mercado en SU
+// moneda: RVL y FX en pesos, RVI en dólares — no se consolidan (Sergio, 01-sep).
+//
+// Reglas que importan:
+//   - RVL: el volumen sale de Fidessa TRADES (la orden ejecutada), no de los
+//     folios, que son las papeletas y sumarían lo mismo repetido. Lo que está
+//     en EMSX y también en Trades es LA MISMA operación: se cruza por
+//     Client/Book + especie + lado para no contarla dos veces.
+//   - Comisión: solo se muestra cuando es CIERTA. Andes al 0,1% o Bancolombia
+//     al 0,2% son tarifa única y se saben de entrada; Protección y COLFONDOS
+//     dependen de bloque o pantalla, así que quedan pendientes hasta que se
+//     genere el reporte y se sepa el dato real.
+//   - RVI: lo que ganamos NO es la comisión sino la utilidad completa
+//     (comisión al cliente + margen de precio − lo que nos cobra el broker).
+// =====================================================================
+let _dashCliente = '';   // filtro activo del panel de la izquierda
+
+function _dashTarifaCierta(cliente){
+  // Tarifa única = certeza. Variable por especie o por bloque/pantalla = no.
+  const g = (typeof GRUPO_COMISIONES_DB !== 'undefined' ? GRUPO_COMISIONES_DB : [])
+    .find(x=>normalizarGrupo(x.grupo) === normalizarGrupo(cliente) || x.book === cliente);
+  if(!g) return null;
+  if(g.variable || g.bloque) return null;         // depende de la marca: no se sabe aún
+  return Number(g.base) || null;                  // p.ej. 0.001 = 0,1%
+}
+
+function _dashDatos(){
+  const hoy = _hoyISO();
+  const M = {
+    FX:  { nombre:'FX',  moneda:'COP', vol:0, com:0, clientes:{} },
+    RVL: { nombre:'RVL', moneda:'COP', vol:0, com:0, clientes:{} },
+    RVI: { nombre:'RVI', moneda:'USD', vol:0, com:0, clientes:{} },
+    RFI: { nombre:'RFI', moneda:'COP', vol:0, com:0, clientes:{} },
+  };
+  const sumar = (mkt, cliente, vol, com, comCierta) => {
+    if(!cliente) return;
+    const m = M[mkt];
+    m.vol += vol;
+    if(comCierta) m.com += com;
+    const c = m.clientes[cliente] || (m.clientes[cliente] = { vol:0, com:0, pendiente:false });
+    c.vol += vol;
+    if(comCierta) c.com += com; else c.pendiente = true;
+  };
+
+  // ---------- RVL ----------
+  // Fidessa Trades manda; EMSX aporta lo que todavía no llegó a Fidessa.
+  const vistos = new Set();
+  Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
+    const t = _fidessaTradesRaw[oid];
+    const cli = normalizarGrupo(t.grupo);
+    if(!cli || !clienteRequiereReporte(cli)) return;
+    const q = Number(t.qtyDone)||0, px = Number(t.avgPx)||0;
+    if(!q || !px) return;
+    vistos.add(cli + '|' + nemoCanonico(t.security,'fidessa') + '|' + t.lado);
+    const bruto = q * px;
+    const tarifa = _dashTarifaCierta(cli);
+    sumar('RVL', cli, bruto, tarifa ? bruto*tarifa : 0, tarifa != null);
+  });
+  // Lo de EMSX que NO está en Trades: misma clave cliente+especie+lado.
+  (_emsxCBCache||[]).forEach(row=>{
+    const cli = normalizarGrupo(row.originate_trader_firm || row.account || '');
+    if(!cli || !clienteRequiereReporte(cli)) return;
+    const esp = nemoCanonico(row.ticker, 'emsx');
+    const lado = String(row.side||'').toUpperCase().startsWith('B') ? 'Compra' : 'Venta';
+    if(vistos.has(cli + '|' + esp + '|' + lado)) return;    // ya contada en Trades
+    const q = Number(row.filled)||0, px = Number(row.avg_price)||0;
+    if(!q || !px) return;
+    const bruto = q * px;
+    const tarifa = _dashTarifaCierta(cli);
+    sumar('RVL', cli, bruto, tarifa ? bruto*tarifa : 0, tarifa != null);
+  });
+
+  // ---------- RVI ----------
+  // Lo que ganamos es la UTILIDAD: comisión al cliente + margen − broker.
+  (historial||[]).forEach(h=>{
+    const cli = h.cliente || '';
+    const q = Number(h.qty)||0, px = Number(h.price)||0;
+    if(!q || !px) return;
+    const bruto = q * px;
+    const pxNos = Number(h.precioNuestro) || px;
+    const margen = String(h.side||'').toUpperCase()==='SELL' ? (pxNos - px)*q : (px - pxNos)*q;
+    const util = (Number(h.cost)||0) + margen - (Number(h.ccsi)||0);
+    sumar('RVI', cli, bruto, util, true);   // en RVI el dato ya es cierto
+  });
+
+  // ---------- FX ----------
+  (typeof operaciones !== 'undefined' ? operaciones : []).forEach(o=>{
+    if(o.fecha && String(o.fecha).slice(0,10) !== hoy) return;
+    const cli = o.cliente || o.grupo || '';
+    const monto = Number(o.amount || o.monto) || 0;
+    if(!cli || !monto) return;
+    let tasa = 0;
+    try { tasa = calcularDesdeValores(o.modelo, o.side, monto, o.params).tasaFinalCliente || 0; }
+    catch(e){ tasa = (o.params && (o.params.rateUnica || o.params.rate)) || 0; }
+    sumar('FX', cli, monto * tasa, Number(o.comisionEQS)||0, true);
+  });
+
+  return M;
+}
+
+function renderDashboard(){
+  const cont = document.getElementById('dashMercados');
+  if(!cont) return;
+  const M = _dashDatos();
+  const el = document.getElementById('dashHora');
+  if(el) el.textContent = new Date().toLocaleString('es-CO',{dateStyle:'long', timeStyle:'short'});
+
+  const mm = (v, moneda) => {
+    if(!v) return moneda === 'USD' ? '$0' : '$0';
+    if(moneda === 'USD') return '$' + v.toLocaleString('es-CO',{maximumFractionDigits:0});
+    return '$' + (v/1e6).toLocaleString('es-CO',{maximumFractionDigits: (v/1e6)<10?1:0}) + ' MM';
+  };
+
+  // ---- Tarjetas por mercado ----
+  cont.innerHTML = Object.keys(M).map(k=>{
+    const m = M[k];
+    const nCli = Object.keys(m.clientes).length;
+    const hayPend = Object.values(m.clientes).some(c=>c.pendiente);
+    const apagado = m.vol === 0;
+    return `
+      <div class="card" style="flex:1;min-width:190px;padding:14px 16px;${apagado?'opacity:.45;':''}">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;">
+          <span style="font-size:13px;font-weight:800;letter-spacing:.5px;">${m.nombre}</span>
+          <span class="field-note" style="font-size:10px;">${m.moneda}</span>
+        </div>
+        <div style="font-size:22px;font-weight:800;margin-top:6px;">${mm(m.vol, m.moneda)}</div>
+        <div class="field-note" style="font-size:11px;">volumen · ${nCli} cliente(s)</div>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border,#232938);">
+          <div style="font-size:15px;font-weight:700;color:var(--buy,#22c55e);">${mm(m.com, m.moneda)}</div>
+          <div class="field-note" style="font-size:11px;">
+            ${k==='RVI' ? 'utilidad' : 'comisión'}${hayPend ? ' · <span style="color:var(--amber,#f59e0b);">falta por reportar</span>' : ''}</div>
+        </div>
+      </div>`;
+  }).join('');
+
+  renderDashClientes(M);
+  renderDashBarras(M);
+  renderDashPendientes();
+}
+
+// Panel de clientes: filtra todo lo demás al hacer clic.
+function renderDashClientes(M){
+  const cont = document.getElementById('dashClientes');
+  if(!cont) return;
+  const tot = {};
+  Object.keys(M).forEach(k=>{
+    Object.keys(M[k].clientes).forEach(c=>{
+      const a = tot[c] || (tot[c] = { mercados:new Set(), pend:false });
+      a.mercados.add(k);
+      if(M[k].clientes[c].pendiente) a.pend = true;
+    });
+  });
+  const nombres = Object.keys(tot).sort();
+  if(!nombres.length){
+    cont.innerHTML = '<div class="field-note">Todavía no hay operaciones hoy.</div>';
+    return;
+  }
+  cont.innerHTML =
+    `<div onclick="filtrarDashCliente('')" style="cursor:pointer;padding:6px 8px;border-radius:6px;
+        font-size:12px;margin-bottom:2px;${!_dashCliente?'background:var(--accent,#818cf8);color:#fff;font-weight:700;':''}">
+      Todos los clientes <span style="opacity:.7;">(${nombres.length})</span></div>` +
+    nombres.map(c=>`
+      <div onclick="filtrarDashCliente('${String(c).replace(/'/g,"\\'")}')"
+           style="cursor:pointer;padding:6px 8px;border-radius:6px;font-size:12px;margin-bottom:2px;
+                  ${_dashCliente===c?'background:var(--accent,#818cf8);color:#fff;font-weight:700;':''}">
+        ${c}
+        <span style="opacity:.6;font-size:10px;"> ${[...tot[c].mercados].join(' · ')}</span>
+        ${tot[c].pend?'<span style="color:var(--amber,#f59e0b);"> ●</span>':''}
+      </div>`).join('');
+}
+
+function filtrarDashCliente(c){
+  _dashCliente = (_dashCliente === c) ? '' : c;
+  renderDashboard();
+}
+
+// Barras de volumen y de lo que ganamos, por cliente.
+function renderDashBarras(M){
+  const paleta = ['#818cf8','#22c55e','#f59e0b','#38bdf8','#f472b6','#a78bfa','#34d399','#fb923c'];
+  const barra = (destino, campo) => {
+    const cont = document.getElementById(destino);
+    if(!cont) return;
+    const filas = [];
+    Object.keys(M).forEach(k=>{
+      Object.keys(M[k].clientes).forEach(c=>{
+        if(_dashCliente && c !== _dashCliente) return;
+        const v = M[k].clientes[c][campo];
+        if(v > 0) filas.push({ cliente:c, mercado:k, moneda:M[k].moneda, valor:v,
+                               pend:M[k].clientes[c].pendiente });
+      });
+    });
+    if(!filas.length){
+      cont.innerHTML = '<div class="field-note">Sin datos todavía.</div>';
+      return;
+    }
+    // Se compara DENTRO de cada moneda: mezclar pesos y dólares en una misma
+    // barra no significaría nada.
+    const maxPorMoneda = {};
+    filas.forEach(f=>{ maxPorMoneda[f.moneda] = Math.max(maxPorMoneda[f.moneda]||0, f.valor); });
+    filas.sort((a,b)=> (b.valor/maxPorMoneda[b.moneda]) - (a.valor/maxPorMoneda[a.moneda]));
+    const totPorMoneda = {};
+    filas.forEach(f=>{ totPorMoneda[f.moneda] = (totPorMoneda[f.moneda]||0) + f.valor; });
+    cont.innerHTML = filas.map((f,i)=>{
+      const pct = f.valor / maxPorMoneda[f.moneda] * 100;
+      const share = f.valor / totPorMoneda[f.moneda] * 100;
+      const txt = f.moneda === 'USD'
+        ? '$' + f.valor.toLocaleString('es-CO',{maximumFractionDigits:0})
+        : '$' + (f.valor/1e6).toLocaleString('es-CO',{maximumFractionDigits:1}) + ' MM';
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;">
+        <span style="width:170px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${f.cliente}">${f.cliente}</span>
+        <span style="width:34px;font-size:10px;opacity:.6;">${f.mercado}</span>
+        <span style="flex:1;background:rgba(255,255,255,.06);border-radius:3px;height:16px;display:block;">
+          <span style="display:block;width:${pct.toFixed(1)}%;height:16px;border-radius:3px;
+                background:${paleta[i%paleta.length]};"></span></span>
+        <span style="width:96px;text-align:right;">${txt}</span>
+        <span style="width:44px;text-align:right;opacity:.6;font-size:11px;">${share.toFixed(0)}%</span>
+        ${f.pend && campo==='com' ? '<span style="color:var(--amber,#f59e0b);font-size:10px;">falta</span>' : '<span style="width:34px;"></span>'}
+      </div>`;
+    }).join('');
+  };
+  barra('dashVolumen', 'vol');
+  barra('dashComision', 'com');
+}
+
+// Lo que falta por hacer, leyendo el estado que ya lleva cada módulo.
+function renderDashPendientes(){
+  const cont = document.getElementById('dashPendientes');
+  if(!cont) return;
+  const avisos = [];
+
+  // RVL: órdenes de Fidessa sin reportar.
+  let sinReportar = 0;
+  Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
+    const t = _fidessaTradesRaw[oid];
+    const cli = normalizarGrupo(t.grupo);
+    if(!cli || !clienteRequiereReporte(cli)) return;
+    if(_lineasNoReportar.has(String(oid))) return;
+    if(!(_reportesGenerados||[]).some(r=>String(r.parent_order_id).startsWith(String(oid)))) sinReportar++;
+  });
+  if(sinReportar) avisos.push(`<b>${sinReportar}</b> orden(es) de RVL sin reportar`);
+
+  // RVI: líneas de EMSX marcadas pero no guardadas.
+  const rviPend = (emsxData||[]).filter(r=>
+    String(r.status||'').toUpperCase()==='FILLED' &&
+    !(historial||[]).some(h=>String(h.symbol||'') === tickerLimpioRVI(r.especie))).length;
+  if(rviPend) avisos.push(`<b>${rviPend}</b> línea(s) de RVI sin procesar`);
+
+  // Reportado pero sin cargar al COR.
+  const sinCOR = [...new Set((_reportesGenerados||[])
+    .filter(r=>r.modulo==='RVL')
+    .map(r=>r.cliente))].filter(c=>vecesCargadoCOR('RVL', c) === 0).length;
+  if(sinCOR) avisos.push(`<b>${sinCOR}</b> cliente(s) reportado(s) sin cargar al COR`);
+
+  if(!avisos.length){
+    cont.innerHTML = `<div style="background:rgba(34,197,94,.10);border-left:3px solid var(--buy,#22c55e);
+        border-radius:6px;padding:10px 14px;font-size:12.5px;color:var(--buy,#22c55e);">
+      ✓ Nada pendiente por ahora.</div>`;
+    return;
+  }
+  cont.innerHTML = `<div style="background:rgba(245,158,11,.10);border-left:3px solid var(--amber,#f59e0b);
+      border-radius:6px;padding:10px 14px;font-size:12.5px;display:flex;gap:18px;flex-wrap:wrap;">
+    ${avisos.map(a=>`<span>⚠ ${a}</span>`).join('')}</div>`;
+}
+
 function renderModuloReportes(){
   const resumen = document.getElementById('reportesResumen');
   if(!document.getElementById('repRVL')) return;
@@ -16062,7 +16378,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 20:22 UTC';
+const BUILD_ID = '2026-09-01 21:17 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
