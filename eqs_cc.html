@@ -13058,7 +13058,28 @@ async function generarCredicorpProteccion(loteDet){
 // (entero, por resto mayor) y el pedazo del folio k es la diferencia contra
 // el folio k-1. Como en el último folio el acumulado objetivo ES la
 // allocation exacta, (b) se cumple por construcción.
+// Reparte los folios entre los portafolios SEPARANDO POR ESPECIE + LADO: los
+// folios de GEB solo se reparten entre los portafolios que recibieron GEB.
+// Sin esta separación, con varias líneas marcadas cada folio se repartía entre
+// TODOS los portafolios de TODAS las especies y el archivo salía cruzado
+// (Sergio, 01-sep). Con una sola especie el resultado es idéntico al de antes,
+// que es por lo que línea a línea siempre funcionó.
 function repartirFoliosColfondos(alocaciones, folios){
+  const clave = x => String(nemoCanonico(x.especie)||x.especie||'') + '|' + String(x.lado||'');
+  const grupos = [...new Set((alocaciones||[]).map(clave))];
+  if(grupos.length > 1){
+    let salida = [];
+    grupos.forEach(g=>{
+      const al = alocaciones.filter(a=>clave(a) === g);
+      const fo = (folios||[]).filter(f=>clave(f) === g);
+      if(al.length && fo.length) salida = salida.concat(_repartirFoliosColfondosUnaEspecie(al, fo));
+    });
+    return salida;
+  }
+  return _repartirFoliosColfondosUnaEspecie(alocaciones, folios);
+}
+
+function _repartirFoliosColfondosUnaEspecie(alocaciones, folios){
   const total = alocaciones.reduce((s,a)=>s+a.cantidad, 0);
   if(total <= 0 || !folios.length) return [];
   // Saldo pendiente de cada portafolio. Es la red de seguridad del invariante
@@ -15900,7 +15921,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 17:17 UTC';
+const BUILD_ID = '2026-09-01 17:29 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
