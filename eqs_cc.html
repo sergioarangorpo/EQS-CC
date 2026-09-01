@@ -12077,7 +12077,7 @@ async function generarReporte(){
       medio: window._porvMedio || 'BBL',
     });
     window._sufijoReporte = '';
-    const nuevas = await registrarLoteRVL(cliente, loteDet, version);
+    const nuevas = await registrarLoteRVL(cliente, loteOps, version);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'CREDICORPCAPITAL-PORVENIR + Archivo plano');
     renderFidessaTradesPanel();
   } else if(formato === 'credicorpffmm'){
@@ -12136,7 +12136,13 @@ async function generarReporte(){
     });
     if(!ok) return;
     await generarExcelCCFFMM(macro, lote, _slug);
-    await registrarLoteRVL(cfgMacro.nombre, lote, version);
+    // CREDICORPFFMM reporta folio a folio: cada fila del lote lleva su propio
+    // portafolio (el Notes), así que se convierte al formato de loteOps.
+    await registrarLoteRVL(cfgMacro.nombre, lote.map(f=>({
+      portafolio: { nombre: cfgMacro.fondo || f.notes || f.portafolio || '' },
+      especie: f.especie, lado: f.lado, cantidad: f.cantidad, precio: f.precio,
+      comMonto: (Number(f.cantidad)||0) * (Number(f.precio)||0) * 0.001,
+    })), version);
 
   } else if(formato === 'skandia'){
     const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
@@ -12183,7 +12189,7 @@ async function generarReporte(){
     window._sufijoReporte = sufijoVersion(version);
     await generarReporteSkandia(cliente, loteDetSk || loteDet);
     window._sufijoReporte = '';
-    const nuevas = await registrarLoteRVL(cliente, loteDet, version);
+    const nuevas = await registrarLoteRVL(cliente, loteOps, version);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos Operaciones + BO');
     renderFidessaTradesPanel();
   } else if(formato === 'colfondos'){
@@ -12200,7 +12206,7 @@ async function generarReporte(){
     window._sufijoReporte = sufijoVersion(version);
     await generarReporteColfondos(cliente, loteOps, loteDet);
     window._sufijoReporte = '';
-    const nuevas = await registrarLoteRVL(cliente, loteDet, version);
+    const nuevas = await registrarLoteRVL(cliente, loteOps, version);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos Operaciones + Detalle');
     renderFidessaTradesPanel();
   } else if(formato === 'andes_fxequity'){
@@ -12486,7 +12492,7 @@ function mostrarAprobacionProteccion(cliente, loteDet){
     window._sufijoReporte = sufijoVersion(version);
     await generarReporteProteccion(cliente, loteDet);
     window._sufijoReporte = '';
-    const nuevas = await registrarLoteRVL(cliente, loteDet, version);
+    const nuevas = await registrarLoteRVL(cliente, loteOps, version);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos rtpcredicorp + credicorp');
     renderFidessaTradesPanel();
   };
@@ -12794,7 +12800,32 @@ function revisarComisiones(cliente, folios){
     'Revisa "Comisión del día" antes de seguir.\n\n¿Generar de todos modos?');
 }
 
-async function registrarLoteRVL(cliente, loteDet, version){
+// Registra en el módulo Reportes EXACTAMENTE lo que salió en el Excel. Recibe
+// `loteOps`, que es lo que se le reportó al cliente: una fila por portafolio,
+// con su especie, su cantidad y su comisión. Antes recibía `loteDet` (los
+// folios crudos) y había que reconstruir el reparto, cosa que salía mal
+// (Sergio, 01-sep).
+async function registrarLoteRVL(cliente, loteOps, version){
+  const lineas = (loteOps||[]).map(o=>{
+    const port = (o.portafolio && o.portafolio.nombre) ? o.portafolio.nombre : String(o.portafolio||'');
+    const esp = nemoCanonico(o.especie) || o.especie || '';
+    return {
+      // Identificador estable y único por especie + lado + portafolio: con
+      // varias filas del mismo reparto no se pisan entre sí.
+      parentOrderId: esp + '|' + (o.lado||'') + (port ? '#' + port : ''),
+      especie: esp, lado: o.lado || '',
+      cantidad: Number(o.cantidad) || 0,
+      precio: Number(o.precio) || 0,
+      comision: Number(o.comMonto) || 0,
+      portafolios: port,
+    };
+  }).filter(l=>l.cantidad > 0);
+  if(!lineas.length) return 0;
+  return await registrarReporte('RVL', getClienteDB(cliente).nombre, lineas, version);
+}
+
+// Versión vieja, por si algún flujo todavía manda folios en vez de loteOps.
+async function registrarLoteRVLDesdeFolios(cliente, loteDet, version){
   const porOrden = {};
   // Los folios de DISTRIBUCIÓN de PROTECCIÓN no traen Parent Order ID (van a
   // una sub-cuenta del cliente, no a una orden), así que se salían del registro
@@ -15921,7 +15952,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 17:29 UTC';
+const BUILD_ID = '2026-09-01 17:37 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
