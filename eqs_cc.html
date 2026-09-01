@@ -5465,6 +5465,14 @@ function ordenarArrayGenerico(arr, tablaId){
 // pasarlos al Excel maestro (Sergio, 25-ago).
 // AVAL FIDUCIARIA: el portafolio nuevo y el renombre post-fusión. Los nombres
 // viejos decían "FIDUBOGOTA", que es anterior a la fusión (Sergio, 26-ago).
+// CAXDAC opera cinco fondos y en la base solo estaba el de Vejez. Los mismos
+// aplican en RVL y en RVI (Sergio, 01-sep). Sin deceval por ahora: se
+// identifican por nombre.
+const CAXDAC_PORTAFOLIOS = [
+  'CAXDAC FDO VEJEZ', 'CAXDAC FDO INVALIDEZ', 'CAXDAC FDO SOBREVIVIENTES',
+  'CAXDAC FDO EXTRALEGAL', 'CAXDAC ADMINISTRADORA',
+];
+
 const AVAL_FIDU_NUEVOS = [
   { deceval: 1127, nombre: 'AVAL FIDUCIARIA META CRECIMIENTO' },
 ];
@@ -5773,6 +5781,18 @@ function getClienteDB(key){
         if(!(cfg.portafolios||[]).some(x=>String(x.deceval)===String(n.deceval))){
           cfg.portafolios.push({ id:'DEC_'+n.deceval, nombre:n.nombre, deceval:n.deceval, nit:'', iva:true });
         }
+      });
+    }
+    if(key === 'CAXDAC' && typeof CAXDAC_PORTAFOLIOS !== 'undefined'){
+      cfg.portafolios = cfg.portafolios || [];
+      const norm = t => String(t||'').toUpperCase().replace(/[^A-Z]/g,'');
+      CAXDAC_PORTAFOLIOS.forEach(n=>{
+        // "CAXDAC - VEJEZ FONDO DE PENSIONES" ya existe: no se duplica.
+        const yaEsta = cfg.portafolios.some(p=>{
+          const a = norm(p.nombre), b = norm(n);
+          return a === b || (a.includes('VEJEZ') && b.includes('VEJEZ'));
+        });
+        if(!yaEsta) cfg.portafolios.push({ id:'CAX_'+norm(n), nombre:n, deceval:'', nit:'', iva:false });
       });
     }
     if(key === 'FIDUCIARIA BANCOLOMBIA' && typeof VALORES_AM_NUEVOS !== 'undefined'){
@@ -14159,6 +14179,16 @@ const clientesRVI = {
     comETF:0.008, comUCIT:0.08/100, comADR:0.008,
     portafolios:['BBVA PORTAFOLIO'],
   },
+  CAXDAC: {
+    nombre:'CAXDAC',
+    // El TAX ID del Trade Confirmation es SIEMPRE el de Credicorp, no el del
+    // cliente (Sergio, 01-sep).
+    taxId:'860.068.182-5',
+    // US por acción, LN como % del gross. Mínimo de USD 20 (no está exento).
+    comETF:0.005, comUCIT:0.05/100, comADR:0.005,
+    portafolios:['CAXDAC FDO VEJEZ','CAXDAC FDO INVALIDEZ','CAXDAC FDO SOBREVIVIENTES',
+                 'CAXDAC FDO EXTRALEGAL','CAXDAC ADMINISTRADORA'],
+  },
   AVAL_FIDUCIARIA: {
     nombre:'AVAL FIDUCIARIA SA',
     // TAX ID tomado del Trade Confirmation del 19-ago.
@@ -16001,7 +16031,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 19:36 UTC';
+const BUILD_ID = '2026-09-01 19:48 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
