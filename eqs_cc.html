@@ -9701,7 +9701,9 @@ async function registrarLoteRVI(cliente, filas){
     const esp = String(f.symbol || f.especie || '').toUpperCase();
     const lado = String(f.side || f.lado || '');
     return {
-      parentOrderId: esp + '|' + lado,   // estable: no depende del id de EMSX
+      // Estable (no depende del id de EMSX) y con el portafolio, para que las
+      // filas del reparto no se pisen entre sí.
+      parentOrderId: esp + '|' + lado + (f.account ? '#' + f.account : ''),
       especie: esp, lado,
       cantidad: Number(f.qty != null ? f.qty : f.cantidad) || 0,
       precio: Number(f.price != null ? f.price : f.precio) || 0,
@@ -9722,7 +9724,9 @@ async function registrarReporte(modulo, cliente, lineas, version){
   // en cinco portafolios son CINCO filas con el mismo identificador: aplicarles
   // el mismo filtro dejaba una sola y el reporte se veía incompleto
   // (Sergio, 31-ago). Ahí se guardan todas.
-  const dedup = modulo !== 'RVI';
+  // Ni RVI ni RVL deduplican por línea: las dos pueden traer varias filas de la
+  // misma orden, una por portafolio.
+  const dedup = false;
   const yaEstan = new Set(dedup ? _reportesGenerados
     .filter(r => r.cliente === cliente && r.modulo === modulo)
     .map(r => String(r.parent_order_id)) : []);
@@ -9734,9 +9738,9 @@ async function registrarReporte(modulo, cliente, lineas, version){
     // comparten especie y lado, y el índice único de la tabla es
     // (fecha, modulo, cliente, parent_order_id) — sin distinguirlas, cada una
     // sobrescribía a la anterior y quedaba UNA sola (Sergio, 31-ago).
-    parent_order_id: modulo === 'RVI' && l.portafolios
-      ? String(l.parentOrderId) + '#' + String(l.portafolios)
-      : String(l.parentOrderId),
+    // El identificador ya viene compuesto (orden#portafolio) desde quien
+    // registra: en RVI lo arma registrarLoteRVI y en RVL registrarLoteRVL.
+    parent_order_id: String(l.parentOrderId),
     especie: l.especie || '', lado: l.lado || '',
     cantidad: Number(l.cantidad) || 0,
     precio: Number(l.precio) || 0,
@@ -11951,11 +11955,17 @@ async function generarReporte(){
     // la que va a ver Porvenir: ellos consolidan, no quieren dos tarifas.
   }
 
-  // Limpiar selección y allocations tras registrar, igual que en FX
+  // Se limpia SOLO lo que se acaba de reportar: el reparto de las demás líneas
+  // se conserva. Antes se borraba todo, así que preparar PFCIBEST, pasar a
+  // CIBEST y generar las dos juntas era imposible — al volver, el alloc de la
+  // primera había desaparecido (Sergio, 01-sep).
+  const _ordsReportadas = new Set((seleccionados||[]).map(f=>String(f.parentOrderId)));
+  _ordsReportadas.forEach(o=>{ delete _allocPorOrden[o]; });
   selectedFolios.clear();
   allocations = [];
+  _ordenActiva = null;
+  poblarSelectorNuevoPortafolio();
   renderFolios();
-  inicializarAllocationsDesdeCliente();
 
   const toast = document.getElementById('toastRVL');
   toast.classList.add('show');
@@ -12657,22 +12667,30 @@ function tarifasPactadas(cliente){
 function revisarComisiones(cliente, folios){
   const t = tarifasPactadas(cliente);
   const nombre = (getClienteDB(cliente)||{}).nombre || cliente;
-  const usadas = { bloque:new Set(), pantalla:new Set() };
-  (folios||[]).forEach(f=>{
-    // Las especies con override (ECOPETROL/PFCIBEST a pantalla) no cuentan
-    // como desviación: su tarifa distinta es la regla, no un error.
-    if(f.especie==='ECOPETROL' || f.especie==='PFCIBEST') return;
-    if(f.marca === 'bloque') usadas.bloque.add(Number(f.comBloquePct != null ? f.comBloquePct : comisionCrucePct()));
-    else usadas.pantalla.add(Number(comisionPantallaPct()));
-  });
   const avisos = [];
   const fmtPct = v => (Math.round(v*10000)/10000) + '%';
-  ['bloque','pantalla'].forEach(tipo=>{
-    if(t[tipo] == null) return;
-    [...usadas[tipo]].forEach(v=>{
-      if(Math.abs(v - t[tipo]) > 1e-9)
-        avisos.push(`${tipo==='bloque'?'Bloque/Cruce':'Pantalla'}: se va a reportar ${fmtPct(v)} y la tarifa de ${nombre} es ${fmtPct(t[tipo])}.`);
-    });
+  // La tarifa se compara ESPECIE POR ESPECIE contra la tabla maestra: COLFONDOS
+  // cobra 0,15% en ECOPETROL, PFCIBEST e ICOLCAP y 0,18% en el resto, así que
+  // compararlo todo contra una sola tarifa marcaba CIBEST a 0,18% como
+  // desviación cuando es lo correcto (Sergio, 01-sep).
+  const vistos = new Set();
+  (folios||[]).forEach(f=>{
+    const tipo = f.marca === 'bloque' ? 'bloque' : 'pantalla';
+    const usada = tipo === 'bloque'
+      ? Number(f.comBloquePct != null ? f.comBloquePct : comisionCrucePct())
+      : Number(comisionPantallaPct());
+    // La de la tabla para ESA especie, con su override si lo tiene.
+    const pactada = (typeof comisionFolioPct === 'function')
+      ? comisionFolioPct(cliente, { especie: f.especie, marca: tipo })
+      : t[tipo];
+    if(pactada == null) return;
+    const k = f.especie + '|' + tipo + '|' + usada;
+    if(vistos.has(k)) return;
+    vistos.add(k);
+    if(Math.abs(usada - pactada) > 1e-9){
+      avisos.push(`${f.especie} (${tipo==='bloque'?'bloque/cruce':'pantalla'}): ` +
+                  `se va a reportar ${fmtPct(usada)} y la tarifa de ${nombre} para esa especie es ${fmtPct(pactada)}.`);
+    }
   });
   if(avisos.length === 0) return true;
   return confirm('⚠ OJO CON LA COMISIÓN\n\n' + avisos.join('\n') +
@@ -12698,10 +12716,19 @@ async function registrarLoteRVL(cliente, loteDet, version){
     // Si hay una sola orden que calce, es esa. Con varias no se adivina.
     return cands.length === 1 ? cands[0] : '';
   };
+  // Se agrupa por ORDEN + PORTAFOLIO: el registro debe reflejar LO REPORTADO,
+  // no la orden de Fidessa. Si PFCIBEST se repartió en dos portafolios, van dos
+  // líneas — antes se consolidaba en una y el reparto se perdía
+  // (Sergio, 01-sep).
   (loteDet||[]).forEach(f=>{
-    const k = _ordenDeFolio(f);
-    if(!k) return;   // sin línea de Trades no hay nada que registrar
-    const o = porOrden[k] || (porOrden[k] = {parentOrderId:k, especie:f.especie, lado:f.lado, cantidad:0, bruto:0, comision:0});
+    const oid = _ordenDeFolio(f);
+    if(!oid) return;   // sin línea de Trades no hay nada que registrar
+    const port = f.portNombre || f.portafolio || '';
+    const k = oid + (port ? '#' + port : '');
+    const o = porOrden[k] || (porOrden[k] = {
+      parentOrderId: k, especie:f.especie, lado:f.lado,
+      cantidad:0, bruto:0, comision:0, portafolios: port,
+    });
     o.cantidad += Number(f.cantidad)||0;
     o.bruto    += (Number(f.cantidad)||0) * (Number(f.precio)||0);
     o.comision += (Number(f.cantidad)||0) * (Number(f.precio)||0) * ((Number(f.comisionPct)||0)/100);
@@ -15777,7 +15804,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-08-31 21:12 UTC';
+const BUILD_ID = '2026-09-01 15:46 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
