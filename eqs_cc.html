@@ -6127,8 +6127,26 @@ function toggleTradeConsolidar(folioOrden){
     _allocPorOrden[_ordenActiva] = allocations.slice();
   }
 
-  if(_tradesConsolidar.has(folioOrden)) _tradesConsolidar.delete(folioOrden);
-  else _tradesConsolidar.add(folioOrden);
+  if(esReparteManual){
+    // En clientes de reparto manual, marcar una orden significa ENFOCARLA para
+    // repartirla: queda ella sola. Antes las órdenes llegaban todas marcadas,
+    // así que el clic en PFCIBEST la DESmarcaba y dejaba CIBEST como activa —
+    // el reparto terminaba aplicándose a la especie equivocada (Sergio, 01-sep).
+    // Volver a marcarla la desenfoca y deja todas seleccionadas otra vez.
+    if(_tradesConsolidar.size === 1 && _tradesConsolidar.has(folioOrden)){
+      _tradesConsolidar.clear();
+      Object.keys(_fidessaTradesRaw||{}).forEach(k=>{
+        const t = _fidessaTradesRaw[k];
+        if(normalizarGrupo(t.grupo) === cliente) _tradesConsolidar.add(k);
+      });
+    }else{
+      _tradesConsolidar.clear();
+      _tradesConsolidar.add(folioOrden);
+    }
+  }else{
+    if(_tradesConsolidar.has(folioOrden)) _tradesConsolidar.delete(folioOrden);
+    else _tradesConsolidar.add(folioOrden);
+  }
   renderFidessaTradesPanel();
   selectedFolios.clear();
 
@@ -6141,7 +6159,12 @@ function toggleTradeConsolidar(folioOrden){
     // Autoseleccionar todos los folios de la orden enfocada (son los que se
     // reparten), para que la "cantidad seleccionada" = qty de la orden.
     if(_ordenActiva){
-      getFiltrados().forEach(f=> selectedFolios.add(f.id));
+      // SOLO los folios DE ESA ORDEN. `getFiltrados()` trae todos los del
+      // cliente, así que al enfocar PFCIBEST también arrastraba los de CIBEST
+      // y el reparto se aplicaba a las dos (Sergio, 01-sep).
+      getFiltrados()
+        .filter(f=>String(f.parentOrderId) === String(_ordenActiva))
+        .forEach(f=> selectedFolios.add(f.id));
     }
   }
   renderFolios();
@@ -15840,7 +15863,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 16:20 UTC';
+const BUILD_ID = '2026-09-01 16:40 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
