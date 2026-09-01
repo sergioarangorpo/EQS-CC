@@ -4773,7 +4773,10 @@ const clientesDB = {
   },
   'METLIFE SEGUROS DE VIDA S.A.': {
     nombre: 'METLIFE SEGUROS DE VIDA S.A.',
-    formatoReporte: 'generico_equity', reparteManual: true,
+    // Tiene UN solo portafolio, así que se autoasigna como Andes o BTG Cayman:
+    // pedir el reparto a mano con una sola opción es un paso de más
+    // (Sergio, 01-sep).
+    formatoReporte: 'generico_equity', reparteManual: false,
     portafoliosDeCategorias: 'METLIFE', portafolios: [],
     fileNombre: 'Metlife Seguros S.A',
     comisionBloque: 0.0015, comisionPantalla: 0.0008,
@@ -5782,6 +5785,11 @@ function getClienteDB(key){
           cfg.portafolios.push({ id:'DEC_'+n.deceval, nombre:n.nombre, deceval:n.deceval, nit:'', iva:true });
         }
       });
+    }
+    // Clientes con UN solo portafolio: se autoasigna solo, sin listarlo a mano.
+    if(!cfg.autoPortafolio && cfg.reparteManual === false &&
+       (cfg.portafolios||[]).length === 1){
+      cfg.autoPortafolio = cfg.portafolios[0].id;
     }
     if(key === 'CAXDAC' && typeof CAXDAC_PORTAFOLIOS !== 'undefined'){
       cfg.portafolios = cfg.portafolios || [];
@@ -12390,7 +12398,24 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
     // ANDES genera UN archivo con las dos patas, así que se registra en las dos
     // secciones del módulo Reportes: RVL por los folios de equity y FX por las
     // operaciones de divisas del día que van en el mismo Excel.
-    const nuevasRVL = await registrarLoteRVL(cliente, ctx.loteDet || [], version);
+    // Andes tiene UN portafolio (autoPortafolio), así que se arma el loteOps
+    // con él: pasar los folios crudos hacía que el registro tomara el campo
+    // equivocado y mostrara "BTG" como portafolio (Sergio, 01-sep).
+    const _cfgAndes = getClienteDB(cliente);
+    const _portAndes = (_cfgAndes.portafolios||[]).find(p=>p.id === _cfgAndes.autoPortafolio)
+                    || (_cfgAndes.portafolios||[])[0] || { nombre: _cfgAndes.nombre || cliente };
+    const _opsAndes = {};
+    (ctx.loteDet||[]).forEach(f=>{
+      const k = f.especie + '|' + f.lado;
+      const a = _opsAndes[k] || (_opsAndes[k] = { portafolio:_portAndes, especie:f.especie,
+                                                  lado:f.lado, cantidad:0, bruto:0, comMonto:0 });
+      const q = Number(f.cantidad)||0, px = Number(f.precio)||0;
+      a.cantidad += q;
+      a.bruto += q*px;
+      a.comMonto += q*px*((Number(f.comisionPct)||0)/100);
+    });
+    const nuevasRVL = await registrarLoteRVL(cliente,
+      Object.values(_opsAndes).map(o=>({...o, precio: o.cantidad>0 ? o.bruto/o.cantidad : 0})), version);
     let nuevasFX = 0;
     if(rep.fxOps && rep.fxOps.length){
       const lineasFX = rep.fxOps.map(o=>({
@@ -16031,7 +16056,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 19:48 UTC';
+const BUILD_ID = '2026-09-01 20:15 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
