@@ -14159,7 +14159,7 @@ const clientesRVI = {
     nombre:'AVAL FIDUCIARIA SA',
     // TAX ID tomado del Trade Confirmation del 19-ago.
     taxId:'860.068.182',
-    comETF:0.004, comUCIT:0.04/100, comADR:0.004,
+    comETF:0.004, comUCIT:0.05/100, comADR:0.004,   // UCITS al 0,05% del gross (Sergio, 01-sep)
     // Los accounts llegan en el ACCOUNT de EMSX (ej. FO-274OQUINTE); no hay
     // lista fija, así que se deja abierta y se toma la que venga.
     portafolios:[],
@@ -14727,6 +14727,10 @@ function renderArqueoRVI(){
     if(_btn) _btn.disabled = true;
     return;
   }
+  // Con el modo ya elegido, el botón vuelve a depender solo de `calcularRVI`
+  // (cliente + precio + distribución completa). Si no se recalcula aquí, queda
+  // apagado desde el freno de arriba aunque todo esté listo (Sergio, 01-sep).
+  if(typeof calcularRVI === 'function') setTimeout(calcularRVI, 0);
 
   const esNuestra = r => /CREDICORP/i.test(String(r.firm||''));
   const cliente  = marcadas.filter(r=>!esNuestra(r));
@@ -15989,7 +15993,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 18:11 UTC';
+const BUILD_ID = '2026-09-01 19:20 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
