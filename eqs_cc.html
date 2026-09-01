@@ -15669,7 +15669,41 @@ async function generarTradeConfirmationPorvenirRVI(cliente, filas, opciones){
   URL.revokeObjectURL(url);
 }
 
+// AVAL FIDUCIARIA pide TODO a 2 decimales, incluido el precio. No basta con
+// redondear al mostrar: el gross tiene que salir del PRECIO YA REDONDEADO, o el
+// cliente multiplica y no le cuadra. Y el redondeo va SIEMPRE a favor nuestro:
+// si el cliente compra, el precio sube (49,7409 -> 49,75); si vende, baja
+// (-> 49,74). Al más cercano perderíamos plata (Sergio, 01-sep).
+const RVI_DOS_DECIMALES = ['AVAL'];
+function usaDosDecimalesRVI(cliente){
+  const c = String(cliente||'').toUpperCase();
+  return RVI_DOS_DECIMALES.some(x=>c.includes(x));
+}
+function precioDosDecimales(precio, lado){
+  const p = Number(precio) || 0;
+  if(!p) return 0;
+  return String(lado||'').toUpperCase() === 'SELL'
+    ? Math.floor(p * 100) / 100      // el cliente vende: se le paga el piso
+    : Math.ceil(p * 100) / 100;      // el cliente compra: se le cobra el techo
+}
+
+// Recalcula toda la cadena desde el precio redondeado, para que el archivo
+// cierre entre sí: P x Q = GROSS, GROSS +/- COST +/- SEC FEE = NET.
+function recalcularDosDecimales(f){
+  const qty = Number(f.qty != null ? f.qty : f.cantidad) || 0;
+  const lado = String(f.side || f.lado || '');
+  const px = precioDosDecimales(f.price != null ? f.price : f.precio, lado);
+  const gross = redondear(qty * px, 2);
+  const cost = redondear(Number(f.cost != null ? f.cost : f.comision) || 0, 2);
+  const secFee = redondear(Number(f.secFee) || 0, 2);
+  const net = lado.toUpperCase() === 'SELL' ? redondear(gross - cost - secFee, 2)
+                                            : redondear(gross + cost + secFee, 2);
+  return { ...f, price: px, precio: px, gross, cost, comision: cost, secFee, net };
+}
+
 async function generarTradeConfirmationRVI(cliente, filas){
+  // Ajuste a 2 decimales antes de escribir nada.
+  if(usaDosDecimalesRVI(cliente)) filas = (filas||[]).map(recalcularDosDecimales);
   const C = REPORTE_COLOR;
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Credicorp Capital Colombia — Equity Sales';
@@ -15764,7 +15798,10 @@ async function generarTradeConfirmationRVI(cliente, filas){
 
   // ---------- Filas ----------
   const db = clientesRVI[Object.keys(clientesRVI).find(k=> clientesRVI[k].nombre === cliente)] || {};
-  const numFmt4 = '#,##0.0000';
+  // AVAL FIDUCIARIA lleva TODO a 2 decimales, también el precio (que
+  // normalmente va con 4).
+  const _dosDec = usaDosDecimalesRVI(cliente);
+  const numFmt4 = _dosDec ? '#,##0.00' : '#,##0.0000';
   const numFmt2 = '#,##0.00';
   filas.forEach((f, i)=>{
     const zebra = i % 2 === 1;
@@ -15952,7 +15989,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 17:37 UTC';
+const BUILD_ID = '2026-09-01 18:11 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
