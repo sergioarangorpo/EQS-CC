@@ -15219,7 +15219,13 @@ function calcularRVI(){
     // El broker decide si hay comisión: CCSI/BTGH/TFSC cobran, los market
     // makers (RFQE) van con cero.
     broker: (emsxData.find(r=>r.id===lineaActiva)||{}).broker || '',
-    precioNuestro: (precioNuestroVinculo(lineaActiva)||{}).precio,
+    // Nuestro precio de ejecución: el del vínculo si lo hay; si no, el AVGPR de
+    // la propia línea de EMSX. Sin este segundo caso el margen salía en $0.00
+    // aunque el arqueo de arriba sí lo calculara — pasa siempre que se marca
+    // una sola línea y el precio del cliente se escribe a mano
+    // (Sergio, 01-sep).
+    precioNuestro: (precioNuestroVinculo(lineaActiva)||{}).precio
+                   ?? (emsxData.find(r=>r.id===lineaActiva)||{}).avgPr,
     lado,
   });
   if(!c) return;
@@ -16056,7 +16062,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 20:15 UTC';
+const BUILD_ID = '2026-09-01 20:22 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
