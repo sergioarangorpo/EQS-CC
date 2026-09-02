@@ -782,6 +782,11 @@
               VOLUMEN POR CLIENTE</div>
             <div id="dashVolumen"></div>
           </div>
+          <div class="card" style="padding:14px 16px;margin-bottom:14px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:10px;">
+              LOS CRUCES MÁS GRANDES DEL DÍA</div>
+            <div id="dashBloques"></div>
+          </div>
           <div class="card" style="padding:14px 16px;">
             <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:4px;">
               LO QUE GANAMOS</div>
@@ -9605,7 +9610,34 @@ async function descargarCOR(seleccion){
 //   - RVI: lo que ganamos NO es la comisión sino la utilidad completa
 //     (comisión al cliente + margen de precio − lo que nos cobra el broker).
 // =====================================================================
+// Un mismo cliente llega con nombres distintos según la fuente: Fidessa manda
+// "COLFONDOS", el registro de reportes "COLFONDOS SA" y RVI "AFP PROTECCION SA".
+// `normalizarGrupo` resuelve los códigos pero no los nombres largos, así que
+// aparecían dos filas del mismo cliente (Sergio, 02-sep).
+function _dashClave(nombre){
+  const n = String(nombre||'').toUpperCase().trim();
+  if(!n) return '';
+  const g = normalizarGrupo(n);
+  // Si el nombre coincide con el NOMBRE COMPLETO de un cliente, se usa su clave.
+  if(typeof clientesDB !== 'undefined'){
+    const k = Object.keys(clientesDB).find(x=>{
+      const nom = String((clientesDB[x].nombre)||'').toUpperCase().trim();
+      return nom === n || x.toUpperCase() === n;
+    });
+    if(k) return k;
+  }
+  // Y si no, se limpian los sufijos que no identifican a nadie.
+  return String(g||n).replace(/\s+(S\.?A\.?S?|LTDA|INC|SAS)\.?$/i,'')
+                     .replace(/^AFP\s+/i,'').trim();
+}
+
 let _dashCliente = '';   // filtro activo del panel de la izquierda
+let _dashMercado = '';   // filtro por mercado: clic en las tarjetas de arriba
+
+function filtrarDashMercado(m){
+  _dashMercado = (_dashMercado === m) ? '' : m;
+  renderDashboard();
+}
 
 function _dashTarifaCierta(cliente){
   // Tarifa única = certeza. Variable por especie o por bloque/pantalla = no.
@@ -9624,6 +9656,15 @@ function _dashDatos(){
     RVI: { nombre:'RVI', moneda:'USD', vol:0, com:0, clientes:{} },
     RFI: { nombre:'RFI', moneda:'COP', vol:0, com:0, clientes:{} },
   };
+  // Lo ya REPORTADO tiene la comisión real: manda sobre cualquier estimación.
+  // Sin esto, COLFONDOS y PROTECCIÓN salían en blanco pese a estar reportados
+  // y "lo que ganamos" quedaba muy por debajo de lo real (Sergio, 02-sep).
+  const comReportada = {};
+  (_reportesGenerados||[]).forEach(r=>{
+    const k = (r.modulo || 'RVL') + '|' + _dashClave(r.cliente || '');
+    comReportada[k] = (comReportada[k] || 0) + (Number(r.comision) || 0);
+  });
+
   const sumar = (mkt, cliente, vol, com, comCierta) => {
     if(!cliente) return;
     const m = M[mkt];
@@ -9639,8 +9680,8 @@ function _dashDatos(){
   const vistos = new Set();
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
     const t = _fidessaTradesRaw[oid];
-    const cli = normalizarGrupo(t.grupo);
-    if(!cli || !clienteRequiereReporte(cli)) return;
+    const cli = _dashClave(t.grupo);
+    if(!cli || !clienteRequiereReporte(normalizarGrupo(t.grupo))) return;
     const q = Number(t.qtyDone)||0, px = Number(t.avgPx)||0;
     if(!q || !px) return;
     vistos.add(cli + '|' + nemoCanonico(t.security,'fidessa') + '|' + t.lado);
@@ -9650,8 +9691,8 @@ function _dashDatos(){
   });
   // Lo de EMSX que NO está en Trades: misma clave cliente+especie+lado.
   (_emsxCBCache||[]).forEach(row=>{
-    const cli = normalizarGrupo(row.originate_trader_firm || row.account || '');
-    if(!cli || !clienteRequiereReporte(cli)) return;
+    const cli = _dashClave(row.originate_trader_firm || row.account || '');
+    if(!cli) return;
     const esp = nemoCanonico(row.ticker, 'emsx');
     const lado = String(row.side||'').toUpperCase().startsWith('B') ? 'Compra' : 'Venta';
     if(vistos.has(cli + '|' + esp + '|' + lado)) return;    // ya contada en Trades
@@ -9672,7 +9713,7 @@ function _dashDatos(){
     const pxNos = Number(h.precioNuestro) || px;
     const margen = String(h.side||'').toUpperCase()==='SELL' ? (pxNos - px)*q : (px - pxNos)*q;
     const util = (Number(h.cost)||0) + margen - (Number(h.ccsi)||0);
-    sumar('RVI', cli, bruto, util, true);   // en RVI el dato ya es cierto
+    sumar('RVI', _dashClave(cli), bruto, util, true);   // en RVI el dato ya es cierto
   });
 
   // ---------- FX ----------
@@ -9681,10 +9722,33 @@ function _dashDatos(){
     const cli = o.cliente || o.grupo || '';
     const monto = Number(o.amount || o.monto) || 0;
     if(!cli || !monto) return;
-    let tasa = 0;
-    try { tasa = calcularDesdeValores(o.modelo, o.side, monto, o.params).tasaFinalCliente || 0; }
-    catch(e){ tasa = (o.params && (o.params.rateUnica || o.params.rate)) || 0; }
-    sumar('FX', cli, monto * tasa, Number(o.comisionEQS)||0, true);
+    // `comEqs` es lo que nos queda a la mesa (80% de la utilidad; el 100% si
+    // hubo pérdida). Sale del mismo cálculo que la tasa, no de un campo suelto
+    // — por eso la columna del dashboard salía vacía (Sergio, 02-sep).
+    let tasa = 0, com = 0;
+    try {
+      const r = calcularDesdeValores(o.modelo, o.side, monto, o.params);
+      tasa = r.tasaFinalCliente || 0;
+      com = Number(r.comEqs) || 0;
+    } catch(e){
+      tasa = (o.params && (o.params.rateUnica || o.params.rate)) || 0;
+      com = Number(o.comEqs) || 0;
+    }
+    sumar('FX', _dashClave(cli), monto * tasa, com, true);
+  });
+
+  // Encima de todo: lo REPORTADO manda. Se reemplaza la estimación por el dato
+  // real y el cliente deja de estar pendiente.
+  Object.keys(M).forEach(mkt=>{
+    Object.keys(M[mkt].clientes).forEach(cli=>{
+      const real = comReportada[mkt + '|' + _dashClave(cli)];
+      if(real == null) return;
+      const c = M[mkt].clientes[cli];
+      M[mkt].com += real - c.com;   // se ajusta el total del mercado
+      c.com = real;
+      c.pendiente = false;
+      c.confirmada = true;
+    });
   });
 
   return M;
@@ -9709,8 +9773,13 @@ function renderDashboard(){
     const nCli = Object.keys(m.clientes).length;
     const hayPend = Object.values(m.clientes).some(c=>c.pendiente);
     const apagado = m.vol === 0;
+    const activo = _dashMercado === k;
     return `
-      <div class="card" style="flex:1;min-width:190px;padding:14px 16px;${apagado?'opacity:.45;':''}">
+      <div class="card" onclick="filtrarDashMercado('${k}')"
+           title="Clic para ver solo este mercado"
+           style="flex:1;min-width:190px;padding:14px 16px;cursor:pointer;
+                  ${apagado?'opacity:.45;':''}
+                  ${activo?'outline:2px solid var(--accent,#818cf8);outline-offset:-2px;':''}">
         <div style="display:flex;align-items:baseline;justify-content:space-between;">
           <span style="font-size:13px;font-weight:800;letter-spacing:.5px;">${m.nombre}</span>
           <span class="field-note" style="font-size:10px;">${m.moneda}</span>
@@ -9728,6 +9797,50 @@ function renderDashboard(){
   renderDashClientes(M);
   renderDashBarras(M);
   renderDashPendientes();
+  renderDashBloques();
+}
+
+// Los cruces más grandes del día, desde los folios de Fidessa. Es el mismo
+// dato que los "mayores bloques" del informe diario, pero de NUESTRAS
+// operaciones (Sergio, 02-sep).
+function renderDashBloques(){
+  const cont = document.getElementById('dashBloques');
+  if(!cont) return;
+  const filas = (foliosFidessa||[])
+    .filter(f=>{
+      if(_dashMercado && _dashMercado !== 'RVL') return false;
+      if(_dashCliente && normalizarGrupo(f.cliente) !== _dashCliente) return false;
+      return (Number(f.cantidad)||0) > 0 && (Number(f.precio)||0) > 0;
+    })
+    .map(f=>({ ...f, monto: f.cantidad * f.precio }))
+    .sort((a,b)=>b.monto - a.monto)
+    .slice(0, 8);
+  if(!filas.length){
+    cont.innerHTML = '<div class="field-note">Sin folios cargados todavía.</div>';
+    return;
+  }
+  cont.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <tr style="opacity:.6;font-size:10px;letter-spacing:.4px;">
+        <th style="text-align:left;padding:3px 6px;">FOLIO</th>
+        <th style="text-align:left;padding:3px 6px;">CLIENTE</th>
+        <th style="text-align:left;padding:3px 6px;">ESPECIE</th>
+        <th style="text-align:left;padding:3px 6px;">LADO</th>
+        <th style="text-align:right;padding:3px 6px;">CANTIDAD</th>
+        <th style="text-align:right;padding:3px 6px;">PRECIO</th>
+        <th style="text-align:right;padding:3px 6px;">MONTO</th>
+      </tr>
+      ${filas.map(f=>`<tr style="border-top:1px solid var(--border,#232938);">
+        <td class="mono-id" style="padding:4px 6px;">${f.folio}</td>
+        <td style="padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;"
+            title="${f.cliente||''}">${f.cliente||'—'}</td>
+        <td class="mono-id" style="padding:4px 6px;">${f.especie}</td>
+        <td style="padding:4px 6px;">${f.lado}</td>
+        <td style="text-align:right;padding:4px 6px;">${fmtInt(f.cantidad)}</td>
+        <td style="text-align:right;padding:4px 6px;">${fmtRate(f.precio)}</td>
+        <td style="text-align:right;padding:4px 6px;font-weight:700;">$${(f.monto/1e6).toLocaleString('es-CO',{maximumFractionDigits:1})} MM</td>
+      </tr>`).join('')}
+    </table>`;
 }
 
 // Panel de clientes: filtra todo lo demás al hacer clic.
@@ -9774,6 +9887,7 @@ function renderDashBarras(M){
     if(!cont) return;
     const filas = [];
     Object.keys(M).forEach(k=>{
+      if(_dashMercado && k !== _dashMercado) return;
       Object.keys(M[k].clientes).forEach(c=>{
         if(_dashCliente && c !== _dashCliente) return;
         const v = M[k].clientes[c][campo];
@@ -9824,8 +9938,8 @@ function renderDashPendientes(){
   let sinReportar = 0;
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
     const t = _fidessaTradesRaw[oid];
-    const cli = normalizarGrupo(t.grupo);
-    if(!cli || !clienteRequiereReporte(cli)) return;
+    const cli = _dashClave(t.grupo);
+    if(!cli || !clienteRequiereReporte(normalizarGrupo(t.grupo))) return;
     if(_lineasNoReportar.has(String(oid))) return;
     if(!(_reportesGenerados||[]).some(r=>String(r.parent_order_id).startsWith(String(oid)))) sinReportar++;
   });
@@ -16378,7 +16492,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-01 21:17 UTC';
+const BUILD_ID = '2026-09-02 14:07 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
