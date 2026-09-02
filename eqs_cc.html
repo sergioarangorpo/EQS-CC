@@ -1876,7 +1876,8 @@
                 <th>Account</th>
                 <th>Side</th>
                 <th>Symbol</th>
-                <th>ISIN</th>
+                <!-- El ISIN se quitó: no se revisa a ojo y le robaba el ancho
+                     a Com broker, que quedaba cortada (Sergio, 02-sep). -->
                 <th class="num">Qty</th>
                 <th class="num">Price</th>
                 <th class="num">Gross</th>
@@ -1888,7 +1889,7 @@
               </tr>
             </thead>
             <tbody id="hist-body">
-              <tr><td colspan="14" class="empty-state">Aún no hay confirmaciones generadas.</td></tr>
+              <tr><td colspan="13" class="empty-state">Aún no hay confirmaciones generadas.</td></tr>
             </tbody>
           </table>
         </div>
@@ -15788,7 +15789,12 @@ function calcularComisiones(clienteKey, tipo, qty, price, opts){
   return {gross, costCliente, costCCSI, tarifaCCSIusada, margen, utilidad};
 }
 
-function calcularSecFee(lado, gross){
+// El SEC fee es un cargo de la SEC: SOLO aplica a instrumentos US y solo en
+// ventas. Un UCITS irlandés o luxemburgués NO lo paga. Esta versión solo miraba
+// el lado, así que se lo cobraba a los UCITS y el cobro llegaba hasta el Excel
+// (Sergio, 02-sep). Se delega en secFeeRVI, que ya tenía la regla completa.
+function calcularSecFee(lado, gross, tipo, isin){
+  if(typeof secFeeRVI === 'function') return secFeeRVI(tipo, lado, gross, isin);
   return lado==='Sell' ? gross * SEC_FEE_RATE : 0;
 }
 
@@ -15821,7 +15827,9 @@ function calcularRVI(){
     lado,
   });
   if(!c) return;
-  const secFee = calcularSecFee(lado, c.gross);
+  // El tipo y el ISIN deciden si hay SEC fee: los UCITS no lo pagan.
+  const secFee = calcularSecFee(lado, c.gross, tipo,
+    document.getElementById('tc-isin') ? document.getElementById('tc-isin').value : '');
   const netCliente = lado==='Sell' ? c.gross - c.costCliente - secFee : c.gross + c.costCliente;
 
   document.getElementById('rc-gross').textContent = fmtMoneyRVI(c.gross,0);
@@ -15913,7 +15921,8 @@ function generarTC(){
     precioNuestro: vincPrecio,
     lado,
   });
-  const secFee     = calcularSecFee(lado, c.gross);
+  const secFee     = calcularSecFee(lado, c.gross, tipo,
+    document.getElementById('tc-isin') ? document.getElementById('tc-isin').value : '');
   const netCliente = lado==='Sell' ? c.gross - c.costCliente - secFee : c.gross + c.costCliente;
   const hora       = new Date().toLocaleTimeString('es-CO');
   const tcId       = Date.now();
@@ -16077,7 +16086,7 @@ function renderHistorial(){
   const coincide=h=>{ if(!fN) return true; const hN=norm(h.cliente); return hN.includes(fN)||fN.includes(hN); };
   const filas=historial.filter(coincide);
   if(!filas.length){
-    tbody.innerHTML='<tr><td colspan="14" class="empty-state">'+(historial.length?'No hay confirmaciones de este cliente.':'Aún no hay confirmaciones generadas.')+'</td></tr>';
+    tbody.innerHTML='<tr><td colspan="13" class="empty-state">'+(historial.length?'No hay confirmaciones de este cliente.':'Aún no hay confirmaciones generadas.')+'</td></tr>';
     document.getElementById('histHint').textContent = historial.length?`(${historial.length} en total)`:'';
     return;
   }
@@ -16087,7 +16096,6 @@ function renderHistorial(){
     <td>${h.account}</td>
     <td><span class="side-badge ${h.side==='Buy'?'buy':'sell'}">${h.side}</span></td>
     <td class="mono-id"><b>${h.symbol}</b></td>
-    <td class="mono-id">${h.isin}</td>
     <td class="num">${fmtInt(h.qty)}</td>
     <td class="num">${fmtRateRVI(h.price,4)}</td>
     <td class="num">${fmtMoneyRVI(h.gross,2)}</td>
@@ -16654,7 +16662,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-02 21:07 UTC';
+const BUILD_ID = '2026-09-02 21:27 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
