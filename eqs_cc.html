@@ -10994,10 +10994,14 @@ function sincronizarAllocOrdenActiva(){
     const cli = document.getElementById('filtroCliente').value;
     const ordsCli = Object.keys(_fidessaTradesRaw||{}).filter(o=>
       normalizarGrupo(_fidessaTradesRaw[o].grupo) === cli && (_fidessaTradesRaw[o].qtyDone||0) > 0);
+    // Solo si hay algo que guardar: con `allocations` vacío no se toca nada,
+    // o se borraría el reparto que acaba de dejar el alloc de IA
+    // (Sergio, 02-sep).
     if(ordsCli.length === 1 && allocations.length > 0){
       _allocPorOrden[ordsCli[0]] = allocations.slice();
       return;
     }
+    if(ordsCli.length === 1) return;   // nada que sincronizar
   }
   if(allocations.length !== 1 || !allocations[0]) return;
   const portId = allocations[0].portId;
@@ -11774,17 +11778,73 @@ function aplicarAllocInterpretado(){
     // (a) el reparto de cada especie tiene que sumar su total. Un typo en el
     //     chat (205.697 por 205.679) se ve igual a simple vista y descuadraría
     //     el reporte sin que nadie lo note.
+    // Dos cosas distintas se pueden descuadrar:
+    //   (1) el reparto no suma su propio total  -> typo en el chat, se frena
+    //   (2) el alloc no coincide con lo EJECUTADO -> el trader mandó la orden
+    //       completa y se ejecutó una parte; ahí se ofrece prorratear
+    //       (Sergio, 02-sep).
     const descuadres = _allocInterpretado.ordenes.filter(o=>{
       const suma = o.lineas.reduce((a,l)=>a+(Number(l.cantidad)||0),0);
-      return suma !== o.cantidadTotal;
+      if(suma !== o.cantidadTotal) return true;               // (1)
+      const oid = Object.keys(_fidessaTradesRaw||{}).find(k=>{
+        const t = _fidessaTradesRaw[k];
+        return normalizarGrupo(t.grupo) === cliente &&
+               nemoCanonico(t.security,'fidessa') === o.especie;
+      });
+      const ejec = oid ? (Number(_fidessaTradesRaw[oid].qtyDone)||0) : 0;
+      return ejec > 0 && ejec !== suma;                        // (2)
     });
     if(descuadres.length){
-      alert('No se aplicó el reparto.\n\n' + descuadres.map(o=>{
+      // Caso habitual: el trader manda la orden COMPLETA y solo se ejecutó una
+      // parte. Por deber fiduciario el reparto va a PRORRATA entre todos los
+      // fondos, así que se ofrece hacerlo en vez de frenar (Sergio, 02-sep).
+      // Ej: alloc por 2.766.860 y ejecutado 1.169.082 -> cada fondo recibe su
+      // misma proporción. La última línea absorbe el redondeo para que sume
+      // exacto.
+      const prorrateables = [];
+      const rotos = [];
+      descuadres.forEach(o=>{
         const suma = o.lineas.reduce((a,l)=>a+(Number(l.cantidad)||0),0);
-        return `${o.especie}: el chat dice ${fmtInt(o.cantidadTotal)} pero el reparto suma ${fmtInt(suma)} ` +
-               `(diferencia ${fmtInt(suma-o.cantidadTotal)}).`;
-      }).join('\n') + '\n\nCorrige el texto y vuelve a interpretarlo.');
-      return;
+        // La cantidad REALMENTE ejecutada es la de la orden de Fidessa.
+        const oid = Object.keys(_fidessaTradesRaw||{}).find(k=>{
+          const t = _fidessaTradesRaw[k];
+          return normalizarGrupo(t.grupo) === cliente &&
+                 nemoCanonico(t.security,'fidessa') === o.especie;
+        });
+        const ejecutado = oid ? (Number(_fidessaTradesRaw[oid].qtyDone)||0) : 0;
+        if(ejecutado > 0 && suma > 0 && ejecutado !== suma) prorrateables.push({o, suma, ejecutado});
+        else rotos.push({o, suma});
+      });
+
+      if(rotos.length){
+        alert('No se aplicó el reparto.\n\n' + rotos.map(x=>
+          `${x.o.especie}: el chat dice ${fmtInt(x.o.cantidadTotal)} pero el reparto suma ${fmtInt(x.suma)} ` +
+          `(diferencia ${fmtInt(x.suma - x.o.cantidadTotal)}).`
+        ).join('\n') + '\n\nCorrige el texto y vuelve a interpretarlo.');
+        return;
+      }
+
+      const detalle = prorrateables.map(x=>{
+        const pct = x.ejecutado / x.suma;
+        return `${x.o.especie}: el alloc pide ${fmtInt(x.suma)} y se ejecutaron ${fmtInt(x.ejecutado)} ` +
+               `(${(pct*100).toFixed(1)}%)\n` +
+               x.o.lineas.map(l=>`      ${l.portTexto}: ${fmtInt(l.cantidad)} → ${fmtInt(Math.round(l.cantidad*pct))}`).join('\n');
+      }).join('\n\n');
+
+      if(!confirm('El reparto no coincide con lo ejecutado.\n\n' + detalle +
+                  '\n\n¿Repartir A PRORRATA entre todos los fondos?')) return;
+
+      // Se aplica: la última línea absorbe el redondeo para que sume exacto.
+      prorrateables.forEach(x=>{
+        const pct = x.ejecutado / x.suma;
+        let restante = x.ejecutado;
+        x.o.lineas.forEach((l,i)=>{
+          const q = (i === x.o.lineas.length-1) ? restante : Math.round(l.cantidad * pct);
+          restante -= q;
+          l.cantidad = q;
+        });
+        x.o.cantidadTotal = x.ejecutado;
+      });
     }
     // (b) portafolios que no cruzaron: no se puede asignar a ciegas.
     const sinPort = [];
@@ -16492,7 +16552,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-02 14:07 UTC';
+const BUILD_ID = '2026-09-02 20:22 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
