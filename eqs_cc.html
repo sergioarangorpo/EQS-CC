@@ -9631,6 +9631,23 @@ function _dashClave(nombre){
                      .replace(/^AFP\s+/i,'').trim();
 }
 
+// Nombres largos que no caben en las barras. Solo afecta lo que se VE.
+const DASH_ABREVIA = {
+  'BANCO BTG PACTUAL CAYMAN BRANCH': 'BTG CAYMAN',
+  'LARRAIN VIAL PP': 'ANDES INV',
+  'ANDES INVESTMENT GROUP INC': 'ANDES INV',
+  'ALLIANZ SEGUROS DE VIDA S.A.': 'ALLIANZ',
+  'METLIFE SEGUROS DE VIDA S.A.': 'METLIFE',
+  'SOCIEDAD ADMINISTRADORA PORVENIR SA': 'PORVENIR',
+  'SKANDIA ADMINISTRADORA FU PE CE SA': 'SKANDIA AFP',
+  'FIDUCIARIA BANCOLOMBIA': 'FIDU BANCOLOMBIA',
+  'CREDICORPFFMM': 'CREDICORP AM',
+};
+function _dashCorto(nombre){
+  const n = String(nombre||'').toUpperCase().trim();
+  return DASH_ABREVIA[n] || nombre;
+}
+
 let _dashCliente = '';   // filtro activo del panel de la izquierda
 let _dashMercado = '';   // filtro por mercado: clic en las tarjetas de arriba
 
@@ -9812,7 +9829,13 @@ function renderDashBloques(){
       if(_dashCliente && normalizarGrupo(f.cliente) !== _dashCliente) return false;
       return (Number(f.cantidad)||0) > 0 && (Number(f.precio)||0) > 0;
     })
-    .map(f=>({ ...f, monto: f.cantidad * f.precio }))
+    .map(f=>{
+      // El folio trae COLCCP cuando salió de un composite; el cliente real está
+      // en la orden de Fidessa Trades que lo originó (Sergio, 02-sep).
+      const t = (_fidessaTradesRaw||{})[f.parentOrderId];
+      const cli = (t && normalizarGrupo(t.grupo)) || f.cliente;
+      return { ...f, _cliReal: _dashClave(cli), monto: f.cantidad * f.precio };
+    })
     .sort((a,b)=>b.monto - a.monto)
     .slice(0, 8);
   if(!filas.length){
@@ -9833,7 +9856,7 @@ function renderDashBloques(){
       ${filas.map(f=>`<tr style="border-top:1px solid var(--border,#232938);">
         <td class="mono-id" style="padding:4px 6px;">${f.folio}</td>
         <td style="padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;"
-            title="${f.cliente||''}">${f.cliente||'—'}</td>
+            title="${f._cliReal||''}">${_dashCorto(f._cliReal)||'—'}</td>
         <td class="mono-id" style="padding:4px 6px;">${f.especie}</td>
         <td style="padding:4px 6px;">${f.lado}</td>
         <td style="text-align:right;padding:4px 6px;">${fmtInt(f.cantidad)}</td>
@@ -9868,7 +9891,7 @@ function renderDashClientes(M){
       <div onclick="filtrarDashCliente('${String(c).replace(/'/g,"\\'")}')"
            style="cursor:pointer;padding:6px 8px;border-radius:6px;font-size:12px;margin-bottom:2px;
                   ${_dashCliente===c?'background:var(--accent,#818cf8);color:#fff;font-weight:700;':''}">
-        ${c}
+        ${_dashCorto(c)}
         <span style="opacity:.6;font-size:10px;"> ${[...tot[c].mercados].join(' · ')}</span>
         ${tot[c].pend?'<span style="color:var(--amber,#f59e0b);"> ●</span>':''}
       </div>`).join('');
@@ -9899,21 +9922,21 @@ function renderDashBarras(M){
       cont.innerHTML = '<div class="field-note">Sin datos todavía.</div>';
       return;
     }
-    // Se compara DENTRO de cada moneda: mezclar pesos y dólares en una misma
-    // barra no significaría nada.
+    // Pesos y dólares van en BLOQUES SEPARADOS, con su propio subtítulo: una
+    // barra que mezcla COP con USD no significa nada (Sergio, 02-sep).
     const maxPorMoneda = {};
     filas.forEach(f=>{ maxPorMoneda[f.moneda] = Math.max(maxPorMoneda[f.moneda]||0, f.valor); });
-    filas.sort((a,b)=> (b.valor/maxPorMoneda[b.moneda]) - (a.valor/maxPorMoneda[a.moneda]));
     const totPorMoneda = {};
     filas.forEach(f=>{ totPorMoneda[f.moneda] = (totPorMoneda[f.moneda]||0) + f.valor; });
-    cont.innerHTML = filas.map((f,i)=>{
+    const pinta = f => {
+      const i = filas.indexOf(f);
       const pct = f.valor / maxPorMoneda[f.moneda] * 100;
       const share = f.valor / totPorMoneda[f.moneda] * 100;
       const txt = f.moneda === 'USD'
         ? '$' + f.valor.toLocaleString('es-CO',{maximumFractionDigits:0})
         : '$' + (f.valor/1e6).toLocaleString('es-CO',{maximumFractionDigits:1}) + ' MM';
       return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;">
-        <span style="width:170px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${f.cliente}">${f.cliente}</span>
+        <span style="width:170px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${f.cliente}">${_dashCorto(f.cliente)}</span>
         <span style="width:34px;font-size:10px;opacity:.6;">${f.mercado}</span>
         <span style="flex:1;background:rgba(255,255,255,.06);border-radius:3px;height:16px;display:block;">
           <span style="display:block;width:${pct.toFixed(1)}%;height:16px;border-radius:3px;
@@ -9922,7 +9945,18 @@ function renderDashBarras(M){
         <span style="width:44px;text-align:right;opacity:.6;font-size:11px;">${share.toFixed(0)}%</span>
         ${f.pend && campo==='com' ? '<span style="color:var(--amber,#f59e0b);font-size:10px;">falta</span>' : '<span style="width:34px;"></span>'}
       </div>`;
-    }).join('');
+    };
+    const bloque = (moneda, titulo, mercados) => {
+      const suyas = filas.filter(f=>f.moneda === moneda)
+                         .sort((a,b)=>b.valor - a.valor);
+      if(!suyas.length) return '';
+      return `<div style="font-size:11px;font-weight:700;letter-spacing:.4px;opacity:.55;
+                  margin:${moneda==='USD'?'14px':'0'} 0 6px;">${titulo}
+                <span style="font-weight:400;">· ${mercados}</span></div>` +
+             suyas.map(pinta).join('');
+    };
+    cont.innerHTML = bloque('COP', 'VALORES EN COP', 'RVL y FX') +
+                     bloque('USD', 'VALORES EN USD', 'RVI y RFI');
   };
   barra('dashVolumen', 'vol');
   barra('dashComision', 'com');
@@ -10145,7 +10179,21 @@ function badgeReporte(parentOrderId, grupo){
 function vecesReportada(parentOrderId){
   const p = String(parentOrderId||'');
   if(!p) return 0;
-  return _reportesGenerados.filter(r => String(r.parent_order_id) === p).length;
+  // El registro guarda el identificador como "ESPECIE|Lado#Portafolio" para no
+  // pisar las filas del reparto, así que ya no coincide con el Parent Order ID
+  // de Fidessa. Se compara también por especie + lado de la orden, que es lo
+  // que de verdad identifica lo reportado (Sergio, 02-sep).
+  const directas = _reportesGenerados.filter(r => String(r.parent_order_id) === p);
+  if(directas.length) return new Set(directas.map(r=>Number(r.version)||1)).size;
+  const t = (_fidessaTradesRaw||{})[p];
+  if(!t) return 0;
+  const esp = nemoCanonico(t.security, 'fidessa');
+  const lado = t.lado;
+  const suyas = _reportesGenerados.filter(r =>
+    r.modulo === 'RVL' &&
+    String(r.especie||'').toUpperCase() === String(esp||'').toUpperCase() &&
+    String(r.lado||'') === String(lado||''));
+  return new Set(suyas.map(r=>Number(r.version)||1)).size;
 }
 
 // Número de envío del cliente hoy, en romano: I, II, III...
@@ -12185,16 +12233,17 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
   // Se REGISTRA lo enviado, no se borra nada. Los folios y las órdenes siguen
   // disponibles: volver a generar el consolidado del día (con las líneas de
   // antes más las nuevas) es un caso normal, no un error.
-  const lineas = completas.map(o=>{
-    const folios = foliosFidessa.filter(f=>String(f.parentOrderId)===String(o.parentOrderId));
-    const qty = folios.reduce((s,f)=>s+f.cantidad,0);
-    const bruto = folios.reduce((s,f)=>s+f.cantidad*f.precio,0);
-    return { parentOrderId:o.parentOrderId, especie: folios[0] ? folios[0].especie : '',
-             lado: folios[0] ? folios[0].lado : '', cantidad: qty,
-             precio: qty>0 ? bruto/qty : 0,
-             comision: folios.reduce((s,f)=> s + f.cantidad*f.precio*(f.marca==='bloque'?comBloque:comPantalla), 0) };
-  }).filter(l=>l.cantidad>0);
-  const nuevas = await registrarReporte('RVL', cfg.nombre, lineas, version);
+  // Se registra LO QUE SALIÓ EN EL ARCHIVO (filasEquity), que ya trae el
+  // portafolio de cada línea. Antes se rearmaba desde los folios sin él, y por
+  // eso BTG Cayman y Fiduashmore aparecían con el account vacío en el módulo
+  // Reportes (Sergio, 02-sep).
+  const nuevas = await registrarLoteRVL(cliente, filasEquity.map(l=>({
+    portafolio: { nombre: l.portNombre || '' },
+    especie: l.especie, lado: l.lado,
+    cantidad: l.cantidad, precio: l.precio,
+    comMonto: (Number(l.cantidad)||0) * (Number(l.precio)||0) * (Number(l.comPct)||0),
+  })), version);
+  const lineas = filasEquity;
 
   const qtyTotal = lineas.reduce((s,l)=>s+l.cantidad,0);
   const comTotal = lineas.reduce((s,l)=>s+l.comision,0);
@@ -15374,7 +15423,18 @@ function renderArqueoRVI(){
   const grossCli = redondear(qCli || qEjec, 0) * precioCli;
   const grossNos = qEjec * precioEjec;
   // Al cliente: 0 si es all-in; si no, la tarifa con el mínimo de USD 20.
-  const comCliCalc = comisionContraparteRVI('CCSI', refCli.tipo, (qCli||qEjec), grossCli, isin);
+  // La tarifa del CLIENTE sale de su propia ficha, no de la de CCSI: COLFONDOS
+  // cobra 0,004/acción y CCSI nos cobra 0,003, así que usar la de CCSI mostraba
+  // una comisión menor a la real (Sergio, 02-sep). El Excel siempre estuvo bien
+  // porque lo calcula por otro lado; era solo la vista.
+  const comCliCalc = (()=>{
+    const kCli = claveClienteRVI(refCli.firm) || claveClienteRVI(refCli.cliente);
+    const db = kCli ? clientesRVI[kCli] : null;
+    if(!db) return comisionContraparteRVI('CCSI', refCli.tipo, (qCli||qEjec), grossCli, isin);
+    const t = String(refCli.tipo||'').toUpperCase();
+    if(t === 'UCIT' || /^(IE|LU)/i.test(String(isin||''))) return redondear(grossCli * db.comUCIT, 2);
+    return redondear((qCli||qEjec) * (t === 'ADR' ? db.comADR : db.comETF), 2);
+  })();
   const comCli = _modoRVI.costo === 'sin' ? 0 : costoClienteRVI(refCli.firm, comCliCalc);
   // CCSI nos cobra a nosotros, y también con mínimo de USD 20.
   const comNosCalc = comisionContraparteRVI(brokers[0]||'', refCli.tipo, qEjec, grossNos, isin);
@@ -16552,7 +16612,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-02 20:22 UTC';
+const BUILD_ID = '2026-09-02 20:54 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
