@@ -741,7 +741,7 @@
 
   <!-- ===== NAV (shared) ===== -->
   <div class="modnav">
-    <button data-mod="Dashboard" onclick="switchModule('Dashboard')" class="">Dashboard</button>
+    <button data-mod="Dashboard" onclick="switchModule('Dashboard')" class="active">Dashboard</button>
     <button data-mod="FX"      onclick="switchModule('FX')"      class="active">FX</button>
     <button data-mod="RVL"     onclick="switchModule('RVL')"     class="">RVL</button>
     <button data-mod="RVI"     onclick="switchModule('RVI')"     class="">RVI</button>
@@ -752,7 +752,7 @@
   </div>
 
   <!-- ===== DASHBOARD ===== -->
-  <div id="mod-Dashboard" class="mod-section">
+  <div id="mod-Dashboard" class="mod-section active">
     <div style="padding:0 24px 24px;">
 
       <div class="section-label" style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
@@ -802,7 +802,7 @@
   </div>
 
   <!-- ===== FX MODULE ===== -->
-  <div id="mod-FX" class="mod-section active">
+  <div id="mod-FX" class="mod-section">
 <div class="grid">
 
     <div class="col-main">
@@ -4940,6 +4940,13 @@ const clientesDB = {
     // De GRUPO_COMISIONES: base 0,08% en pantalla y 0,15% en bloque.
     comisionBloque: 0.0015, comisionPantalla: 0.0008,
   },
+  'ITAU ASSET MANAGEMENT': {
+    nombre: 'ITAU ASSET MANAGEMENT',
+    formatoReporte: 'generico_equity', reparteManual: true,
+    portafolios: [],
+    fileNombre: 'Itau Asset Management',
+    comisionBloque: 0.0015, comisionPantalla: 0.0008,
+  },
   'ALIANZA VALORES': {
     nombre: 'ALIANZA VALORES',
     formatoReporte: 'generico_equity',
@@ -5048,6 +5055,9 @@ const PRESUPUESTO_DB = [{"grupo":"ALLIANZ","trader":"SAR","categoria":"INSTITUCI
 const ALIAS_GRUPO = {
   LV_CO: 'LARRAIN VIAL PP',
   VALORES_AM: 'FIDUCIARIA BANCOLOMBIA',
+  ITAU: 'ITAU ASSET MANAGEMENT',
+  ITAU_AM: 'ITAU ASSET MANAGEMENT',
+  'ITAU AM': 'ITAU ASSET MANAGEMENT',
   ALLIANZ_SEG_CO: 'ALLIANZ SEGUROS DE VIDA S.A.',
   METLIFE: 'METLIFE SEGUROS DE VIDA S.A.',
   BTG: 'BANCO BTG PACTUAL CAYMAN BRANCH',
@@ -5525,6 +5535,11 @@ function ordenarArrayGenerico(arr, tablaId){
 // CAXDAC opera cinco fondos y en la base solo estaba el de Vejez. Los mismos
 // aplican en RVL y en RVI (Sergio, 01-sep). Sin deceval por ahora: se
 // identifican por nombre.
+// ITAU ASSET MANAGEMENT: tres portafolios, los mismos en RVL y RVI.
+const ITAU_PORTAFOLIOS = [
+  'ITAU FIC MEDIANO PLAZO', 'ITAU FIC RENTA FIJA DOLAR', 'ITAU OTTO',
+];
+
 const CAXDAC_PORTAFOLIOS = [
   'CAXDAC FDO VEJEZ', 'CAXDAC FDO INVALIDEZ', 'CAXDAC FDO SOBREVIVIENTES',
   'CAXDAC FDO EXTRALEGAL', 'CAXDAC ADMINISTRADORA',
@@ -5844,6 +5859,14 @@ function getClienteDB(key){
     if(!cfg.autoPortafolio && cfg.reparteManual === false &&
        (cfg.portafolios||[]).length === 1){
       cfg.autoPortafolio = cfg.portafolios[0].id;
+    }
+    if(key === 'ITAU ASSET MANAGEMENT' && typeof ITAU_PORTAFOLIOS !== 'undefined'){
+      cfg.portafolios = cfg.portafolios || [];
+      ITAU_PORTAFOLIOS.forEach(n=>{
+        if(!cfg.portafolios.some(p=>p.nombre === n)){
+          cfg.portafolios.push({ id:'ITAU_'+n.replace(/[^A-Z]/gi,''), nombre:n, deceval:'', nit:'', iva:true });
+        }
+      });
     }
     if(key === 'CAXDAC' && typeof CAXDAC_PORTAFOLIOS !== 'undefined'){
       cfg.portafolios = cfg.portafolios || [];
@@ -6544,7 +6567,7 @@ function aplicarCorreccionWMCO(){
 // (VWAP y WMCO): guarda los datos y muestra el botón; el Excel se genera al click.
 function mostrarPanelExcelCruce(cli, reg, trader){
   _cruceExcelPendiente = { cli, reg, trader };
-  switchModule('FX'); // el blotter corregido y el botón del Excel viven en FX
+  switchModule('FX');   // el blotter corregido y el botón del Excel viven en FX
   let panel = document.getElementById('cruceExcelPanel');
   if(!panel){
     panel = document.createElement('div');
@@ -6634,7 +6657,7 @@ function irACalculadoraCruce(){
   document.getElementById('modalCruceFX').style.display = 'none';
   const b = p.bloques[p.idx];
 
-  switchModule('FX');
+  switchModule('Dashboard');   // el dashboard es la pantalla de entrada
 
   // Cliente: si el grupo existe como opción de la calculadora, se selecciona;
   // MLI existe. Se usa su modelo (UNICA — extranjero no-Andes).
@@ -9832,8 +9855,19 @@ function renderDashBloques(){
     .map(f=>{
       // El folio trae COLCCP cuando salió de un composite; el cliente real está
       // en la orden de Fidessa Trades que lo originó (Sergio, 02-sep).
-      const t = (_fidessaTradesRaw||{})[f.parentOrderId];
-      const cli = (t && normalizarGrupo(t.grupo)) || f.cliente;
+      // 1) por el Parent Order ID  2) si el folio no lo trae (pasa con los
+      // composites), por especie + lado contra las órdenes del día
+      // 3) lo que diga el folio. COLCCP es la cuenta interna: nunca es cliente.
+      let t = (_fidessaTradesRaw||{})[f.parentOrderId];
+      if(!t){
+        const k = Object.keys(_fidessaTradesRaw||{}).find(x=>{
+          const o = _fidessaTradesRaw[x];
+          return nemoCanonico(o.security,'fidessa') === f.especie && o.lado === f.lado;
+        });
+        if(k) t = _fidessaTradesRaw[k];
+      }
+      let cli = (t && normalizarGrupo(t.grupo)) || f.cliente;
+      if(/^COLCCP$/i.test(String(cli||''))) cli = '';
       return { ...f, _cliReal: _dashClave(cli), monto: f.cantidad * f.precio };
     })
     .sort((a,b)=>b.monto - a.monto)
@@ -14743,6 +14777,14 @@ const clientesRVI = {
     comETF:0.008, comUCIT:0.08/100, comADR:0.008,
     portafolios:['BBVA PORTAFOLIO'],
   },
+  ITAU: {
+    nombre:'ITAU ASSET MANAGEMENT',
+    taxId:'860.068.182-5',
+    // UCITS 0,1% del gross; ETF y ADR 0,007 por acción. Mínimo USD 20 en los
+    // dos casos (Sergio, 02-sep).
+    comETF:0.007, comUCIT:0.1/100, comADR:0.007,
+    portafolios:['ITAU FIC MEDIANO PLAZO','ITAU FIC RENTA FIJA DOLAR','ITAU OTTO'],
+  },
   CAXDAC: {
     nombre:'CAXDAC',
     // El TAX ID del Trade Confirmation es SIEMPRE el de Credicorp, no el del
@@ -16612,7 +16654,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-02 20:54 UTC';
+const BUILD_ID = '2026-09-02 21:07 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -16657,7 +16699,7 @@ tickClock();
 setInterval(tickClock, 1000);
 
 // Start on FX
-switchModule('FX');
+switchModule('Dashboard');   // el dashboard es la pantalla de entrada
 </script>
 </body>
 </html>
