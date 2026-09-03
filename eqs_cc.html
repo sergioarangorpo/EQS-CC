@@ -10155,73 +10155,6 @@ function renderDashboard(){
 // Los cruces más grandes del día, desde los folios de Fidessa. Es el mismo
 // dato que los "mayores bloques" del informe diario, pero de NUESTRAS
 // operaciones (Sergio, 02-sep).
-function renderDashBloques(){
-  const cont = document.getElementById('dashBloques');
-  if(!cont) return;
-  const filas = (foliosFidessa||[])
-    .filter(f=>{
-      if(_dashMercado && _dashMercado !== 'RVL') return false;
-      if(_dashCliente && normalizarGrupo(f.cliente) !== _dashCliente) return false;
-      return (Number(f.cantidad)||0) > 0 && (Number(f.precio)||0) > 0;
-    })
-    .map(f=>{
-      // El folio trae COLCCP cuando salió de un composite; el cliente real está
-      // en la orden de Fidessa Trades que lo originó (Sergio, 02-sep).
-      // 1) por el Parent Order ID  2) si el folio no lo trae (pasa con los
-      // composites), por especie + lado contra las órdenes del día
-      // 3) lo que diga el folio. COLCCP es la cuenta interna: nunca es cliente.
-      let t = (_fidessaTradesRaw||{})[f.parentOrderId];
-      if(!t){
-        const k = Object.keys(_fidessaTradesRaw||{}).find(x=>{
-          const o = _fidessaTradesRaw[x];
-          return nemoCanonico(o.security,'fidessa') === f.especie && o.lado === f.lado;
-        });
-        if(k) t = _fidessaTradesRaw[k];
-      }
-      let cli = (t && normalizarGrupo(t.grupo)) || f.cliente;
-      // COLCCP es la cuenta interna del composite, nunca un cliente. Si no se
-      // logra resolver a quién pertenece, se busca por el TCN en los folios
-      // hermanos: los composites comparten la orden con el resto (Sergio, 03-sep).
-      if(/^COLCCP$/i.test(String(cli||''))) cli = '';
-      if(!cli){
-        const hermano = (foliosFidessa||[]).find(x=>
-          x.especie === f.especie && x.lado === f.lado &&
-          x.cliente && !/^COLCCP$/i.test(String(x.cliente)));
-        if(hermano) cli = normalizarGrupo(hermano.cliente);
-      }
-      return { ...f, _cliReal: _dashClave(cli), monto: f.cantidad * f.precio };
-    })
-    .filter(f=>f._cliReal)          // sin cliente resuelto no se muestra
-    .sort((a,b)=>b.monto - a.monto)
-    .slice(0, 8);
-  if(!filas.length){
-    cont.innerHTML = '<div class="field-note">Sin folios cargados todavía.</div>';
-    return;
-  }
-  cont.innerHTML = `
-    <table style="width:100%;border-collapse:collapse;font-size:12px;">
-      <tr style="opacity:.6;font-size:10px;letter-spacing:.4px;">
-        <th style="text-align:left;padding:3px 6px;">FOLIO</th>
-        <th style="text-align:left;padding:3px 6px;">CLIENTE</th>
-        <th style="text-align:left;padding:3px 6px;">ESPECIE</th>
-        <th style="text-align:left;padding:3px 6px;">LADO</th>
-        <th style="text-align:right;padding:3px 6px;">CANTIDAD</th>
-        <th style="text-align:right;padding:3px 6px;">PRECIO</th>
-        <th style="text-align:right;padding:3px 6px;">MONTO</th>
-      </tr>
-      ${filas.map(f=>`<tr style="border-top:1px solid var(--border,#232938);">
-        <td class="mono-id" style="padding:4px 6px;">${f.folio}</td>
-        <td style="padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;"
-            title="${f._cliReal||''}">${_dashCorto(f._cliReal)||'—'}</td>
-        <td class="mono-id" style="padding:4px 6px;">${f.especie}</td>
-        <td style="padding:4px 6px;">${f.lado}</td>
-        <td style="text-align:right;padding:4px 6px;">${fmtInt(f.cantidad)}</td>
-        <td style="text-align:right;padding:4px 6px;">${fmtRate(f.precio)}</td>
-        <td style="text-align:right;padding:4px 6px;font-weight:700;">$${(f.monto/1e6).toLocaleString('es-CO',{maximumFractionDigits:1})} MM</td>
-      </tr>`).join('')}
-    </table>`;
-}
-
 // Panel de clientes: filtra todo lo demás al hacer clic.
 function renderDashClientes(M){
   const cont = document.getElementById('dashClientes');
@@ -10258,7 +10191,8 @@ function filtrarDashCliente(c){
   renderDashboard();
 }
 
-// Barras de volumen y de lo que ganamos, por cliente.
+// Barras de volumen y de lo que ganamos, por cliente. Pesos y dólares van en
+// bloques separados: una barra que mezcla monedas no significa nada.
 function renderDashBarras(M){
   const paleta = ['#818cf8','#22c55e','#f59e0b','#38bdf8','#f472b6','#a78bfa','#34d399','#fb923c'];
   const barra = (destino, campo) => {
@@ -10278,8 +10212,6 @@ function renderDashBarras(M){
       cont.innerHTML = '<div class="field-note">Sin datos todavía.</div>';
       return;
     }
-    // Pesos y dólares van en BLOQUES SEPARADOS, con su propio subtítulo: una
-    // barra que mezcla COP con USD no significa nada (Sergio, 02-sep).
     const maxPorMoneda = {};
     filas.forEach(f=>{ maxPorMoneda[f.moneda] = Math.max(maxPorMoneda[f.moneda]||0, f.valor); });
     const totPorMoneda = {};
@@ -10303,8 +10235,7 @@ function renderDashBarras(M){
       </div>`;
     };
     const bloque = (moneda, titulo, mercados) => {
-      const suyas = filas.filter(f=>f.moneda === moneda)
-                         .sort((a,b)=>b.valor - a.valor);
+      const suyas = filas.filter(f=>f.moneda === moneda).sort((a,b)=>b.valor - a.valor);
       if(!suyas.length) return '';
       return `<div style="font-size:11px;font-weight:700;letter-spacing:.4px;opacity:.55;
                   margin:${moneda==='USD'?'14px':'0'} 0 6px;">${titulo}
@@ -10324,27 +10255,24 @@ function renderDashPendientes(){
   if(!cont) return;
   const avisos = [];
 
-  // RVL: órdenes de Fidessa sin reportar.
   let sinReportar = 0;
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
     const t = _fidessaTradesRaw[oid];
-    const cli = _dashClave(t.grupo);
-    if(!cli || !clienteRequiereReporte(normalizarGrupo(t.grupo))) return;
+    const cli = normalizarGrupo(t.grupo);
+    if(!cli || !clienteRequiereReporte(cli)) return;
     if(_lineasNoReportar.has(String(oid))) return;
-    if(!(_reportesGenerados||[]).some(r=>String(r.parent_order_id).startsWith(String(oid)))) sinReportar++;
+    if(vecesReportada(oid) === 0) sinReportar++;
   });
   if(sinReportar) avisos.push(`<b>${sinReportar}</b> orden(es) de RVL sin reportar`);
 
-  // RVI: líneas de EMSX marcadas pero no guardadas.
   const rviPend = (emsxData||[]).filter(r=>
     String(r.status||'').toUpperCase()==='FILLED' &&
     !(historial||[]).some(h=>String(h.symbol||'') === tickerLimpioRVI(r.especie))).length;
   if(rviPend) avisos.push(`<b>${rviPend}</b> línea(s) de RVI sin procesar`);
 
-  // Reportado pero sin cargar al COR.
   const sinCOR = [...new Set((_reportesGenerados||[])
-    .filter(r=>r.modulo==='RVL')
-    .map(r=>r.cliente))].filter(c=>vecesCargadoCOR('RVL', c) === 0).length;
+    .filter(r=>r.modulo==='RVL').map(r=>r.cliente))]
+    .filter(c=>vecesCargadoCOR('RVL', c) === 0).length;
   if(sinCOR) avisos.push(`<b>${sinCOR}</b> cliente(s) reportado(s) sin cargar al COR`);
 
   if(!avisos.length){
@@ -10356,6 +10284,98 @@ function renderDashPendientes(){
   cont.innerHTML = `<div style="background:rgba(245,158,11,.10);border-left:3px solid var(--amber,#f59e0b);
       border-radius:6px;padding:10px 14px;font-size:12.5px;display:flex;gap:18px;flex-wrap:wrap;">
     ${avisos.map(a=>`<span>⚠ ${a}</span>`).join('')}</div>`;
+}
+
+function renderDashBloques(){
+  const cont = document.getElementById('dashBloques');
+  if(!cont) return;
+
+  // Un CRUCE es un TCN, no un folio suelto. Cada TCN tiene dos patas —quien
+  // compra y quien vende— y cada pata puede venir partida en varias filas si
+  // hubo reparto. Tratarlas por separado mostraba el mismo cruce dos veces y
+  // con el cliente equivocado (Sergio, 03-sep).
+  const porTCN = {};
+  (foliosFidessa||[]).forEach(f=>{
+    if(!(Number(f.cantidad) > 0) || !(Number(f.precio) > 0)) return;
+    (porTCN[f.folio] = porTCN[f.folio] || []).push(f);
+  });
+
+  // El cliente de cada pata sale de su orden en Fidessa Trades; el folio trae
+  // COLCCP cuando la pata pasó por la cuenta interna.
+  const cliDe = f => {
+    const t = (_fidessaTradesRaw||{})[f.parentOrderId];
+    let c = (t && normalizarGrupo(t.grupo)) || f.cliente || '';
+    if(/^COLCCP$/i.test(String(c))) c = '';
+    return c;
+  };
+
+  const cruces = Object.keys(porTCN).map(tcn=>{
+    const patas = porTCN[tcn];
+    const compra = patas.filter(f=>f.lado === 'Compra');
+    const venta  = patas.filter(f=>f.lado === 'Venta');
+    // La cantidad del cruce es la de UN lado, y dentro de cada lado se toma la
+    // pata consolidada, no la suma de sus partes: en el TCN 607083 la venta
+    // viene repartida en 5 filas MÁS la línea completa de 175.345, así que
+    // sumarlas daba el doble (Sergio, 03-sep).
+    const delLado = arr => {
+      if(!arr.length) return 0;
+      const suma = arr.reduce((a,f)=>a+f.cantidad,0);
+      const mayor = Math.max(...arr.map(f=>f.cantidad));
+      // Si la fila más grande es la mitad del total, es la consolidada y el
+      // resto son sus partes.
+      return (arr.length > 1 && Math.abs(mayor*2 - suma) <= 1) ? mayor : suma;
+    };
+    const qC = delLado(compra);
+    const qV = delLado(venta);
+    const qty = Math.max(qC, qV);
+    const px = patas[0].precio;
+    // Quién está de cada lado: se toma el primer cliente identificable.
+    const quien = arr => {
+      for(const f of arr){ const c = cliDe(f); if(c) return c; }
+      return '';
+    };
+    return {
+      tcn, especie: patas[0].especie, px, qty, monto: qty * px,
+      compra: quien(compra), venta: quien(venta),
+    };
+  })
+  .filter(c=>{
+    if(_dashMercado && _dashMercado !== 'RVL') return false;
+    if(_dashCliente && _dashClave(c.compra) !== _dashCliente
+                    && _dashClave(c.venta)  !== _dashCliente) return false;
+    return c.qty > 0;
+  })
+  .sort((a,b)=>b.monto - a.monto)
+  .slice(0, 8);
+
+  if(!cruces.length){
+    cont.innerHTML = '<div class="field-note">Sin folios cargados todavía.</div>';
+    return;
+  }
+
+  cont.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <tr style="opacity:.6;font-size:10px;letter-spacing:.4px;">
+        <th style="text-align:left;padding:3px 6px;">FOLIO</th>
+        <th style="text-align:left;padding:3px 6px;">ESPECIE</th>
+        <th style="text-align:left;padding:3px 6px;">COMPRA</th>
+        <th style="text-align:left;padding:3px 6px;">VENDE</th>
+        <th style="text-align:right;padding:3px 6px;">CANTIDAD</th>
+        <th style="text-align:right;padding:3px 6px;">PRECIO</th>
+        <th style="text-align:right;padding:3px 6px;">MONTO</th>
+      </tr>
+      ${cruces.map(c=>`<tr style="border-top:1px solid var(--border,#232938);">
+        <td class="mono-id" style="padding:4px 6px;">${c.tcn}</td>
+        <td class="mono-id" style="padding:4px 6px;">${c.especie}</td>
+        <td style="padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;"
+            title="${c.compra||''}">${_dashCorto(c.compra) || '<span style="opacity:.4;">—</span>'}</td>
+        <td style="padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;"
+            title="${c.venta||''}">${_dashCorto(c.venta) || '<span style="opacity:.4;">—</span>'}</td>
+        <td style="text-align:right;padding:4px 6px;">${fmtInt(c.qty)}</td>
+        <td style="text-align:right;padding:4px 6px;">${fmtRate(c.px)}</td>
+        <td style="text-align:right;padding:4px 6px;font-weight:700;">$${(c.monto/1e6).toLocaleString('es-CO',{maximumFractionDigits:1})} MM</td>
+      </tr>`).join('')}
+    </table>`;
 }
 
 function renderModuloReportes(){
@@ -16993,7 +17013,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-03 17:41 UTC';
+const BUILD_ID = '2026-09-03 17:50 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
