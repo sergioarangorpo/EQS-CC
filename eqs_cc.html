@@ -5335,77 +5335,179 @@ const GRUPO_COMISIONES_DB = [{"grupo": "COLFONDOS", "book": "COLFONDOS", "report
 // en la fila 5 y datos desde la 6. Una fila por FOLIO, con el TCN de 6 dígitos.
 async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  if(!loteDet || !loteDet.length){ alert('No hay operaciones para generar el reporte.'); return; }
   const cfgMacro = CCFFMM_MACROGRUPOS[macro];
+  const C = REPORTE_COLOR;
+  const hoyDate = new Date();
+
+  // ===================================================================
+  // ESTRUCTURA FIJA — es el formato del cliente y NO se puede mover:
+  //   L2/M2  -> etiqueta IVA y su 19%
+  //   fila 4 -> encabezados (14 columnas, A..N)
+  //   fila 5 -> primera operación
+  // El logo y los colores se agregan ENCIMA, en las filas 1-3 que están
+  // libres, sin correr una sola celda (Sergio, 03-sep).
+  // ===================================================================
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'Credicorp Capital Colombia — Equity Sales';
+  wb.creator = 'EQS CC — Credicorp Capital';
+  wb.created = hoyDate;
   const ws = wb.addWorksheet('Hoja1', {
     pageSetup: { orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 },
     views: [{ showGridLines:false }],
   });
 
-  ws.getCell('A4').value = 'CONFIRMACION OPERACIÓN ACC';
-  ws.getCell('A4').font = { name:'Calibri', size:11, bold:true };
+  // Anchos tomados del archivo del cliente.
+  [25.7, 44.3, 11.8, 5.3, 15.1, 18.1, 14.7, 3.4, 11, 12.6, 19.2, 15.4, 13.7, 18]
+    .forEach((w,i)=>{ ws.getColumn(i+1).width = w; });
 
-  const H = ['OPERACIÓN','CUMPLIMIENTO','POSTURA','NOMBRE','CANTIDAD','PRECIO','VALOR BRUTO',
-             'COMISION','IVA','VALOR NETO','FOLIOS','ISIN','FONDO'];
+  const COLS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N'];
+
+  // ---------- Banda de marca en las filas 1-3 ----------
+  for(let rr=1; rr<=3; rr++){
+    COLS.forEach(col=> ws.getCell(`${col}${rr}`).fill =
+      {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}});
+  }
+  ws.getRow(1).height = 6;
+  ws.getRow(2).height = 30;
+  ws.getRow(3).height = 12;
+  try{
+    const imgId = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension:'png' });
+    ws.addImage(imgId, { tl:{col:0, row:1}, ext:{width:150, height:34} });
+  }catch(e){ /* si el logo falla, la banda igual se ve bien */ }
+
+  const tit = ws.getCell('D2');
+  tit.value = cfgMacro.nombre;
+  tit.font = { name:'Calibri', size:13, bold:true, color:{argb:C.white} };
+  tit.alignment = { vertical:'middle' };
+  ws.mergeCells('D2:H2');
+
+  // El IVA se queda EXACTAMENTE donde estaba (L2 y M2), solo mejor vestido.
+  const lIva = ws.getCell('L2');
+  lIva.value = 'IVA';
+  lIva.font = { name:'Calibri', size:11, bold:true, color:{argb:C.white} };
+  lIva.alignment = { horizontal:'right', vertical:'middle' };
+  const mIva = ws.getCell('M2');
+  mIva.value = 0.19;
+  mIva.numFmt = '0%';
+  mIva.font = { name:'Calibri', size:11, bold:true, color:{argb:C.orangeSoft} };
+  mIva.alignment = { horizontal:'left', vertical:'middle' };
+
+  // ---------- Encabezados: SIEMPRE en la fila 4 ----------
+  const H = ['Entidad Comisionista','Fondo','NIT','Folio','Fecha Operación','Fecha Cumplimiento',
+             'Nemo','C/V','Cantidad','Precio','Giro bruto COP','Comisión','IVA','Neto'];
+  const alin = ['left','left','left','center','center','center','left','center',
+                'right','right','right','right','right','right'];
   H.forEach((h,i)=>{
-    const c = ws.getCell(5, i+1);
+    const c = ws.getCell(`${COLS[i]}4`);
     c.value = h;
-    c.font = { name:'Calibri', size:11, bold:true };
+    c.font = { name:'Calibri', size:10, bold:true, color:{argb:C.white} };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
+    c.alignment = { horizontal:alin[i], vertical:'middle', wrapText:true };
+    c.border = { bottom:{style:'medium', color:{argb:C.orange}} };
   });
+  ws.getRow(4).height = 26;
 
-  // Orden: especie, luego folio. Así el cliente lee cada especie junta.
+  // ---------- Operaciones: desde la fila 5 ----------
+  // Orden: especie y luego folio, para que el cliente lea cada especie junta.
   const filas = loteDet.slice().sort((a,b)=>
     String(a.especie).localeCompare(String(b.especie), 'es', {sensitivity:'base'}) ||
     (Number(a.folio) - Number(b.folio)));
 
-  let r = 6;
+  // El NIT sale del maestro de decevales; si no está, se deja en blanco antes
+  // que inventarlo.
+  const nitFondo = (()=>{
+    const m = Object.values(_maestroDeceval||{}).find(x=>
+      String(x.portafolio||'').toUpperCase().includes(String(cfgMacro.fondo||'').toUpperCase()) ||
+      String(x.id_fondo||'').toUpperCase() === String(cfgMacro.nombre||'').toUpperCase());
+    return m ? String(m.nit||'') + String(m.dv||'') : '';
+  })();
+
+  let r = 5;
   filas.forEach(f=>{
     const qty = Number(f.cantidad)||0;
-    const px = Number(f.precio)||0;
+    const px  = Number(f.precio)||0;
     const bruto = redondear(qty * px, 2);
     // 0,1% SIEMPRE, sin override de ninguna especie.
     const com = redondear(bruto * 0.001, 4);
     const iva = redondear(com * 0.19, 4);
-    const neto = f.lado === 'Venta' ? redondear(bruto - com - iva, 2)
-                                    : redondear(bruto + com + iva, 2);
-    // En FIDUCIARIA el FONDO es el portafolio de la línea (viene del Notes);
-    // en los otros tres es fijo.
-    const fondo = cfgMacro.fondo || f.portafolio || f.notes || '';
-    // Las fechas van como Date real para que Excel las muestre como fecha. Si
-    // el folio no las trae, se toman de los campos del formulario.
-    const aFecha = x => {
-      if(x instanceof Date) return x;
-      const m = String(x||'').match(/^(\d{4})-(\d{2})-(\d{2})/);
-      return m ? new Date(Number(m[1]), Number(m[2])-1, Number(m[3])) : null;
-    };
-    const fReg = aFecha(f.fechaReg) || aFecha((document.getElementById('fechaRegistro')||{}).value);
-    const fCum = aFecha(f.fechaCum) || aFecha((document.getElementById('fechaCumplimiento')||{}).value);
-    const v = [
-      fReg, fCum,
-      f.lado === 'Venta' ? 'V' : 'C',
-      f.especie, qty, px, bruto, com, iva, neto,
-      Number(f.folio),                      // TCN completo de 6 dígitos
-      f.isin || isinDeNemo(f.especie) || '',
-      fondo,
+    const esVenta = f.lado === 'Venta';
+    const neto = esVenta ? redondear(bruto - com - iva, 2) : redondear(bruto + com + iva, 2);
+
+    const vals = [
+      'CREDICORP CAPITAL S.A',
+      cfgMacro.fondo || f.portNombre || f.notes || '',
+      nitFondo,
+      String(f.folio||''),
+      f.fechaReg instanceof Date ? f.fechaReg : hoyDate,
+      f.fechaCumpl instanceof Date ? f.fechaCumpl : (f.fechaCumpl || ''),
+      f.especie,
+      esVenta ? 'V' : 'C',
+      qty, px, bruto, com, iva, neto,
     ];
-    v.forEach((val,i)=>{ ws.getCell(r, i+1).value = val; });
-    [1,2].forEach(c=>{ ws.getCell(r,c).numFmt = 'yyyy-mm-dd'; });
-    ws.getCell(r,5).numFmt = '#,##0';
-    [6,7,10].forEach(c=>{ ws.getCell(r,c).numFmt = '#,##0.00'; });
-    [8,9].forEach(c=>{ ws.getCell(r,c).numFmt = '#,##0.0000'; });
-    for(let c=1;c<=13;c++) ws.getCell(r,c).font = { name:'Calibri', size:11 };
+    vals.forEach((v,i)=>{
+      const c = ws.getCell(`${COLS[i]}${r}`);
+      c.value = v;
+      c.font = { name:'Calibri', size:10, color:{argb:C.textDark} };
+      c.alignment = { horizontal:alin[i], vertical:'middle' };
+      c.border = { bottom:{style:'hair', color:{argb:C.cardBorder}} };
+    });
+    // Formatos del cliente: fechas cortas, cantidad con miles, el resto moneda.
+    ['E','F'].forEach(col=>{ ws.getCell(`${col}${r}`).numFmt = 'dd/mm/yyyy'; });
+    ws.getCell(`I${r}`).numFmt = '#,##0';
+    ['J','K','L','M','N'].forEach(col=>{ ws.getCell(`${col}${r}`).numFmt = '"$"#,##0.00'; });
+    ws.getRow(r).height = 16;
+    // La venta se marca en el C/V, que es lo que se busca al revisar.
+    ws.getCell(`H${r}`).font = { name:'Calibri', size:10, bold:true,
+      color:{argb: esVenta ? 'FFB91C1C' : 'FF166534'} };
+    // Zebra para poder seguir la fila a lo ancho.
+    if((r-5)%2===1){
+      COLS.forEach(col=> ws.getCell(`${col}${r}`).fill =
+        {type:'pattern', pattern:'solid', fgColor:{argb:C.grayLight}});
+    }
     r++;
   });
 
-  autofitColumnasRango(ws, 5, r-1, ['A','B','C','D','E','F','G','H','I','J','K','L','M'], {min:9, max:44});
-  const buf = await wb.xlsx.writeBuffer();
-  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `Operaciones_${cfgMacro.archivo}_${fechaSlug}.xlsx`;
-  a.click();
-  URL.revokeObjectURL(url);
+  // ---------- Totales ----------
+  const suma = col => filas.reduce((a,f)=>{
+    const q = Number(f.cantidad)||0, p = Number(f.precio)||0;
+    const b = redondear(q*p, 2), c1 = redondear(b*0.001, 4), i1 = redondear(c1*0.19, 4);
+    if(col==='I') return a + q;
+    if(col==='K') return a + b;
+    if(col==='L') return a + c1;
+    if(col==='M') return a + i1;
+    if(col==='N') return a + (f.lado==='Venta' ? redondear(b-c1-i1,2) : redondear(b+c1+i1,2));
+    return a;
+  }, 0);
+  ws.getCell(`A${r}`).value = 'TOTAL';
+  ws.getCell(`D${r}`).value = filas.length + ' ops';
+  ws.getCell(`I${r}`).value = suma('I');
+  ws.getCell(`K${r}`).value = redondear(suma('K'), 2);
+  ws.getCell(`L${r}`).value = redondear(suma('L'), 2);
+  ws.getCell(`M${r}`).value = redondear(suma('M'), 2);
+  ws.getCell(`N${r}`).value = redondear(suma('N'), 2);
+  COLS.forEach((col,i)=>{
+    const c = ws.getCell(`${col}${r}`);
+    c.font = { name:'Calibri', size:10.5, bold:true, color:{argb:C.white} };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navyLight} };
+    c.alignment = { horizontal:alin[i], vertical:'middle' };
+    c.border = { top:{style:'medium', color:{argb:C.orange}} };
+  });
+  ws.getCell(`I${r}`).numFmt = '#,##0';
+  ['K','L','M','N'].forEach(col=>{ ws.getCell(`${col}${r}`).numFmt = '"$"#,##0.00'; });
+  ws.getRow(r).height = 19;
+
+  // Los encabezados quedan fijos al desplazarse por las operaciones.
+  ws.views = [{ showGridLines:false, state:'frozen', ySplit:4 }];
+  ws.autoFilter = { from:'A4', to:`N${r-1}` };
+
+  const nombre = `${cfgMacro.archivo}_${fechaSlug}${window._sufijoReporte||''}.xlsx`;
+  wb.xlsx.writeBuffer().then(buf=>{
+    const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+    const a = document.createElement('a');
+    a.href = url; a.download = nombre;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
 }
 
 // =====================================================================
@@ -5416,7 +5518,7 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
 // (Sergio, 24-ago).
 // =====================================================================
 const CCFFMM_MACROGRUPOS = {
-  ACC_COLOMBIA: { nombre:'ACCIONES COLOMBIA', archivo:'CC_AM',        fondo:'CREDICORP CAPITAL ACCIONES' },
+  ACC_COLOMBIA: { nombre:'ACCIONES COLOMBIA', archivo:'CC_AM',        fondo:'CREDICORP CAPITAL ACCIONES COLOMBIA' },
   ACC_GLOBALES: { nombre:'ACCIONES GLOBALES', archivo:'ACC_GLOBALES', fondo:'CREDICORP CAPITAL ACCIONES GLOBALES' },
   CRGS:         { nombre:'CRGS',              archivo:'GRSG',         fondo:'CRGS' },
   FIDUCIARIA:   { nombre:'FIDUCIARIA',        archivo:'FIDUCIARIA',   fondo:null },   // el fondo es el portafolio de cada línea
@@ -17272,7 +17374,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-03 21:42 UTC';
+const BUILD_ID = '2026-09-03 22:10 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
