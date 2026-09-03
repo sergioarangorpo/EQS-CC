@@ -8920,12 +8920,33 @@ let _cierresAnteriores = {};
 
 async function cargarCierreAnterior(){
   try{
-    const filas = await supaFetch('cierres_mercado', `fecha=lt.${_hoyISO()}&order=fecha.desc&limit=200`);
+    const filas = await supaFetch('cierres_mercado', `fecha=lt.${_hoyISO()}&order=fecha.desc&limit=2000`);
     if(!filas.length) return;
     const ultima = filas[0].fecha;
     _cierresAnteriores = {};
     filas.filter(f=>f.fecha === ultima).forEach(f=>{ _cierresAnteriores[f.nemo] = Number(f.ultimo)||0; });
     console.log('Informe diario: cierre anterior cargado ('+ultima+', '+Object.keys(_cierresAnteriores).length+' especies)');
+
+    // ---- BASE DEL MTD ----
+    // El MTD se mide contra el ÚLTIMO CIERRE DEL MES PASADO, no contra una
+    // tabla fija. La tabla traía julio y en septiembre daba GRUPOSURA +24,96%
+    // cuando el dato real es +11,49% — 68.680 contra el cierre del 31-ago de
+    // 61.600, no contra los 54.960 de julio (Sergio, 03-sep).
+    const hoy = new Date();
+    const primeroDeMes = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}-01`;
+    const delMesPasado = filas.filter(f=>String(f.fecha) < primeroDeMes);
+    if(delMesPasado.length){
+      const cierreMes = delMesPasado[0].fecha;    // vienen ordenadas desc
+      let n = 0;
+      delMesPasado.filter(f=>f.fecha === cierreMes).forEach(f=>{
+        const v = Number(f.ultimo) || 0;
+        if(v > 0){ _CIERRE_MTD[f.nemo] = v; n++; }
+      });
+      console.log(`Informe diario: base del MTD = cierre del ${cierreMes} (${n} especies)`);
+    }else{
+      console.warn('Informe diario: no hay cierre del mes pasado guardado; ' +
+                   'el MTD usa la tabla fija y puede estar desactualizado.');
+    }
   }catch(e){
     console.warn('No se pudo cargar cierres_mercado (¿falta crear la tabla?):', e.message);
   }
@@ -17129,7 +17150,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-03 19:50 UTC';
+const BUILD_ID = '2026-09-03 20:09 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
