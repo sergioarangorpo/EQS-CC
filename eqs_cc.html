@@ -2039,28 +2039,6 @@
     </div>
 
     <div class="card" style="margin-top:18px;">
-      <div class="section-label">Festivo nuevo</div>
-      <div class="field-note" style="margin-bottom:10px;">
-        Los calendarios cambian. <b>Colombia</b> define el cumplimiento de RVL;
-        <b>Estados Unidos</b> el de FX, donde además frena la operación si cae en festivo.</div>
-      <div class="field-row">
-        <div class="field"><label>Fecha</label>
-          <input type="date" id="mfFecha" style="width:170px;"></div>
-        <div class="field"><label>País</label>
-          <select id="mfPais" style="width:200px;">
-            <option value="CO">Colombia — afecta RVL</option>
-            <option value="US">Estados Unidos — afecta FX</option>
-          </select></div>
-        <div class="field" style="flex:1;"><label>Nombre <span class="field-note">(opcional)</span></label>
-          <input type="text" id="mfNombre" placeholder="Día de la Independencia"></div>
-        <div class="field" style="align-self:flex-end;">
-          <button class="btn purple" onclick="guardarFestivo()">Guardar festivo</button></div>
-      </div>
-      <div id="mfEstado" class="field-note" style="margin-top:8px;"></div>
-      <div id="mfLista" style="margin-top:12px;"></div>
-    </div>
-
-    <div class="card" style="margin-top:18px;">
       <div class="section-label">Especie nueva</div>
       <div class="field-note" style="margin-bottom:10px;">
         El mercado define los tickers: RVL arma <b>NEMO CB Equity</b> y <b>NEMO.BGa</b>;
@@ -2142,62 +2120,18 @@
 
     <!-- Barra de carga al COR: al cierre salen varios clientes a la vez y
          bajarlos uno por uno es un desgaste (Sergio, 27-ago). -->
-    <!-- Una barra por mercado: cada uno tiene su destino y su propia
-         selección. Antes iban mezcladas y había que marcar clientes de
-         mercados distintos en la misma lista (Sergio, 03-sep). -->
-    <div style="margin:0 24px 16px;display:flex;gap:10px;flex-wrap:wrap;">
-
-      <div style="flex:1;min-width:300px;padding:12px 14px;background:var(--bg-2,#161b26);
-                  border:1px solid var(--border,#232938);border-radius:8px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
-          <span style="font-size:13px;font-weight:700;">FX</span>
-          <span class="field-note" style="font-size:10px;">al Back Office</span>
-        </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-          <button class="btn small ghost" onclick="seleccionarCOR('pendientes','FX')">Pendientes</button>
-          <button class="btn small ghost" onclick="seleccionarCOR('todos','FX')">Todos</button>
-          <button class="btn small ghost" onclick="seleccionarCOR('ninguno','FX')">Limpiar</button>
-        </div>
-        <div id="fichasFX" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;min-height:24px;"></div>
-        <div class="field-note" id="selFX" style="font-size:11px;margin-bottom:8px;min-height:15px;">—</div>
-        <button class="btn purple" id="btnFxMultiple" onclick="descargarFXSeleccionados()" disabled
-                style="width:100%;">📥 Enviar al BO</button>
-      </div>
-
-      <div style="flex:1;min-width:300px;padding:12px 14px;background:var(--bg-2,#161b26);
-                  border:1px solid var(--border,#232938);border-radius:8px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
-          <span style="font-size:13px;font-weight:700;">RVL</span>
-          <span class="field-note" style="font-size:10px;">complementación al COR</span>
-        </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-          <button class="btn small ghost" onclick="seleccionarCOR('pendientes','RVL')">Pendientes</button>
-          <button class="btn small ghost" onclick="seleccionarCOR('todos','RVL')">Todos</button>
-          <button class="btn small ghost" onclick="seleccionarCOR('ninguno','RVL')">Limpiar</button>
-        </div>
-        <div id="fichasRVL" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;min-height:24px;"></div>
-        <div class="field-note" id="selRVL" style="font-size:11px;margin-bottom:8px;min-height:15px;">—</div>
-        <button class="btn purple" id="btnCorMultiple" onclick="descargarCORSeleccionados()" disabled
-                style="width:100%;">📥 Archivo del COR</button>
-      </div>
-
-      <div style="flex:1;min-width:300px;padding:12px 14px;background:var(--bg-2,#161b26);
-                  border:1px solid var(--border,#232938);border-radius:8px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
-          <span style="font-size:13px;font-weight:700;">RVI</span>
-          <span class="field-note" style="font-size:10px;">planilla del Back Office</span>
-        </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-          <button class="btn small ghost" onclick="seleccionarCOR('pendientes','RVI')">Pendientes</button>
-          <button class="btn small ghost" onclick="seleccionarCOR('todos','RVI')">Todos</button>
-          <button class="btn small ghost" onclick="seleccionarCOR('ninguno','RVI')">Limpiar</button>
-        </div>
-        <div id="fichasRVI" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;min-height:24px;"></div>
-        <div class="field-note" id="selRVI" style="font-size:11px;margin-bottom:8px;min-height:15px;">—</div>
-        <button class="btn purple" id="btnBoMultiple" onclick="descargarBOSeleccionados()" disabled
-                style="width:100%;">📥 Planilla BO</button>
-      </div>
-
+    <div style="margin:0 24px 16px;padding:12px 16px;background:var(--bg-2,#161b26);
+                border:1px solid var(--border,#232938);border-radius:8px;
+                display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+      <span style="font-size:13px;font-weight:700;">Carga al COR</span>
+      <button class="btn small ghost" onclick="seleccionarCOR('pendientes')">Pendientes de cargar</button>
+      <button class="btn small ghost" onclick="seleccionarCOR('todos')">Todos los de hoy</button>
+      <button class="btn small ghost" onclick="seleccionarCOR('ninguno')">Limpiar</button>
+      <span class="field-note" id="corSeleccion" style="flex:1;min-width:180px;">Marca los clientes que vas a subir.</span>
+      <button class="btn purple" id="btnCorMultiple" onclick="descargarCORSeleccionados()" disabled>
+        📥 COR (RVL)</button>
+      <button class="btn purple" id="btnBoMultiple" onclick="descargarBOSeleccionados()" disabled>
+        📥 Planilla BO (RVI)</button>
     </div>
 
     <div style="padding:0 24px 24px;">
@@ -2272,14 +2206,6 @@ function switchModule(mod) {
   // El dashboard se recalcula al entrar: lee de los otros módulos, así que
   // tiene que estar fresco cada vez.
   if(mod === 'Dashboard' && typeof renderDashboard === 'function') renderDashboard();
-  // El selector de Client/Book se llena al ENTRAR a Ayudas: al arrancar la app
-  // `clientesDB` todavía puede no estar completo y el desplegable quedaba vacío
-  // (Sergio, 03-sep).
-  if(mod === 'Ayudas'){
-    if(typeof poblarClientBookMaestro === 'function') poblarClientBookMaestro();
-    if(typeof renderListaFestivos === 'function') renderListaFestivos();
-    if(typeof renderListasMaestro === 'function') renderListasMaestro();
-  }
   const ml = MARKET_LABELS[mod];
   if(ml) {
     document.getElementById('market-label').textContent = ml.label;
@@ -2427,52 +2353,13 @@ const festivosUS = [
   '2026-09-07','2026-10-12','2026-11-11','2026-11-26','2026-12-25',
   '2027-01-01','2027-01-18',
 ];
-// Los dos calendarios se mantienen SEPARADOS: el cumplimiento de equity local
-// (RVL) sigue el colombiano y no se mueve por un festivo en Estados Unidos —
-// el 07-sep-2026 es festivo allá y hábil acá, y mezclarlos daba cumplimiento
-// 08-sep cuando corresponde 07-sep (Sergio, 03-sep).
-// FX sí usa el de US: si el cumplimiento cae en festivo allá, no se liquida.
-function _isoLocal(d){
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
+const festivos = new Set([...festivosCO, ...festivosUS]);
 
-const festivos = new Set([...festivosCO, ...festivosUS]);   // ambos, para lo que necesite los dos
-let _festivosCO = new Set(festivosCO);
-let _festivosUS = new Set(festivosUS);
-
-// Los festivos viven en Supabase para poder agregarlos sin tocar el HTML.
-// Lo de aquí arriba es el respaldo por si la tabla no responde.
-async function cargarFestivos(){
-  try{
-    const filas = await supaFetch('festivos', 'order=fecha.asc&limit=2000') || [];
-    if(!filas.length) return;
-    const co = new Set(), us = new Set();
-    filas.forEach(f=>{
-      const d = String(f.fecha).slice(0,10);
-      if(f.pais === 'US') us.add(d); else co.add(d);
-    });
-    if(co.size) _festivosCO = co;
-    if(us.size) _festivosUS = us;
-    console.log(`Festivos: ${_festivosCO.size} CO y ${_festivosUS.size} US cargados de Supabase`);
-    if(typeof initDatesRVL === 'function') initDatesRVL();
-  }catch(e){ console.warn('No se pudieron cargar los festivos, se usan los del código:', e.message); }
-}
-
-// `pais` decide qué calendario se mira: 'CO' (por defecto), 'US' o 'AMBOS'.
-function esHabil(d, pais){
+function esHabil(d){
   const day = d.getDay();
   if(day===0||day===6) return false;
-  const iso = _isoLocal(d);
-  if(pais === 'US')    return !_festivosUS.has(iso);
-  if(pais === 'AMBOS') return !_festivosUS.has(iso) && !_festivosCO.has(iso);
-  return !_festivosCO.has(iso);
-}
-
-function esFestivoUS(d){
-  return _festivosUS.has(typeof d === 'string' ? d.slice(0,10) : _isoLocal(d));
-}
-function esFestivoCO(d){
-  return _festivosCO.has(typeof d === 'string' ? d.slice(0,10) : _isoLocal(d));
+  const iso = d.toISOString().slice(0,10);
+  return !festivos.has(iso);
 }
 
 function parseFechaLocal(str){
@@ -2485,71 +2372,14 @@ function parseFechaLocal(str){
   return new Date(y, m - 1, d);
 }
 
-function sumarDiasHabiles(fecha, dias, pais){
+function sumarDiasHabiles(fecha, dias){
   let d = new Date(fecha);
   let added = 0;
   while(added < dias){
     d.setDate(d.getDate()+1);
-    if(esHabil(d, pais)) added++;
+    if(esHabil(d)) added++;
   }
   return d;
-}
-
-// ---------------------------------------------------------------------
-// CUMPLIMIENTO DE FX
-// El FX se liquida en Estados Unidos, así que un festivo allá bloquea la
-// fecha. Las reglas, confirmadas por Sergio el 03-sep:
-// La fecha depende de cuándo se mueve la plata del equity:
-//   - Cliente VENDE USD  (compró acciones): necesita los pesos para pagar el
-//     equity, así que el FX cumple T+1.
-//   - Cliente COMPRA USD (vendió acciones): la plata le entra cuando cumple el
-//     equity, así que el FX va T+2 — y salta si ese día es festivo allá. El
-//     03-sep una compra da 08-sep, porque el 7 es festivo en Estados Unidos.
-//   - ANDES INVESTMENT: siempre T+3, sin importar el lado.
-// Devuelve { fecha, iso, alerta } — `alerta` explica por qué se movió, para
-// poder avisar en pantalla.
-// ---------------------------------------------------------------------
-function cumplimientoFX(fechaBase, lado, cliente){
-  // La base se normaliza SIEMPRE a medianoche local, venga como Date o como
-  // texto: `instanceof Date` no es fiable si el Date viene de otro contexto.
-  let base;
-  if(fechaBase && typeof fechaBase.getFullYear === 'function'){
-    base = new Date(fechaBase.getFullYear(), fechaBase.getMonth(), fechaBase.getDate());
-  }else{
-    base = parseFechaLocal(String(fechaBase || _hoyISO()));
-  }
-  const esAndes = /ANDES|LARRAIN/i.test(String(cliente||''));
-  const compra = String(lado||'').toUpperCase().startsWith('B') ||
-                 /COMPRA/i.test(String(lado||''));
-
-  // Andes T+3 siempre; el resto: compra de USD T+2, venta T+1.
-  let dias = esAndes ? 3 : (compra ? 2 : 1);
-  let d = sumarDiasHabiles(base, dias, 'US');
-  const natural = _isoLocal(d);
-
-  // Si el cliente COMPRA USD y el T+1 cae en festivo, se corre al siguiente
-  // hábil. `sumarDiasHabiles` ya lo salta, así que aquí solo se detecta si
-  // hubo movimiento para poder avisarlo.
-  const sinSaltar = new Date(base);
-  sinSaltar.setDate(sinSaltar.getDate() + dias);
-  const eraFestivo = esFestivoUS(sinSaltar) ||
-                     sinSaltar.getDay() === 0 || sinSaltar.getDay() === 6;
-
-  let alerta = '';
-  if(eraFestivo){
-    // fmtFechaCorta espera "YYYY-MM-DD", no un Date.
-    const q = _isoLocal(sinSaltar);
-    const dd = iso => { const [y,m,d] = String(iso).split('-'); return `${d}/${m}/${y}`; };
-    alerta = esFestivoUS(sinSaltar)
-      ? `El ${dd(q)} es festivo en Estados Unidos: el cumplimiento se corre al ${dd(natural)}.`
-      : `El ${dd(q)} cae en fin de semana: el cumplimiento se corre al ${dd(natural)}.`;
-  }
-  return { fecha: d, iso: natural, alerta, dias, esAndes };
-}
-
-// Siguiente día hábil según el calendario que se le pase.
-function siguienteHabil(fecha, pais){
-  return sumarDiasHabiles(fecha, 1, pais);
 }
 
 function fmtUSD(n){ return '$' + Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -5004,8 +4834,7 @@ const clientesDB = {
     formatoReporte: 'generico_equity', reparteManual: false,
     portafoliosDeCategorias: 'METLIFE', portafolios: [],
     fileNombre: 'Metlife Seguros S.A',
-    // Tarifa ÚNICA de 0,1%: no cambia entre bloque y pantalla (Sergio, 03-sep).
-    comisionBloque: 0.001, comisionPantalla: 0.001,
+    comisionBloque: 0.0015, comisionPantalla: 0.0008,
   },
   'BANCO BTG PACTUAL CAYMAN BRANCH': {
     nombre: 'BANCO BTG PACTUAL CAYMAN BRANCH',
@@ -5730,56 +5559,6 @@ const AVAL_FIDU_NUEVOS = [
 let _maestroPortafolios = [];
 let _maestroEspecies = [];
 
-// Anclaje por DECEVAL: Código Orión, dígito de verificación y Especial
-// Fiduciario de cada portafolio. Sin esto, esas tres columnas del archivo del
-// COR salían en blanco y la complementación masiva no cargaba (Sergio, 03-sep).
-let _maestroDeceval = {};
-
-async function cargarMaestroDeceval(){
-  try{
-    const filas = await supaFetch('maestro_deceval', 'order=deceval.asc&limit=5000') || [];
-    if(!filas.length) return;
-    _maestroDeceval = {};
-    filas.forEach(f=>{ _maestroDeceval[String(f.deceval).trim()] = f; });
-    aplicarMaestroDeceval();
-    console.log(`COR: ${filas.length} portafolio(s) con Código Orión cargados`);
-  }catch(e){ console.warn('No se pudo cargar el maestro de decevales:', e.message); }
-}
-
-// Vuelca los datos sobre los portafolios que ya tiene la app, emparejando por
-// deceval. Lo que no esté en la tabla se deja como estaba.
-function aplicarMaestroDeceval(){
-  if(typeof clientesDB === 'undefined') return;
-  // Índices auxiliares: no todos los clientes identifican sus portafolios por
-  // deceval. PROTECCIÓN usa códigos propios (PICELSIA, VOLGSURA), así que
-  // también se busca por ID DE FONDO y por NOMBRE (Sergio, 03-sep).
-  const porFondo = {}, porNombre = {};
-  const limpiar = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-  Object.values(_maestroDeceval).forEach(m=>{
-    if(m.id_fondo) porFondo[limpiar(m.id_fondo)] = m;
-    if(m.portafolio) porNombre[limpiar(m.portafolio)] = m;
-  });
-
-  let n = 0;
-  Object.keys(clientesDB).forEach(k=>{
-    const cfg = getClienteDB(k);
-    (cfg.portafolios||[]).forEach(pf=>{
-      // El deceval puede venir en `deceval` o dentro del id (DEC_1756602).
-      const dec = String(pf.deceval || String(pf.id||'').replace(/^DEC_/,'') || '').trim();
-      const m = _maestroDeceval[dec] || porFondo[limpiar(pf.id)] || porNombre[limpiar(pf.nombre)];
-      if(!m) return;
-      if(!pf.deceval && m.deceval) pf.deceval = String(m.deceval);
-      pf.orion = m.codigo_orion || pf.orion || '';
-      pf.dv = m.dv || pf.dv || '';
-      // El EF se copia TAL CUAL: los espacios son parte del dato (" 03", "23 ").
-      if(m.ef != null && m.ef !== '') pf.especialFid = m.ef;
-      if(!pf.nit && m.nit) pf.nit = m.nit;
-      n++;
-    });
-  });
-  if(n) console.log(`COR: ${n} portafolio(s) con Orión/DV/EF aplicados`);
-}
-
 async function cargarMaestros(){
   try{
     _maestroPortafolios = await supaFetch('maestro_portafolios', 'order=creado_en.desc&limit=2000') || [];
@@ -5864,40 +5643,6 @@ function previsualizarTickersMaestro(){
   const t = tickersDeMercado(n, m);
   el.innerHTML = `Se va a registrar como <b>${t.bloomberg}</b>` +
     (t.fidessa ? ` y <b>${t.fidessa}</b> en Fidessa` : ' (RVI: no llega por Fidessa)');
-}
-
-async function guardarFestivo(){
-  const est = document.getElementById('mfEstado');
-  const fecha = (document.getElementById('mfFecha')||{}).value || '';
-  const pais = (document.getElementById('mfPais')||{}).value || 'CO';
-  const nombre = String((document.getElementById('mfNombre')||{}).value||'').trim();
-  if(!fecha){ est.innerHTML = '<span style="color:var(--amber,#f59e0b);">Elige la fecha.</span>'; return; }
-  est.textContent = 'Guardando…';
-  try{
-    await guardarEnLotesSupabase('festivos', [{ fecha, pais, nombre: nombre||null, creado_por:'SAR' }]);
-    await cargarFestivos();
-    renderListaFestivos();
-    est.innerHTML = `<span style="color:var(--buy,#22c55e);">Guardado: ${fecha} (${pais})</span>`;
-    document.getElementById('mfNombre').value = '';
-  }catch(e){
-    est.innerHTML = `<span style="color:var(--sell,#ef4444);">No se pudo guardar: ${e.message}</span>`;
-  }
-}
-
-// Los próximos festivos de cada país, para ver de un vistazo qué viene.
-function renderListaFestivos(){
-  const cont = document.getElementById('mfLista');
-  if(!cont) return;
-  const hoy = _hoyISO();
-  const prox = (set, n) => [...set].filter(d=>d >= hoy).sort().slice(0, n);
-  const fmt = iso => { const [y,m,d] = iso.split('-'); return `${d}/${m}/${y}`; };
-  cont.innerHTML = `
-    <div style="display:flex;gap:24px;flex-wrap:wrap;font-size:12px;">
-      <div><div class="field-note" style="margin-bottom:4px;">PRÓXIMOS EN COLOMBIA — afectan RVL</div>
-        ${prox(_festivosCO,5).map(d=>`<div>${fmt(d)}</div>`).join('') || '<div class="field-note">—</div>'}</div>
-      <div><div class="field-note" style="margin-bottom:4px;">PRÓXIMOS EN ESTADOS UNIDOS — afectan FX</div>
-        ${prox(_festivosUS,5).map(d=>`<div>${fmt(d)}</div>`).join('') || '<div class="field-note">—</div>'}</div>
-    </div>`;
 }
 
 async function guardarPortafolioMaestro(){
@@ -7041,8 +6786,6 @@ const _CONFLICTO_POR_TABLA = {
   maestro_portafolios: 'deceval',
   maestro_especies: 'especie',
   rvi_historico: 'id',
-  festivos: 'fecha,pais',
-  maestro_deceval: 'deceval',
 };
 async function guardarEnLotesSupabase(tabla, filas, tamanoLote=200){
   const conflicto = _CONFLICTO_POR_TABLA[tabla] || '';
@@ -8920,33 +8663,12 @@ let _cierresAnteriores = {};
 
 async function cargarCierreAnterior(){
   try{
-    const filas = await supaFetch('cierres_mercado', `fecha=lt.${_hoyISO()}&order=fecha.desc&limit=2000`);
+    const filas = await supaFetch('cierres_mercado', `fecha=lt.${_hoyISO()}&order=fecha.desc&limit=200`);
     if(!filas.length) return;
     const ultima = filas[0].fecha;
     _cierresAnteriores = {};
     filas.filter(f=>f.fecha === ultima).forEach(f=>{ _cierresAnteriores[f.nemo] = Number(f.ultimo)||0; });
     console.log('Informe diario: cierre anterior cargado ('+ultima+', '+Object.keys(_cierresAnteriores).length+' especies)');
-
-    // ---- BASE DEL MTD ----
-    // El MTD se mide contra el ÚLTIMO CIERRE DEL MES PASADO, no contra una
-    // tabla fija. La tabla traía julio y en septiembre daba GRUPOSURA +24,96%
-    // cuando el dato real es +11,49% — 68.680 contra el cierre del 31-ago de
-    // 61.600, no contra los 54.960 de julio (Sergio, 03-sep).
-    const hoy = new Date();
-    const primeroDeMes = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}-01`;
-    const delMesPasado = filas.filter(f=>String(f.fecha) < primeroDeMes);
-    if(delMesPasado.length){
-      const cierreMes = delMesPasado[0].fecha;    // vienen ordenadas desc
-      let n = 0;
-      delMesPasado.filter(f=>f.fecha === cierreMes).forEach(f=>{
-        const v = Number(f.ultimo) || 0;
-        if(v > 0){ _CIERRE_MTD[f.nemo] = v; n++; }
-      });
-      console.log(`Informe diario: base del MTD = cierre del ${cierreMes} (${n} especies)`);
-    }else{
-      console.warn('Informe diario: no hay cierre del mes pasado guardado; ' +
-                   'el MTD usa la tabla fija y puede estar desactualizado.');
-    }
   }catch(e){
     console.warn('No se pudo cargar cierres_mercado (¿falta crear la tabla?):', e.message);
   }
@@ -9584,81 +9306,31 @@ function folioCOR(tcn, especie, fechaISO){
   return f + seg + String(tcn).padStart(6,'0');
 }
 
-// `mercado` acota la acción a las casillas de ese módulo: cada barra maneja
-// solo lo suyo (Sergio, 03-sep).
-function seleccionarCOR(modo, mercado){
-  const mkts = mercado ? [mercado] : ['FX','RVL','RVI'];
-  mkts.forEach(mkt=>{
-    const clientes = [...new Set((_reportesGenerados||[])
-      .filter(r=>r.modulo === mkt).map(r=>r.cliente))];
-    _selCOR[mkt].clear();
-    if(modo === 'todos') clientes.forEach(c=>_selCOR[mkt].add(c));
-    else if(modo === 'pendientes'){
-      // En RVI lo que se registra es la planilla del BO, no el COR.
-      const puesto = mkt === 'RVI' ? 'BO' : mkt;
-      clientes.filter(c=>vecesCargadoCOR(puesto, c) === 0).forEach(c=>_selCOR[mkt].add(c));
-    }
-  });
-  renderFichasCOR();
-}
-
-// Los clientes reportados aparecen como FICHAS en la barra de su módulo, y se
-// marcan con un clic. Van saliendo solas a medida que se reporta, así todo
-// —elegir y exportar— queda en un mismo punto (Sergio, 03-sep).
-let _selCOR = { FX:new Set(), RVL:new Set(), RVI:new Set() };
-
-function renderFichasCOR(){
-  ['FX','RVL','RVI'].forEach(mkt=>{
-    const cont = document.getElementById('fichas' + mkt);
-    if(!cont) return;
-    const clientes = [...new Set((_reportesGenerados||[])
-      .filter(r=>r.modulo === mkt).map(r=>r.cliente))].sort();
-    if(!clientes.length){
-      cont.innerHTML = `<span class="field-note" style="font-size:11px;">Sin reportes de ${mkt} todavía.</span>`;
-      _selCOR[mkt].clear();
-      return;
-    }
-    // Se descarta lo que ya no exista (p. ej. tras limpiar el día).
-    [..._selCOR[mkt]].forEach(c=>{ if(!clientes.includes(c)) _selCOR[mkt].delete(c); });
-    cont.innerHTML = clientes.map(c=>{
-      const puesto = mkt === 'RVI' ? 'BO' : mkt;
-      const cargado = vecesCargadoCOR(puesto, c) > 0;
-      const on = _selCOR[mkt].has(c);
-      return `<span onclick="toggleFichaCOR('${mkt}','${String(c).replace(/'/g,"\\'")}')"
-        title="${c}${cargado ? ' · ya cargado' : ''}"
-        style="cursor:pointer;user-select:none;font-size:11.5px;padding:3px 10px;border-radius:12px;
-               border:1px solid ${on ? 'var(--accent,#818cf8)' : 'var(--border,#232938)'};
-               background:${on ? 'var(--accent,#818cf8)' : 'transparent'};
-               color:${on ? '#fff' : 'inherit'};font-weight:${on ? '700' : '400'};
-               ${cargado && !on ? 'opacity:.55;' : ''}">
-        ${typeof _dashCorto === 'function' ? _dashCorto(c) : c}${cargado ? ' ✓' : ''}</span>`;
-    }).join('');
+function seleccionarCOR(modo){
+  document.querySelectorAll('.chk-cor').forEach(ch=>{
+    if(modo === 'ninguno') ch.checked = false;
+    else if(modo === 'todos') ch.checked = true;
+    else if(modo === 'pendientes') ch.checked = vecesCargadoCOR(ch.dataset.mod, ch.dataset.cli) === 0;
   });
   renderResumenSeleccionCOR();
 }
 
-function toggleFichaCOR(mkt, cliente){
-  if(_selCOR[mkt].has(cliente)) _selCOR[mkt].delete(cliente);
-  else _selCOR[mkt].add(cliente);
-  renderFichasCOR();
-}
-
 function renderResumenSeleccionCOR(){
-  [['FX','selFX','btnFxMultiple'],['RVL','selRVL','btnCorMultiple'],['RVI','selRVI','btnBoMultiple']]
-   .forEach(([mkt, idTxt, idBtn])=>{
-    const suyos = [..._selCOR[mkt]];
-    const btn = document.getElementById(idBtn);
-    if(btn) btn.disabled = suyos.length === 0;
-    const el = document.getElementById(idTxt);
-    if(!el) return;
-    el.textContent = suyos.length === 0
-      ? 'Toca los clientes que vas a incluir.'
-      : `${suyos.length} en un solo archivo: ${suyos.join(' · ')}`;
-  });
+  const sel = [...document.querySelectorAll('.chk-cor')].filter(ch=>ch.checked);
+  const el = document.getElementById('corSeleccion');
+  const btn = document.getElementById('btnCorMultiple');
+  if(btn) btn.disabled = !sel.some(ch=>ch.dataset.mod === 'RVL');
+  const btnBo = document.getElementById('btnBoMultiple');
+  if(btnBo) btnBo.disabled = !sel.some(ch=>ch.dataset.mod === 'RVI');
+  if(!el) return;
+  el.textContent = sel.length === 0
+    ? 'Marca los clientes que vas a subir.'
+    : `${sel.length} cliente(s): ${sel.map(ch=>ch.dataset.cli).join(' · ')}`;
 }
 
 function descargarCORSeleccionados(){
-  const sel = [..._selCOR.RVL].map(c=>({modulo:'RVL', cliente:c}));
+  const sel = [...document.querySelectorAll('.chk-cor')].filter(ch=>ch.checked)
+    .map(ch=>({ modulo: ch.dataset.mod, cliente: ch.dataset.cli }));
   if(!sel.length){ alert('Marca al menos un cliente.'); return; }
   descargarCOR(sel);
 }
@@ -9886,86 +9558,9 @@ async function descargarPlanillaBO(clientes){
   }catch(e){ console.warn('No se pudo registrar la planilla:', e.message); }
 }
 
-// FX al Back Office: una fila por operación del día, con lo que se le confirma
-// al cliente y lo que nos queda a la mesa (Sergio, 03-sep).
-async function descargarFX(clientes){
-  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
-  const H = ['FECHA','CLIENTE','LADO','MONTO USD','TASA CLIENTE','VALOR COP','COM. EQS','MODELO'];
-  const filas = [];
-  const resumen = [];
-  clientes.forEach(cli=>{
-    const suyas = (typeof operaciones !== 'undefined' ? operaciones : [])
-      .filter(o=>{
-        if(o.fecha && String(o.fecha).slice(0,10) !== _hoyISO()) return false;
-        return _dashClave(o.cliente || o.grupo || '') === _dashClave(cli);
-      });
-    suyas.forEach(o=>{
-      const monto = Number(o.amount || o.monto) || 0;
-      let tasa = 0, com = 0;
-      try {
-        const r = calcularDesdeValores(o.modelo, o.side, monto, o.params);
-        tasa = r.tasaFinalCliente || 0;
-        com = Number(r.comEqs) || 0;
-      } catch(e){
-        tasa = (o.params && (o.params.rateUnica || o.params.rate)) || 0;
-        com = Number(o.comEqs) || 0;
-      }
-      filas.push({
-        'FECHA': new Date(), 'CLIENTE': cli,
-        'LADO': String(o.side||'').toUpperCase() === 'BUY' ? 'COMPRA' : 'VENTA',
-        'MONTO USD': monto, 'TASA CLIENTE': redondear(tasa, 2),
-        'VALOR COP': redondear(monto * tasa, 2), 'COM. EQS': redondear(com, 2),
-        'MODELO': o.modelo || '',
-      });
-    });
-    if(suyas.length) resumen.push({cliente:cli, n:suyas.length});
-  });
-  if(!filas.length){ alert('No se encontraron operaciones de FX de esos clientes hoy.'); return; }
-
-  const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('Hoja1');
-  H.forEach((h,i)=>{
-    const c = ws.getCell(1, i+1);
-    c.value = h;
-    c.font = { name:'Calibri', size:11, bold:true, color:{argb:'FFFFFFFF'} };
-    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF13294B'} };
-    c.alignment = { horizontal:'center' };
-  });
-  filas.forEach((f,i)=>{
-    const r = i+2;
-    H.forEach((col,c)=>{ ws.getCell(r, c+1).value = f[col]; });
-    ws.getCell(r,1).numFmt = 'dd/mm/yyyy';
-    ws.getCell(r,4).numFmt = '#,##0.00';
-    [5,6,7].forEach(c=>{ ws.getCell(r,c).numFmt = '#,##0.00'; });
-  });
-  autofitColumnas(ws, {min:9, max:28});
-  const d = new Date();
-  const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
-  const buf = await wb.xlsx.writeBuffer();
-  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-  const a = document.createElement('a');
-  a.href = url; a.download = `FX_BACKOFFICE_${slug}.xlsx`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-
-  try{
-    await guardarEnLotesSupabase('cargas_cor', resumen.map(r=>({
-      fecha: _hoyISO(), modulo:'FX', cliente:r.cliente,
-      version: vecesCargadoCOR('FX', r.cliente) + 1, n_filas:r.n, generado_por:'SAR',
-    })));
-    await cargarRegistroCOR();
-    renderModuloReportes();
-  }catch(e){ console.warn('No se pudo registrar el envío de FX:', e.message); }
-}
-
-function descargarFXSeleccionados(){
-  const sel = [..._selCOR.FX];
-  if(!sel.length){ alert('Marca al menos un cliente de FX.'); return; }
-  descargarFX(sel);
-}
-
 function descargarBOSeleccionados(){
-  const sel = [..._selCOR.RVI];
+  const sel = [...document.querySelectorAll('.chk-cor')].filter(ch=>ch.checked && ch.dataset.mod === 'RVI')
+    .map(ch=>ch.dataset.cli);
   if(!sel.length){ alert('Marca al menos un cliente de RVI.'); return; }
   descargarPlanillaBO(sel);
 }
@@ -10085,55 +9680,10 @@ function filtrarDashMercado(m){
   renderDashboard();
 }
 
-// Comisiones de los clientes que NO llevan reporte nuestro (brokers y mesas
-// que operan por acá). Son tarifa ÚNICA, así que el dashboard puede mostrarlas
-// desde que se opera, sin esperar a nada. Van SIN IVA: el dashboard muestra
-// ingreso, y el IVA se le entrega a la DIAN (Sergio, 03-sep).
-const COMISION_NO_REPORTA = {
-  'ASHMORE': 0.00050,
-  'BISG': 0.00042,
-  'BNPB': 0.00084,
-  'BRSE': 0.00060,
-  'CITI_NY': 0.00084,
-  'COWEN': 0.00200,
-  'CREDICORPFFMM': 0.00100,
-  'CSI': 0.00100,            // la tabla decía 0,252%: era un error de la dinámica
-  'GOLDMAN': 0.00100,
-  'HORZ': 0.00060,
-  'HSBC_NY': 0.00055,
-  'ITAU': 0.00070,
-  'JPMNY': 0.00060,
-  'JPMORGANCL': 0.00060,
-  'MLI': 0.00084,
-  'MORGAN STANLEY': 0.00077,
-  'PLURAL': 0.00084,
-  'SANTNYCV': 0.00060,
-  'SCOTIA': 0.00060,
-  'XPUS': 0.00084,
-};
-
 function _dashTarifaCierta(cliente){
   // Tarifa única = certeza. Variable por especie o por bloque/pantalla = no.
-  // Los que no llevan reporte tienen tarifa única conocida.
-  // Coincidencia EXACTA únicamente: ASHMORE (0,05%) y FIDUASHMORE (0,09%) son
-  // clientes distintos, y `normalizarGrupo` los une — buscar por ahí le ponía
-  // a Fiduashmore la tarifa de Ashmore (Sergio, 03-sep).
-  const cn = String(cliente||'').toUpperCase().trim();
-  if(COMISION_NO_REPORTA[cn] != null) return COMISION_NO_REPORTA[cn];
-
-  // Se busca por grupo, por book Y por el nombre completo del cliente: el
-  // dashboard usa el nombre largo ("ANDES INVESTMENT GROUP INC") y la tabla
-  // el corto ("LARRAIN VIAL PP"), así que sin esto Andes salía como pendiente
-  // pese a tener tarifa única de 0,1% (Sergio, 03-sep).
-  const norm = t => String(t||'').toUpperCase().trim();
   const g = (typeof GRUPO_COMISIONES_DB !== 'undefined' ? GRUPO_COMISIONES_DB : [])
-    .find(x=>{
-      if(normalizarGrupo(x.grupo) === normalizarGrupo(cliente)) return true;
-      if(norm(x.book) === norm(cliente)) return true;
-      if(norm(x.grupo) === norm(cliente)) return true;
-      const cfg = (typeof clientesDB !== 'undefined') ? clientesDB[x.grupo] : null;
-      return cfg && norm(cfg.nombre) === norm(cliente);
-    });
+    .find(x=>normalizarGrupo(x.grupo) === normalizarGrupo(cliente) || x.book === cliente);
   if(!g) return null;
   if(g.variable || g.bloque) return null;         // depende de la marca: no se sabe aún
   return Number(g.base) || null;                  // p.ej. 0.001 = 0,1%
@@ -10171,10 +9721,8 @@ function _dashDatos(){
   const vistos = new Set();
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
     const t = _fidessaTradesRaw[oid];
-    // Los brokers y mesas que no llevan reporte SÍ generan comisión y volumen:
-    // antes se descartaban del dashboard y su ingreso no se veía (Sergio, 03-sep).
     const cli = _dashClave(t.grupo);
-    if(!cli) return;
+    if(!cli || !clienteRequiereReporte(normalizarGrupo(t.grupo))) return;
     const q = Number(t.qtyDone)||0, px = Number(t.avgPx)||0;
     if(!q || !px) return;
     vistos.add(cli + '|' + nemoCanonico(t.security,'fidessa') + '|' + t.lado);
@@ -10207,26 +9755,6 @@ function _dashDatos(){
     const margen = String(h.side||'').toUpperCase()==='SELL' ? (pxNos - px)*q : (px - pxNos)*q;
     const util = (Number(h.cost)||0) + margen - (Number(h.ccsi)||0);
     sumar('RVI', _dashClave(cli), bruto, util, true);   // en RVI el dato ya es cierto
-  });
-
-  // Lo que está FILLED en EMSX y todavía no se ha registrado: el volumen ya se
-  // operó, así que debe verse desde ya. Cuando se guarde la operación sale de
-  // aquí y entra arriba con su comisión (Sergio, 03-sep).
-  const yaEnHistorial = new Set((historial||[]).map(h=>
-    String(h.symbol||'').toUpperCase() + '|' + String(h.side||'') + '|' + Number(h.qty||0)));
-  (typeof emsxData !== 'undefined' ? emsxData : []).forEach(r=>{
-    if(String(r.status||'').toUpperCase() !== 'FILLED') return;
-    const q = Number(r.qty)||0, px = Number(r.avgPr)||0;
-    if(!q || !px) return;
-    const sym = tickerLimpioRVI(r.especie).toUpperCase();
-    // Si la línea ya se registró (por su especie, lado y cantidad), no se
-    // cuenta dos veces.
-    if(yaEnHistorial.has(sym + '|' + r.lado + '|' + q)) return;
-    // Nuestra propia línea contra el mercado no es volumen de cliente.
-    if(/CREDICORP/i.test(String(r.firm||'')) && !r.cliente) return;
-    const cli = _dashClave(r.cliente || r.firm || '');
-    if(!cli) return;
-    sumar('RVI', cli, q * px, 0, false);   // sin comisión: falta registrarla
   });
 
   // ---------- FX ----------
@@ -10316,6 +9844,63 @@ function renderDashboard(){
 // Los cruces más grandes del día, desde los folios de Fidessa. Es el mismo
 // dato que los "mayores bloques" del informe diario, pero de NUESTRAS
 // operaciones (Sergio, 02-sep).
+function renderDashBloques(){
+  const cont = document.getElementById('dashBloques');
+  if(!cont) return;
+  const filas = (foliosFidessa||[])
+    .filter(f=>{
+      if(_dashMercado && _dashMercado !== 'RVL') return false;
+      if(_dashCliente && normalizarGrupo(f.cliente) !== _dashCliente) return false;
+      return (Number(f.cantidad)||0) > 0 && (Number(f.precio)||0) > 0;
+    })
+    .map(f=>{
+      // El folio trae COLCCP cuando salió de un composite; el cliente real está
+      // en la orden de Fidessa Trades que lo originó (Sergio, 02-sep).
+      // 1) por el Parent Order ID  2) si el folio no lo trae (pasa con los
+      // composites), por especie + lado contra las órdenes del día
+      // 3) lo que diga el folio. COLCCP es la cuenta interna: nunca es cliente.
+      let t = (_fidessaTradesRaw||{})[f.parentOrderId];
+      if(!t){
+        const k = Object.keys(_fidessaTradesRaw||{}).find(x=>{
+          const o = _fidessaTradesRaw[x];
+          return nemoCanonico(o.security,'fidessa') === f.especie && o.lado === f.lado;
+        });
+        if(k) t = _fidessaTradesRaw[k];
+      }
+      let cli = (t && normalizarGrupo(t.grupo)) || f.cliente;
+      if(/^COLCCP$/i.test(String(cli||''))) cli = '';
+      return { ...f, _cliReal: _dashClave(cli), monto: f.cantidad * f.precio };
+    })
+    .sort((a,b)=>b.monto - a.monto)
+    .slice(0, 8);
+  if(!filas.length){
+    cont.innerHTML = '<div class="field-note">Sin folios cargados todavía.</div>';
+    return;
+  }
+  cont.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <tr style="opacity:.6;font-size:10px;letter-spacing:.4px;">
+        <th style="text-align:left;padding:3px 6px;">FOLIO</th>
+        <th style="text-align:left;padding:3px 6px;">CLIENTE</th>
+        <th style="text-align:left;padding:3px 6px;">ESPECIE</th>
+        <th style="text-align:left;padding:3px 6px;">LADO</th>
+        <th style="text-align:right;padding:3px 6px;">CANTIDAD</th>
+        <th style="text-align:right;padding:3px 6px;">PRECIO</th>
+        <th style="text-align:right;padding:3px 6px;">MONTO</th>
+      </tr>
+      ${filas.map(f=>`<tr style="border-top:1px solid var(--border,#232938);">
+        <td class="mono-id" style="padding:4px 6px;">${f.folio}</td>
+        <td style="padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;"
+            title="${f._cliReal||''}">${_dashCorto(f._cliReal)||'—'}</td>
+        <td class="mono-id" style="padding:4px 6px;">${f.especie}</td>
+        <td style="padding:4px 6px;">${f.lado}</td>
+        <td style="text-align:right;padding:4px 6px;">${fmtInt(f.cantidad)}</td>
+        <td style="text-align:right;padding:4px 6px;">${fmtRate(f.precio)}</td>
+        <td style="text-align:right;padding:4px 6px;font-weight:700;">$${(f.monto/1e6).toLocaleString('es-CO',{maximumFractionDigits:1})} MM</td>
+      </tr>`).join('')}
+    </table>`;
+}
+
 // Panel de clientes: filtra todo lo demás al hacer clic.
 function renderDashClientes(M){
   const cont = document.getElementById('dashClientes');
@@ -10352,8 +9937,7 @@ function filtrarDashCliente(c){
   renderDashboard();
 }
 
-// Barras de volumen y de lo que ganamos, por cliente. Pesos y dólares van en
-// bloques separados: una barra que mezcla monedas no significa nada.
+// Barras de volumen y de lo que ganamos, por cliente.
 function renderDashBarras(M){
   const paleta = ['#818cf8','#22c55e','#f59e0b','#38bdf8','#f472b6','#a78bfa','#34d399','#fb923c'];
   const barra = (destino, campo) => {
@@ -10373,6 +9957,8 @@ function renderDashBarras(M){
       cont.innerHTML = '<div class="field-note">Sin datos todavía.</div>';
       return;
     }
+    // Pesos y dólares van en BLOQUES SEPARADOS, con su propio subtítulo: una
+    // barra que mezcla COP con USD no significa nada (Sergio, 02-sep).
     const maxPorMoneda = {};
     filas.forEach(f=>{ maxPorMoneda[f.moneda] = Math.max(maxPorMoneda[f.moneda]||0, f.valor); });
     const totPorMoneda = {};
@@ -10396,7 +9982,8 @@ function renderDashBarras(M){
       </div>`;
     };
     const bloque = (moneda, titulo, mercados) => {
-      const suyas = filas.filter(f=>f.moneda === moneda).sort((a,b)=>b.valor - a.valor);
+      const suyas = filas.filter(f=>f.moneda === moneda)
+                         .sort((a,b)=>b.valor - a.valor);
       if(!suyas.length) return '';
       return `<div style="font-size:11px;font-weight:700;letter-spacing:.4px;opacity:.55;
                   margin:${moneda==='USD'?'14px':'0'} 0 6px;">${titulo}
@@ -10416,24 +10003,27 @@ function renderDashPendientes(){
   if(!cont) return;
   const avisos = [];
 
+  // RVL: órdenes de Fidessa sin reportar.
   let sinReportar = 0;
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
     const t = _fidessaTradesRaw[oid];
-    const cli = normalizarGrupo(t.grupo);
-    if(!cli || !clienteRequiereReporte(cli)) return;
+    const cli = _dashClave(t.grupo);
+    if(!cli || !clienteRequiereReporte(normalizarGrupo(t.grupo))) return;
     if(_lineasNoReportar.has(String(oid))) return;
-    if(vecesReportada(oid) === 0) sinReportar++;
+    if(!(_reportesGenerados||[]).some(r=>String(r.parent_order_id).startsWith(String(oid)))) sinReportar++;
   });
   if(sinReportar) avisos.push(`<b>${sinReportar}</b> orden(es) de RVL sin reportar`);
 
+  // RVI: líneas de EMSX marcadas pero no guardadas.
   const rviPend = (emsxData||[]).filter(r=>
     String(r.status||'').toUpperCase()==='FILLED' &&
     !(historial||[]).some(h=>String(h.symbol||'') === tickerLimpioRVI(r.especie))).length;
   if(rviPend) avisos.push(`<b>${rviPend}</b> línea(s) de RVI sin procesar`);
 
+  // Reportado pero sin cargar al COR.
   const sinCOR = [...new Set((_reportesGenerados||[])
-    .filter(r=>r.modulo==='RVL').map(r=>r.cliente))]
-    .filter(c=>vecesCargadoCOR('RVL', c) === 0).length;
+    .filter(r=>r.modulo==='RVL')
+    .map(r=>r.cliente))].filter(c=>vecesCargadoCOR('RVL', c) === 0).length;
   if(sinCOR) avisos.push(`<b>${sinCOR}</b> cliente(s) reportado(s) sin cargar al COR`);
 
   if(!avisos.length){
@@ -10447,76 +10037,7 @@ function renderDashPendientes(){
     ${avisos.map(a=>`<span>⚠ ${a}</span>`).join('')}</div>`;
 }
 
-function renderDashBloques(){
-  const cont = document.getElementById('dashBloques');
-  if(!cont) return;
-
-  // Resuelve el cliente de un folio SIN depender de Fidessa Trades, que solo
-  // llega al cierre del día. El folio trae COLCCP cuando salió de un composite;
-  // en ese caso el dueño está en los folios HERMANOS del mismo TCN, que son las
-  // patas del reparto y sí traen su Client/Book (Sergio, 03-sep).
-  const clienteDeFolio = f => {
-    // 1) Fidessa Trades, si ya está cargado
-    const t = (_fidessaTradesRaw||{})[f.parentOrderId];
-    let cli = (t && normalizarGrupo(t.grupo)) || '';
-    // 2) lo que diga el propio folio
-    if(!cli && f.cliente && !/^COLCCP$/i.test(String(f.cliente))) cli = normalizarGrupo(f.cliente);
-    // 3) las patas del mismo TCN: el composite comparte folio con su reparto
-    if(!cli){
-      const hermanos = (foliosFidessa||[]).filter(x=>
-        String(x.folio) === String(f.folio) && x.lado === f.lado &&
-        x.cliente && !/^COLCCP$/i.test(String(x.cliente)));
-      if(hermanos.length) cli = normalizarGrupo(hermanos[0].cliente);
-    }
-    // 4) el mismo TCN pero del otro lado no sirve: sería la contraparte.
-    return _dashClave(cli);
-  };
-
-  const filas = (foliosFidessa||[])
-    .filter(f=>{
-      if(_dashMercado && _dashMercado !== 'RVL') return false;
-      return (Number(f.cantidad)||0) > 0 && (Number(f.precio)||0) > 0;
-    })
-    .map(f=>({ ...f, _cliReal: clienteDeFolio(f), monto: f.cantidad * f.precio }))
-    .filter(f=>{
-      if(_dashCliente && f._cliReal !== _dashCliente) return false;
-      return true;
-    })
-    .sort((a,b)=>b.monto - a.monto)
-    .slice(0, 8);
-
-  if(!filas.length){
-    cont.innerHTML = '<div class="field-note">Sin folios cargados todavía.</div>';
-    return;
-  }
-  cont.innerHTML = `
-    <table style="width:100%;border-collapse:collapse;font-size:12px;">
-      <tr style="opacity:.6;font-size:10px;letter-spacing:.4px;">
-        <th style="text-align:left;padding:3px 6px;">FOLIO</th>
-        <th style="text-align:left;padding:3px 6px;">CLIENTE</th>
-        <th style="text-align:left;padding:3px 6px;">ESPECIE</th>
-        <th style="text-align:left;padding:3px 6px;">LADO</th>
-        <th style="text-align:right;padding:3px 6px;">CANTIDAD</th>
-        <th style="text-align:right;padding:3px 6px;">PRECIO</th>
-        <th style="text-align:right;padding:3px 6px;">MONTO</th>
-      </tr>
-      ${filas.map(f=>`<tr style="border-top:1px solid var(--border,#232938);">
-        <td class="mono-id" style="padding:4px 6px;">${f.folio}</td>
-        <td style="padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px;"
-            title="${f._cliReal||''}">${_dashCorto(f._cliReal) || '<span style="opacity:.4;">—</span>'}</td>
-        <td class="mono-id" style="padding:4px 6px;">${f.especie}</td>
-        <td style="padding:4px 6px;">${f.lado}</td>
-        <td style="text-align:right;padding:4px 6px;">${fmtInt(f.cantidad)}</td>
-        <td style="text-align:right;padding:4px 6px;">${fmtRate(f.precio)}</td>
-        <td style="text-align:right;padding:4px 6px;font-weight:700;">$${(f.monto/1e6).toLocaleString('es-CO',{maximumFractionDigits:1})} MM</td>
-      </tr>`).join('')}
-    </table>`;
-}
-
 function renderModuloReportes(){
-  // Las fichas se repintan con cada cambio: los clientes van apareciendo a
-  // medida que se reporta.
-  setTimeout(()=>{ if(typeof renderFichasCOR === 'function') renderFichasCOR(); }, 0);
   const resumen = document.getElementById('reportesResumen');
   if(!document.getElementById('repRVL')) return;
   const total = _reportesGenerados.length;
@@ -10547,19 +10068,18 @@ function renderModuloReportes(){
             return `
             <div class="blotter-wrap" style="margin-bottom:14px;">
               <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);gap:10px;">
-                <!-- La selección múltiple vive ARRIBA, en las fichas de cada
-                     módulo: bajar a marcar y volver a subir a exportar era
-                     incómodo con varios clientes (Sergio, 03-sep). -->
-                <strong>${cli}</strong>
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                  <input type="checkbox" class="chk chk-cor" data-mod="${mod}" data-cli="${String(cli).replace(/"/g,'&quot;')}"
+                         onclick="renderResumenSeleccionCOR()">
+                  <strong>${cli}</strong>
+                </label>
                 <span style="display:flex;align-items:center;gap:10px;">
                   <span class="field-note">${etiquetaVersion(ultima)} · ${rs.length} línea(s) · ${fmtInt(qty)} · comisión ${fmtMoney(com)}</span>
-                  ${badgeCargaCOR(mod === 'RVI' ? 'BO' : mod, cli)}
+                  ${mod === 'FX' ? '' : badgeCargaCOR(mod === 'RVI' ? 'BO' : mod, cli)}
                   ${mod === 'RVL' ? `<button class="btn small purple" title="Descargar el archivo de complementación para subir al COR"
                      onclick="descargarCOR([{modulo:'${mod}', cliente:'${String(cli).replace(/'/g,"\\'")}'}])">📥 COR</button>` : ''}
                   ${mod === 'RVI' ? `<button class="btn small purple" title="Descargar la planilla del Back Office con las dos patas"
                      onclick="descargarPlanillaBO(['${String(cli).replace(/'/g,"\\'")}'])">📥 Planilla BO</button>` : ''}
-                  ${mod === 'FX' ? `<button class="btn small purple" title="Descargar lo que se le envía al Back Office"
-                     onclick="descargarFX(['${String(cli).replace(/'/g,"\\'")}'])">📥 BO</button>` : ''}
                 </span>
               </div>
               <table><thead><tr>
@@ -15258,14 +14778,6 @@ const clientesRVI = {
     comETF:0.008, comUCIT:0.08/100, comADR:0.008,
     portafolios:['BBVA PORTAFOLIO'],
   },
-  METLIFE: {
-    nombre:'METLIFE SEGUROS DE VIDA S.A.',
-    taxId:'860.068.182-5',
-    // ETF y ADR 0,01 por acción; UCITS 0,1% del gross. Mínimo USD 20 en los
-    // dos casos (Sergio, 03-sep).
-    comETF:0.01, comUCIT:0.1/100, comADR:0.01,
-    portafolios:['METLIFE COLOMBIA SEGUROS DE VIDA S.A.'],
-  },
   ITAU: {
     nombre:'ITAU ASSET MANAGEMENT',
     taxId:'860.068.182-5',
@@ -17150,7 +16662,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-03 20:09 UTC';
+const BUILD_ID = '2026-09-02 21:27 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -17160,10 +16672,6 @@ try{
 cargarLineasNoReportar().then(cargarReportesGenerados);
 // Histórico de RVI y registro de cargas al COR: los dos viven en Supabase para
 // que sobrevivan a un refresco de la página.
-if(typeof cargarMaestroDeceval === 'function') cargarMaestroDeceval();
-if(typeof cargarFestivos === 'function') cargarFestivos().then(()=>{
-  if(typeof renderListaFestivos === 'function') renderListaFestivos();
-});
 if(typeof cargarHistoricoRVI === 'function') cargarHistoricoRVI();
 if(typeof cargarRegistroCOR === 'function'){
   cargarRegistroCOR().then(()=>{ if(typeof renderModuloReportes === 'function') renderModuloReportes(); });
