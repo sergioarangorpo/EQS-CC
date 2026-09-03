@@ -10584,25 +10584,23 @@ function renderDashPendientes(){
   if(!cont) return;
 
   // --- RVL: órdenes sin reportar, con su cliente ---
-  const rvlSinReportar = [];
+  const porCliRVL = {};
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
     const t = _fidessaTradesRaw[oid];
     const cli = normalizarGrupo(t.grupo);
     if(!cli || !clienteRequiereReporte(cli)) return;
     if(_lineasNoReportar.has(String(oid))) return;
     if(vecesReportada(oid) === 0){
-      rvlSinReportar.push({ cliente: _dashClave(cli), especie: nemoCanonico(t.security,'fidessa') });
+      const c = _dashClave(cli);
+      porCliRVL[c] = (porCliRVL[c]||0) + 1;
     }
   });
-  const porCliRVL = {};
-  rvlSinReportar.forEach(x=>{ porCliRVL[x.cliente] = (porCliRVL[x.cliente]||0) + 1; });
 
   // --- RVI: líneas FILLED que aún no se han guardado ---
-  const rviPend = (emsxData||[]).filter(r=>
-    String(r.status||'').toUpperCase()==='FILLED' &&
-    !(historial||[]).some(h=>String(h.symbol||'') === tickerLimpioRVI(r.especie)));
   const porCliRVI = {};
-  rviPend.forEach(r=>{
+  (emsxData||[]).forEach(r=>{
+    if(String(r.status||'').toUpperCase() !== 'FILLED') return;
+    if((historial||[]).some(h=>String(h.symbol||'') === tickerLimpioRVI(r.especie))) return;
     const c = _dashClave(r.cliente || r.firm || '');
     if(c) porCliRVI[c] = (porCliRVI[c]||0) + 1;
   });
@@ -10615,7 +10613,7 @@ function renderDashPendientes(){
   };
   const corRVL = sinLlevar('RVL'), boRVI = sinLlevar('RVI'), boFX = sinLlevar('FX');
 
-  const nada = !rvlSinReportar.length && !rviPend.length &&
+  const nada = !Object.keys(porCliRVL).length && !Object.keys(porCliRVI).length &&
                !corRVL.length && !boRVI.length && !boFX.length;
   if(nada){
     cont.innerHTML = `<div style="background:rgba(34,197,94,.10);border-left:3px solid var(--buy,#22c55e);
@@ -10624,40 +10622,35 @@ function renderDashPendientes(){
     return;
   }
 
-  const celda = (n, detalle, etiqueta) => {
-    if(!n) return `<td style="padding:6px 10px;text-align:center;opacity:.3;">—</td>`;
-    return `<td style="padding:6px 10px;text-align:center;" title="${detalle}">
-      <span style="font-size:16px;font-weight:800;color:var(--amber,#f59e0b);">${n}</span>
-      <div style="font-size:10px;opacity:.7;line-height:1.3;max-width:230px;margin:0 auto;">${etiqueta}</div></td>`;
+  // Cada cliente es una FICHA que fluye y se acomoda al ancho disponible. Una
+  // matriz de celdas fijas desbordaba con los nombres largos (Sergio, 03-sep).
+  const ficha = (texto, n) => `<span style="display:inline-flex;align-items:center;gap:6px;
+      font-size:11.5px;padding:3px 9px;border-radius:12px;background:rgba(245,158,11,.14);
+      border:1px solid rgba(245,158,11,.35);white-space:nowrap;">
+      <b style="color:var(--amber,#f59e0b);">${n}</b>${texto}</span>`;
+
+  const grupo = (titulo, obj, sufijo) => {
+    const claves = Array.isArray(obj) ? obj : Object.keys(obj);
+    if(!claves.length) return '';
+    const fichas = claves.sort().map(c=>{
+      const n = Array.isArray(obj) ? '' : obj[c];
+      return ficha(_dashCorto(c), n || '·');
+    }).join('');
+    return `<div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:8px;flex-wrap:nowrap;">
+      <span style="flex:0 0 190px;font-size:10.5px;font-weight:700;letter-spacing:.3px;
+                   opacity:.7;padding-top:4px;">${titulo}</span>
+      <span style="flex:1;display:flex;gap:6px;flex-wrap:wrap;min-width:0;">${fichas}</span>
+    </div>`;
   };
-  const lista = obj => Object.keys(obj).sort()
-    .map(c=>`${_dashCorto(c)} (${obj[c]})`).join(' · ');
 
   cont.innerHTML = `
-    <div style="background:rgba(245,158,11,.08);border-left:3px solid var(--amber,#f59e0b);
-                border-radius:6px;padding:4px 10px;">
-      <table style="width:100%;border-collapse:collapse;font-size:12px;">
-        <tr style="opacity:.6;font-size:10px;letter-spacing:.4px;">
-          <th style="text-align:left;padding:4px 10px;">MÓDULO</th>
-          <th style="padding:4px 10px;">SIN REPORTAR AL CLIENTE</th>
-          <th style="padding:4px 10px;">REPORTADO, SIN LLEVAR</th>
-        </tr>
-        <tr style="border-top:1px solid var(--border,#232938);">
-          <td style="padding:6px 10px;font-weight:700;">RVL</td>
-          ${celda(rvlSinReportar.length, lista(porCliRVL), lista(porCliRVL))}
-          ${celda(corRVL.length, corRVL.join(' · '), 'al COR: ' + corRVL.map(_dashCorto).join(' · '))}
-        </tr>
-        <tr style="border-top:1px solid var(--border,#232938);">
-          <td style="padding:6px 10px;font-weight:700;">RVI</td>
-          ${celda(rviPend.length, lista(porCliRVI), lista(porCliRVI) || 'líneas de EMSX')}
-          ${celda(boRVI.length, boRVI.join(' · '), 'a la planilla BO: ' + boRVI.map(_dashCorto).join(' · '))}
-        </tr>
-        <tr style="border-top:1px solid var(--border,#232938);">
-          <td style="padding:6px 10px;font-weight:700;">FX</td>
-          ${celda(0, '', '')}
-          ${celda(boFX.length, boFX.join(' · '), 'al BO: ' + boFX.map(_dashCorto).join(' · '))}
-        </tr>
-      </table>
+    <div style="background:rgba(245,158,11,.07);border-left:3px solid var(--amber,#f59e0b);
+                border-radius:6px;padding:12px 14px;overflow:hidden;">
+      ${grupo('RVL · SIN REPORTAR', porCliRVL)}
+      ${grupo('RVL · SIN CARGAR AL COR', corRVL)}
+      ${grupo('RVI · SIN PROCESAR', porCliRVI)}
+      ${grupo('RVI · SIN PLANILLA BO', boRVI)}
+      ${grupo('FX · SIN ENVIAR AL BO', boFX)}
     </div>`;
 }
 
@@ -17374,7 +17367,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-03 22:10 UTC';
+const BUILD_ID = '2026-09-03 22:37 UTC · v42';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
