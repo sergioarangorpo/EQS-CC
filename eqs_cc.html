@@ -2158,6 +2158,7 @@
           <button class="btn small ghost" onclick="seleccionarCOR('todos','FX')">Todos</button>
           <button class="btn small ghost" onclick="seleccionarCOR('ninguno','FX')">Limpiar</button>
         </div>
+        <div id="fichasFX" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;min-height:24px;"></div>
         <div class="field-note" id="selFX" style="font-size:11px;margin-bottom:8px;min-height:15px;">—</div>
         <button class="btn purple" id="btnFxMultiple" onclick="descargarFXSeleccionados()" disabled
                 style="width:100%;">📥 Enviar al BO</button>
@@ -2174,6 +2175,7 @@
           <button class="btn small ghost" onclick="seleccionarCOR('todos','RVL')">Todos</button>
           <button class="btn small ghost" onclick="seleccionarCOR('ninguno','RVL')">Limpiar</button>
         </div>
+        <div id="fichasRVL" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;min-height:24px;"></div>
         <div class="field-note" id="selRVL" style="font-size:11px;margin-bottom:8px;min-height:15px;">—</div>
         <button class="btn purple" id="btnCorMultiple" onclick="descargarCORSeleccionados()" disabled
                 style="width:100%;">📥 Archivo del COR</button>
@@ -2190,6 +2192,7 @@
           <button class="btn small ghost" onclick="seleccionarCOR('todos','RVI')">Todos</button>
           <button class="btn small ghost" onclick="seleccionarCOR('ninguno','RVI')">Limpiar</button>
         </div>
+        <div id="fichasRVI" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;min-height:24px;"></div>
         <div class="field-note" id="selRVI" style="font-size:11px;margin-bottom:8px;min-height:15px;">—</div>
         <button class="btn purple" id="btnBoMultiple" onclick="descargarBOSeleccionados()" disabled
                 style="width:100%;">📥 Planilla BO</button>
@@ -9563,37 +9566,78 @@ function folioCOR(tcn, especie, fechaISO){
 // `mercado` acota la acción a las casillas de ese módulo: cada barra maneja
 // solo lo suyo (Sergio, 03-sep).
 function seleccionarCOR(modo, mercado){
-  document.querySelectorAll('.chk-cor').forEach(ch=>{
-    if(mercado && ch.dataset.mod !== mercado) return;
-    if(modo === 'ninguno') ch.checked = false;
-    else if(modo === 'todos') ch.checked = true;
+  const mkts = mercado ? [mercado] : ['FX','RVL','RVI'];
+  mkts.forEach(mkt=>{
+    const clientes = [...new Set((_reportesGenerados||[])
+      .filter(r=>r.modulo === mkt).map(r=>r.cliente))];
+    _selCOR[mkt].clear();
+    if(modo === 'todos') clientes.forEach(c=>_selCOR[mkt].add(c));
     else if(modo === 'pendientes'){
       // En RVI lo que se registra es la planilla del BO, no el COR.
-      const reg = ch.dataset.mod === 'RVI' ? 'BO' : ch.dataset.mod;
-      ch.checked = vecesCargadoCOR(reg, ch.dataset.cli) === 0;
+      const puesto = mkt === 'RVI' ? 'BO' : mkt;
+      clientes.filter(c=>vecesCargadoCOR(puesto, c) === 0).forEach(c=>_selCOR[mkt].add(c));
     }
+  });
+  renderFichasCOR();
+}
+
+// Los clientes reportados aparecen como FICHAS en la barra de su módulo, y se
+// marcan con un clic. Van saliendo solas a medida que se reporta, así todo
+// —elegir y exportar— queda en un mismo punto (Sergio, 03-sep).
+let _selCOR = { FX:new Set(), RVL:new Set(), RVI:new Set() };
+
+function renderFichasCOR(){
+  ['FX','RVL','RVI'].forEach(mkt=>{
+    const cont = document.getElementById('fichas' + mkt);
+    if(!cont) return;
+    const clientes = [...new Set((_reportesGenerados||[])
+      .filter(r=>r.modulo === mkt).map(r=>r.cliente))].sort();
+    if(!clientes.length){
+      cont.innerHTML = `<span class="field-note" style="font-size:11px;">Sin reportes de ${mkt} todavía.</span>`;
+      _selCOR[mkt].clear();
+      return;
+    }
+    // Se descarta lo que ya no exista (p. ej. tras limpiar el día).
+    [..._selCOR[mkt]].forEach(c=>{ if(!clientes.includes(c)) _selCOR[mkt].delete(c); });
+    cont.innerHTML = clientes.map(c=>{
+      const puesto = mkt === 'RVI' ? 'BO' : mkt;
+      const cargado = vecesCargadoCOR(puesto, c) > 0;
+      const on = _selCOR[mkt].has(c);
+      return `<span onclick="toggleFichaCOR('${mkt}','${String(c).replace(/'/g,"\\'")}')"
+        title="${c}${cargado ? ' · ya cargado' : ''}"
+        style="cursor:pointer;user-select:none;font-size:11.5px;padding:3px 10px;border-radius:12px;
+               border:1px solid ${on ? 'var(--accent,#818cf8)' : 'var(--border,#232938)'};
+               background:${on ? 'var(--accent,#818cf8)' : 'transparent'};
+               color:${on ? '#fff' : 'inherit'};font-weight:${on ? '700' : '400'};
+               ${cargado && !on ? 'opacity:.55;' : ''}">
+        ${typeof _dashCorto === 'function' ? _dashCorto(c) : c}${cargado ? ' ✓' : ''}</span>`;
+    }).join('');
   });
   renderResumenSeleccionCOR();
 }
 
+function toggleFichaCOR(mkt, cliente){
+  if(_selCOR[mkt].has(cliente)) _selCOR[mkt].delete(cliente);
+  else _selCOR[mkt].add(cliente);
+  renderFichasCOR();
+}
+
 function renderResumenSeleccionCOR(){
-  const sel = [...document.querySelectorAll('.chk-cor')].filter(ch=>ch.checked);
   [['FX','selFX','btnFxMultiple'],['RVL','selRVL','btnCorMultiple'],['RVI','selRVI','btnBoMultiple']]
    .forEach(([mkt, idTxt, idBtn])=>{
-    const suyos = sel.filter(ch=>ch.dataset.mod === mkt);
+    const suyos = [..._selCOR[mkt]];
     const btn = document.getElementById(idBtn);
     if(btn) btn.disabled = suyos.length === 0;
     const el = document.getElementById(idTxt);
     if(!el) return;
     el.textContent = suyos.length === 0
-      ? 'Marca los clientes de este módulo.'
-      : `${suyos.length}: ${suyos.map(ch=>ch.dataset.cli).join(' · ')}`;
+      ? 'Toca los clientes que vas a incluir.'
+      : `${suyos.length} en un solo archivo: ${suyos.join(' · ')}`;
   });
 }
 
 function descargarCORSeleccionados(){
-  const sel = [...document.querySelectorAll('.chk-cor')].filter(ch=>ch.checked)
-    .map(ch=>({ modulo: ch.dataset.mod, cliente: ch.dataset.cli }));
+  const sel = [..._selCOR.RVL].map(c=>({modulo:'RVL', cliente:c}));
   if(!sel.length){ alert('Marca al menos un cliente.'); return; }
   descargarCOR(sel);
 }
@@ -9894,15 +9938,13 @@ async function descargarFX(clientes){
 }
 
 function descargarFXSeleccionados(){
-  const sel = [...document.querySelectorAll('.chk-cor')]
-    .filter(ch=>ch.checked && ch.dataset.mod === 'FX').map(ch=>ch.dataset.cli);
+  const sel = [..._selCOR.FX];
   if(!sel.length){ alert('Marca al menos un cliente de FX.'); return; }
   descargarFX(sel);
 }
 
 function descargarBOSeleccionados(){
-  const sel = [...document.querySelectorAll('.chk-cor')].filter(ch=>ch.checked && ch.dataset.mod === 'RVI')
-    .map(ch=>ch.dataset.cli);
+  const sel = [..._selCOR.RVI];
   if(!sel.length){ alert('Marca al menos un cliente de RVI.'); return; }
   descargarPlanillaBO(sel);
 }
@@ -10451,6 +10493,9 @@ function renderDashBloques(){
 }
 
 function renderModuloReportes(){
+  // Las fichas se repintan con cada cambio: los clientes van apareciendo a
+  // medida que se reporta.
+  setTimeout(()=>{ if(typeof renderFichasCOR === 'function') renderFichasCOR(); }, 0);
   const resumen = document.getElementById('reportesResumen');
   if(!document.getElementById('repRVL')) return;
   const total = _reportesGenerados.length;
@@ -10481,11 +10526,10 @@ function renderModuloReportes(){
             return `
             <div class="blotter-wrap" style="margin-bottom:14px;">
               <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);gap:10px;">
-                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                  <input type="checkbox" class="chk chk-cor" data-mod="${mod}" data-cli="${String(cli).replace(/"/g,'&quot;')}"
-                         onclick="renderResumenSeleccionCOR()">
-                  <strong>${cli}</strong>
-                </label>
+                <!-- La selección múltiple vive ARRIBA, en las fichas de cada
+                     módulo: bajar a marcar y volver a subir a exportar era
+                     incómodo con varios clientes (Sergio, 03-sep). -->
+                <strong>${cli}</strong>
                 <span style="display:flex;align-items:center;gap:10px;">
                   <span class="field-note">${etiquetaVersion(ultima)} · ${rs.length} línea(s) · ${fmtInt(qty)} · comisión ${fmtMoney(com)}</span>
                   ${badgeCargaCOR(mod === 'RVI' ? 'BO' : mod, cli)}
@@ -17085,7 +17129,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-03 19:12 UTC';
+const BUILD_ID = '2026-09-03 19:50 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
