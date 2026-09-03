@@ -2039,6 +2039,28 @@
     </div>
 
     <div class="card" style="margin-top:18px;">
+      <div class="section-label">Festivo nuevo</div>
+      <div class="field-note" style="margin-bottom:10px;">
+        Los calendarios cambian. <b>Colombia</b> define el cumplimiento de RVL;
+        <b>Estados Unidos</b> el de FX, donde además frena la operación si cae en festivo.</div>
+      <div class="field-row">
+        <div class="field"><label>Fecha</label>
+          <input type="date" id="mfFecha" style="width:170px;"></div>
+        <div class="field"><label>País</label>
+          <select id="mfPais" style="width:200px;">
+            <option value="CO">Colombia — afecta RVL</option>
+            <option value="US">Estados Unidos — afecta FX</option>
+          </select></div>
+        <div class="field" style="flex:1;"><label>Nombre <span class="field-note">(opcional)</span></label>
+          <input type="text" id="mfNombre" placeholder="Día de la Independencia"></div>
+        <div class="field" style="align-self:flex-end;">
+          <button class="btn purple" onclick="guardarFestivo()">Guardar festivo</button></div>
+      </div>
+      <div id="mfEstado" class="field-note" style="margin-top:8px;"></div>
+      <div id="mfLista" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
       <div class="section-label">Especie nueva</div>
       <div class="field-note" style="margin-bottom:10px;">
         El mercado define los tickers: RVL arma <b>NEMO CB Equity</b> y <b>NEMO.BGa</b>;
@@ -2394,13 +2416,52 @@ const festivosUS = [
   '2026-09-07','2026-10-12','2026-11-11','2026-11-26','2026-12-25',
   '2027-01-01','2027-01-18',
 ];
-const festivos = new Set([...festivosCO, ...festivosUS]);
+// Los dos calendarios se mantienen SEPARADOS: el cumplimiento de equity local
+// (RVL) sigue el colombiano y no se mueve por un festivo en Estados Unidos —
+// el 07-sep-2026 es festivo allá y hábil acá, y mezclarlos daba cumplimiento
+// 08-sep cuando corresponde 07-sep (Sergio, 03-sep).
+// FX sí usa el de US: si el cumplimiento cae en festivo allá, no se liquida.
+function _isoLocal(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
 
-function esHabil(d){
+const festivos = new Set([...festivosCO, ...festivosUS]);   // ambos, para lo que necesite los dos
+let _festivosCO = new Set(festivosCO);
+let _festivosUS = new Set(festivosUS);
+
+// Los festivos viven en Supabase para poder agregarlos sin tocar el HTML.
+// Lo de aquí arriba es el respaldo por si la tabla no responde.
+async function cargarFestivos(){
+  try{
+    const filas = await supaFetch('festivos', 'order=fecha.asc&limit=2000') || [];
+    if(!filas.length) return;
+    const co = new Set(), us = new Set();
+    filas.forEach(f=>{
+      const d = String(f.fecha).slice(0,10);
+      if(f.pais === 'US') us.add(d); else co.add(d);
+    });
+    if(co.size) _festivosCO = co;
+    if(us.size) _festivosUS = us;
+    console.log(`Festivos: ${_festivosCO.size} CO y ${_festivosUS.size} US cargados de Supabase`);
+    if(typeof initDatesRVL === 'function') initDatesRVL();
+  }catch(e){ console.warn('No se pudieron cargar los festivos, se usan los del código:', e.message); }
+}
+
+// `pais` decide qué calendario se mira: 'CO' (por defecto), 'US' o 'AMBOS'.
+function esHabil(d, pais){
   const day = d.getDay();
   if(day===0||day===6) return false;
-  const iso = d.toISOString().slice(0,10);
-  return !festivos.has(iso);
+  const iso = _isoLocal(d);
+  if(pais === 'US')    return !_festivosUS.has(iso);
+  if(pais === 'AMBOS') return !_festivosUS.has(iso) && !_festivosCO.has(iso);
+  return !_festivosCO.has(iso);
+}
+
+function esFestivoUS(d){
+  return _festivosUS.has(typeof d === 'string' ? d.slice(0,10) : _isoLocal(d));
+}
+function esFestivoCO(d){
+  return _festivosCO.has(typeof d === 'string' ? d.slice(0,10) : _isoLocal(d));
 }
 
 function parseFechaLocal(str){
@@ -2413,14 +2474,71 @@ function parseFechaLocal(str){
   return new Date(y, m - 1, d);
 }
 
-function sumarDiasHabiles(fecha, dias){
+function sumarDiasHabiles(fecha, dias, pais){
   let d = new Date(fecha);
   let added = 0;
   while(added < dias){
     d.setDate(d.getDate()+1);
-    if(esHabil(d)) added++;
+    if(esHabil(d, pais)) added++;
   }
   return d;
+}
+
+// ---------------------------------------------------------------------
+// CUMPLIMIENTO DE FX
+// El FX se liquida en Estados Unidos, así que un festivo allá bloquea la
+// fecha. Las reglas, confirmadas por Sergio el 03-sep:
+// La fecha depende de cuándo se mueve la plata del equity:
+//   - Cliente VENDE USD  (compró acciones): necesita los pesos para pagar el
+//     equity, así que el FX cumple T+1.
+//   - Cliente COMPRA USD (vendió acciones): la plata le entra cuando cumple el
+//     equity, así que el FX va T+2 — y salta si ese día es festivo allá. El
+//     03-sep una compra da 08-sep, porque el 7 es festivo en Estados Unidos.
+//   - ANDES INVESTMENT: siempre T+3, sin importar el lado.
+// Devuelve { fecha, iso, alerta } — `alerta` explica por qué se movió, para
+// poder avisar en pantalla.
+// ---------------------------------------------------------------------
+function cumplimientoFX(fechaBase, lado, cliente){
+  // La base se normaliza SIEMPRE a medianoche local, venga como Date o como
+  // texto: `instanceof Date` no es fiable si el Date viene de otro contexto.
+  let base;
+  if(fechaBase && typeof fechaBase.getFullYear === 'function'){
+    base = new Date(fechaBase.getFullYear(), fechaBase.getMonth(), fechaBase.getDate());
+  }else{
+    base = parseFechaLocal(String(fechaBase || _hoyISO()));
+  }
+  const esAndes = /ANDES|LARRAIN/i.test(String(cliente||''));
+  const compra = String(lado||'').toUpperCase().startsWith('B') ||
+                 /COMPRA/i.test(String(lado||''));
+
+  // Andes T+3 siempre; el resto: compra de USD T+2, venta T+1.
+  let dias = esAndes ? 3 : (compra ? 2 : 1);
+  let d = sumarDiasHabiles(base, dias, 'US');
+  const natural = _isoLocal(d);
+
+  // Si el cliente COMPRA USD y el T+1 cae en festivo, se corre al siguiente
+  // hábil. `sumarDiasHabiles` ya lo salta, así que aquí solo se detecta si
+  // hubo movimiento para poder avisarlo.
+  const sinSaltar = new Date(base);
+  sinSaltar.setDate(sinSaltar.getDate() + dias);
+  const eraFestivo = esFestivoUS(sinSaltar) ||
+                     sinSaltar.getDay() === 0 || sinSaltar.getDay() === 6;
+
+  let alerta = '';
+  if(eraFestivo){
+    // fmtFechaCorta espera "YYYY-MM-DD", no un Date.
+    const q = _isoLocal(sinSaltar);
+    const dd = iso => { const [y,m,d] = String(iso).split('-'); return `${d}/${m}/${y}`; };
+    alerta = esFestivoUS(sinSaltar)
+      ? `El ${dd(q)} es festivo en Estados Unidos: el cumplimiento se corre al ${dd(natural)}.`
+      : `El ${dd(q)} cae en fin de semana: el cumplimiento se corre al ${dd(natural)}.`;
+  }
+  return { fecha: d, iso: natural, alerta, dias, esAndes };
+}
+
+// Siguiente día hábil según el calendario que se le pase.
+function siguienteHabil(fecha, pais){
+  return sumarDiasHabiles(fecha, 1, pais);
 }
 
 function fmtUSD(n){ return '$' + Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -5687,6 +5805,40 @@ function previsualizarTickersMaestro(){
     (t.fidessa ? ` y <b>${t.fidessa}</b> en Fidessa` : ' (RVI: no llega por Fidessa)');
 }
 
+async function guardarFestivo(){
+  const est = document.getElementById('mfEstado');
+  const fecha = (document.getElementById('mfFecha')||{}).value || '';
+  const pais = (document.getElementById('mfPais')||{}).value || 'CO';
+  const nombre = String((document.getElementById('mfNombre')||{}).value||'').trim();
+  if(!fecha){ est.innerHTML = '<span style="color:var(--amber,#f59e0b);">Elige la fecha.</span>'; return; }
+  est.textContent = 'Guardando…';
+  try{
+    await guardarEnLotesSupabase('festivos', [{ fecha, pais, nombre: nombre||null, creado_por:'SAR' }]);
+    await cargarFestivos();
+    renderListaFestivos();
+    est.innerHTML = `<span style="color:var(--buy,#22c55e);">Guardado: ${fecha} (${pais})</span>`;
+    document.getElementById('mfNombre').value = '';
+  }catch(e){
+    est.innerHTML = `<span style="color:var(--sell,#ef4444);">No se pudo guardar: ${e.message}</span>`;
+  }
+}
+
+// Los próximos festivos de cada país, para ver de un vistazo qué viene.
+function renderListaFestivos(){
+  const cont = document.getElementById('mfLista');
+  if(!cont) return;
+  const hoy = _hoyISO();
+  const prox = (set, n) => [...set].filter(d=>d >= hoy).sort().slice(0, n);
+  const fmt = iso => { const [y,m,d] = iso.split('-'); return `${d}/${m}/${y}`; };
+  cont.innerHTML = `
+    <div style="display:flex;gap:24px;flex-wrap:wrap;font-size:12px;">
+      <div><div class="field-note" style="margin-bottom:4px;">PRÓXIMOS EN COLOMBIA — afectan RVL</div>
+        ${prox(_festivosCO,5).map(d=>`<div>${fmt(d)}</div>`).join('') || '<div class="field-note">—</div>'}</div>
+      <div><div class="field-note" style="margin-bottom:4px;">PRÓXIMOS EN ESTADOS UNIDOS — afectan FX</div>
+        ${prox(_festivosUS,5).map(d=>`<div>${fmt(d)}</div>`).join('') || '<div class="field-note">—</div>'}</div>
+    </div>`;
+}
+
 async function guardarPortafolioMaestro(){
   const est = document.getElementById('mpEstado');
   const deceval = String(document.getElementById('mpDeceval').value||'').replace(/\D/g,'').trim();
@@ -6828,6 +6980,7 @@ const _CONFLICTO_POR_TABLA = {
   maestro_portafolios: 'deceval',
   maestro_especies: 'especie',
   rvi_historico: 'id',
+  festivos: 'fecha,pais',
 };
 async function guardarEnLotesSupabase(tabla, filas, tamanoLote=200){
   const conflicto = _CONFLICTO_POR_TABLA[tabla] || '';
@@ -9885,6 +10038,26 @@ function _dashDatos(){
     const margen = String(h.side||'').toUpperCase()==='SELL' ? (pxNos - px)*q : (px - pxNos)*q;
     const util = (Number(h.cost)||0) + margen - (Number(h.ccsi)||0);
     sumar('RVI', _dashClave(cli), bruto, util, true);   // en RVI el dato ya es cierto
+  });
+
+  // Lo que está FILLED en EMSX y todavía no se ha registrado: el volumen ya se
+  // operó, así que debe verse desde ya. Cuando se guarde la operación sale de
+  // aquí y entra arriba con su comisión (Sergio, 03-sep).
+  const yaEnHistorial = new Set((historial||[]).map(h=>
+    String(h.symbol||'').toUpperCase() + '|' + String(h.side||'') + '|' + Number(h.qty||0)));
+  (typeof emsxData !== 'undefined' ? emsxData : []).forEach(r=>{
+    if(String(r.status||'').toUpperCase() !== 'FILLED') return;
+    const q = Number(r.qty)||0, px = Number(r.avgPr)||0;
+    if(!q || !px) return;
+    const sym = tickerLimpioRVI(r.especie).toUpperCase();
+    // Si la línea ya se registró (por su especie, lado y cantidad), no se
+    // cuenta dos veces.
+    if(yaEnHistorial.has(sym + '|' + r.lado + '|' + q)) return;
+    // Nuestra propia línea contra el mercado no es volumen de cliente.
+    if(/CREDICORP/i.test(String(r.firm||'')) && !r.cliente) return;
+    const cli = _dashClave(r.cliente || r.firm || '');
+    if(!cli) return;
+    sumar('RVI', cli, q * px, 0, false);   // sin comisión: falta registrarla
   });
 
   // ---------- FX ----------
@@ -16802,7 +16975,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-03 15:35 UTC';
+const BUILD_ID = '2026-09-03 17:18 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -16812,6 +16985,9 @@ try{
 cargarLineasNoReportar().then(cargarReportesGenerados);
 // Histórico de RVI y registro de cargas al COR: los dos viven en Supabase para
 // que sobrevivan a un refresco de la página.
+if(typeof cargarFestivos === 'function') cargarFestivos().then(()=>{
+  if(typeof renderListaFestivos === 'function') renderListaFestivos();
+});
 if(typeof cargarHistoricoRVI === 'function') cargarHistoricoRVI();
 if(typeof cargarRegistroCOR === 'function'){
   cargarRegistroCOR().then(()=>{ if(typeof renderModuloReportes === 'function') renderModuloReportes(); });
