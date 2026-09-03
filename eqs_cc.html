@@ -5727,6 +5727,56 @@ const AVAL_FIDU_NUEVOS = [
 let _maestroPortafolios = [];
 let _maestroEspecies = [];
 
+// Anclaje por DECEVAL: Código Orión, dígito de verificación y Especial
+// Fiduciario de cada portafolio. Sin esto, esas tres columnas del archivo del
+// COR salían en blanco y la complementación masiva no cargaba (Sergio, 03-sep).
+let _maestroDeceval = {};
+
+async function cargarMaestroDeceval(){
+  try{
+    const filas = await supaFetch('maestro_deceval', 'order=deceval.asc&limit=5000') || [];
+    if(!filas.length) return;
+    _maestroDeceval = {};
+    filas.forEach(f=>{ _maestroDeceval[String(f.deceval).trim()] = f; });
+    aplicarMaestroDeceval();
+    console.log(`COR: ${filas.length} portafolio(s) con Código Orión cargados`);
+  }catch(e){ console.warn('No se pudo cargar el maestro de decevales:', e.message); }
+}
+
+// Vuelca los datos sobre los portafolios que ya tiene la app, emparejando por
+// deceval. Lo que no esté en la tabla se deja como estaba.
+function aplicarMaestroDeceval(){
+  if(typeof clientesDB === 'undefined') return;
+  // Índices auxiliares: no todos los clientes identifican sus portafolios por
+  // deceval. PROTECCIÓN usa códigos propios (PICELSIA, VOLGSURA), así que
+  // también se busca por ID DE FONDO y por NOMBRE (Sergio, 03-sep).
+  const porFondo = {}, porNombre = {};
+  const limpiar = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  Object.values(_maestroDeceval).forEach(m=>{
+    if(m.id_fondo) porFondo[limpiar(m.id_fondo)] = m;
+    if(m.portafolio) porNombre[limpiar(m.portafolio)] = m;
+  });
+
+  let n = 0;
+  Object.keys(clientesDB).forEach(k=>{
+    const cfg = getClienteDB(k);
+    (cfg.portafolios||[]).forEach(pf=>{
+      // El deceval puede venir en `deceval` o dentro del id (DEC_1756602).
+      const dec = String(pf.deceval || String(pf.id||'').replace(/^DEC_/,'') || '').trim();
+      const m = _maestroDeceval[dec] || porFondo[limpiar(pf.id)] || porNombre[limpiar(pf.nombre)];
+      if(!m) return;
+      if(!pf.deceval && m.deceval) pf.deceval = String(m.deceval);
+      pf.orion = m.codigo_orion || pf.orion || '';
+      pf.dv = m.dv || pf.dv || '';
+      // El EF se copia TAL CUAL: los espacios son parte del dato (" 03", "23 ").
+      if(m.ef != null && m.ef !== '') pf.especialFid = m.ef;
+      if(!pf.nit && m.nit) pf.nit = m.nit;
+      n++;
+    });
+  });
+  if(n) console.log(`COR: ${n} portafolio(s) con Orión/DV/EF aplicados`);
+}
+
 async function cargarMaestros(){
   try{
     _maestroPortafolios = await supaFetch('maestro_portafolios', 'order=creado_en.desc&limit=2000') || [];
@@ -6989,6 +7039,7 @@ const _CONFLICTO_POR_TABLA = {
   maestro_especies: 'especie',
   rvi_historico: 'id',
   festivos: 'fecha,pais',
+  maestro_deceval: 'deceval',
 };
 async function guardarEnLotesSupabase(tabla, filas, tamanoLote=200){
   const conflicto = _CONFLICTO_POR_TABLA[tabla] || '';
@@ -17034,7 +17085,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-03 18:55 UTC';
+const BUILD_ID = '2026-09-03 19:12 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -17044,6 +17095,7 @@ try{
 cargarLineasNoReportar().then(cargarReportesGenerados);
 // Histórico de RVI y registro de cargas al COR: los dos viven en Supabase para
 // que sobrevivan a un refresco de la página.
+if(typeof cargarMaestroDeceval === 'function') cargarMaestroDeceval();
 if(typeof cargarFestivos === 'function') cargarFestivos().then(()=>{
   if(typeof renderListaFestivos === 'function') renderListaFestivos();
 });
