@@ -2269,6 +2269,14 @@ function switchModule(mod) {
   // El dashboard se recalcula al entrar: lee de los otros módulos, así que
   // tiene que estar fresco cada vez.
   if(mod === 'Dashboard' && typeof renderDashboard === 'function') renderDashboard();
+  // El selector de Client/Book se llena al ENTRAR a Ayudas: al arrancar la app
+  // `clientesDB` todavía puede no estar completo y el desplegable quedaba vacío
+  // (Sergio, 03-sep).
+  if(mod === 'Ayudas'){
+    if(typeof poblarClientBookMaestro === 'function') poblarClientBookMaestro();
+    if(typeof renderListaFestivos === 'function') renderListaFestivos();
+    if(typeof renderListasMaestro === 'function') renderListasMaestro();
+  }
   const ml = MARKET_LABELS[mod];
   if(ml) {
     document.getElementById('market-label').textContent = ml.label;
@@ -10171,9 +10179,19 @@ function renderDashBloques(){
         if(k) t = _fidessaTradesRaw[k];
       }
       let cli = (t && normalizarGrupo(t.grupo)) || f.cliente;
+      // COLCCP es la cuenta interna del composite, nunca un cliente. Si no se
+      // logra resolver a quién pertenece, se busca por el TCN en los folios
+      // hermanos: los composites comparten la orden con el resto (Sergio, 03-sep).
       if(/^COLCCP$/i.test(String(cli||''))) cli = '';
+      if(!cli){
+        const hermano = (foliosFidessa||[]).find(x=>
+          x.especie === f.especie && x.lado === f.lado &&
+          x.cliente && !/^COLCCP$/i.test(String(x.cliente)));
+        if(hermano) cli = normalizarGrupo(hermano.cliente);
+      }
       return { ...f, _cliReal: _dashClave(cli), monto: f.cantidad * f.precio };
     })
+    .filter(f=>f._cliReal)          // sin cliente resuelto no se muestra
     .sort((a,b)=>b.monto - a.monto)
     .slice(0, 8);
   if(!filas.length){
@@ -16975,7 +16993,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-03 17:18 UTC';
+const BUILD_ID = '2026-09-03 17:41 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
