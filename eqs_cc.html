@@ -9971,10 +9971,55 @@ function filtrarDashMercado(m){
   renderDashboard();
 }
 
+// Comisiones de los clientes que NO llevan reporte nuestro (brokers y mesas
+// que operan por acá). Son tarifa ÚNICA, así que el dashboard puede mostrarlas
+// desde que se opera, sin esperar a nada. Van SIN IVA: el dashboard muestra
+// ingreso, y el IVA se le entrega a la DIAN (Sergio, 03-sep).
+const COMISION_NO_REPORTA = {
+  'ASHMORE': 0.00050,
+  'BISG': 0.00042,
+  'BNPB': 0.00084,
+  'BRSE': 0.00060,
+  'CITI_NY': 0.00084,
+  'COWEN': 0.00200,
+  'CREDICORPFFMM': 0.00100,
+  'CSI': 0.00100,            // la tabla decía 0,252%: era un error de la dinámica
+  'GOLDMAN': 0.00100,
+  'HORZ': 0.00060,
+  'HSBC_NY': 0.00055,
+  'ITAU': 0.00070,
+  'JPMNY': 0.00060,
+  'JPMORGANCL': 0.00060,
+  'MLI': 0.00084,
+  'MORGAN STANLEY': 0.00077,
+  'PLURAL': 0.00084,
+  'SANTNYCV': 0.00060,
+  'SCOTIA': 0.00060,
+  'XPUS': 0.00084,
+};
+
 function _dashTarifaCierta(cliente){
   // Tarifa única = certeza. Variable por especie o por bloque/pantalla = no.
+  // Los que no llevan reporte tienen tarifa única conocida.
+  // Coincidencia EXACTA únicamente: ASHMORE (0,05%) y FIDUASHMORE (0,09%) son
+  // clientes distintos, y `normalizarGrupo` los une — buscar por ahí le ponía
+  // a Fiduashmore la tarifa de Ashmore (Sergio, 03-sep).
+  const cn = String(cliente||'').toUpperCase().trim();
+  if(COMISION_NO_REPORTA[cn] != null) return COMISION_NO_REPORTA[cn];
+
+  // Se busca por grupo, por book Y por el nombre completo del cliente: el
+  // dashboard usa el nombre largo ("ANDES INVESTMENT GROUP INC") y la tabla
+  // el corto ("LARRAIN VIAL PP"), así que sin esto Andes salía como pendiente
+  // pese a tener tarifa única de 0,1% (Sergio, 03-sep).
+  const norm = t => String(t||'').toUpperCase().trim();
   const g = (typeof GRUPO_COMISIONES_DB !== 'undefined' ? GRUPO_COMISIONES_DB : [])
-    .find(x=>normalizarGrupo(x.grupo) === normalizarGrupo(cliente) || x.book === cliente);
+    .find(x=>{
+      if(normalizarGrupo(x.grupo) === normalizarGrupo(cliente)) return true;
+      if(norm(x.book) === norm(cliente)) return true;
+      if(norm(x.grupo) === norm(cliente)) return true;
+      const cfg = (typeof clientesDB !== 'undefined') ? clientesDB[x.grupo] : null;
+      return cfg && norm(cfg.nombre) === norm(cliente);
+    });
   if(!g) return null;
   if(g.variable || g.bloque) return null;         // depende de la marca: no se sabe aún
   return Number(g.base) || null;                  // p.ej. 0.001 = 0,1%
@@ -10012,8 +10057,10 @@ function _dashDatos(){
   const vistos = new Set();
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
     const t = _fidessaTradesRaw[oid];
+    // Los brokers y mesas que no llevan reporte SÍ generan comisión y volumen:
+    // antes se descartaban del dashboard y su ingreso no se veía (Sergio, 03-sep).
     const cli = _dashClave(t.grupo);
-    if(!cli || !clienteRequiereReporte(normalizarGrupo(t.grupo))) return;
+    if(!cli) return;
     const q = Number(t.qtyDone)||0, px = Number(t.avgPx)||0;
     if(!q || !px) return;
     vistos.add(cli + '|' + nemoCanonico(t.security,'fidessa') + '|' + t.lado);
@@ -16987,7 +17034,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-03 18:16 UTC';
+const BUILD_ID = '2026-09-03 18:55 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
