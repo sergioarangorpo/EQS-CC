@@ -5367,19 +5367,22 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
     COLS.forEach(col=> ws.getCell(`${col}${rr}`).fill =
       {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}});
   }
-  ws.getRow(1).height = 6;
-  ws.getRow(2).height = 30;
-  ws.getRow(3).height = 12;
+  // La banda se hace más alta para que el logo respire: 48 px de alto sobre
+  // 60 de banda, centrado verticalmente (Sergio, 03-sep).
+  ws.getRow(1).height = 10;
+  ws.getRow(2).height = 40;
+  ws.getRow(3).height = 10;
   try{
     const imgId = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension:'png' });
-    ws.addImage(imgId, { tl:{col:0, row:1}, ext:{width:150, height:34} });
+    // Coordenadas enteras: las fraccionarias hacen que Excel suelte la imagen.
+    ws.addImage(imgId, { tl:{col:0, row:1}, ext:{width:210, height:48} });
   }catch(e){ /* si el logo falla, la banda igual se ve bien */ }
 
-  const tit = ws.getCell('D2');
+  const tit = ws.getCell('E2');
   tit.value = cfgMacro.nombre;
   tit.font = { name:'Calibri', size:13, bold:true, color:{argb:C.white} };
   tit.alignment = { vertical:'middle' };
-  ws.mergeCells('D2:H2');
+  ws.mergeCells('E2:H2');
 
   // El IVA se queda EXACTAMENTE donde estaba (L2 y M2), solo mejor vestido.
   const lIva = ws.getCell('L2');
@@ -5416,10 +5419,18 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
   // El NIT sale del maestro de decevales; si no está, se deja en blanco antes
   // que inventarlo.
   const nitFondo = (()=>{
-    const m = Object.values(_maestroDeceval||{}).find(x=>
-      String(x.portafolio||'').toUpperCase().includes(String(cfgMacro.fondo||'').toUpperCase()) ||
-      String(x.id_fondo||'').toUpperCase() === String(cfgMacro.nombre||'').toUpperCase());
-    return m ? String(m.nit||'') + String(m.dv||'') : '';
+    const limpiar = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    const claves = [cfgMacro.fondo, cfgMacro.nombre, 'CREDICORP CAPITAL ' + cfgMacro.nombre]
+      .filter(Boolean).map(limpiar);
+    // Se compara en los dos sentidos: la base dice "CREDICORP CAPITAL ACCIONES
+    // COLOMBIA" y el macrogrupo "ACCIONES COLOMBIA" (Sergio, 03-sep).
+    const m = Object.values(_maestroDeceval||{}).find(x=>{
+      const port = limpiar(x.portafolio), fondo = limpiar(x.id_fondo);
+      return claves.some(k => port === k || fondo === k ||
+                              (k && (port.includes(k) || k.includes(port))) ||
+                              (k && fondo && (fondo.includes(k) || k.includes(fondo))));
+    });
+    return m ? String(m.nit||'').trim() + String(m.dv||'').trim() : '';
   })();
 
   let r = 5;
@@ -5437,7 +5448,7 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
       'CREDICORP CAPITAL S.A',
       cfgMacro.fondo || f.portNombre || f.notes || '',
       nitFondo,
-      String(f.folio||''),
+      Number(f.folio) || f.folio || '',   // número, para poder ordenar y sumar
       f.fechaReg instanceof Date ? f.fechaReg : hoyDate,
       f.fechaCumpl instanceof Date ? f.fechaCumpl : (f.fechaCumpl || ''),
       f.especie,
@@ -5497,8 +5508,9 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
   ws.getRow(r).height = 19;
 
   // Los encabezados quedan fijos al desplazarse por las operaciones.
+  // Los encabezados quedan fijos, pero SIN filtro automático: llegaba activo y
+  // no es lo que el cliente espera abrir (Sergio, 03-sep).
   ws.views = [{ showGridLines:false, state:'frozen', ySplit:4 }];
-  ws.autoFilter = { from:'A4', to:`N${r-1}` };
 
   const nombre = `${cfgMacro.archivo}_${fechaSlug}${window._sufijoReporte||''}.xlsx`;
   wb.xlsx.writeBuffer().then(buf=>{
@@ -17367,7 +17379,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-03 22:37 UTC · v42';
+const BUILD_ID = '2026-09-03 22:44 UTC · v43';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
