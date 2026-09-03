@@ -2120,18 +2120,59 @@
 
     <!-- Barra de carga al COR: al cierre salen varios clientes a la vez y
          bajarlos uno por uno es un desgaste (Sergio, 27-ago). -->
-    <div style="margin:0 24px 16px;padding:12px 16px;background:var(--bg-2,#161b26);
-                border:1px solid var(--border,#232938);border-radius:8px;
-                display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-      <span style="font-size:13px;font-weight:700;">Carga al COR</span>
-      <button class="btn small ghost" onclick="seleccionarCOR('pendientes')">Pendientes de cargar</button>
-      <button class="btn small ghost" onclick="seleccionarCOR('todos')">Todos los de hoy</button>
-      <button class="btn small ghost" onclick="seleccionarCOR('ninguno')">Limpiar</button>
-      <span class="field-note" id="corSeleccion" style="flex:1;min-width:180px;">Marca los clientes que vas a subir.</span>
-      <button class="btn purple" id="btnCorMultiple" onclick="descargarCORSeleccionados()" disabled>
-        📥 COR (RVL)</button>
-      <button class="btn purple" id="btnBoMultiple" onclick="descargarBOSeleccionados()" disabled>
-        📥 Planilla BO (RVI)</button>
+    <!-- Una barra por mercado: cada uno tiene su destino y su propia
+         selección. Antes iban mezcladas y había que marcar clientes de
+         mercados distintos en la misma lista (Sergio, 03-sep). -->
+    <div style="margin:0 24px 16px;display:flex;gap:10px;flex-wrap:wrap;">
+
+      <div style="flex:1;min-width:300px;padding:12px 14px;background:var(--bg-2,#161b26);
+                  border:1px solid var(--border,#232938);border-radius:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+          <span style="font-size:13px;font-weight:700;">FX</span>
+          <span class="field-note" style="font-size:10px;">al Back Office</span>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+          <button class="btn small ghost" onclick="seleccionarCOR('pendientes','FX')">Pendientes</button>
+          <button class="btn small ghost" onclick="seleccionarCOR('todos','FX')">Todos</button>
+          <button class="btn small ghost" onclick="seleccionarCOR('ninguno','FX')">Limpiar</button>
+        </div>
+        <div class="field-note" id="selFX" style="font-size:11px;margin-bottom:8px;min-height:15px;">—</div>
+        <button class="btn purple" id="btnFxMultiple" onclick="descargarFXSeleccionados()" disabled
+                style="width:100%;">📥 Enviar al BO</button>
+      </div>
+
+      <div style="flex:1;min-width:300px;padding:12px 14px;background:var(--bg-2,#161b26);
+                  border:1px solid var(--border,#232938);border-radius:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+          <span style="font-size:13px;font-weight:700;">RVL</span>
+          <span class="field-note" style="font-size:10px;">complementación al COR</span>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+          <button class="btn small ghost" onclick="seleccionarCOR('pendientes','RVL')">Pendientes</button>
+          <button class="btn small ghost" onclick="seleccionarCOR('todos','RVL')">Todos</button>
+          <button class="btn small ghost" onclick="seleccionarCOR('ninguno','RVL')">Limpiar</button>
+        </div>
+        <div class="field-note" id="selRVL" style="font-size:11px;margin-bottom:8px;min-height:15px;">—</div>
+        <button class="btn purple" id="btnCorMultiple" onclick="descargarCORSeleccionados()" disabled
+                style="width:100%;">📥 Archivo del COR</button>
+      </div>
+
+      <div style="flex:1;min-width:300px;padding:12px 14px;background:var(--bg-2,#161b26);
+                  border:1px solid var(--border,#232938);border-radius:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+          <span style="font-size:13px;font-weight:700;">RVI</span>
+          <span class="field-note" style="font-size:10px;">planilla del Back Office</span>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+          <button class="btn small ghost" onclick="seleccionarCOR('pendientes','RVI')">Pendientes</button>
+          <button class="btn small ghost" onclick="seleccionarCOR('todos','RVI')">Todos</button>
+          <button class="btn small ghost" onclick="seleccionarCOR('ninguno','RVI')">Limpiar</button>
+        </div>
+        <div class="field-note" id="selRVI" style="font-size:11px;margin-bottom:8px;min-height:15px;">—</div>
+        <button class="btn purple" id="btnBoMultiple" onclick="descargarBOSeleccionados()" disabled
+                style="width:100%;">📥 Planilla BO</button>
+      </div>
+
     </div>
 
     <div style="padding:0 24px 24px;">
@@ -4834,7 +4875,8 @@ const clientesDB = {
     formatoReporte: 'generico_equity', reparteManual: false,
     portafoliosDeCategorias: 'METLIFE', portafolios: [],
     fileNombre: 'Metlife Seguros S.A',
-    comisionBloque: 0.0015, comisionPantalla: 0.0008,
+    // Tarifa ÚNICA de 0,1%: no cambia entre bloque y pantalla (Sergio, 03-sep).
+    comisionBloque: 0.001, comisionPantalla: 0.001,
   },
   'BANCO BTG PACTUAL CAYMAN BRANCH': {
     nombre: 'BANCO BTG PACTUAL CAYMAN BRANCH',
@@ -9306,26 +9348,35 @@ function folioCOR(tcn, especie, fechaISO){
   return f + seg + String(tcn).padStart(6,'0');
 }
 
-function seleccionarCOR(modo){
+// `mercado` acota la acción a las casillas de ese módulo: cada barra maneja
+// solo lo suyo (Sergio, 03-sep).
+function seleccionarCOR(modo, mercado){
   document.querySelectorAll('.chk-cor').forEach(ch=>{
+    if(mercado && ch.dataset.mod !== mercado) return;
     if(modo === 'ninguno') ch.checked = false;
     else if(modo === 'todos') ch.checked = true;
-    else if(modo === 'pendientes') ch.checked = vecesCargadoCOR(ch.dataset.mod, ch.dataset.cli) === 0;
+    else if(modo === 'pendientes'){
+      // En RVI lo que se registra es la planilla del BO, no el COR.
+      const reg = ch.dataset.mod === 'RVI' ? 'BO' : ch.dataset.mod;
+      ch.checked = vecesCargadoCOR(reg, ch.dataset.cli) === 0;
+    }
   });
   renderResumenSeleccionCOR();
 }
 
 function renderResumenSeleccionCOR(){
   const sel = [...document.querySelectorAll('.chk-cor')].filter(ch=>ch.checked);
-  const el = document.getElementById('corSeleccion');
-  const btn = document.getElementById('btnCorMultiple');
-  if(btn) btn.disabled = !sel.some(ch=>ch.dataset.mod === 'RVL');
-  const btnBo = document.getElementById('btnBoMultiple');
-  if(btnBo) btnBo.disabled = !sel.some(ch=>ch.dataset.mod === 'RVI');
-  if(!el) return;
-  el.textContent = sel.length === 0
-    ? 'Marca los clientes que vas a subir.'
-    : `${sel.length} cliente(s): ${sel.map(ch=>ch.dataset.cli).join(' · ')}`;
+  [['FX','selFX','btnFxMultiple'],['RVL','selRVL','btnCorMultiple'],['RVI','selRVI','btnBoMultiple']]
+   .forEach(([mkt, idTxt, idBtn])=>{
+    const suyos = sel.filter(ch=>ch.dataset.mod === mkt);
+    const btn = document.getElementById(idBtn);
+    if(btn) btn.disabled = suyos.length === 0;
+    const el = document.getElementById(idTxt);
+    if(!el) return;
+    el.textContent = suyos.length === 0
+      ? 'Marca los clientes de este módulo.'
+      : `${suyos.length}: ${suyos.map(ch=>ch.dataset.cli).join(' · ')}`;
+  });
 }
 
 function descargarCORSeleccionados(){
@@ -9556,6 +9607,85 @@ async function descargarPlanillaBO(clientes){
     await cargarRegistroCOR();
     renderModuloReportes();
   }catch(e){ console.warn('No se pudo registrar la planilla:', e.message); }
+}
+
+// FX al Back Office: una fila por operación del día, con lo que se le confirma
+// al cliente y lo que nos queda a la mesa (Sergio, 03-sep).
+async function descargarFX(clientes){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  const H = ['FECHA','CLIENTE','LADO','MONTO USD','TASA CLIENTE','VALOR COP','COM. EQS','MODELO'];
+  const filas = [];
+  const resumen = [];
+  clientes.forEach(cli=>{
+    const suyas = (typeof operaciones !== 'undefined' ? operaciones : [])
+      .filter(o=>{
+        if(o.fecha && String(o.fecha).slice(0,10) !== _hoyISO()) return false;
+        return _dashClave(o.cliente || o.grupo || '') === _dashClave(cli);
+      });
+    suyas.forEach(o=>{
+      const monto = Number(o.amount || o.monto) || 0;
+      let tasa = 0, com = 0;
+      try {
+        const r = calcularDesdeValores(o.modelo, o.side, monto, o.params);
+        tasa = r.tasaFinalCliente || 0;
+        com = Number(r.comEqs) || 0;
+      } catch(e){
+        tasa = (o.params && (o.params.rateUnica || o.params.rate)) || 0;
+        com = Number(o.comEqs) || 0;
+      }
+      filas.push({
+        'FECHA': new Date(), 'CLIENTE': cli,
+        'LADO': String(o.side||'').toUpperCase() === 'BUY' ? 'COMPRA' : 'VENTA',
+        'MONTO USD': monto, 'TASA CLIENTE': redondear(tasa, 2),
+        'VALOR COP': redondear(monto * tasa, 2), 'COM. EQS': redondear(com, 2),
+        'MODELO': o.modelo || '',
+      });
+    });
+    if(suyas.length) resumen.push({cliente:cli, n:suyas.length});
+  });
+  if(!filas.length){ alert('No se encontraron operaciones de FX de esos clientes hoy.'); return; }
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Hoja1');
+  H.forEach((h,i)=>{
+    const c = ws.getCell(1, i+1);
+    c.value = h;
+    c.font = { name:'Calibri', size:11, bold:true, color:{argb:'FFFFFFFF'} };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF13294B'} };
+    c.alignment = { horizontal:'center' };
+  });
+  filas.forEach((f,i)=>{
+    const r = i+2;
+    H.forEach((col,c)=>{ ws.getCell(r, c+1).value = f[col]; });
+    ws.getCell(r,1).numFmt = 'dd/mm/yyyy';
+    ws.getCell(r,4).numFmt = '#,##0.00';
+    [5,6,7].forEach(c=>{ ws.getCell(r,c).numFmt = '#,##0.00'; });
+  });
+  autofitColumnas(ws, {min:9, max:28});
+  const d = new Date();
+  const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  const a = document.createElement('a');
+  a.href = url; a.download = `FX_BACKOFFICE_${slug}.xlsx`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  try{
+    await guardarEnLotesSupabase('cargas_cor', resumen.map(r=>({
+      fecha: _hoyISO(), modulo:'FX', cliente:r.cliente,
+      version: vecesCargadoCOR('FX', r.cliente) + 1, n_filas:r.n, generado_por:'SAR',
+    })));
+    await cargarRegistroCOR();
+    renderModuloReportes();
+  }catch(e){ console.warn('No se pudo registrar el envío de FX:', e.message); }
+}
+
+function descargarFXSeleccionados(){
+  const sel = [...document.querySelectorAll('.chk-cor')]
+    .filter(ch=>ch.checked && ch.dataset.mod === 'FX').map(ch=>ch.dataset.cli);
+  if(!sel.length){ alert('Marca al menos un cliente de FX.'); return; }
+  descargarFX(sel);
 }
 
 function descargarBOSeleccionados(){
@@ -10075,11 +10205,13 @@ function renderModuloReportes(){
                 </label>
                 <span style="display:flex;align-items:center;gap:10px;">
                   <span class="field-note">${etiquetaVersion(ultima)} · ${rs.length} línea(s) · ${fmtInt(qty)} · comisión ${fmtMoney(com)}</span>
-                  ${mod === 'FX' ? '' : badgeCargaCOR(mod === 'RVI' ? 'BO' : mod, cli)}
+                  ${badgeCargaCOR(mod === 'RVI' ? 'BO' : mod, cli)}
                   ${mod === 'RVL' ? `<button class="btn small purple" title="Descargar el archivo de complementación para subir al COR"
                      onclick="descargarCOR([{modulo:'${mod}', cliente:'${String(cli).replace(/'/g,"\\'")}'}])">📥 COR</button>` : ''}
                   ${mod === 'RVI' ? `<button class="btn small purple" title="Descargar la planilla del Back Office con las dos patas"
                      onclick="descargarPlanillaBO(['${String(cli).replace(/'/g,"\\'")}'])">📥 Planilla BO</button>` : ''}
+                  ${mod === 'FX' ? `<button class="btn small purple" title="Descargar lo que se le envía al Back Office"
+                     onclick="descargarFX(['${String(cli).replace(/'/g,"\\'")}'])">📥 BO</button>` : ''}
                 </span>
               </div>
               <table><thead><tr>
@@ -14778,6 +14910,14 @@ const clientesRVI = {
     comETF:0.008, comUCIT:0.08/100, comADR:0.008,
     portafolios:['BBVA PORTAFOLIO'],
   },
+  METLIFE: {
+    nombre:'METLIFE SEGUROS DE VIDA S.A.',
+    taxId:'860.068.182-5',
+    // ETF y ADR 0,01 por acción; UCITS 0,1% del gross. Mínimo USD 20 en los
+    // dos casos (Sergio, 03-sep).
+    comETF:0.01, comUCIT:0.1/100, comADR:0.01,
+    portafolios:['METLIFE COLOMBIA SEGUROS DE VIDA S.A.'],
+  },
   ITAU: {
     nombre:'ITAU ASSET MANAGEMENT',
     taxId:'860.068.182-5',
@@ -16662,7 +16802,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-02 21:27 UTC';
+const BUILD_ID = '2026-09-03 15:35 UTC';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
