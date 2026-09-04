@@ -9936,13 +9936,12 @@ function filasCORDeCliente(modulo, cliente){
     if(!reparto.length){
       reparto = [{ port: ports.find(p=>p.id===cfg.autoPortafolio) || ports[0] || {}, cantidad: total }];
     }
-    fol.forEach(f=>{
+    // Reparto entero por folio: ni una acción de más ni de menos.
+    const _matriz = repartirFolioAFolio(reparto.map(a=>a.cantidad), fol);
+    fol.forEach((f, _k)=>{
       let n = 0;
-      let restante = f.cantidad;
       reparto.forEach((a,i)=>{
-        // Cada folio se parte entre los portafolios en la misma proporción.
-        const q = (i === reparto.length-1) ? restante : Math.round(f.cantidad * a.cantidad / total);
-        restante -= q;
+        const q = _matriz[_k][i];
         if(q <= 0) return;
         n++;
         // 1) la del reporte  2) la del folio  3) el recálculo, como último recurso
@@ -13350,10 +13349,10 @@ async function generarReporte(){
         const fs = seleccionados.filter(f=>String(f.parentOrderId)===String(a.parentOrderId));
         const total = fs.reduce((x,f)=>x+f.cantidad,0);
         if(!total) return;
-        let restante = a.cantidad;
+        // Reparto entero por folio (ver repartirFolioAFolio).
+        const _m = repartirFolioAFolio([a.cantidad], fs);
         fs.forEach((f,i)=>{
-          const q = (i === fs.length-1) ? restante : Math.round(f.cantidad * a.cantidad / total);
-          restante -= q;
+          const q = _m[i][0];
           // Se conservan comisión y fechas: el generador las lee de estos
           // campos y al repartir se estaban perdiendo (comisión 0 y fechas
           // vacías en las 236 filas del 14-ago).
@@ -13425,12 +13424,10 @@ async function generarReporte(){
         const fs = seleccionados.filter(f=>String(f.parentOrderId)===String(a.parentOrderId));
         const total = fs.reduce((x,f)=>x+f.cantidad,0);
         if(!total) return;
-        let restante = a.cantidad;
+        // Reparto entero por folio (ver repartirFolioAFolio).
+        const _m = repartirFolioAFolio([a.cantidad], fs);
         fs.forEach((f,i)=>{
-          // Proporcional, y el último folio absorbe el redondeo para que la
-          // suma dé exacta: cero tolerancia a diferencias de cantidad.
-          const q = (i === fs.length-1) ? restante : Math.round(f.cantidad * a.cantidad / total);
-          restante -= q;
+          const q = _m[i][0];
           if(q > 0) partido.push({ ...f, cantidad:q, portNombre:a.portafolio.nombre });
         });
       });
@@ -14524,6 +14521,49 @@ async function generarCredicorpProteccion(loteDet){
 // TODOS los portafolios de TODAS las especies y el archivo salía cruzado
 // (Sergio, 01-sep). Con una sola especie el resultado es idéntico al de antes,
 // que es por lo que línea a línea siempre funcionó.
+// Reparte los folios de UNA orden entre sus portafolios respetando dos cosas:
+// cada folio se entrega COMPLETO (las acciones son enteras) y cada portafolio
+// recibe EXACTAMENTE su allocation. Método: proporción, piso entero, y las
+// unidades sueltas a los de mayor resto — a igualdad, al portafolio más grande.
+// El último folio entrega el saldo, que cuadra porque la orden y sus folios
+// suman lo mismo.
+//
+// Antes cada portafolio se repartía por separado con Math.round: cuadraba
+// consigo mismo pero los FOLIOS quedaban descuadrados (3.999 donde había
+// 4.000) y las sobrantes se acumulaban en otro (Sergio, 04-sep).
+// `cantidades` es el array de allocation; devuelve una matriz [folio][i].
+function repartirFolioAFolio(cantidades, folios){
+  const totalAlloc = cantidades.reduce((a,x)=>a+(Number(x)||0), 0);
+  if(!totalAlloc || !folios.length) return folios.map(()=>cantidades.map(()=>0));
+  const saldo = cantidades.map(x=>Number(x)||0);
+  return folios.map((f, k)=>{
+    const ultimo = (k === folios.length - 1);
+    if(ultimo){
+      const dar = saldo.slice();
+      saldo.forEach((_,i)=>{ saldo[i] = 0; });
+      return dar;
+    }
+    const exactos = cantidades.map((x,i)=>
+      Math.min((Number(x)||0) * f.cantidad / totalAlloc, saldo[i]));
+    const pedazos = exactos.map(x=>Math.floor(x));
+    let faltan = f.cantidad - pedazos.reduce((a,x)=>a+x, 0);
+    const orden = exactos.map((x,i)=>({ i, resto: x - Math.floor(x), tam: saldo[i] }))
+      .sort((a,b)=> b.resto - a.resto || b.tam - a.tam || a.i - b.i);
+    let vuelta = 0;
+    while(faltan > 0 && vuelta < 1000){
+      let dio = false;
+      for(const c of orden){
+        if(faltan <= 0) break;
+        if(pedazos[c.i] < saldo[c.i]){ pedazos[c.i]++; faltan--; dio = true; }
+      }
+      if(!dio) break;
+      vuelta++;
+    }
+    pedazos.forEach((q,i)=>{ saldo[i] -= q; });
+    return pedazos;
+  });
+}
+
 function repartirFoliosColfondos(alocaciones, folios){
   const clave = x => String(nemoCanonico(x.especie)||x.especie||'') + '|' + String(x.lado||'');
   const grupos = [...new Set((alocaciones||[]).map(clave))];
@@ -17476,7 +17516,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-04 16:38 UTC · v46';
+const BUILD_ID = '2026-09-04 16:55 UTC · v47';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
