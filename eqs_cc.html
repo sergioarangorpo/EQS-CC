@@ -13011,20 +13011,56 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
   // Detalle folio a folio: los clientes locales lo cotejan contra sus papeletas
   // de bolsa. Cada folio se reparte entre los portafolios de su orden en la
   // misma proporción del consolidado, así el detalle suma exactamente igual.
+  // El reparto se hace POR FOLIO, no portafolio por portafolio. Antes cada
+  // portafolio se repartía con Math.round y cuadraba consigo mismo, pero los
+  // FOLIOS no: unos quedaban con 3.999 donde había 4.000 y las sobrantes se
+  // acumulaban en otro. Las acciones son enteras y cada folio tiene que
+  // entregarse completo, ni una más ni una menos (Sergio, 04-sep).
+  //
+  // Método: proporción de cada portafolio sobre el folio, piso entero, y las
+  // unidades sueltas a los de mayor resto (y a igualdad, a los más grandes)
+  // hasta cerrar el folio exacto. El último folio entrega el saldo, que por
+  // construcción cuadra porque la orden y sus folios suman lo mismo.
   const foliosDetalle = [];
   completas.forEach(o=>{
     const fol = foliosFidessa.filter(f=>String(f.parentOrderId)===String(o.parentOrderId));
+    const lineas = filasEquity.filter(x=>String(x.parentOrderId)===String(o.parentOrderId));
     const totalOrden = fol.reduce((a,f)=>a+f.cantidad,0);
-    if(!totalOrden) return;
-    filasEquity.filter(x=>String(x.parentOrderId)===String(o.parentOrderId)).forEach(lin=>{
-      let restante = lin.cantidad;
-      fol.forEach((f,i)=>{
-        // El último folio absorbe el redondeo para que la suma dé exacta.
-        const q = (i === fol.length-1) ? restante : Math.round(f.cantidad * lin.cantidad / totalOrden);
-        restante -= q;
+    if(!totalOrden || !lineas.length) return;
+    const totalAlloc = lineas.reduce((a,l)=>a+(Number(l.cantidad)||0),0);
+    if(!totalAlloc) return;
+
+    const saldo = lineas.map(l=>Number(l.cantidad)||0);   // lo que le falta a cada portafolio
+    fol.forEach((f, k)=>{
+      const ultimo = (k === fol.length - 1);
+      let pedazos;
+      if(ultimo){
+        // El saldo suma exactamente este folio cuando la orden cuadra.
+        pedazos = saldo.slice();
+      }else{
+        const exactos = lineas.map((l,i)=>
+          Math.min((Number(l.cantidad)||0) * f.cantidad / totalAlloc, saldo[i]));
+        pedazos = exactos.map(x=>Math.floor(x));
+        let faltan = f.cantidad - pedazos.reduce((a,x)=>a+x, 0);
+        // Resto mayor primero; a igualdad, el portafolio más grande.
+        const orden = exactos.map((x,i)=>({ i, resto: x - Math.floor(x), tam: saldo[i] }))
+          .sort((a,b)=> b.resto - a.resto || b.tam - a.tam || a.i - b.i);
+        let vuelta = 0;
+        while(faltan > 0 && vuelta < 1000){
+          let dio = false;
+          for(const c of orden){
+            if(faltan <= 0) break;
+            if(pedazos[c.i] < saldo[c.i]){ pedazos[c.i]++; faltan--; dio = true; }
+          }
+          if(!dio) break;      // todos en su tope: no hay dónde poner el resto
+          vuelta++;
+        }
+      }
+      pedazos.forEach((q,i)=>{
+        saldo[i] -= q;
         if(q > 0) foliosDetalle.push({
           folio: f.folio, especie: f.especie, lado: f.lado, cantidad: q,
-          precio: f.precio, comPct: lin.comPct, portNombre: lin.portNombre,
+          precio: f.precio, comPct: lineas[i].comPct, portNombre: lineas[i].portNombre,
         });
       });
     });
@@ -17440,7 +17476,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-04 14:56 UTC · v45';
+const BUILD_ID = '2026-09-04 16:38 UTC · v46';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
