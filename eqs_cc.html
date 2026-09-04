@@ -9901,7 +9901,26 @@ function descargarCORSeleccionados(){
 function filasCORDeCliente(modulo, cliente){
   const lineas = _reportesGenerados.filter(r=>r.modulo===modulo && r.cliente===cliente);
   if(!lineas.length) return [];
-  const poids = new Set(lineas.map(r=>String(r.parent_order_id)));
+  // El identificador del registro es "ESPECIE|Lado#Portafolio", no el Parent
+  // Order ID de Fidessa. Para encontrar el reparto se buscan las órdenes del
+  // cliente cuya especie y lado coincidan con lo reportado — antes se comparaba
+  // contra el POID y no encontraba nada, así que el COR salía vacío
+  // (Sergio, 04-sep).
+  const reportadas = new Set(lineas.map(r=>
+    String(r.especie||'').toUpperCase() + '|' + String(r.lado||'')));
+  const poids = new Set();
+  Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
+    const t = _fidessaTradesRaw[oid];
+    if(normalizarGrupo(t.grupo) !== normalizarGrupo(cliente) &&
+       (getClienteDB(normalizarGrupo(t.grupo)).nombre||'') !== cliente) return;
+    const k = String(nemoCanonico(t.security,'fidessa')||'').toUpperCase() + '|' + String(t.lado||'');
+    if(reportadas.has(k)) poids.add(String(oid));
+  });
+  // Respaldo: si el registro guardó el POID directamente (formato viejo).
+  lineas.forEach(r=>{
+    const p = String(r.parent_order_id||'').split('#')[0];
+    if((_fidessaTradesRaw||{})[p]) poids.add(p);
+  });
   // Se busca la clave del cliente para poder leer sus portafolios.
   const claveCli = Object.keys(clientesDB).find(k=>(getClienteDB(k).nombre||k) === cliente) || cliente;
   const cfg = getClienteDB(claveCli);
@@ -9912,13 +9931,28 @@ function filasCORDeCliente(modulo, cliente){
   // La comisión sale de LO QUE SE LE REPORTÓ AL CLIENTE, no de un recálculo:
   // el COR y la confirmación tienen que decir lo mismo. Recalcular hacía que
   // Andes saliera con 0,08% cuando su tarifa es 0,1% (Sergio, 27-ago).
+  // La comisión se indexa por ESPECIE|LADO, no por el identificador del
+  // registro, que ahora lleva el portafolio pegado. Sin esto no encontraba la
+  // tarifa reportada y caía al recálculo, que daba 0,08% cuando Bancolombia va
+  // a 0,2% en bloque (Sergio, 04-sep).
   const comPorOrden = {};
+  const comPorEspecie = {};
   lineas.forEach(r=>{
     const q = Number(r.cantidad) || 0;
     const c = Number(r.comision) || 0;
     const px = Number(r.precio) || 0;
-    // `comision` viene en pesos: se vuelve porcentaje sobre el bruto.
-    if(q && px) comPorOrden[String(r.parent_order_id)] = c / (q * px) * 100;
+    if(!q || !px) return;
+    const pct = c / (q * px) * 100;    // `comision` viene en pesos
+    comPorOrden[String(r.parent_order_id)] = pct;
+    const k = String(r.especie||'').toUpperCase() + '|' + String(r.lado||'');
+    // Si una especie se reportó con varias tarifas, se pondera por monto.
+    const acc = comPorEspecie[k] || (comPorEspecie[k] = { bruto:0, com:0 });
+    acc.bruto += q * px;
+    acc.com += c;
+  });
+  Object.keys(comPorEspecie).forEach(k=>{
+    const a = comPorEspecie[k];
+    comPorEspecie[k] = a.bruto ? a.com / a.bruto * 100 : 0;
   });
 
   const filas = [];
@@ -9945,7 +9979,12 @@ function filasCORDeCliente(modulo, cliente){
         if(q <= 0) return;
         n++;
         // 1) la del reporte  2) la del folio  3) el recálculo, como último recurso
+        // 1) por orden  2) por especie+lado (lo reportado)  3) la del folio
+        //    4) el recálculo, como último recurso
         let pct = comPorOrden[String(oid)];
+        if(pct == null || !isFinite(pct) || pct <= 0){
+          pct = comPorEspecie[String(f.especie||'').toUpperCase() + '|' + String(f.lado||'')];
+        }
         if(pct == null || !isFinite(pct) || pct <= 0) pct = Number(f.comisionPct);
         if(pct == null || !isFinite(pct) || pct <= 0){
           pct = (typeof comisionFolioPct === 'function') ? comisionFolioPct(claveCli, f) : 0;
@@ -17516,7 +17555,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-04 16:55 UTC · v47';
+const BUILD_ID = '2026-09-04 18:08 UTC · v48';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
