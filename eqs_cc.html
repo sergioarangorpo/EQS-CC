@@ -13755,7 +13755,10 @@ async function generarReporte(){
     const ok = await previsualizarReporte({
       titulo: `CREDICORP CAPITAL — ${cfgMacro.nombre} — ${etiquetaVersion(version)}`,
       archivo: `Operaciones_${cfgMacro.archivo}_${_slug}.xlsx`,
-      columnas: ['Especie','Lado','Cantidad','Precio prom.','Bruto','Folios','Fondo'],
+      // Con COMISIÓN y NETO, como las confirmaciones de los demás clientes:
+      // sin esos dos no hay forma de revisar la plata antes de descargar
+      // (Sergio, 04-sep).
+      columnas: ['Especie','Lado','Cantidad','Precio prom.','Bruto','Comisión','IVA','Neto','Folios','Fondo'],
       filas: (()=>{
         const g = {};
         lote.forEach(f=>{
@@ -13766,11 +13769,24 @@ async function generarReporte(){
         });
         return Object.values(g)
           .sort((x,y)=>String(x.especie).localeCompare(String(y.especie)) || String(x.fondo).localeCompare(String(y.fondo)))
-          .map(a=>[a.especie, a.lado, fmtInt(a.qty), fmtRate(a.qty?a.bruto/a.qty:0), fmtMoney(a.bruto), String(a.n), a.fondo]);
+          .map(a=>{
+            // 0,1% + IVA, sin override de ninguna especie.
+            const com = redondear(a.bruto * 0.001, 2);
+            const iva = redondear(com * 0.19, 2);
+            const neto = a.lado === 'Venta' ? redondear(a.bruto - com - iva, 2)
+                                            : redondear(a.bruto + com + iva, 2);
+            return [a.especie, a.lado, fmtInt(a.qty), fmtRate(a.qty?a.bruto/a.qty:0),
+                    fmtMoney(a.bruto), fmtMoney(com), fmtMoney(iva), fmtMoney(neto),
+                    String(a.n), a.fondo];
+          });
       })(),
-      totales: `<b style="color:var(--accent,#818cf8);">Macrogrupo: ${cfgMacro.nombre}</b> · ` +
+      totales: (()=>{
+        const comTot = redondear(brutoTot * 0.001, 2);
+        const ivaTot = redondear(comTot * 0.19, 2);
+        return `<b style="color:var(--accent,#818cf8);">Macrogrupo: ${cfgMacro.nombre}</b> · ` +
                `${lote.length} folio(s) · ${fmtInt(qTot)} acciones · bruto ${fmtMoney(brutoTot)} · ` +
-               `comisión 0,1% + IVA 19%`,
+               `comisión ${fmtMoney(comTot)} + IVA ${fmtMoney(ivaTot)}`;
+      })(),
     });
     if(!ok) return;
     await generarExcelCCFFMM(macro, lote, _slug);
@@ -17764,7 +17780,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-04 20:38 UTC · v52';
+const BUILD_ID = '2026-09-04 20:41 UTC · v53';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
