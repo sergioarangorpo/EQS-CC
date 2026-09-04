@@ -778,8 +778,10 @@
         <!-- Volumen y comisión por cliente -->
         <div style="flex:1;min-width:420px;">
           <div class="card" style="padding:14px 16px;margin-bottom:14px;">
-            <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:10px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:4px;">
               VOLUMEN POR CLIENTE</div>
+            <!-- Totales arriba, igual que en "lo que ganamos" (Sergio, 04-sep). -->
+            <div id="dashTotalesVol" style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 14px;"></div>
             <div id="dashVolumen"></div>
           </div>
           <div class="card" style="padding:14px 16px;margin-bottom:14px;">
@@ -5571,7 +5573,27 @@ function macrogrupoCCFFMM(notes){
   if(/ACC(IONES)?\s+COLOMBIA/.test(t)) return 'ACC_COLOMBIA';
   if(/ACC(IONES)?\s+GLOBALES/.test(t)) return 'ACC_GLOBALES';
   if(/^CRGS$/.test(t)) return 'CRGS';
-  return 'FIDUCIARIA';   // el resto son portafolios de la fiduciaria
+  // Lo que NO se reconoce queda SIN macrogrupo, para que el panel lo señale y
+  // Sergio lo corrija. Antes todo lo desconocido caía en FIDUCIARIA, así que
+  // una línea de ACCIONES COLOMBIA mal marcada como "Would" se reportaba en el
+  // macrogrupo equivocado — y entre ellos hay muralla china (Sergio, 04-sep).
+  if(/^(WOULD|WLD|W)$/i.test(t)) return '';
+  if(esFondoFiduciariaCCFFMM(t)) return 'FIDUCIARIA';
+  return '';
+}
+
+// ¿El Notes corresponde a un fondo de la fiduciaria? Se apoya en el maestro de
+// decevales, que ya tiene los ~150 fondos cargados. Si no está, no se asume.
+function esFondoFiduciariaCCFFMM(notes){
+  const limpiar = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const n = limpiar(notes);
+  if(!n) return false;
+  if(typeof _maestroDeceval === 'undefined') return true;   // sin base, no se frena
+  return Object.values(_maestroDeceval).some(x=>{
+    if(!/FIDUCIARIA CREDICORP|CREDICORP AM/i.test(String(x.client_book||''))) return false;
+    const f = limpiar(x.id_fondo), pr = limpiar(x.portafolio);
+    return f === n || pr === n || (f && (f.includes(n) || n.includes(f)));
+  });
 }
 
 function comisionFolioPct(cliente, f){
@@ -10075,7 +10097,11 @@ function filasCORDeCliente(modulo, cliente){
           // vacío (Sergio, 04-sep).
           dv_cliente: (String(a.port.orion||'').replace(/\D/g,'').length === 9)
             ? (a.port.dv || '') : '',
-          EspecialFiduciario: a.port.especialFid || '',
+          // Con Código Orión de 9 dígitos (el NIT) va el DV y el Especial
+          // Fiduciario queda VACÍO; con código corto es al revés
+          // (Sergio, 04-sep).
+          EspecialFiduciario: (String(a.port.orion||'').replace(/\D/g,'').length === 9)
+            ? '' : (a.port.especialFid || ''),
           Nemotecnico: f.especie,
           Folio: folioCOR(f.folio, f.especie, f.fechaReg),
           CantidadFraccion: q,
@@ -10777,14 +10803,17 @@ function renderDashBarras(M){
   };
   barra('dashVolumen', 'vol');
   barra('dashComision', 'com');
-  renderDashTotales(M);
+  renderDashTotales(M, 'com', 'dashTotales');
+  renderDashTotales(M, 'vol', 'dashTotalesVol');
 }
 
 // Cuánto llevamos ganado hoy, por moneda y por mercado. Los pesos y los
 // dólares NO se suman entre sí: cada uno va en su propia tarjeta.
-function renderDashTotales(M){
-  const cont = document.getElementById('dashTotales');
+function renderDashTotales(M, campo, destino){
+  campo = campo || 'com';
+  const cont = document.getElementById(destino || 'dashTotales');
   if(!cont) return;
+  const esVol = campo === 'vol';
 
   const acum = { COP:{ total:0, por:{}, pend:0 }, USD:{ total:0, por:{}, pend:0 } };
   Object.keys(M).forEach(k=>{
@@ -10794,9 +10823,11 @@ function renderDashTotales(M){
     Object.keys(m.clientes).forEach(c=>{
       if(_dashCliente && c !== _dashCliente) return;
       const cl = m.clientes[c];
-      a.total += cl.com;
-      a.por[k] = (a.por[k] || 0) + cl.com;
-      if(cl.pendiente) a.pend++;
+      a.total += cl[campo];
+      a.por[k] = (a.por[k] || 0) + cl[campo];
+      // El aviso de "falta por reportar" solo aplica a la comisión: el volumen
+      // ya se conoce desde que se opera.
+      if(!esVol && cl.pendiente) a.pend++;
     });
   });
 
@@ -10813,11 +10844,15 @@ function renderDashTotales(M){
       .sort((x,y)=>a.por[y] - a.por[x])
       .map(k=>`<span style="opacity:.75;">${k}</span> ${fmt(a.por[k], moneda)}`)
       .join('<span style="opacity:.3;"> · </span>');
+    // El volumen va en el color de acento; lo que ganamos, en verde.
+    const col = esVol ? 'var(--accent,#818cf8)' : 'var(--buy,#22c55e)';
+    const fondo = esVol ? 'rgba(129,140,248,.08)' : 'rgba(34,197,94,.08)';
+    const borde = esVol ? 'rgba(129,140,248,.25)' : 'rgba(34,197,94,.25)';
     return `
-      <div style="flex:1;min-width:230px;background:rgba(34,197,94,.08);
-                  border:1px solid rgba(34,197,94,.25);border-radius:8px;padding:12px 14px;">
+      <div style="flex:1;min-width:230px;background:${fondo};
+                  border:1px solid ${borde};border-radius:8px;padding:12px 14px;">
         <div style="font-size:10.5px;font-weight:700;letter-spacing:.4px;opacity:.6;">${etiqueta}</div>
-        <div style="font-size:26px;font-weight:800;color:var(--buy,#22c55e);line-height:1.25;margin-top:2px;">
+        <div style="font-size:26px;font-weight:800;color:${col};line-height:1.25;margin-top:2px;">
           ${fmt(a.total, moneda)}</div>
         <div style="font-size:11px;margin-top:4px;">${detalle || '<span style="opacity:.5;">—</span>'}</div>
         ${a.pend ? `<div style="font-size:10.5px;margin-top:5px;color:var(--amber,#f59e0b);">
@@ -10825,9 +10860,11 @@ function renderDashTotales(M){
       </div>`;
   };
 
-  const html = tarjeta('COP', 'GANAMOS HOY EN PESOS') + tarjeta('USD', 'GANAMOS HOY EN DÓLARES');
+  const html = esVol
+    ? tarjeta('COP', 'VOLUMEN HOY EN PESOS') + tarjeta('USD', 'VOLUMEN HOY EN DÓLARES')
+    : tarjeta('COP', 'GANAMOS HOY EN PESOS') + tarjeta('USD', 'GANAMOS HOY EN DÓLARES');
   cont.innerHTML = html || `<div class="field-note" style="font-size:11.5px;">
-    Todavía no hay comisión confirmada hoy.</div>`;
+    ${esVol ? 'Todavía no se ha operado hoy.' : 'Todavía no hay comisión confirmada hoy.'}</div>`;
 }
 
 // Lo que falta por hacer, leyendo el estado que ya lleva cada módulo.
@@ -10934,7 +10971,7 @@ function renderDashBloques(){
     return _dashClave(cli);
   };
 
-  const filas = (foliosFidessa||[])
+  let filas = (foliosFidessa||[])
     .filter(f=>{
       if(_dashMercado && _dashMercado !== 'RVL') return false;
       return (Number(f.cantidad)||0) > 0 && (Number(f.precio)||0) > 0;
@@ -10944,8 +10981,17 @@ function renderDashBloques(){
       if(_dashCliente && f._cliReal !== _dashCliente) return false;
       return true;
     })
-    .sort((a,b)=>b.monto - a.monto)
-    .slice(0, 8);
+    .sort((a,b)=>b.monto - a.monto);
+
+  // Un folio aparece UNA vez: si está el folio completo y también sus
+  // fracciones del reparto, se queda el mayor. Antes CEMARGOS salía dos veces,
+  // con 150.000 y con 82.169 del mismo folio (Sergio, 04-sep).
+  const porFolio = {};
+  filas.forEach(f=>{
+    const k = String(f.folio) + '|' + f.lado;
+    if(!porFolio[k] || f.monto > porFolio[k].monto) porFolio[k] = f;
+  });
+  filas = Object.values(porFolio).sort((a,b)=>b.monto - a.monto).slice(0, 8);
 
   if(!filas.length){
     cont.innerHTML = '<div class="field-note">Sin folios cargados todavía.</div>';
@@ -17718,7 +17764,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-04 20:22 UTC · v51';
+const BUILD_ID = '2026-09-04 20:38 UTC · v52';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
