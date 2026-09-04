@@ -2524,29 +2524,52 @@ function cumplimientoFX(fechaBase, lado, cliente){
   const compra = String(lado||'').toUpperCase().startsWith('B') ||
                  /COMPRA/i.test(String(lado||''));
 
-  // Andes T+3 siempre; el resto: compra de USD T+2, venta T+1.
-  let dias = esAndes ? 3 : (compra ? 2 : 1);
-  let d = sumarDiasHabiles(base, dias, 'US');
+  // TODO PARTE DEL CUMPLIMIENTO DEL EQUITY, que sigue el calendario COLOMBIANO
+  // (T+2). De ahí se mueve según el lado:
+  //   - Cliente VENDE USD (compró acciones): necesita los pesos para pagar el
+  //     equity, así que el FX cumple el día hábil ANTERIOR.
+  //   - Cliente COMPRA USD (vendió acciones): la plata le entra el día que
+  //     cumple el equity, así que se lleva los dólares ESE MISMO día — y si
+  //     Estados Unidos está cerrado, el siguiente hábil allá.
+  //   - ANDES: siempre T+3.
+  // Antes se contaba T+2 en días hábiles de US, y con un festivo colombiano
+  // que no lo es en US (2-nov) daba los dólares un día ANTES de que llegara la
+  // plata de las acciones (Sergio, 04-sep).
+  const cumpleEquity = sumarDiasHabiles(base, 2, 'CO');
+
+  let d, dias;
+  if(esAndes){
+    dias = 3;
+    d = sumarDiasHabiles(base, 3, 'CO');
+    while(!esHabil(d, 'US')) d.setDate(d.getDate() + 1);
+  }else if(compra){
+    dias = 2;
+    // El mismo día del cumplimiento del equity, corrido si US está cerrado.
+    d = new Date(cumpleEquity);
+    while(!esHabil(d, 'US')) d.setDate(d.getDate() + 1);
+  }else{
+    dias = 1;
+    // El día hábil anterior al cumplimiento del equity.
+    d = new Date(cumpleEquity);
+    do { d.setDate(d.getDate() - 1); } while(!esHabil(d, 'CO') || !esHabil(d, 'US'));
+  }
   const natural = _isoLocal(d);
 
-  // Si el cliente COMPRA USD y el T+1 cae en festivo, se corre al siguiente
-  // hábil. `sumarDiasHabiles` ya lo salta, así que aquí solo se detecta si
-  // hubo movimiento para poder avisarlo.
-  const sinSaltar = new Date(base);
-  sinSaltar.setDate(sinSaltar.getDate() + dias);
-  const eraFestivo = esFestivoUS(sinSaltar) ||
-                     sinSaltar.getDay() === 0 || sinSaltar.getDay() === 6;
-
+  // Aviso solo cuando la fecha se movió por un festivo en Estados Unidos, que
+  // es lo que hay que explicarle al cliente.
   let alerta = '';
-  if(eraFestivo){
-    // fmtFechaCorta espera "YYYY-MM-DD", no un Date.
-    const q = _isoLocal(sinSaltar);
-    const dd = iso => { const [y,m,d] = String(iso).split('-'); return `${d}/${m}/${y}`; };
-    alerta = esFestivoUS(sinSaltar)
-      ? `El ${dd(q)} es festivo en Estados Unidos: el cumplimiento se corre al ${dd(natural)}.`
-      : `El ${dd(q)} cae en fin de semana: el cumplimiento se corre al ${dd(natural)}.`;
+  const dd = iso => { const [y,m,x] = String(iso).split('-'); return `${x}/${m}/${y}`; };
+  const isoEquity = _isoLocal(cumpleEquity);
+  if(compra && !esAndes && natural !== isoEquity){
+    alerta = `El ${dd(isoEquity)} —cuando cumple el equity— está cerrado en Estados Unidos: ` +
+             `el cumplimiento de los dólares se corre al ${dd(natural)}.`;
+  }else if(esAndes){
+    const t3 = _isoLocal(sumarDiasHabiles(base, 3, 'CO'));
+    if(t3 !== natural){
+      alerta = `El ${dd(t3)} es festivo en Estados Unidos: el cumplimiento se corre al ${dd(natural)}.`;
+    }
   }
-  return { fecha: d, iso: natural, alerta, dias, esAndes };
+  return { fecha: d, iso: natural, alerta, dias, esAndes, cumpleEquity: isoEquity };
 }
 
 // Siguiente día hábil según el calendario que se le pase.
@@ -9090,6 +9113,20 @@ CIERRES_BASE.forEach(c=>{ _CIERRE_YTD[c.nemo] = c.dic2025; _CIERRE_MTD[c.nemo] =
 
 let _cierresAnteriores = {};
 
+// Contra qué fecha se está midiendo el MTD. Se muestra en el informe.
+let _baseMTD = { fecha:null, especies:0, esUltimoHabil:false };
+
+// ¿Esa fecha es el último día hábil de su mes? Si no lo es, falta cargar el
+// cierre de ese día y el MTD queda medido contra un día intermedio.
+function _esUltimoHabilDelMes(iso){
+  const [y,m,d] = String(iso).split('-').map(Number);
+  if(!y || !m || !d) return false;
+  const ultimo = new Date(y, m, 0);          // día 0 del mes siguiente = último de este
+  let cur = new Date(ultimo);
+  while(!esHabil(cur, 'CO')) cur.setDate(cur.getDate() - 1);
+  return _isoLocal(cur) === String(iso);
+}
+
 async function cargarCierreAnterior(){
   try{
     const filas = await supaFetch('cierres_mercado', `fecha=lt.${_hoyISO()}&order=fecha.desc&limit=2000`);
@@ -9114,8 +9151,13 @@ async function cargarCierreAnterior(){
         const v = Number(f.ultimo) || 0;
         if(v > 0){ _CIERRE_MTD[f.nemo] = v; n++; }
       });
+      // Se guarda contra QUÉ FECHA se está midiendo, para mostrarlo en el
+      // informe: si un mes no se carga el cierre del último día hábil, el MTD
+      // sale medido contra otro día y no habría cómo notarlo (Sergio, 04-sep).
+      _baseMTD = { fecha: cierreMes, especies: n, esUltimoHabil: _esUltimoHabilDelMes(cierreMes) };
       console.log(`Informe diario: base del MTD = cierre del ${cierreMes} (${n} especies)`);
     }else{
+      _baseMTD = { fecha:null, especies:0, esUltimoHabil:false };
       console.warn('Informe diario: no hay cierre del mes pasado guardado; ' +
                    'el MTD usa la tabla fija y puede estar desactualizado.');
     }
@@ -9407,7 +9449,26 @@ function informeCompactoHTML(){
       </tr>`).join('')}
     </table>
 
-    <div style="font-size:16px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:24px 0 10px;">RESUMEN DEL CONTINUO</div>
+    <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:24px 0 10px;">
+      <span style="font-size:16px;font-weight:700;letter-spacing:.4px;opacity:.75;">RESUMEN DEL CONTINUO</span>
+      ${(()=>{
+        // Contra qué fecha se mide el MTD. Si no es el último día hábil del
+        // mes pasado, el número está medido contra un día intermedio y hay que
+        // cargar ese cierre (Sergio, 04-sep).
+        const b = (typeof _baseMTD !== 'undefined') ? _baseMTD : null;
+        if(!b || !b.fecha){
+          return `<span style="font-size:13px;color:var(--amber,#f59e0b);">
+            ⚠ MTD contra la tabla fija: falta cargar el cierre del mes pasado.</span>`;
+        }
+        const [y,m,d] = String(b.fecha).split('-');
+        const txt = `${d}/${m}/${y}`;
+        return b.esUltimoHabil
+          ? `<span style="font-size:13px;opacity:.6;">MTD medido contra el cierre del ${txt}</span>`
+          : `<span style="font-size:13px;color:var(--amber,#f59e0b);">
+              ⚠ MTD medido contra el ${txt}, que no es el último día hábil del mes.
+              Carga ese cierre para que el dato quede exacto.</span>`;
+      })()}
+    </div>
     <table style="width:100%;border-collapse:collapse;">
       <tr>${th('Especie')}${th('Último','right')}${th('Día','right')}${th('MTD','right')}${th('YTD','right')}${th('VWAP','right')}${th('Volumen COP','right')}${th('USD','right')}</tr>
       ${porVol.map(filaResumen).join('')}
@@ -17379,7 +17440,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-03 22:44 UTC · v43';
+const BUILD_ID = '2026-09-04 14:56 UTC · v45';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
