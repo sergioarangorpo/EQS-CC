@@ -790,6 +790,9 @@
           <div class="card" style="padding:14px 16px;">
             <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:4px;">
               LO QUE GANAMOS</div>
+            <!-- Los totales arriba: leer las barras y sumar mentalmente es un
+                 desgaste innecesario (Sergio, 04-sep). -->
+            <div id="dashTotales" style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 14px;"></div>
             <div class="field-note" style="font-size:11px;margin-bottom:10px;">
               Comisión en RVL y FX; en RVI la utilidad completa (comisión + margen − broker).
               Los clientes de tarifa variable aparecen solo cuando ya se reportó.</div>
@@ -6099,7 +6102,14 @@ async function guardarEspecieMaestro(){
 function aplicarMaestroPortafolios(){
   _maestroPortafolios.forEach(p=>{
     const clave = (typeof grupoDeTrade === 'function') ? grupoDeTrade(p.client_book, '') : p.client_book;
-    const cfg = (typeof clientesDB !== 'undefined') ? clientesDB[clave] : null;
+    // Se pasa por getClienteDB, que es quien carga los portafolios del Excel de
+    // bases. Escribir directo en clientesDB agregaba el portafolio a una lista
+    // que la carga perezosa después reemplazaba, así que el portafolio nuevo
+    // desaparecía y su línea no entraba al reparto — le pasó a FUNDACIÓN
+    // BANCOLOMBIA FORTALECIMIENTO, que dejó 14.000 acciones por fuera del COR
+    // (Sergio, 04-sep).
+    const cfg = (typeof getClienteDB === 'function') ? getClienteDB(clave)
+              : ((typeof clientesDB !== 'undefined') ? clientesDB[clave] : null);
     if(!cfg) return;
     cfg.portafolios = cfg.portafolios || [];
     if(!cfg.portafolios.some(x=>String(x.deceval)===String(p.deceval))){
@@ -6160,6 +6170,15 @@ function normalizarNombresAvalFidu(){
     }
   });
 }
+
+// Portafolios de FIDUCIARIA BANCOLOMBIA que no estaban en la base y sí operan.
+// Sin ellos el reparto pierde sus líneas y el COR sale corto (Sergio, 04-sep).
+const FIDUCOLOMBIA_NUEVOS = [
+  { deceval:'3798189', nombre:'FIDUCOLOMBIA E.F. FUNDACIÓN BANCOLOMBIA - FORTALECIMIENTO',
+    nit:'800150280', dv:'0', orion:'43368', especialFid:'FBF' },
+  { deceval:'2456920', nombre:'FIDUCOLOMBIA P.A. PROMOTORA PROANTIOQUIA INVERSIONES',
+    nit:'830054539', dv:'0', orion:'', especialFid:'PPI' },
+];
 
 const VALORES_AM_NUEVOS = [
   { deceval: 2474798, nombre: 'FIDUBANCOLOMBIA P.A. ABEL TAMAYO FIERRO GIDGLOB' },
@@ -6257,6 +6276,19 @@ function getClienteDB(key){
        (cfg.portafolios||[]).length === 1){
       cfg.autoPortafolio = cfg.portafolios[0].id;
     }
+    // Los portafolios agregados desde Ayudas se aplican DESPUÉS de la carga
+    // perezosa, para que no los pise.
+    if(typeof _maestroPortafolios !== 'undefined' && _maestroPortafolios.length){
+      _maestroPortafolios.forEach(p=>{
+        const cl = (typeof grupoDeTrade === 'function') ? grupoDeTrade(p.client_book, '') : p.client_book;
+        if(cl !== key) return;
+        cfg.portafolios = cfg.portafolios || [];
+        if(!cfg.portafolios.some(x=>String(x.deceval) === String(p.deceval))){
+          cfg.portafolios.push({ id:'DEC_'+p.deceval, nombre:p.nombre, deceval:p.deceval,
+                                 nit:p.nit||'', iva:p.iva !== false, especialFid:p.especial_fid||'' });
+        }
+      });
+    }
     if(key === 'ITAU ASSET MANAGEMENT' && typeof ITAU_PORTAFOLIOS !== 'undefined'){
       cfg.portafolios = cfg.portafolios || [];
       ITAU_PORTAFOLIOS.forEach(n=>{
@@ -6275,6 +6307,15 @@ function getClienteDB(key){
           return a === b || (a.includes('VEJEZ') && b.includes('VEJEZ'));
         });
         if(!yaEsta) cfg.portafolios.push({ id:'CAX_'+norm(n), nombre:n, deceval:'', nit:'', iva:false });
+      });
+    }
+    if(key === 'FIDUCIARIA BANCOLOMBIA' && typeof FIDUCOLOMBIA_NUEVOS !== 'undefined'){
+      cfg.portafolios = cfg.portafolios || [];
+      FIDUCOLOMBIA_NUEVOS.forEach(n=>{
+        if(cfg.portafolios.some(p=>String(p.deceval) === String(n.deceval))) return;
+        cfg.portafolios.push({ id:'DEC_'+n.deceval, nombre:n.nombre, deceval:n.deceval,
+                               nit:n.nit, dv:n.dv, orion:n.orion,
+                               especialFid:n.especialFid, iva:true });
       });
     }
     if(key === 'FIDUCIARIA BANCOLOMBIA' && typeof VALORES_AM_NUEVOS !== 'undefined'){
@@ -10029,7 +10070,11 @@ function filasCORDeCliente(modulo, cliente){
         }
         filas.push({
           cliente: a.port.orion || '',            // Código Orión — llega con la tabla de Miguel
-          dv_cliente: a.port.dv || '',
+          // El DV solo se manda cuando el Código Orión es el NIT (9 dígitos),
+          // como el Fondo Abierto por Compartimentos. En los códigos cortos va
+          // vacío (Sergio, 04-sep).
+          dv_cliente: (String(a.port.orion||'').replace(/\D/g,'').length === 9)
+            ? (a.port.dv || '') : '',
           EspecialFiduciario: a.port.especialFid || '',
           Nemotecnico: f.especie,
           Folio: folioCOR(f.folio, f.especie, f.fechaReg),
@@ -10041,7 +10086,9 @@ function filasCORDeCliente(modulo, cliente){
           Fraccion: n,
           deceval: a.port.deceval || '',
           medioverificable: 5,
-          fechaFoliio: new Date(),
+          // Fecha SIN hora, como el =HOY() de Excel: con hora la bolsa puede
+          // rechazar el archivo.
+          fechaFoliio: (()=>{ const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); })(),
           usuariocomercial: 'SARANGO',
           idorioncomercial: 'SAR',
           nombreordenante: '',
@@ -10050,6 +10097,9 @@ function filasCORDeCliente(modulo, cliente){
       });
     });
   });
+  // Ordenado por folio y luego por fracción, que es como se lee en bolsa.
+  filas.sort((a,b)=> String(a.Folio).localeCompare(String(b.Folio)) ||
+                     (Number(a.Fraccion)||0) - (Number(b.Fraccion)||0));
   return filas;
 }
 
@@ -10288,6 +10338,11 @@ async function descargarCOR(seleccion){
     const f = filasCORDeCliente(modulo, cliente);
     if(f.length){ filas = filas.concat(f); resumen.push({modulo, cliente, n:f.length}); }
   });
+  // Consecutivo por FOLIO y luego por FRACCIÓN, que es como se revisa a ojo
+  // contra la papeleta (Sergio, 04-sep).
+  filas.sort((a,b)=>
+    String(a.Folio).localeCompare(String(b.Folio)) ||
+    (Number(a.Fraccion)||0) - (Number(b.Fraccion)||0));
   if(!filas.length){
     alert('No se encontraron folios para esos clientes.\n\n' +
           'El archivo del COR se arma con los folios de Fidessa: revisa que estén cargados.');
@@ -10722,6 +10777,57 @@ function renderDashBarras(M){
   };
   barra('dashVolumen', 'vol');
   barra('dashComision', 'com');
+  renderDashTotales(M);
+}
+
+// Cuánto llevamos ganado hoy, por moneda y por mercado. Los pesos y los
+// dólares NO se suman entre sí: cada uno va en su propia tarjeta.
+function renderDashTotales(M){
+  const cont = document.getElementById('dashTotales');
+  if(!cont) return;
+
+  const acum = { COP:{ total:0, por:{}, pend:0 }, USD:{ total:0, por:{}, pend:0 } };
+  Object.keys(M).forEach(k=>{
+    if(_dashMercado && k !== _dashMercado) return;
+    const m = M[k];
+    const a = acum[m.moneda];
+    Object.keys(m.clientes).forEach(c=>{
+      if(_dashCliente && c !== _dashCliente) return;
+      const cl = m.clientes[c];
+      a.total += cl.com;
+      a.por[k] = (a.por[k] || 0) + cl.com;
+      if(cl.pendiente) a.pend++;
+    });
+  });
+
+  const fmt = (v, moneda) => moneda === 'USD'
+    ? '$' + v.toLocaleString('es-CO',{maximumFractionDigits:0})
+    : (Math.abs(v) >= 1e6
+        ? '$' + (v/1e6).toLocaleString('es-CO',{maximumFractionDigits:1}) + ' MM'
+        : '$' + v.toLocaleString('es-CO',{maximumFractionDigits:0}));
+
+  const tarjeta = (moneda, etiqueta) => {
+    const a = acum[moneda];
+    if(!a.total && !a.pend) return '';
+    const detalle = Object.keys(a.por).filter(k=>a.por[k] > 0)
+      .sort((x,y)=>a.por[y] - a.por[x])
+      .map(k=>`<span style="opacity:.75;">${k}</span> ${fmt(a.por[k], moneda)}`)
+      .join('<span style="opacity:.3;"> · </span>');
+    return `
+      <div style="flex:1;min-width:230px;background:rgba(34,197,94,.08);
+                  border:1px solid rgba(34,197,94,.25);border-radius:8px;padding:12px 14px;">
+        <div style="font-size:10.5px;font-weight:700;letter-spacing:.4px;opacity:.6;">${etiqueta}</div>
+        <div style="font-size:26px;font-weight:800;color:var(--buy,#22c55e);line-height:1.25;margin-top:2px;">
+          ${fmt(a.total, moneda)}</div>
+        <div style="font-size:11px;margin-top:4px;">${detalle || '<span style="opacity:.5;">—</span>'}</div>
+        ${a.pend ? `<div style="font-size:10.5px;margin-top:5px;color:var(--amber,#f59e0b);">
+          ⚠ falta ${a.pend} cliente(s) por reportar</div>` : ''}
+      </div>`;
+  };
+
+  const html = tarjeta('COP', 'GANAMOS HOY EN PESOS') + tarjeta('USD', 'GANAMOS HOY EN DÓLARES');
+  cont.innerHTML = html || `<div class="field-note" style="font-size:11.5px;">
+    Todavía no hay comisión confirmada hoy.</div>`;
 }
 
 // Lo que falta por hacer, leyendo el estado que ya lleva cada módulo.
@@ -13995,7 +14101,26 @@ function mostrarAprobacionProteccion(cliente, loteDet){
     window._sufijoReporte = sufijoVersion(version);
     await generarReporteProteccion(cliente, loteDet);
     window._sufijoReporte = '';
-    const nuevas = await registrarLoteRVL(cliente, loteOps, version);
+    // `loteOps` no existe en esta función —solo llegan `cliente` y `loteDet`—,
+    // así que se arma aquí. Sin esto PROTECCIÓN generaba el archivo pero NO
+    // quedaba registrada: no salía en el módulo Reportes ni en el dashboard
+    // (Sergio, 04-sep).
+    const _opsProt = {};
+    (loteDet||[]).forEach(f=>{
+      const port = f.portNombre || f.portafolio || '';
+      const k = String(f.especie||'') + '|' + String(f.lado||'') + '|' + port;
+      const a = _opsProt[k] || (_opsProt[k] = {
+        portafolio: { nombre: port }, especie: f.especie, lado: f.lado,
+        cantidad: 0, bruto: 0, comMonto: 0,
+      });
+      const q = Number(f.cantidad)||0, px = Number(f.precio)||0;
+      a.cantidad += q;
+      a.bruto += q * px;
+      a.comMonto += q * px * ((Number(f.comisionPct)||0)/100);
+    });
+    const _loteOpsProt = Object.values(_opsProt)
+      .map(o=>({ ...o, precio: o.cantidad > 0 ? o.bruto / o.cantidad : 0 }));
+    const nuevas = await registrarLoteRVL(cliente, _loteOpsProt, version);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos rtpcredicorp + credicorp');
     renderFidessaTradesPanel();
   };
@@ -17593,7 +17718,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-04 19:29 UTC · v49';
+const BUILD_ID = '2026-09-04 20:22 UTC · v51';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
