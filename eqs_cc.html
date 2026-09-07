@@ -10323,6 +10323,9 @@ function filasCORDeCliente(modulo, cliente){
     comPorEspecie[k] = a.bruto ? a.com / a.bruto * 100 : 0;
   });
 
+  // Si el cliente reportó una sola especie, el promedio ponderado ES la tarifa;
+  // con varias, no sirve como respaldo.
+  const _unaSolaEspecie = new Set(lineas.map(r=>String(r.especie||'').toUpperCase())).size <= 1;
   const filas = [];
   const folios = (foliosFidessa||[]).filter(f=>poids.has(String(f.parentOrderId)));
   // Agrupado por orden, para repartir cada folio entre los portafolios.
@@ -10346,16 +10349,22 @@ function filasCORDeCliente(modulo, cliente){
         const q = _matriz[_k][i];
         if(q <= 0) return;
         n++;
-        // 1) la del reporte  2) la del folio  3) el recálculo, como último recurso
-        // 1) por orden  2) por especie+lado (lo reportado)  3) la del folio
-        //    4) el recálculo, como último recurso
-        let pct = comPorOrden[String(oid)];
-        if(pct == null || !isFinite(pct) || pct <= 0){
-          pct = comPorEspecie[String(f.especie||'').toUpperCase() + '|' + String(f.lado||'')];
-        }
-        if(pct == null || !isFinite(pct) || pct <= 0) pct = Number(f.comisionPct);
+        // La comisión sale de la TARIFA DEL FOLIO —bloque o pantalla, con el
+        // override por especie de cada cliente—, no de dividir el total
+        // reportado entre el bruto: con varias especies esa división daba
+        // promedios como 0,1079%, que no es ninguna tarifa real
+        // (Sergio, 07-sep).
+        let pct = Number(f.comisionPct);
         if(pct == null || !isFinite(pct) || pct <= 0){
           pct = (typeof comisionFolioPct === 'function') ? comisionFolioPct(claveCli, f) : 0;
+        }
+        // Los promedios ponderados solo se usan si la tarifa no se pudo
+        // resolver, y únicamente cuando el cliente reportó UNA sola especie.
+        if((pct == null || !isFinite(pct) || pct <= 0) && _unaSolaEspecie){
+          pct = comPorOrden[String(oid)];
+          if(pct == null || !isFinite(pct) || pct <= 0){
+            pct = comPorEspecie[String(f.especie||'').toUpperCase() + '|' + String(f.lado||'')];
+          }
         }
         filas.push({
           cliente: a.port.orion || '',            // Código Orión — llega con la tabla de Miguel
@@ -10631,11 +10640,23 @@ async function descargarCOR(seleccion){
     const f = filasCORDeCliente(modulo, cliente);
     if(f.length){ filas = filas.concat(f); resumen.push({modulo, cliente, n:f.length}); }
   });
-  // Consecutivo por FOLIO y luego por FRACCIÓN, que es como se revisa a ojo
-  // contra la papeleta (Sergio, 04-sep).
+  // Orden final: ESPECIE, LADO y FOLIO, que es como se revisa a ojo contra la
+  // papeleta (Sergio, 07-sep).
   filas.sort((a,b)=>
+    String(a.Nemotecnico||'').localeCompare(String(b.Nemotecnico||''), 'es') ||
+    String(a['C/V']||'').localeCompare(String(b['C/V']||'')) ||
     String(a.Folio).localeCompare(String(b.Folio)) ||
     (Number(a.Fraccion)||0) - (Number(b.Fraccion)||0));
+
+  // La FRACCIÓN es el consecutivo dentro de cada folio y lado. Se numera aquí,
+  // ya con todas las filas juntas: al hacerlo dentro de cada cliente todas
+  // salían con 1 (Sergio, 07-sep).
+  const _frac = {};
+  filas.forEach(f=>{
+    const k = String(f.Folio) + '|' + String(f['C/V']||'');
+    _frac[k] = (_frac[k] || 0) + 1;
+    f.Fraccion = _frac[k];
+  });
   if(!filas.length){
     alert('No se encontraron folios para esos clientes.\n\n' +
           'El archivo del COR se arma con los folios de Fidessa: revisa que estén cargados.');
@@ -18122,7 +18143,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-07 20:33 UTC · v61';
+const BUILD_ID = '2026-09-07 21:12 UTC · v62';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
