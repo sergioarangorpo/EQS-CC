@@ -5540,7 +5540,9 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
   // no es lo que el cliente espera abrir (Sergio, 03-sep).
   ws.views = [{ showGridLines:false, state:'frozen', ySplit:4 }];
 
-  const nombre = `${cfgMacro.archivo}_${fechaSlug}${window._sufijoReporte||''}.xlsx`;
+  // El nombre lleva el prefijo Operaciones_ y el código del macrogrupo, igual
+  // que lo que anuncia la confirmación (Sergio, 05-sep).
+  const nombre = `Operaciones_${cfgMacro.archivo}_${fechaSlug}${window._sufijoReporte||''}.xlsx`;
   wb.xlsx.writeBuffer().then(buf=>{
     const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
     const a = document.createElement('a');
@@ -5561,12 +5563,55 @@ const CCFFMM_MACROGRUPOS = {
   ACC_COLOMBIA: { nombre:'ACCIONES COLOMBIA', archivo:'CC_AM',        fondo:'CREDICORP CAPITAL ACCIONES COLOMBIA' },
   ACC_GLOBALES: { nombre:'ACCIONES GLOBALES', archivo:'ACC_GLOBALES', fondo:'CREDICORP CAPITAL ACCIONES GLOBALES' },
   CRGS:         { nombre:'CRGS',              archivo:'GRSG',         fondo:'CRGS' },
-  FIDUCIARIA:   { nombre:'FIDUCIARIA',        archivo:'FIDUCIARIA',   fondo:null },   // el fondo es el portafolio de cada línea
+  FIDUCIARIA:   { nombre:'FIDUCIARIA',        archivo:'CC_FIDUCIARIA', fondo:null },  // el fondo es el portafolio de cada línea
 };
 
 // Clasifica una línea por su Notes. Devuelve la clave del macrogrupo, o '' si
 // el Notes viene vacío — en ese caso NO se asume Fiduciaria: se avisa, porque
 // puede ser que simplemente se olvidó marcar.
+// El fondo de una línea: primero lo asignado a mano, luego el Notes del folio,
+// y por último el Notes de su orden en Fidessa Trades.
+function fondoDeFolioFFMM(f){
+  const manual = _fondoManualFFMM[String(f.parentOrderId)];
+  if(manual) return manual;
+  return String(f.notes || f.portafolio || '').trim()
+      || String(((_fidessaTradesRaw||{})[String(f.parentOrderId)]||{}).notes || '').trim();
+}
+
+// Fondo asignado a mano cuando el Notes no trae marca: parentOrderId -> fondo.
+// Vive solo en la sesión; al reportar queda en el registro (Sergio, 05-sep).
+let _fondoManualFFMM = {};
+
+// Todos los fondos que se pueden elegir: los tres macrogrupos propios primero
+// y después los de la fiduciaria, sacados del maestro de decevales.
+// Asigna el fondo a una orden sin marca y repinta.
+function asignarFondoFFMM(parentOrderId, fondo){
+  if(fondo) _fondoManualFFMM[String(parentOrderId)] = fondo;
+  else delete _fondoManualFFMM[String(parentOrderId)];
+  if(typeof renderFolios === 'function') renderFolios();
+}
+
+function opcionesFondoFFMM(){
+  const propios = [
+    { valor:'ACCIONES COLOMBIA', etiqueta:'ACCIONES COLOMBIA', macro:'ACC_COLOMBIA' },
+    { valor:'ACC GLOBALES',      etiqueta:'ACCIONES GLOBALES', macro:'ACC_GLOBALES' },
+    { valor:'CRGS',              etiqueta:'CRGS',              macro:'CRGS' },
+  ];
+  const fondos = [];
+  if(typeof _maestroDeceval !== 'undefined'){
+    const vistos = new Set();
+    Object.values(_maestroDeceval).forEach(x=>{
+      if(!/FIDUCIARIA CREDICORP/i.test(String(x.client_book||''))) return;
+      const n = String(x.id_fondo || x.portafolio || '').trim();
+      if(!n || vistos.has(n)) return;
+      vistos.add(n);
+      fondos.push({ valor:n, etiqueta:n, macro:'FIDUCIARIA' });
+    });
+    fondos.sort((a,b)=>a.etiqueta.localeCompare(b.etiqueta, 'es'));
+  }
+  return { propios, fondos };
+}
+
 function macrogrupoCCFFMM(notes){
   const t = String(notes||'').trim().toUpperCase();
   if(!t) return '';
@@ -11787,8 +11832,7 @@ function renderPanelListo(filtrados){
     const cuenta = {};
     let sinMarca = 0;
     folios.forEach(f=>{
-      const notes = String(f.notes || f.portafolio || '').trim()
-                 || String((_fidessaTradesRaw[String(f.parentOrderId)]||{}).notes || '').trim();
+      const notes = fondoDeFolioFFMM(f);
       const k = macrogrupoCCFFMM(notes);
       if(!k){ sinMarca++; return; }
       cuenta[k] = cuenta[k] || { n:0, ports:new Set() };
@@ -11797,8 +11841,42 @@ function renderPanelListo(filtrados){
     });
     const claves = Object.keys(cuenta);
     if(sinMarca){
-      avisoMacro = `<div style="font-size:12.5px;color:var(--amber,#f59e0b);">` +
-        `⚠ ${sinMarca} folio(s) SIN marca de macrogrupo en el Account. Revísalo en Fidessa.</div>`;
+      // Se puede asignar el fondo AQUÍ, sin volver a Fidessa a corregir la
+      // papeleta: el trade ya está hecho y hay que reportarlo (Sergio, 05-sep).
+      const ordsSin = [...new Set(folios.filter(f=>!macrogrupoCCFFMM(fondoDeFolioFFMM(f)))
+        .map(f=>String(f.parentOrderId)))];
+      const op = opcionesFondoFFMM();
+      avisoMacro = `
+        <div style="background:rgba(245,158,11,.10);border-left:3px solid var(--amber,#f59e0b);
+                    border-radius:6px;padding:10px 14px;">
+          <div style="font-size:12.5px;color:var(--amber,#f59e0b);font-weight:700;">
+            ⚠ ${sinMarca} folio(s) sin marca de fondo en el Account</div>
+          <div class="field-note" style="font-size:11.5px;margin:4px 0 8px;">
+            El Notes de Fidessa llegó vacío o con una marca que no se reconoce.
+            Asigna el fondo aquí para poder reportar.</div>
+          ${ordsSin.map(oid=>{
+            const t = (_fidessaTradesRaw||{})[oid] || {};
+            const esp = nemoCanonico(t.security,'fidessa') || '';
+            const q = (foliosFidessa||[]).filter(f=>String(f.parentOrderId)===oid)
+                        .reduce((a,f)=>a+f.cantidad,0);
+            const sel = _fondoManualFFMM[oid] || '';
+            return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;font-size:12px;">
+              <span style="min-width:190px;">
+                <b>${esp}</b> ${t.lado||''} · ${fmtInt(q)}
+                <span class="field-note" style="font-size:10px;"> ${oid}</span></span>
+              <select onchange="asignarFondoFFMM('${oid}', this.value)"
+                      style="flex:1;max-width:420px;font-size:12px;padding:3px 8px;">
+                <option value="">— elige el fondo —</option>
+                <optgroup label="Macrogrupos propios">
+                  ${op.propios.map(o=>`<option value="${o.valor}"${sel===o.valor?' selected':''}>${o.etiqueta}</option>`).join('')}
+                </optgroup>
+                <optgroup label="Fondos de la fiduciaria">
+                  ${op.fondos.map(o=>`<option value="${String(o.valor).replace(/"/g,'&quot;')}"${sel===o.valor?' selected':''}>${o.etiqueta}</option>`).join('')}
+                </optgroup>
+              </select>
+            </div>`;
+          }).join('')}
+        </div>`;
     }else if(claves.length > 1){
       avisoMacro = `<div style="font-size:12.5px;color:var(--amber,#f59e0b);">` +
         `⚠ Hay folios de ${claves.length} macrogrupos: ` +
@@ -13724,8 +13802,7 @@ async function generarReporte(){
     const porMacro = {};
     const sinMarca = [];
     seleccionados.forEach(f=>{
-      const notes = String(f.notes || f.portafolio || '').trim()
-                 || String((_fidessaTradesRaw[String(f.parentOrderId)]||{}).notes || '').trim();
+      const notes = fondoDeFolioFFMM(f);
       const k = macrogrupoCCFFMM(notes);
       if(!k){ sinMarca.push(f.especie + ' folio ' + f.folio); return; }
       (porMacro[k] = porMacro[k] || []).push({ ...f, notes });
@@ -17780,7 +17857,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-04 20:41 UTC · v53';
+const BUILD_ID = '2026-09-07 16:31 UTC · v54';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
