@@ -3961,6 +3961,133 @@ async function generarReporteExcel(){
 //   NOT TODAY = ese lado no operó hoy
 //   TAX RATE  = 'ALL IN': la comisión va embebida en el precio
 // =====================================================================
+// =====================================================================
+// BNP PARIBAS — dos archivos por operación
+// ---------------------------------------------------------------------
+//   1) CREDICORP_CAPITAL_COLOMBIA_-_EQTY_EXECUTION_BNP_yyyymmdd
+//      Encabezados en la fila 3. La CANTIDAD lleva signo: + compra, − venta.
+//      Comisión = 0,1% del bruto y NET CASH = bruto + comisión.
+//   2) VWAP_-_Colombia_ddMmmaa  o  MOC_-_Colombia_ddMmmaa
+//      Según cómo lo marque BNP en su correo. Encabezados en la fila 2.
+//
+// El nemo se traduce al código de BNP (CIBEST -> CO_CIBEST) y al RIC
+// (CIBEST -> CIBEST.CN) con la tabla de abajo (Sergio, 07-sep).
+// =====================================================================
+const BNP_NEMOS = {
+  BCOLOMBIA: { bnp:'CO_BCOLO',     ric:'BIC.CN' },
+  ISA:       { bnp:'CO_ISA',       ric:'ISA.CN' },
+  PFBCOLOM:  { bnp:'CO_PFBCOLO',   ric:'BIC_p1.CN' },
+  CEMARGOS:  { bnp:'CO_CEMARGOS',  ric:'CCB.CN' },
+  CIBEST:    { bnp:'CO_CIBEST',    ric:'CIBEST.CN' },
+  PFCIBEST:  { bnp:'CO_PFCIBEST',  ric:'PFCIBEST.CN' },
+  ECOPETROL: { bnp:'CO_ECOPETL',   ric:'ECO.CN' },
+};
+const BNP_COMISION = 0.001;          // 0,1% del bruto
+const BNP_BROKER   = 'CORREVAL';
+const BNP_PORTFOLIO = 'IEFLATMCSI_DEFAULT';
+const BNP_BROKER_VWAP = 'CVBOBOG';
+
+function nemoBNP(nemo){
+  const n = String(nemo||'').toUpperCase().trim();
+  return BNP_NEMOS[n] || { bnp:'CO_' + n, ric:n + '.CN' };
+}
+
+// Fecha como la espera BNP en el nombre del archivo: 21Jul26.
+function fechaBNPCorta(d){
+  const MES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return String(d.getDate()).padStart(2,'0') + MES[d.getMonth()] + String(d.getFullYear()).slice(-2);
+}
+
+async function generarExcelBNP(lineas, tipoOrden, fechaOp){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  if(!lineas || !lineas.length){ alert('No hay operaciones de BNP para reportar.'); return; }
+  const d = fechaOp instanceof Date ? fechaOp : new Date();
+  const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  const tipo = /MOC/i.test(String(tipoOrden||'')) ? 'MOC' : 'VWAP';
+
+  const bajar = async (wb, nombre) => {
+    const buf = await wb.xlsx.writeBuffer();
+    const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+    const a = document.createElement('a');
+    a.href = url; a.download = nombre;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // ---------- 1) EQTY EXECUTION ----------
+  const wb1 = new ExcelJS.Workbook();
+  const ws1 = wb1.addWorksheet('Hoja1');
+  [17.9, 15.8, 12.2, 16.9, 21.2, 10.1, 12.3, 10, 12.3, 10, 4.4, 18.4, 11.2, 16.2]
+    .forEach((w,i)=>{ ws1.getColumn(i+1).width = w; });
+  // Fila 2: las notas del formato de BNP, tal cual.
+  [['B2','(leave blank)'],['D2','(leave blank)'],['E2','(use these bnp codes)'],
+   ['G2','(leave blank)'],['H2','(leave blank)'],['I2','(leave blank)'],
+   ['J2','(leave blank)'],['L2','(+ = buy / - = sell)']].forEach(([ref,txt])=>{
+    const c = ws1.getCell(ref);
+    c.value = txt;
+    c.font = { name:'Calibri', size:9, italic:true, color:{argb:'FF808080'} };
+  });
+  const H1 = ['Commission+Tax','CUSTODY FEE','BROKER','COUNTERPART','UNDERLYING','LOT SIZE',
+              'C/P','E/A','MATURITY','STRIKE','Acc','QUANTITY','PRICE','NET CASH'];
+  H1.forEach((h,i)=>{
+    const c = ws1.getCell(3, i+1);
+    c.value = h;
+    c.font = { name:'Calibri', size:11, bold:true };
+  });
+  const CONTABLE = '_(* #,##0.00_);_(* \\(#,##0.00\\);_(* "-"??_);_(@_)';
+  const CONTABLE_ENT = '_-* #,##0_-;\\-* #,##0_-;_-* "-"??_-;_-@_-';
+  let r1 = 4;
+  lineas.forEach(l=>{
+    const q = Number(l.cantidad) || 0;
+    const px = Number(l.precio) || 0;
+    if(!q || !px) return;
+    const bruto = q * px;
+    const com = bruto * BNP_COMISION;
+    const esCompra = String(l.lado||'').toUpperCase().startsWith('C') ||
+                     String(l.lado||'').toUpperCase().startsWith('B');
+    ws1.getCell(r1,1).value = com;                       // Commission+Tax
+    ws1.getCell(r1,3).value = BNP_BROKER;
+    ws1.getCell(r1,5).value = nemoBNP(l.especie).bnp;    // UNDERLYING
+    ws1.getCell(r1,6).value = 1;                         // LOT SIZE
+    // La cantidad lleva SIGNO: positiva compra, negativa venta.
+    ws1.getCell(r1,12).value = esCompra ? q : -q;
+    ws1.getCell(r1,13).value = px;
+    ws1.getCell(r1,14).value = bruto + com;              // NET CASH
+    ws1.getCell(r1,1).numFmt = CONTABLE;
+    ws1.getCell(r1,12).numFmt = CONTABLE_ENT;
+    ws1.getCell(r1,14).numFmt = CONTABLE;
+    r1++;
+  });
+  await bajar(wb1, `CREDICORP_CAPITAL_COLOMBIA_-_EQTY_EXECUTION_BNP_${slug}.xlsx`);
+
+  // ---------- 2) VWAP / MOC ----------
+  const wb2 = new ExcelJS.Workbook();
+  const ws2 = wb2.addWorksheet('Hoja1');
+  [3, 14, 12, 14, 7, 15, 22, 12].forEach((w,i)=>{ ws2.getColumn(i+1).width = w; });
+  ['Ric Code','Size','Price','CCY','Udl','Portfolio','Broker'].forEach((h,i)=>{
+    const c = ws2.getCell(2, i+2);
+    c.value = h;
+    c.font = { name:'Calibri', size:11, bold:true };
+  });
+  let r2 = 3;
+  lineas.forEach(l=>{
+    const q = Number(l.cantidad) || 0;
+    const px = Number(l.precio) || 0;
+    if(!q || !px) return;
+    const m = nemoBNP(l.especie);
+    ws2.getCell(r2,2).value = m.ric;
+    ws2.getCell(r2,3).value = q;
+    ws2.getCell(r2,4).value = px;
+    ws2.getCell(r2,5).value = 'COP';
+    ws2.getCell(r2,6).value = m.bnp;
+    ws2.getCell(r2,7).value = BNP_PORTFOLIO;
+    ws2.getCell(r2,8).value = BNP_BROKER_VWAP;
+    ws2.getCell(r2,3).numFmt = '#,##0';
+    r2++;
+  });
+  await bajar(wb2, `${tipo}_-_Colombia_${fechaBNPCorta(d)}.xlsx`);
+}
+
 async function generarExcelCruceMLI(clienteKey, registrados, trader){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
   if(!registrados || registrados.length===0){ alert('No hay lados registrados para el reporte del cruce.'); return; }
@@ -5160,6 +5287,17 @@ const clientesDB = {
     portafolios: [],
     fileNombre: 'Itau Asset Management',
     comisionBloque: 0.0015, comisionPantalla: 0.0008,
+  },
+  'BNPB': {
+    nombre: 'BNP PARIBAS ARBITRAJE S.N.C',
+    // Reporte propio: dos archivos, EQTY EXECUTION + VWAP/MOC. La comisión es
+    // 0,1% del bruto, sin distinguir bloque de pantalla (Sergio, 07-sep).
+    formatoReporte: 'bnp', reparteManual: false,
+    fileNombre: 'BNP',
+    comisionBloque: 0.001, comisionPantalla: 0.001,
+    portafolios: [{ id:'BNP', nombre:'BNP PARIBAS ARBITRAJE S.N.C', deceval:'1627809', iva:false }],
+    autoPortafolio: 'BNP',
+    iva: false,
   },
   'ALIANZA VALORES': {
     nombre: 'ALIANZA VALORES',
@@ -13963,11 +14101,25 @@ async function generarReporte(){
     // El nombre va COMPLETO: "CREDICORP CAPITAL ACCIONES COLOMBIA", no solo el
     // macrogrupo, que por sí solo no identifica al cliente (Sergio, 07-sep).
     const _nombreReporte = cfgMacro.fondo || ('CREDICORP CAPITAL ' + cfgMacro.nombre);
-    await registrarLoteRVL(_nombreReporte, lote.map(f=>({
-      portafolio: { nombre: cfgMacro.fondo || f.notes || f.portafolio || '' },
-      especie: f.especie, lado: f.lado, cantidad: f.cantidad, precio: f.precio,
-      comMonto: (Number(f.cantidad)||0) * (Number(f.precio)||0) * 0.001,
-    })), version);
+    // CONSOLIDADO por especie + lado + portafolio, no una fila por folio: con
+    // seis folios el módulo Reportes mostraba seis líneas y la primera —800.000
+    // de un total de 813.868— parecía ser la ejecución completa
+    // (Sergio, 07-sep).
+    const _agr = {};
+    lote.forEach(f=>{
+      const port = cfgMacro.fondo || f.notes || f.portafolio || '';
+      const k = String(f.especie) + '|' + String(f.lado) + '|' + port;
+      const a = _agr[k] || (_agr[k] = {
+        portafolio: { nombre: port }, especie: f.especie, lado: f.lado,
+        cantidad: 0, bruto: 0, comMonto: 0,
+      });
+      const q = Number(f.cantidad)||0, px = Number(f.precio)||0;
+      a.cantidad += q;
+      a.bruto += q * px;
+      a.comMonto += q * px * 0.001;
+    });
+    await registrarLoteRVL(_nombreReporte, Object.values(_agr)
+      .map(o=>({ ...o, precio: o.cantidad > 0 ? o.bruto / o.cantidad : 0 })), version);
 
   } else if(formato === 'skandia'){
     const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
@@ -17952,7 +18104,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-07 17:24 UTC · v58';
+const BUILD_ID = '2026-09-07 18:05 UTC · v60';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
