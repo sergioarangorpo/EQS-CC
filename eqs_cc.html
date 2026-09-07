@@ -5124,7 +5124,7 @@ const clientesDB = {
     // macrogrupos con muralla china entre ellos: se distinguen por el Notes de
     // Fidessa (= Account de EMSX) y se reportan SIEMPRE por separado.
     formatoReporte: 'credicorpffmm',
-    reparteManual: false,
+    reparteManual: true,   // se asigna como Bancolombia (Sergio, 05-sep)
     portafolios: [],
     fileNombre: 'Operaciones',
     // 0,1% sin excepciones: no hay override de ECOPETROL ni PFCIBEST.
@@ -5618,27 +5618,33 @@ function macrogrupoCCFFMM(notes){
   if(/ACC(IONES)?\s+COLOMBIA/.test(t)) return 'ACC_COLOMBIA';
   if(/ACC(IONES)?\s+GLOBALES/.test(t)) return 'ACC_GLOBALES';
   if(/^CRGS$/.test(t)) return 'CRGS';
-  // Lo que NO se reconoce queda SIN macrogrupo, para que el panel lo señale y
-  // Sergio lo corrija. Antes todo lo desconocido caía en FIDUCIARIA, así que
-  // una línea de ACCIONES COLOMBIA mal marcada como "Would" se reportaba en el
-  // macrogrupo equivocado — y entre ellos hay muralla china (Sergio, 04-sep).
-  if(/^(WOULD|WLD|W)$/i.test(t)) return '';
-  if(esFondoFiduciariaCCFFMM(t)) return 'FIDUCIARIA';
-  return '';
+  // El resto SOLO es FIDUCIARIA si el Account corresponde a un fondo real.
+  // Antes todo lo desconocido caía ahí por descarte, así que un "Would" —que
+  // es un dato, pero no un fondo— se reportaba como Fiduciaria y el arqueo
+  // decía que todo estaba bien (Sergio, 05-sep).
+  return fondoFiduciariaCCFFMM(t) ? 'FIDUCIARIA' : '';
 }
 
-// ¿El Notes corresponde a un fondo de la fiduciaria? Se apoya en el maestro de
-// decevales, que ya tiene los ~150 fondos cargados. Si no está, no se asume.
-function esFondoFiduciariaCCFFMM(notes){
+// Busca el Account contra la lista real de fondos. El Account no llega idéntico
+// al maestro, así que se compara sin espacios ni signos y aceptando que uno
+// contenga al otro. Devuelve el nombre del fondo, o '' si no lo reconoce.
+function fondoFiduciariaCCFFMM(account){
   const limpiar = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-  const n = limpiar(notes);
-  if(!n) return false;
-  if(typeof _maestroDeceval === 'undefined') return true;   // sin base, no se frena
-  return Object.values(_maestroDeceval).some(x=>{
-    if(!/FIDUCIARIA CREDICORP|CREDICORP AM/i.test(String(x.client_book||''))) return false;
-    const f = limpiar(x.id_fondo), pr = limpiar(x.portafolio);
-    return f === n || pr === n || (f && (f.includes(n) || n.includes(f)));
+  const n = limpiar(account);
+  if(!n || n.length < 3) return '';
+  if(typeof _maestroDeceval === 'undefined') return '';
+  let mejor = '';
+  Object.values(_maestroDeceval).forEach(x=>{
+    if(!/FIDUCIARIA CREDICORP/i.test(String(x.client_book||''))) return;
+    const nombre = String(x.id_fondo || x.portafolio || '').trim();
+    const f = limpiar(nombre);
+    if(!f || f.length < 3) return;
+    if(f === n){ mejor = nombre; return; }
+    // Coincidencia parcial: se queda con el nombre más largo que calce, que es
+    // el más específico (FI SMURFIT II antes que FI SMURFIT).
+    if((f.includes(n) || n.includes(f)) && nombre.length > mejor.length) mejor = nombre;
   });
+  return mejor;
 }
 
 function comisionFolioPct(cliente, f){
@@ -6354,6 +6360,28 @@ function getClienteDB(key){
           cfg.portafolios.push({ id:'DEC_'+p.deceval, nombre:p.nombre, deceval:p.deceval,
                                  nit:p.nit||'', iva:p.iva !== false, especialFid:p.especial_fid||'' });
         }
+      });
+    }
+    // CREDICORPFFMM: sus portafolios salen del maestro de decevales, nombrados
+    // por macrogrupo para que la lista de asignación se lea de un golpe
+    // (Sergio, 05-sep).
+    if(key === 'CREDICORPFFMM' && typeof _maestroDeceval !== 'undefined'){
+      cfg.portafolios = cfg.portafolios || [];
+      const yaEsta = n => cfg.portafolios.some(p=>p.nombre === n);
+      [['CC_ACCIONES COL','ACCIONES COLOMBIA'],
+       ['CC_ACC GLOBALES','ACC GLOBALES'],
+       ['CRGS','CRGS']].forEach(([nombre, fondo])=>{
+        if(!yaEsta(nombre)) cfg.portafolios.push({
+          id:'FFMM_'+nombre.replace(/[^A-Z]/gi,''), nombre, fondo, iva:true });
+      });
+      Object.values(_maestroDeceval).forEach(x=>{
+        if(!/FIDUCIARIA CREDICORP/i.test(String(x.client_book||''))) return;
+        const fondo = String(x.id_fondo || x.portafolio || '').trim();
+        if(!fondo) return;
+        const nombre = 'CC_FIDUCIARIA ' + fondo;
+        if(yaEsta(nombre)) return;
+        cfg.portafolios.push({ id:'FFMM_'+String(x.deceval||fondo).replace(/[^A-Z0-9]/gi,''),
+                               nombre, fondo, deceval:x.deceval||'', nit:x.nit||'', iva:true });
       });
     }
     if(key === 'ITAU ASSET MANAGEMENT' && typeof ITAU_PORTAFOLIOS !== 'undefined'){
@@ -11852,8 +11880,8 @@ function renderPanelListo(filtrados){
           <div style="font-size:12.5px;color:var(--amber,#f59e0b);font-weight:700;">
             ⚠ ${sinMarca} folio(s) sin marca de fondo en el Account</div>
           <div class="field-note" style="font-size:11.5px;margin:4px 0 8px;">
-            El Notes de Fidessa llegó vacío o con una marca que no se reconoce.
-            Asigna el fondo aquí para poder reportar.</div>
+            El Account de Fidessa/EMSX no corresponde a ningún portafolio de
+            CREDICORP CAPITAL AM. Asigna el fondo aquí para poder reportar.</div>
           ${ordsSin.map(oid=>{
             const t = (_fidessaTradesRaw||{})[oid] || {};
             const esp = nemoCanonico(t.security,'fidessa') || '';
@@ -13835,7 +13863,9 @@ async function generarReporte(){
       // Con COMISIÓN y NETO, como las confirmaciones de los demás clientes:
       // sin esos dos no hay forma de revisar la plata antes de descargar
       // (Sergio, 04-sep).
-      columnas: ['Especie','Lado','Cantidad','Precio prom.','Bruto','Comisión','IVA','Neto','Folios','Fondo'],
+      // Solo lo que se revisa: sin número de folios ni columnas de más
+      // (Sergio, 05-sep).
+      columnas: ['Account','Cantidad','Precio','Bruto','Comisión','% Com.','IVA','Valor Neto'],
       filas: (()=>{
         const g = {};
         lote.forEach(f=>{
@@ -13845,16 +13875,15 @@ async function generarReporte(){
           a.qty += f.cantidad; a.bruto += f.cantidad*f.precio; a.n++;
         });
         return Object.values(g)
-          .sort((x,y)=>String(x.especie).localeCompare(String(y.especie)) || String(x.fondo).localeCompare(String(y.fondo)))
+          .sort((x,y)=>String(x.fondo).localeCompare(String(y.fondo)) || String(x.especie).localeCompare(String(y.especie)))
           .map(a=>{
             // 0,1% + IVA, sin override de ninguna especie.
             const com = redondear(a.bruto * 0.001, 2);
             const iva = redondear(com * 0.19, 2);
             const neto = a.lado === 'Venta' ? redondear(a.bruto - com - iva, 2)
                                             : redondear(a.bruto + com + iva, 2);
-            return [a.especie, a.lado, fmtInt(a.qty), fmtRate(a.qty?a.bruto/a.qty:0),
-                    fmtMoney(a.bruto), fmtMoney(com), fmtMoney(iva), fmtMoney(neto),
-                    String(a.n), a.fondo];
+            return [a.fondo, fmtInt(a.qty), fmtRate(a.qty?a.bruto/a.qty:0),
+                    fmtMoney(a.bruto), fmtMoney(com), '0,100%', fmtMoney(iva), fmtMoney(neto)];
           });
       })(),
       totales: (()=>{
@@ -17857,7 +17886,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-07 16:31 UTC · v54';
+const BUILD_ID = '2026-09-07 17:01 UTC · v55';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
