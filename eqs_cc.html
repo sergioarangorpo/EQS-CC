@@ -5625,8 +5625,22 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
       cfgMacro.fondo || f.portNombre || f.notes || '',
       nitFondo,
       Number(f.folio) || f.folio || '',   // número, para poder ordenar y sumar
-      f.fechaReg instanceof Date ? f.fechaReg : hoyDate,
-      f.fechaCumpl instanceof Date ? f.fechaCumpl : (f.fechaCumpl || ''),
+      // Fecha sin hora: si arrastra la hora, Excel la muestra con horas.
+      (()=>{
+        const d = (f.fechaReg instanceof Date) ? f.fechaReg : hoyDate;
+        return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      })(),
+      // Si el folio no trae cumplimiento, se calcula: T+2 en calendario
+      // COLOMBIANO. Antes quedaba vacío porque los folios de Fidessa no lo
+      // traen (Sergio, 07-sep). El festivo en Estados Unidos no lo mueve.
+      (()=>{
+        if(f.fechaCumpl instanceof Date) return f.fechaCumpl;
+        if(f.fechaCumpl) return f.fechaCumpl;
+        const b = (f.fechaReg instanceof Date) ? f.fechaReg : hoyDate;
+        const base = new Date(b.getFullYear(), b.getMonth(), b.getDate());
+        const c = sumarDiasHabiles(base, 2, 'CO');
+        return new Date(c.getFullYear(), c.getMonth(), c.getDate());
+      })(),
       f.especie,
       esVenta ? 'V' : 'C',
       qty, px, bruto, com, iva, neto,
@@ -5791,6 +5805,10 @@ function opcionesFondoFFMM(){
 function macrogrupoCCFFMM(notes){
   const t = String(notes||'').trim().toUpperCase();
   if(!t) return '';
+  // OJO: "FPV ACCIONES COLOMBIA" es un fondo de la FIDUCIARIA, no el
+  // macrogrupo ACCIONES COLOMBIA. Se descarta antes de mirar los macrogrupos
+  // propios, porque el nombre los contiene (Sergio, 07-sep).
+  if(/\bFPV\b|\bFVP\b/.test(t)) return fondoFiduciariaCCFFMM(t) ? 'FIDUCIARIA' : 'FIDUCIARIA';
   if(/ACC(IONES)?\s+COLOMBIA/.test(t)) return 'ACC_COLOMBIA';
   if(/ACC(IONES)?\s+GLOBALES/.test(t)) return 'ACC_GLOBALES';
   if(/^CRGS$/.test(t)) return 'CRGS';
@@ -18104,7 +18122,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-07 18:05 UTC · v60';
+const BUILD_ID = '2026-09-07 20:33 UTC · v61';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
