@@ -4775,8 +4775,13 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
     agrup[k].cant += f.cantidad;
     agrup[k].montoPx += f.cantidad * f.precio;
   });
+  // El precio promedio se guarda COMPLETO en la celda y se muestra con 2
+  // decimales: el cliente quiere poder entrar a la celda y ver toda la
+  // precisión (Sergio, 07-sep). El formato de la columna se encarga de la
+  // vista; el valor no se toca.
   cuadroResumen('RESUMEN EQUITY', Object.values(agrup).map(g=>({
-    lado:g.lado, nombre:g.nombre, cantidad:g.cant, precioProm: redondear(g.montoPx/g.cant, 2),
+    lado:g.lado, nombre:g.nombre, cantidad:g.cant,
+    precioProm: g.cant ? g.montoPx / g.cant : 0,
   })));
 
   // Tabla: una fila por portafolio asignado. Portafolio en vez de Symbol-solo:
@@ -17923,7 +17928,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-07 17:12 UTC · v56';
+const BUILD_ID = '2026-09-07 17:19 UTC · v57';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
