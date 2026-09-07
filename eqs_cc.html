@@ -5572,10 +5572,38 @@ const CCFFMM_MACROGRUPOS = {
 // El fondo de una línea: primero lo asignado a mano, luego el Notes del folio,
 // y por último el Notes de su orden en Fidessa Trades.
 function fondoDeFolioFFMM(f){
+  // 1) EL PORTAFOLIO ASIGNADO manda sobre todo. Si Sergio repartió la línea a
+  //    CC_ACCIONES COL, el macrogrupo es ese — sin importar qué diga el Account
+  //    de Fidessa. Antes el freno seguía mirando el Account (que decía WOULD) y
+  //    bloqueaba aunque la asignación ya estuviera hecha (Sergio, 05-sep).
+  const asignado = fondoDeAsignacionFFMM(f);
+  if(asignado) return asignado;
   const manual = _fondoManualFFMM[String(f.parentOrderId)];
   if(manual) return manual;
+  // 2) Si no hay asignación, el Account de Fidessa o EMSX.
   return String(f.notes || f.portafolio || '').trim()
       || String(((_fidessaTradesRaw||{})[String(f.parentOrderId)]||{}).notes || '').trim();
+}
+
+// El fondo que sale del reparto: se busca la orden del folio en el store de
+// allocations y se devuelve el `fondo` del portafolio asignado.
+function fondoDeAsignacionFFMM(f){
+  const oid = String(f.parentOrderId || '');
+  let al = (_allocPorOrden||{})[oid];
+  // Si la orden está activa, el reparto en pantalla todavía no se ha guardado.
+  if((!al || !al.length) && String(_ordenActiva||'') === oid && (allocations||[]).length){
+    al = allocations;
+  }
+  if(!al || !al.length) return '';
+  const cfg = getClienteDB('CREDICORPFFMM');
+  const ports = cfg.portafolios || [];
+  // Con varios portafolios asignados, cada uno puede ser de otro macrogrupo:
+  // se devuelve el del primero y el generador ya separa por macrogrupo.
+  for(const a of al){
+    const p = ports.find(x=>x.id === a.portId);
+    if(p && p.fondo) return p.fondo;
+  }
+  return '';
 }
 
 // Fondo asignado a mano cuando el Notes no trae marca: parentOrderId -> fondo.
@@ -13468,6 +13496,10 @@ async function generarReporte(){
   // Marcar folios sirve para dos cosas: ponerle comisión de bloque a alguno, o
   // reportar a propósito solo una parte. Pedir la selección cuando la app ya
   // tiene EMSX + Trades + Folios cuadrados era trabajo manual sin valor.
+  // El reparto que está EN PANTALLA se guarda antes de leerlo: si no, lo que
+  // acabas de asignar no existe todavía en `_allocPorOrden` y el generador cree
+  // que no hay asignación (Sergio, 05-sep).
+  if(typeof sincronizarAllocOrdenActiva === 'function') sincronizarAllocOrdenActiva();
   const marcados = filtrados.filter(f=>selectedFolios.has(f.id));
   const seleccionados = esProteccionRep
     ? filtrados.filter(f=>f.origen==='proteccion-directo')
@@ -13772,17 +13804,21 @@ async function generarReporte(){
     // la que va a ver Porvenir: ellos consolidan, no quieren dos tarifas.
   }
 
-  // Se limpia SOLO lo que se acaba de reportar: el reparto de las demás líneas
-  // se conserva. Antes se borraba todo, así que preparar PFCIBEST, pasar a
-  // CIBEST y generar las dos juntas era imposible — al volver, el alloc de la
-  // primera había desaparecido (Sergio, 01-sep).
-  const _ordsReportadas = new Set((seleccionados||[]).map(f=>String(f.parentOrderId)));
-  _ordsReportadas.forEach(o=>{ delete _allocPorOrden[o]; });
-  selectedFolios.clear();
-  allocations = [];
-  _ordenActiva = null;
-  poblarSelectorNuevoPortafolio();
-  renderFolios();
+  // La limpieza del reparto va al FINAL, cuando el archivo ya se generó. Corría
+  // aquí, antes de que la rama de CREDICORPFFMM leyera la asignación, así que
+  // la borraba justo cuando se necesitaba y el generador creía que no había
+  // portafolio asignado (Sergio, 05-sep).
+  const _limpiarTrasReportar = () => {
+    // Se limpia SOLO lo reportado: el reparto de las demás líneas se conserva,
+    // para poder preparar varias especies y generarlas juntas (Sergio, 01-sep).
+    const _ordsReportadas = new Set((seleccionados||[]).map(f=>String(f.parentOrderId)));
+    _ordsReportadas.forEach(o=>{ delete _allocPorOrden[o]; });
+    selectedFolios.clear();
+    allocations = [];
+    _ordenActiva = null;
+    poblarSelectorNuevoPortafolio();
+    renderFolios();
+  };
 
   const toast = document.getElementById('toastRVL');
   toast.classList.add('show');
@@ -13987,6 +14023,7 @@ async function generarReporte(){
   } else {
     await generarYDescargarReporteRVL(cliente);
   }
+  _limpiarTrasReportar();
 }
 
 // Pantalla de aprobación de PROTECCIÓN. Muestra, por especie+lado, la cantidad
@@ -17886,7 +17923,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-07 17:01 UTC · v55';
+const BUILD_ID = '2026-09-07 17:12 UTC · v56';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
