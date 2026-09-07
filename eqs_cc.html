@@ -2152,10 +2152,13 @@
     <!-- Una barra por mercado: cada uno tiene su destino y su propia
          selección. Antes iban mezcladas y había que marcar clientes de
          mercados distintos en la misma lista (Sergio, 03-sep). -->
-    <div style="margin:0 24px 16px;display:flex;gap:10px;flex-wrap:wrap;">
+    <!-- align-items:stretch para que los tres cuadros midan lo mismo aunque uno
+         tenga más fichas; el botón queda abajo en los tres (Sergio, 07-sep). -->
+    <div style="margin:0 24px 16px;display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;">
 
       <div style="flex:1;min-width:300px;padding:12px 14px;background:var(--bg-2,#161b26);
-                  border:1px solid var(--border,#232938);border-radius:8px;">
+                  border:1px solid var(--border,#232938);border-radius:8px;
+                  display:flex;flex-direction:column;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
           <span style="font-size:13px;font-weight:700;">FX</span>
           <span class="field-note" style="font-size:10px;">al Back Office</span>
@@ -2166,13 +2169,14 @@
           <button class="btn small ghost" onclick="seleccionarCOR('ninguno','FX')">Limpiar</button>
         </div>
         <div id="fichasFX" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;min-height:24px;"></div>
-        <div class="field-note" id="selFX" style="font-size:11px;margin-bottom:8px;min-height:15px;">—</div>
+        <div class="field-note" id="selFX" style="font-size:11px;margin-bottom:8px;min-height:15px;flex:1;">—</div>
         <button class="btn purple" id="btnFxMultiple" onclick="descargarFXSeleccionados()" disabled
                 style="width:100%;">📥 Enviar al BO</button>
       </div>
 
       <div style="flex:1;min-width:300px;padding:12px 14px;background:var(--bg-2,#161b26);
-                  border:1px solid var(--border,#232938);border-radius:8px;">
+                  border:1px solid var(--border,#232938);border-radius:8px;
+                  display:flex;flex-direction:column;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
           <span style="font-size:13px;font-weight:700;">RVL</span>
           <span class="field-note" style="font-size:10px;">complementación al COR</span>
@@ -2183,13 +2187,14 @@
           <button class="btn small ghost" onclick="seleccionarCOR('ninguno','RVL')">Limpiar</button>
         </div>
         <div id="fichasRVL" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;min-height:24px;"></div>
-        <div class="field-note" id="selRVL" style="font-size:11px;margin-bottom:8px;min-height:15px;">—</div>
+        <div class="field-note" id="selRVL" style="font-size:11px;margin-bottom:8px;min-height:15px;flex:1;">—</div>
         <button class="btn purple" id="btnCorMultiple" onclick="descargarCORSeleccionados()" disabled
                 style="width:100%;">📥 Archivo del COR</button>
       </div>
 
       <div style="flex:1;min-width:300px;padding:12px 14px;background:var(--bg-2,#161b26);
-                  border:1px solid var(--border,#232938);border-radius:8px;">
+                  border:1px solid var(--border,#232938);border-radius:8px;
+                  display:flex;flex-direction:column;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
           <span style="font-size:13px;font-weight:700;">RVI</span>
           <span class="field-note" style="font-size:10px;">planilla del Back Office</span>
@@ -2200,7 +2205,7 @@
           <button class="btn small ghost" onclick="seleccionarCOR('ninguno','RVI')">Limpiar</button>
         </div>
         <div id="fichasRVI" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;min-height:24px;"></div>
-        <div class="field-note" id="selRVI" style="font-size:11px;margin-bottom:8px;min-height:15px;">—</div>
+        <div class="field-note" id="selRVI" style="font-size:11px;margin-bottom:8px;min-height:15px;flex:1;">—</div>
         <button class="btn purple" id="btnBoMultiple" onclick="descargarBOSeleccionados()" disabled
                 style="width:100%;">📥 Planilla BO</button>
       </div>
@@ -11127,23 +11132,39 @@ function renderDashBloques(){
     </table>`;
 }
 
+// De cada línea se muestra SOLO la última versión: si se reportó de nuevo, el
+// reenvío manda sobre el envío original (Sergio, 07-sep).
+function ultimaVersionPorLinea(filas){
+  const mejor = {};
+  (filas||[]).forEach(r=>{
+    const k = String(r.modulo||'') + '|' + String(r.cliente||'') + '|' +
+              String(r.parent_order_id||'');
+    const v = Number(r.version) || 1;
+    if(!mejor[k] || v > (Number(mejor[k].version)||1)) mejor[k] = r;
+  });
+  return Object.values(mejor);
+}
+
 function renderModuloReportes(){
   // Las fichas se repintan con cada cambio: los clientes van apareciendo a
   // medida que se reporta.
   setTimeout(()=>{ if(typeof renderFichasCOR === 'function') renderFichasCOR(); }, 0);
   const resumen = document.getElementById('reportesResumen');
   if(!document.getElementById('repRVL')) return;
-  const total = _reportesGenerados.length;
+  // Solo la última versión de cada línea: un reenvío reemplaza al original en
+  // la vista, no se muestran los dos (Sergio, 07-sep).
+  const _vigentes = ultimaVersionPorLinea(_reportesGenerados);
+  const total = _vigentes.length;
   if(resumen) resumen.textContent = total === 0
     ? 'Aún no se ha generado ningún reporte hoy'
-    : `${total} línea(s) reportada(s) · ${new Set(_reportesGenerados.map(r=>r.cliente)).size} cliente(s)`;
+    : `${total} línea(s) reportada(s) · ${new Set(_vigentes.map(r=>r.cliente)).size} cliente(s)`;
 
   [['RVL','repRVL','Renta Variable Local'],
    ['RVI','repRVI','Renta Variable Internacional'],
    ['FX','repFX','Divisas']].forEach(([mod, divId, titulo])=>{
     const cont = document.getElementById(divId);
     if(!cont) return;
-    const filas = _reportesGenerados.filter(r => r.modulo === mod);
+    const filas = _vigentes.filter(r => r.modulo === mod);
     // Agrupado por cliente: es como Sergio piensa el envío ("¿qué le mandé a BTG?")
     const porCliente = {};
     filas.forEach(r=>{ (porCliente[r.cliente] = porCliente[r.cliente] || []).push(r); });
@@ -13939,7 +13960,10 @@ async function generarReporte(){
     await generarExcelCCFFMM(macro, lote, _slug);
     // CREDICORPFFMM reporta folio a folio: cada fila del lote lleva su propio
     // portafolio (el Notes), así que se convierte al formato de loteOps.
-    await registrarLoteRVL(cfgMacro.nombre, lote.map(f=>({
+    // El nombre va COMPLETO: "CREDICORP CAPITAL ACCIONES COLOMBIA", no solo el
+    // macrogrupo, que por sí solo no identifica al cliente (Sergio, 07-sep).
+    const _nombreReporte = cfgMacro.fondo || ('CREDICORP CAPITAL ' + cfgMacro.nombre);
+    await registrarLoteRVL(_nombreReporte, lote.map(f=>({
       portafolio: { nombre: cfgMacro.fondo || f.notes || f.portafolio || '' },
       especie: f.especie, lado: f.lado, cantidad: f.cantidad, precio: f.precio,
       comMonto: (Number(f.cantidad)||0) * (Number(f.precio)||0) * 0.001,
@@ -17928,7 +17952,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-07 17:19 UTC · v57';
+const BUILD_ID = '2026-09-07 17:24 UTC · v58';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
