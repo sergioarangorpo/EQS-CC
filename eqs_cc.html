@@ -10949,7 +10949,19 @@ const DASH_ABREVIA = {
 };
 function _dashCorto(nombre){
   const n = String(nombre||'').toUpperCase().trim();
-  return DASH_ABREVIA[n] || nombre;
+  if(DASH_ABREVIA[n]) return DASH_ABREVIA[n];
+  // El nombre puede llegar ya recortado por _dashClave ("SOCIEDAD
+  // ADMINISTRADORA PORVENIR", sin el SA), así que también se compara
+  // ignorando los sufijos societarios (Sergio, 08-sep).
+  const limpiar = t => String(t||'').toUpperCase()
+    .replace(/\s+(S\.?A\.?S?|LTDA|INC|SAS|BRANCH)\.?$/i,'')
+    .replace(/[^A-Z0-9]/g,'');
+  const k = limpiar(n);
+  for(const largo in DASH_ABREVIA){
+    const l = limpiar(largo);
+    if(l === k || (k && l && (l.includes(k) || k.includes(l)))) return DASH_ABREVIA[largo];
+  }
+  return nombre;
 }
 
 let _dashCliente = '';   // filtro activo del panel de la izquierda
@@ -11094,7 +11106,7 @@ function _dashDatos(){
         volumen += Number(f['GROSS AMOUNT']) || 0;
       }
     });
-    sumar('RVI', cli, volumen, vendemos - compramos, true);
+    sumar('RVI', _dashCorto(cli), volumen, vendemos - compramos, true);
   });
 
   // Lo que está FILLED en EMSX y todavía no se ha registrado: el volumen ya se
@@ -17789,7 +17801,20 @@ async function cargarHistoricoRVI(){
         gross: Number(f.gross), cost: Number(f.cost), secFee: Number(f.sec_fee),
         net: Number(f.net), ccsi: Number(f.ccsi), tipo: f.tipo,
         emsxId: f.emsx_id, tradeDate: f.trade_date, settleDate: f.settle_date,
-        broker: f.broker, precioNuestro: Number(f.precio_nuestro),
+        broker: f.broker,
+        // Nuestro precio de ejecución. Las operaciones guardadas antes del
+        // 08-sep quedaron con el MISMO precio del cliente, así que el margen
+        // salía en cero y el dashboard mostraba solo la comisión. Si la línea
+        // de EMSX sigue disponible, se recompone desde su AVG PX, que es el
+        // precio al que de verdad ejecutamos (Sergio, 08-sep).
+        precioNuestro: (()=>{
+          const guardado = Number(f.precio_nuestro) || 0;
+          const px = Number(f.price) || 0;
+          if(guardado && Math.abs(guardado - px) > 1e-9) return guardado;
+          const ln = (emsxData||[]).find(r=>String(r.id) === String(f.emsx_id));
+          const avg = ln ? Number(ln.avgPr) || 0 : 0;
+          return (avg && Math.abs(avg - px) > 1e-9) ? avg : (guardado || px);
+        })(),
         espejo: !!f.espejo, comBrokerUnit: Number(f.com_broker_unit)||0,
       });
     });
@@ -18413,7 +18438,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 19:22 UTC · v72';
+const BUILD_ID = '2026-09-08 19:26 UTC · v74';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
