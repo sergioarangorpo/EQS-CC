@@ -18402,7 +18402,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 19:06 UTC · v70';
+const BUILD_ID = '2026-09-08 19:16 UTC · v71';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -18421,10 +18421,27 @@ if(typeof cargarMaestroDeceval === 'function') cargarMaestroDeceval();
 if(typeof cargarFestivos === 'function') cargarFestivos().then(()=>{
   if(typeof renderListaFestivos === 'function') renderListaFestivos();
 });
-if(typeof cargarHistoricoRVI === 'function') cargarHistoricoRVI();
+// El dashboard se repinta CUANDO LLEGAN LOS DATOS. Como es el módulo de
+// entrada, se pintaba vacío antes de que Supabase respondiera y tocaba navegar
+// a otro módulo y volver para verlo (Sergio, 08-sep).
+const _repintarDash = () => {
+  if(typeof renderDashboard === 'function' &&
+     document.getElementById('mod-Dashboard') &&
+     document.getElementById('mod-Dashboard').classList.contains('active')){
+    renderDashboard();
+  }
+};
+if(typeof cargarHistoricoRVI === 'function') cargarHistoricoRVI().then(_repintarDash).catch(()=>{});
 if(typeof cargarRegistroCOR === 'function'){
-  cargarRegistroCOR().then(()=>{ if(typeof renderModuloReportes === 'function') renderModuloReportes(); });
+  cargarRegistroCOR().then(()=>{
+    if(typeof renderModuloReportes === 'function') renderModuloReportes();
+    _repintarDash();
+  });
 }
+// Red de seguridad: las cargas que no devuelven promesa (EMSX, Fidessa) tardan
+// distinto, así que se repinta un par de veces más.
+setTimeout(_repintarDash, 1500);
+setTimeout(_repintarDash, 4000);
 cargarCanastasPendientes();
 cargarCierreAnterior();
 cargarEmsxCBDesdeSupabase();
