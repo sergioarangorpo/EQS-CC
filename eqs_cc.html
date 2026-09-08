@@ -15149,7 +15149,19 @@ async function registrarLoteRVL(cliente, loteOps, version){
                     (cfgR.portafolios||[])[0] || { nombre: cfgR.nombre || cliente };
     const g = {};
     base.forEach(f=>{
-      const port = f.portNombre || (f.portafolio && f.portafolio.nombre) || portDef.nombre;
+      // El portafolio REAL de cada folio. En Skandia sale de la cuenta de EMSX;
+      // en otros del propio folio. Solo si no hay forma de saberlo se usa el
+      // portafolio por defecto — antes se le ponía ese a todo y el reporte
+      // salía con el fondo equivocado (Sergio, 08-sep).
+      let port = f.portNombre || (f.portafolio && f.portafolio.nombre) || '';
+      if(!port && typeof _skFondoDeFolio === 'function' &&
+         /SKANDIA/i.test(String(cfgR.nombre || cliente))){
+        const sk = _skFondoDeFolio(f);
+        if(sk && sk.fondo && sk.fondo.nombre) port = sk.fondo.nombre;
+        else if(sk && sk.id) port = sk.id;
+      }
+      if(!port && f.account) port = String(f.account);
+      if(!port) port = portDef.nombre;
       const k = String(f.especie) + '|' + String(f.lado) + '|' + port;
       const a = g[k] || (g[k] = { portafolio:{ nombre:port }, especie:f.especie,
                                   lado:f.lado, cantidad:0, bruto:0, comMonto:0 });
@@ -18517,7 +18529,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 20:43 UTC · v79';
+const BUILD_ID = '2026-09-08 20:47 UTC · v80';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
