@@ -10434,7 +10434,24 @@ function tipoOpBO(isin){
 }
 
 function filasBODeCliente(cliente){
-  let ops = historial.filter(h=>h.cliente === cliente);
+  // El nombre se compara NORMALIZADO: el módulo Reportes usa el del registro
+  // ("SOCIEDAD ADMINISTRADORA PORVENIR SA") y el histórico puede tener otra
+  // forma del mismo cliente. Comparar exacto devolvía "no se encontraron
+  // operaciones" con la planilla vacía (Sergio, 08-sep).
+  // Se compara también contra la ficha de RVI: el registro guarda el nombre
+  // largo ("SOCIEDAD ADMINISTRADORA PORVENIR SA") y el botón puede pedir la
+  // clave corta ("PORVENIR"). Sin esto la planilla salía vacía diciendo que no
+  // había operaciones (Sergio, 08-sep).
+  const kPedido = claveClienteRVI(cliente) || _dashClave(cliente);
+  const norm = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  let ops = historial.filter(h=>{
+    if(h.cliente === cliente) return true;
+    const kHist = claveClienteRVI(h.cliente) || _dashClave(h.cliente);
+    if(kPedido && kHist && kPedido === kHist) return true;
+    // Último recurso: que uno contenga al otro.
+    const a = norm(h.cliente), b = norm(cliente);
+    return !!(a && b && (a.includes(b) || b.includes(a)));
+  });
   if(!ops.length) return [];
   // La planilla del BO tiene que decir LO MISMO que el Trade Confirmation que
   // se le envió al cliente. Aval va con precios a 2 decimales, así que su pata
@@ -10452,7 +10469,7 @@ function filasBODeCliente(cliente){
     const secFee = redondear(Number(h.secFee)||0, 4);
     const lado = String(h.side||'').toUpperCase() === 'SELL' ? 'COMPRA' : 'VENTA';
     filas.push({
-      'TIPO OP': tipoOpBO(h.isin), 'CLIENTE': cliente, 'PORTFOLIO': h.account || '',
+      'TIPO OP': tipoOpBO(h.isin), 'CLIENTE': h.cliente || cliente, 'PORTFOLIO': h.account || '',
       'NEMO': h.symbol || '', 'ISIN': h.isin || '', 'PP B/S': lado,
       'TD': fmtF(h.tradeDate), 'SD': fmtF(h.settleDate),
       'VLR/NM': qty, 'PL': px,
@@ -10481,6 +10498,8 @@ function filasBODeCliente(cliente){
 
   Object.values(porBroker).forEach(a=>{
     const gross = redondear(a.qty * a.px, 4);
+    // Los market makers de RFQE (BTGU, TFSR, VIRT...) no cobran: su pata va con
+    // COST en cero, no con el mínimo de USD 20 (Sergio, 08-sep).
     const cobra = RVI_BROKERS_CON_COSTO.some(x=>a.broker.includes(x));
     let cost = 0;
     if(cobra){
@@ -18328,7 +18347,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 16:49 UTC · v64';
+const BUILD_ID = '2026-09-08 17:09 UTC · v65';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
