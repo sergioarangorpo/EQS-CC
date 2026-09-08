@@ -18380,7 +18380,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 17:48 UTC · v67';
+const BUILD_ID = '2026-09-08 18:01 UTC · v68';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -18390,6 +18390,11 @@ try{
 cargarLineasNoReportar().then(cargarReportesGenerados);
 // Histórico de RVI y registro de cargas al COR: los dos viven en Supabase para
 // que sobrevivan a un refresco de la página.
+// Los maestros se cargan AL ARRANCAR: `cargarMaestros` solo corría al guardar
+// algo desde Ayudas, así que un portafolio creado por otra persona —o por uno
+// mismo antes de recargar— no aparecía nunca en la lista de asignación
+// (Sergio, 08-sep).
+if(typeof cargarMaestros === 'function') cargarMaestros();
 if(typeof cargarMaestroDeceval === 'function') cargarMaestroDeceval();
 if(typeof cargarFestivos === 'function') cargarFestivos().then(()=>{
   if(typeof renderListaFestivos === 'function') renderListaFestivos();
