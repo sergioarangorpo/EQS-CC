@@ -4921,10 +4921,10 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
     const k = `${f.lado}|${f.especie}`;
     if(!agrup[k]) agrup[k] = {lado:f.lado, nombre:f.especie, cant:0, montoPx:0, bruto:0, com:0, iva:0, neto:0};
     const px = Number(f.precio) || 0;
-    const gross = redondear(f.cantidad * px, 2);
-    const com = redondear(gross * (Number(f.comPct)||0), 3);
-    const iva = redondear(com * 0.19, 2);
-    const neto = redondear(f.lado === 'Compra' ? gross + com + iva : gross - com - iva, 2);
+    const gross = f.cantidad * px;
+    const com = gross * (Number(f.comPct)||0);
+    const iva = com * 0.19;
+    const neto = f.lado === 'Compra' ? gross + com + iva : gross - com - iva;
     agrup[k].cant += f.cantidad;
     agrup[k].montoPx += f.cantidad * px;
     agrup[k].bruto += gross;
@@ -4940,7 +4940,7 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
     lado:g.lado, nombre:g.nombre, cantidad:g.cant,
     // El promedio se guarda COMPLETO; la vista lo muestra con 2 decimales.
     precioProm: g.cant ? g.montoPx / g.cant : 0,
-    valor: redondear(g.bruto, 2),     // la SUMA del detalle, no cantidad x precio
+    valor: g.bruto,                   // la SUMA del detalle, sin redondear
     fmtCant: '#,##0',
     fmtPrecio: '"$"#,##0.00',
     fmtValor: '"$"#,##0.00',
@@ -4953,11 +4953,10 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
   const eqIni = r;
   const fechaSlug = fileBase.fechaSlug;
   filasEquity.forEach(f=>{
-    // PRECIO a 2 decimales (así se complementa en bolsa y así lo espera el
-    // cliente) y COMISIÓN a 3 como máximo: en bolsa no se puede complementar
-    // con más precisión (Sergio, 12-ago). El redondeo es POR LÍNEA; un
-    // consolidado que sume varias líneas no lleva esa restricción.
-    const precio = redondear(f.precio, 2);
+    // El PRECIO va COMPLETO en la celda y se muestra con 2 decimales: el
+    // cliente quiere entrar a la celda y ver toda la precisión. Cortarlo movía
+    // el gross —182 pesos en una línea de 90.944 acciones— (Sergio, 08-sep).
+    const precio = Number(f.precio) || 0;
     const gross = redondear(f.cantidad * precio, 2);
     const comision = redondear(gross * f.comPct, 3);
     // IVA = 19% de la comisión (todos estos clientes lo llevan). El neto suma
@@ -5021,6 +5020,11 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
       // El precio va COMPLETO: Fidessa entrega hasta 4 decimales y cortarlo a 2
       // movía el gross (182 pesos en una línea de 90.944 acciones). El formato
       // de la columna se encarga de la vista (Sergio, 08-sep).
+      // NADA se redondea: los valores van completos y el formato de la columna
+      // los muestra con 2 decimales. Al entrar a la celda se ve toda la
+      // precisión, que es lo que pide el cliente (Sergio, 08-sep).
+      // El PRECIO va completo; el resto SÍ se redondea: gross, comisión, IVA y
+      // neto son plata y tienen que cerrar a dos decimales (Sergio, 08-sep).
       const precio = Number(f.precio) || 0;
       const gross = redondear(f.cantidad * precio, 2);
       const comision = redondear(gross * f.comPct, 3);
@@ -18369,7 +18373,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 17:26 UTC · v66';
+const BUILD_ID = '2026-09-08 17:38 UTC · v67';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
