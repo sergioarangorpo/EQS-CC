@@ -10551,69 +10551,203 @@ async function descargarPlanillaBO(clientes){
 // al cliente y lo que nos queda a la mesa (Sergio, 03-sep).
 async function descargarFX(clientes){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
-  const H = ['FECHA','CLIENTE','LADO','MONTO USD','TASA CLIENTE','VALOR COP','COM. EQS','MODELO'];
+  const C = REPORTE_COLOR;
+  const hoyDate = new Date();
+  const fechaTxt = hoyDate.toLocaleDateString('es-CO', {day:'2-digit', month:'2-digit', year:'numeric'});
+
+  // Una fila por OPERACIÓN, en orden de cliente. Es el soporte del correo de
+  // comisiones del cierre: cada trade con su tasa al cliente, la tasa cerrada
+  // con la mesa y el reparto de la utilidad, para que quede la trazabilidad
+  // del pyg de las dos mesas (Sergio, 08-sep).
   const filas = [];
-  const resumen = [];
-  clientes.forEach(cli=>{
-    const suyas = (typeof operaciones !== 'undefined' ? operaciones : [])
-      .filter(o=>{
-        if(o.fecha && String(o.fecha).slice(0,10) !== _hoyISO()) return false;
-        return _dashClave(o.cliente || o.grupo || '') === _dashClave(cli);
-      });
-    suyas.forEach(o=>{
+  (clientes||[]).forEach(cli=>{
+    (typeof operaciones !== 'undefined' ? operaciones : []).forEach(o=>{
+      if(o.fecha && String(o.fecha).slice(0,10) !== _hoyISO()) return;
+      if(_dashClave(o.cliente || o.grupo || '') !== _dashClave(cli)) return;
       const monto = Number(o.amount || o.monto) || 0;
-      let tasa = 0, com = 0;
-      try {
-        const r = calcularDesdeValores(o.modelo, o.side, monto, o.params);
-        tasa = r.tasaFinalCliente || 0;
-        com = Number(r.comEqs) || 0;
-      } catch(e){
-        tasa = (o.params && (o.params.rateUnica || o.params.rate)) || 0;
-        com = Number(o.comEqs) || 0;
-      }
+      if(!monto) return;
+      let r = {};
+      try { r = calcularDesdeValores(o.modelo, o.side, monto, o.params) || {}; }
+      catch(e){ r = {}; }
+      const tasaCli = Number(r.tasaFinalCliente) || Number((o.params||{}).rateUnica) || 0;
+      const tasaMesa = Number(r.tasaFinalNuestra) || 0;
       filas.push({
-        'FECHA': new Date(), 'CLIENTE': cli,
-        'LADO': String(o.side||'').toUpperCase() === 'BUY' ? 'COMPRA' : 'VENTA',
-        'MONTO USD': monto, 'TASA CLIENTE': redondear(tasa, 2),
-        'VALOR COP': redondear(monto * tasa, 2), 'COM. EQS': redondear(com, 2),
-        'MODELO': o.modelo || '',
+        cliente: cli,
+        lado: String(o.side||'').toUpperCase() === 'BUY' ? 'COMPRA' : 'VENTA',
+        monto,
+        tasaCli, tasaMesa,
+        valorCOP: monto * tasaCli,
+        utilidad: Number(r.utilidadTotal) || 0,
+        comEqs: Number(r.comEqs) || 0,
+        comMesa: Number(r.comMesa) || 0,
+        modelo: o.modelo || '',
+        hora: o.hora || '',
       });
     });
-    if(suyas.length) resumen.push({cliente:cli, n:suyas.length});
   });
   if(!filas.length){ alert('No se encontraron operaciones de FX de esos clientes hoy.'); return; }
+  filas.sort((a,b)=> String(a.cliente).localeCompare(String(b.cliente),'es') ||
+                     String(a.hora).localeCompare(String(b.hora)));
+
+  const totUtil = filas.reduce((t,f)=>t+f.utilidad, 0);
+  const totEqs  = filas.reduce((t,f)=>t+f.comEqs, 0);
+  const totMesa = filas.reduce((t,f)=>t+f.comMesa, 0);
+  const totUSD  = filas.reduce((t,f)=>t+f.monto, 0);
 
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('Hoja1');
+  wb.creator = 'EQS CC — Credicorp Capital';
+  wb.created = hoyDate;
+  const ws = wb.addWorksheet('Comisiones FX', {
+    pageSetup: { orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 },
+    views: [{ showGridLines:false }],
+  });
+  ws.columns = [
+    { width: 2.5 }, { width: 32 }, { width: 10 }, { width: 16 }, { width: 14 },
+    { width: 14 }, { width: 19 }, { width: 16 }, { width: 16 }, { width: 16 },
+    { width: 14 }, { width: 2.5 },
+  ];
+  const COLS = ['B','C','D','E','F','G','H','I','J','K'];
+  const TODAS = ['A','B','C','D','E','F','G','H','I','J','K','L'];
+  for(let rr=1; rr<=filas.length+26; rr++){
+    TODAS.forEach(c=> ws.getCell(`${c}${rr}`).fill =
+      {type:'pattern', pattern:'solid', fgColor:{argb:C.paper}});
+  }
+
+  let r = 1;
+  // ---------- Banda de marca ----------
+  for(let rr=r; rr<=r+3; rr++){
+    TODAS.forEach(c=> ws.getCell(`${c}${rr}`).fill =
+      {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}});
+  }
+  ws.getRow(r).height = 8; ws.getRow(r+1).height = 32;
+  ws.getRow(r+2).height = 20; ws.getRow(r+3).height = 10;
+  try{
+    const img = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension:'png' });
+    ws.addImage(img, { tl:{col:1, row:r}, ext:{width:165, height:38} });
+  }catch(e){ /* sin logo la banda igual se ve bien */ }
+  const tit = ws.getCell(`E${r+1}`);
+  tit.value = 'COMISIONES DE DIVISAS';
+  tit.font = { name:'Calibri', size:16, bold:true, color:{argb:C.white} };
+  tit.alignment = { vertical:'middle' };
+  ws.mergeCells(`E${r+1}:H${r+1}`);
+  const sub = ws.getCell(`E${r+2}`);
+  sub.value = 'Soporte de operaciones — Equity Sales · Mesa de Divisas';
+  sub.font = { name:'Calibri', size:10, color:{argb:C.orangeSoft} };
+  ws.mergeCells(`E${r+2}:H${r+2}`);
+  const fec = ws.getCell(`J${r+1}`);
+  fec.value = fechaTxt;
+  fec.font = { name:'Calibri', size:12, bold:true, color:{argb:C.white} };
+  fec.alignment = { horizontal:'right', vertical:'middle' };
+  ws.mergeCells(`J${r+1}:K${r+1}`);
+  r += 5;
+
+  // ---------- Acumulado ARRIBA ----------
+  const tarjeta = (col, etiqueta, valor, resaltar) => {
+    const e = ws.getCell(`${col}${r}`);
+    e.value = etiqueta;
+    e.font = { name:'Calibri', size:8, bold:true, color:{argb:C.textMuted} };
+    const v = ws.getCell(`${col}${r+1}`);
+    v.value = valor;
+    v.numFmt = '"$"#,##0.00';
+    v.font = { name:'Calibri', size:13, bold:true,
+               color:{argb: resaltar ? 'FF15803D' : C.textDark} };
+  };
+  tarjeta('B', 'OPERACIONES', filas.length, false);
+  ws.getCell(`B${r+1}`).numFmt = '#,##0';
+  tarjeta('D', 'MONTO USD', totUSD, false);
+  tarjeta('F', 'UTILIDAD TOTAL', totUtil, true);
+  tarjeta('H', 'COMISIÓN EQUITY SALES', totEqs, true);
+  tarjeta('I', 'COMISIÓN MESA DE DIVISAS', totMesa, true);
+  ws.getRow(r).height = 13; ws.getRow(r+1).height = 20;
+  COLS.forEach(c=> ws.getCell(`${c}${r+1}`).border =
+    { bottom:{style:'medium', color:{argb:C.orange}} });
+  r += 3;
+
+  // ---------- Tabla ----------
+  const H = ['CLIENTE','LADO','MONTO USD','TASA CLIENTE','TASA MESA',
+             'VALOR COP','UTILIDAD','COM. EQS','COM. MESA','MODELO'];
+  const alin = ['left','center','right','right','right','right','right','right','right','left'];
   H.forEach((h,i)=>{
-    const c = ws.getCell(1, i+1);
+    const c = ws.getCell(`${COLS[i]}${r}`);
     c.value = h;
-    c.font = { name:'Calibri', size:11, bold:true, color:{argb:'FFFFFFFF'} };
-    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF13294B'} };
-    c.alignment = { horizontal:'center' };
+    c.font = { name:'Calibri', size:9, bold:true, color:{argb:C.white} };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
+    c.alignment = { horizontal:alin[i], vertical:'middle', wrapText:true };
+    c.border = { bottom:{style:'medium', color:{argb:C.orange}} };
   });
+  ws.getRow(r).height = 24;
+  r++;
+
+  const ini = r;
   filas.forEach((f,i)=>{
-    const r = i+2;
-    H.forEach((col,c)=>{ ws.getCell(r, c+1).value = f[col]; });
-    ws.getCell(r,1).numFmt = 'dd/mm/yyyy';
-    ws.getCell(r,4).numFmt = '#,##0.00';
-    [5,6,7].forEach(c=>{ ws.getCell(r,c).numFmt = '#,##0.00'; });
+    const vals = [f.cliente, f.lado, f.monto, f.tasaCli, f.tasaMesa,
+                  f.valorCOP, f.utilidad, f.comEqs, f.comMesa, f.modelo];
+    vals.forEach((v,ci)=>{
+      const c = ws.getCell(`${COLS[ci]}${r}`);
+      c.value = v;
+      c.font = { name:'Calibri', size:10, color:{argb:C.textDark} };
+      c.alignment = { horizontal:alin[ci], vertical:'middle' };
+      c.border = { bottom:{style:'hair', color:{argb:C.cardBorder}} };
+    });
+    ws.getCell(`D${r}`).numFmt = '#,##0.00';
+    ['E','F'].forEach(c=>{ ws.getCell(`${c}${r}`).numFmt = '#,##0.0000'; });
+    ['G','H','I','J'].forEach(c=>{ ws.getCell(`${c}${r}`).numFmt = '"$"#,##0.00'; });
+    // El lado, en color.
+    ws.getCell(`C${r}`).font = { name:'Calibri', size:10, bold:true,
+      color:{argb: f.lado === 'VENTA' ? 'FFB91C1C' : 'FF166534'} };
+    // Las operaciones EN PÉRDIDA se marcan: ahí EQS asume el 100% y conviene
+    // que salte a la vista en el correo, no descubrirlo sumando.
+    if(f.utilidad < 0){
+      COLS.forEach(c=> ws.getCell(`${c}${r}`).fill =
+        {type:'pattern', pattern:'solid', fgColor:{argb:'FFFDE8E8'}});
+      ws.getCell(`H${r}`).font = { name:'Calibri', size:10, bold:true, color:{argb:'FFB91C1C'} };
+    }else if((r-ini)%2===1){
+      COLS.forEach(c=> ws.getCell(`${c}${r}`).fill =
+        {type:'pattern', pattern:'solid', fgColor:{argb:C.grayLight}});
+    }
+    ws.getRow(r).height = 16;
+    r++;
   });
-  autofitColumnas(ws, {min:9, max:28});
-  const d = new Date();
-  const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+
+  // ---------- Totales ----------
+  const tot = ['TOTAL','', totUSD, '', '', filas.reduce((t,f)=>t+f.valorCOP,0),
+               totUtil, totEqs, totMesa, ''];
+  tot.forEach((v,i)=>{
+    const c = ws.getCell(`${COLS[i]}${r}`);
+    c.value = v;
+    c.font = { name:'Calibri', size:10.5, bold:true, color:{argb:C.white} };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navyLight} };
+    c.alignment = { horizontal:alin[i], vertical:'middle' };
+    c.border = { top:{style:'medium', color:{argb:C.orange}} };
+  });
+  ws.getCell(`D${r}`).numFmt = '#,##0.00';
+  ['G','H','I','J'].forEach(c=>{ ws.getCell(`${c}${r}`).numFmt = '"$"#,##0.00'; });
+  ws.getRow(r).height = 20;
+  r += 2;
+
+  const pie = ws.getCell(`B${r}`);
+  pie.value = 'Credicorp Capital Colombia S.A. Comisionista de Bolsa · Equity Sales · ' +
+              'La utilidad se reparte 80% Equity Sales / 20% Mesa de Divisas; ' +
+              'en operaciones con pérdida la asume Equity Sales.';
+  pie.font = { name:'Calibri', size:8, italic:true, color:{argb:C.textMuted} };
+  ws.mergeCells(`B${r}:K${r}`);
+
+  ws.views = [{ showGridLines:false, state:'frozen', ySplit: ini - 1 }];
+
+  const slug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
   const buf = await wb.xlsx.writeBuffer();
   const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
   const a = document.createElement('a');
-  a.href = url; a.download = `FX_BACKOFFICE_${slug}.xlsx`;
+  a.href = url; a.download = `COMISIONES_FX_${slug}.xlsx`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 
   try{
-    await guardarEnLotesSupabase('cargas_cor', resumen.map(r=>({
-      fecha: _hoyISO(), modulo:'FX', cliente:r.cliente,
-      version: vecesCargadoCOR('FX', r.cliente) + 1, n_filas:r.n, generado_por:'SAR',
-    })));
+    const resumen = [...new Set(filas.map(f=>f.cliente))]
+      .map(c=>({ fecha:_hoyISO(), modulo:'FX', cliente:c,
+                 version: vecesCargadoCOR('FX', c) + 1,
+                 n_filas: filas.filter(f=>f.cliente===c).length, generado_por:'SAR' }));
+    await guardarEnLotesSupabase('cargas_cor', resumen);
     await cargarRegistroCOR();
     renderModuloReportes();
   }catch(e){ console.warn('No se pudo registrar el envío de FX:', e.message); }
@@ -18143,7 +18277,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-07 21:12 UTC · v62';
+const BUILD_ID = '2026-09-08 16:22 UTC · v63';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
