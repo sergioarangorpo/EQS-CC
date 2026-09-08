@@ -17769,9 +17769,20 @@ async function cargarHistoricoRVI(){
   try{
     const filas = await supaFetch('rvi_historico', `fecha=eq.${_hoyISO()}&order=creado_en.asc&limit=1000`) || [];
     if(!filas.length) return;
+    // Se compara por CONTENIDO, no solo por id: las operaciones guardadas en
+    // esta misma sesión llevan un id generado al vuelo que no coincide con el
+    // de Supabase, así que la misma operación entraba dos veces y el dashboard
+    // la sumaba doble — el total saltaba de 1.617 a 201 al recargar el
+    // histórico encima (Sergio, 08-sep).
+    const huella = h => [String(h.cliente||''), String(h.account||''), String(h.side||''),
+                         String(h.symbol||''), Number(h.qty)||0,
+                         (Number(h.price)||0).toFixed(6)].join('|');
     const yaEstan = new Set(historial.map(h=>String(h.id)));
+    const huellas = new Set(historial.map(huella));
     filas.forEach(f=>{
       if(yaEstan.has(String(f.id))) return;
+      if(huellas.has(huella({ cliente:f.cliente, account:f.account, side:f.side,
+                              symbol:f.symbol, qty:f.qty, price:f.price }))) return;
       historial.push({
         id: f.id, hora: f.hora, cliente: f.cliente, account: f.account, side: f.side,
         symbol: f.symbol, isin: f.isin, qty: Number(f.qty), price: Number(f.price),
@@ -18402,7 +18413,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 19:16 UTC · v71';
+const BUILD_ID = '2026-09-08 19:22 UTC · v72';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
