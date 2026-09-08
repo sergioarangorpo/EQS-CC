@@ -6236,7 +6236,14 @@ async function cargarMaestros(){
     _maestroEspecies = await supaFetch('maestro_especies', 'order=creado_en.desc&limit=2000') || [];
   }catch(e){ console.warn('maestro_especies:', e.message); _maestroEspecies = []; }
   aplicarMaestroEspecies();
+  // Los portafolios también se aplican: se cargaban de Supabase pero nunca se
+  // volcaban sobre los clientes, así que un portafolio creado desde Ayudas no
+  // aparecía en la lista de asignación ni después de recargar (Sergio, 08-sep).
+  aplicarMaestroPortafolios();
   renderListasMaestro();
+  // Si hay un cliente en pantalla, se repinta para que el portafolio nuevo
+  // salga sin tener que cambiar de cliente y volver.
+  if(typeof poblarSelectorNuevoPortafolio === 'function') poblarSelectorNuevoPortafolio();
 }
 
 // Las especies entran a las mismas tablas que ya usa la app, para que
@@ -18373,7 +18380,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 17:38 UTC · v67';
+const BUILD_ID = '2026-09-08 17:48 UTC · v67';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
