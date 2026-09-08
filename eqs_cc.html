@@ -1747,6 +1747,17 @@
             <input type="text" id="tc-secfee" readonly>
           </div>
         </div>
+        <!-- PORVENIR pide el nombre del trader que dio la orden: va en la
+             columna NOTES de su proforma. Solo aparece para ese cliente
+             (Sergio, 08-sep). -->
+        <div class="field-row" id="rowTraderRVI" style="display:none;">
+          <div class="field" style="flex:1;">
+            <label>Trader que dio la orden <span class="field-note">(va en NOTES)</span></label>
+            <select id="tc-trader-rvi" style="width:100%;">
+              <option value="">— elige el trader —</option>
+            </select>
+          </div>
+        </div>
       </div>
         </div>
         <div class="rvi-alloc-col">
@@ -16818,7 +16829,26 @@ function claveClienteRVI(firm){
   }) || '';
 }
 
+// El selector de trader solo se muestra para PORVENIR, que lo pide en la
+// columna NOTES de su proforma.
+function refrescarTraderRVI(){
+  const row = document.getElementById('rowTraderRVI');
+  const sel = document.getElementById('tc-trader-rvi');
+  if(!row || !sel) return;
+  const cli = (document.getElementById('tc-cliente')||{}).value || '';
+  const esPorvenir = /PORVENIR/i.test(cli) ||
+    /PORVENIR/i.test((clientesRVI[cli]||{}).nombre || '');
+  row.style.display = esPorvenir ? '' : 'none';
+  if(!esPorvenir) return;
+  if(sel.options.length > 1) return;   // ya está poblado
+  const todos = [...new Set([].concat(...Object.values(
+    typeof PORVENIR_TRADERS !== 'undefined' ? PORVENIR_TRADERS : {})))].sort();
+  sel.innerHTML = '<option value="">— elige el trader —</option>' +
+    todos.map(t=>`<option value="${t}">${t}</option>`).join('');
+}
+
 function volcarLineaEnFormularioRVI(){
+  setTimeout(()=>{ if(typeof refrescarTraderRVI === 'function') refrescarTraderRVI(); }, 0);
   // Con MARKET MAKER la comisión es cero y se pone sola; con broker que cobra
   // se deja VACÍA para que Sergio la escriba (ADR y ETF tienen tarifas
   // distintas y la app no puede adivinar cuál aplica).
@@ -17275,6 +17305,8 @@ function poblarClienteSelector(){
 }
 
 function onCambioCliente(){
+  // El selector de trader solo aplica a PORVENIR (Sergio, 08-sep).
+  setTimeout(()=>{ if(typeof refrescarTraderRVI === 'function') refrescarTraderRVI(); }, 0);
   const key = document.getElementById('tc-cliente').value;
   const acc = document.getElementById('nuevo-account');
   if(!key || !clientesRVI[key]){
@@ -17555,9 +17587,25 @@ distribuciones.forEach(d=>{
     // salía con 10,96 en vez de 20 (Sergio, 01-sep). Exentas las tres AFP.
     const _costCalc = tipo==='UCIT' ? grossAcc*db.comUCIT : d.qty*db.comETF;
     const costAcc   = costoClienteRVI(db.nombre || clienteKey, _costCalc);
-    const secFeeAcc = lado==='Sell' ? grossAcc*SEC_FEE_RATE : 0;
+    // El SEC fee solo aplica a instrumentos US y solo en ventas: un UCITS no lo
+    // paga (Sergio, 02-sep).
+    const secFeeAcc = secFeeRVI(tipo, lado, grossAcc, isin);
     const netAcc    = lado==='Sell' ? grossAcc-costAcc-secFeeAcc : grossAcc+costAcc;
-    const ccsiAcc   = Math.max(tipo==='UCIT' ? grossAcc*CCSI.comUCIT : d.qty*CCSI.comETF, CCSI.minUSD);
+    // La comisión del BROKER depende de QUIÉN es el broker: los market makers
+    // de RFQE (BTGU, TFSR, VIRT, JRFE...) no cobran. Se calculaba siempre con
+    // las tarifas de CCSI, así que una RFQE con BTGU salía con valor en el
+    // histórico aunque el arqueo dijera cero (Sergio, 08-sep).
+    const ccsiAcc = (()=>{
+      const _ln = emsxData.find(r=>r.id===lineaActiva) || {};
+      const brk = String(_ln.broker||'').toUpperCase();
+      // Si el campo de comisión del broker está en cero, manda ese cero.
+      const escrito = parseNum((document.getElementById('tc-com-ccsi')||{}).value);
+      if(brk && !RVI_BROKERS_CON_COSTO.some(x=>brk.includes(x))) return 0;
+      if(escrito === 0) return 0;
+      const base = tipo==='UCIT' ? grossAcc*(escrito || CCSI.comUCIT)
+                                 : d.qty*(escrito || CCSI.comETF);
+      return Math.max(base, CCSI.minUSD);
+    })();
 
     historial.unshift({
       id: tcId+Math.random(),
@@ -17574,6 +17622,9 @@ distribuciones.forEach(d=>{
       // El modo con el que se registró: el espejo decide si nuestra pata se
       // parte igual que la del cliente o va consolidada.
       espejo: _modoRVI.espejo === 'si',
+      // Trader que dio la orden: va en la columna NOTES de la proforma de
+      // PORVENIR (Sergio, 08-sep).
+      trader: (document.getElementById('tc-trader-rvi')||{}).value || '',
       comBrokerUnit: parseNum((document.getElementById('tc-com-ccsi')||{}).value) || 0,
     });
   });
@@ -18277,7 +18328,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 16:22 UTC · v63';
+const BUILD_ID = '2026-09-08 16:49 UTC · v64';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
