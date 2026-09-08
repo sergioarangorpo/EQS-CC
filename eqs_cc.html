@@ -3256,13 +3256,24 @@ function actualizarNetoPanelFX(filas, hayFiltroActivo){
     return;
   }
 
-  const filasCubribles = filas.filter(({op}) => op.origen !== 'inbox');
+  // Los TOTALES muestran TODO lo filtrado, que es lo que dice la etiqueta y lo
+  // que se ve en la tabla. El NETO A CUBRIR sigue excluyendo lo que llega por
+  // el inbox (Andes DMA), porque eso no hay que cubrirlo en el mercado. Antes
+  // los dos usaban el mismo subconjunto, así que compra y venta salían iguales
+  // aunque la tabla mostrara otra cosa (Sergio, 08-sep).
   let totalCompra = 0, totalVenta = 0;
-  filasCubribles.forEach(({op})=>{
+  filas.forEach(({op})=>{
     if(op.side==='BUY') totalCompra += op.amount;
     else totalVenta += op.amount;
   });
-  const neto = totalCompra - totalVenta;
+
+  const filasCubribles = filas.filter(({op}) => op.origen !== 'inbox');
+  let cubrirCompra = 0, cubrirVenta = 0;
+  filasCubribles.forEach(({op})=>{
+    if(op.side==='BUY') cubrirCompra += op.amount;
+    else cubrirVenta += op.amount;
+  });
+  const neto = cubrirCompra - cubrirVenta;
 
   compraEl.textContent = fmtUSD(totalCompra);
   ventaEl.textContent = fmtUSD(totalVenta);
@@ -3953,6 +3964,34 @@ async function generarReporteExcel(){
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+
+  // El reporte queda REGISTRADO en el módulo Reportes, igual que los de RVL y
+  // RVI. Se generaba el archivo pero no se anotaba en ninguna parte, así que
+  // el cliente no aparecía como reportado (Sergio, 08-sep).
+  try{
+    const opsCli = operaciones.filter(op =>
+      (fondoReporte[op.cliente]||op.cliente) === fondoNombre &&
+      (!op.fecha || String(op.fecha).slice(0,10) === _hoyISO()));
+    if(opsCli.length){
+      const version = proximaVersion(fondoNombre, 'FX');
+      const lineas = opsCli.map(op=>{
+        let r = {};
+        try { r = calcularDesdeValores(op.modelo, op.side, op.amount, op.params) || {}; }
+        catch(e){ r = {}; }
+        return {
+          parentOrderId: 'FX-' + op.id,       // la unidad en FX es la operación
+          especie: 'USDCOP',
+          lado: String(op.side||'').toUpperCase() === 'BUY' ? 'Compra' : 'Venta',
+          cantidad: Number(op.amount) || 0,
+          precio: Number(r.tasaFinalCliente) ||
+                  Number((op.params||{}).rateUnica) || Number((op.params||{}).rate) || 0,
+          comision: Number(r.comEqs) || 0,
+        };
+      });
+      await registrarReporte('FX', fondoNombre, lineas, version);
+      if(typeof renderModuloReportes === 'function') renderModuloReportes();
+    }
+  }catch(e){ console.warn('No se pudo registrar el reporte de FX:', e.message); }
 }
 
 // Excel del cruce FX: UN archivo con DOS bloques — EQUITY (las acciones que se
@@ -18453,7 +18492,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 20:17 UTC · v76';
+const BUILD_ID = '2026-09-08 20:27 UTC · v77';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
