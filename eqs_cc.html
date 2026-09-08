@@ -10196,8 +10196,12 @@ function folioCOR(tcn, especie, fechaISO){
 function seleccionarCOR(modo, mercado){
   const mkts = mercado ? [mercado] : ['FX','RVL','RVI'];
   mkts.forEach(mkt=>{
-    const clientes = [...new Set((_reportesGenerados||[])
-      .filter(r=>r.modulo === mkt).map(r=>r.cliente))];
+    const clientes = mkt === 'FX'
+      ? [...new Set((typeof operaciones !== 'undefined' ? operaciones : [])
+          .filter(o=>!o.fecha || String(o.fecha).slice(0,10) === _hoyISO())
+          .map(o=>o.cliente || o.grupo || '').filter(Boolean))]
+      : [...new Set((_reportesGenerados||[])
+          .filter(r=>r.modulo === mkt).map(r=>r.cliente))];
     _selCOR[mkt].clear();
     if(modo === 'todos') clientes.forEach(c=>_selCOR[mkt].add(c));
     else if(modo === 'pendientes'){
@@ -10218,13 +10222,24 @@ function renderFichasCOR(){
   ['FX','RVL','RVI'].forEach(mkt=>{
     const cont = document.getElementById('fichas' + mkt);
     if(!cont) return;
-    const clientes = [...new Set((_reportesGenerados||[])
-      .filter(r=>r.modulo === mkt).map(r=>r.cliente))].sort();
+    // FX NO depende de RVL: sus clientes salen de las operaciones del día del
+    // propio módulo FX. Andes puede tener FX sin haber operado RVL, y antes el
+    // botón quedaba deshabilitado porque no había reporte de RVL que lo
+    // anclara (Sergio, 08-sep).
+    const clientes = mkt === 'FX'
+      ? [...new Set((typeof operaciones !== 'undefined' ? operaciones : [])
+          .filter(o=>!o.fecha || String(o.fecha).slice(0,10) === _hoyISO())
+          .map(o=>o.cliente || o.grupo || '').filter(Boolean))].sort()
+      : [...new Set((_reportesGenerados||[])
+          .filter(r=>r.modulo === mkt).map(r=>r.cliente))].sort();
     if(!clientes.length){
-      cont.innerHTML = `<span class="field-note" style="font-size:11px;">Sin reportes de ${mkt} todavía.</span>`;
+      cont.innerHTML = `<span class="field-note" style="font-size:11px;">${
+        mkt === 'FX' ? 'Sin operaciones de FX hoy.' : `Sin reportes de ${mkt} todavía.`}</span>`;
       _selCOR[mkt].clear();
       return;
     }
+    // En FX arrancan todos marcados: el caso normal es enviar el día completo.
+    if(mkt === 'FX' && !_selCOR.FX.size) clientes.forEach(c=>_selCOR.FX.add(c));
     // Se descarta lo que ya no exista (p. ej. tras limpiar el día).
     [..._selCOR[mkt]].forEach(c=>{ if(!clientes.includes(c)) _selCOR[mkt].delete(c); });
     cont.innerHTML = clientes.map(c=>{
@@ -18438,7 +18453,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 19:26 UTC · v74';
+const BUILD_ID = '2026-09-08 20:17 UTC · v76';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
