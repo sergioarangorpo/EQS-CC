@@ -10689,7 +10689,9 @@ async function descargarFX(clientes){
       const tasaCli = Number(r.tasaFinalCliente) || Number((o.params||{}).rateUnica) || 0;
       const tasaMesa = Number(r.tasaFinalNuestra) || 0;
       filas.push({
-        cliente: cli,
+        // Nombre COMPLETO: en este soporte va a la mesa de divisas, donde
+        // "ANDES" a secas no identifica al cliente (Sergio, 08-sep).
+        cliente: (getClienteDB(_dashClave(cli)) || {}).nombre || o.cliente || cli,
         lado: String(o.side||'').toUpperCase() === 'BUY' ? 'COMPRA' : 'VENTA',
         monto,
         tasaCli, tasaMesa,
@@ -10719,12 +10721,12 @@ async function descargarFX(clientes){
     views: [{ showGridLines:false }],
   });
   ws.columns = [
-    { width: 2.5 }, { width: 32 }, { width: 10 }, { width: 16 }, { width: 14 },
-    { width: 14 }, { width: 19 }, { width: 16 }, { width: 16 }, { width: 16 },
-    { width: 14 }, { width: 2.5 },
+    { width: 2.5 }, { width: 36 }, { width: 10 }, { width: 16 }, { width: 14 },
+    { width: 14 }, { width: 20 }, { width: 16 }, { width: 16 }, { width: 16 },
+    { width: 2.5 },
   ];
-  const COLS = ['B','C','D','E','F','G','H','I','J','K'];
-  const TODAS = ['A','B','C','D','E','F','G','H','I','J','K','L'];
+  const COLS = ['B','C','D','E','F','G','H','I','J'];
+  const TODAS = ['A','B','C','D','E','F','G','H','I','J','K'];
   for(let rr=1; rr<=filas.length+26; rr++){
     TODAS.forEach(c=> ws.getCell(`${c}${rr}`).fill =
       {type:'pattern', pattern:'solid', fgColor:{argb:C.paper}});
@@ -10751,11 +10753,11 @@ async function descargarFX(clientes){
   sub.value = 'Soporte de operaciones — Equity Sales · Mesa de Divisas';
   sub.font = { name:'Calibri', size:10, color:{argb:C.orangeSoft} };
   ws.mergeCells(`E${r+2}:H${r+2}`);
-  const fec = ws.getCell(`J${r+1}`);
+  const fec = ws.getCell(`I${r+1}`);
   fec.value = fechaTxt;
   fec.font = { name:'Calibri', size:12, bold:true, color:{argb:C.white} };
   fec.alignment = { horizontal:'right', vertical:'middle' };
-  ws.mergeCells(`J${r+1}:K${r+1}`);
+  ws.mergeCells(`I${r+1}:J${r+1}`);
   r += 5;
 
   // ---------- Acumulado ARRIBA ----------
@@ -10782,8 +10784,8 @@ async function descargarFX(clientes){
 
   // ---------- Tabla ----------
   const H = ['CLIENTE','LADO','MONTO USD','TASA CLIENTE','TASA MESA',
-             'VALOR COP','UTILIDAD','COM. EQS','COM. MESA','MODELO'];
-  const alin = ['left','center','right','right','right','right','right','right','right','left'];
+             'VALOR COP','UTILIDAD','COM. EQS','COM. MESA'];
+  const alin = ['left','center','right','right','right','right','right','right','right'];
   H.forEach((h,i)=>{
     const c = ws.getCell(`${COLS[i]}${r}`);
     c.value = h;
@@ -10798,7 +10800,7 @@ async function descargarFX(clientes){
   const ini = r;
   filas.forEach((f,i)=>{
     const vals = [f.cliente, f.lado, f.monto, f.tasaCli, f.tasaMesa,
-                  f.valorCOP, f.utilidad, f.comEqs, f.comMesa, f.modelo];
+                  f.valorCOP, f.utilidad, f.comEqs, f.comMesa];
     vals.forEach((v,ci)=>{
       const c = ws.getCell(`${COLS[ci]}${r}`);
       c.value = v;
@@ -10828,7 +10830,7 @@ async function descargarFX(clientes){
 
   // ---------- Totales ----------
   const tot = ['TOTAL','', totUSD, '', '', filas.reduce((t,f)=>t+f.valorCOP,0),
-               totUtil, totEqs, totMesa, ''];
+               totUtil, totEqs, totMesa];
   tot.forEach((v,i)=>{
     const c = ws.getCell(`${COLS[i]}${r}`);
     c.value = v;
@@ -10847,7 +10849,7 @@ async function descargarFX(clientes){
               'La utilidad se reparte 80% Equity Sales / 20% Mesa de Divisas; ' +
               'en operaciones con pérdida la asume Equity Sales.';
   pie.font = { name:'Calibri', size:8, italic:true, color:{argb:C.textMuted} };
-  ws.mergeCells(`B${r}:K${r}`);
+  ws.mergeCells(`B${r}:J${r}`);
 
   ws.views = [{ showGridLines:false, state:'frozen', ySplit: ini - 1 }];
 
@@ -18492,7 +18494,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 20:27 UTC · v77';
+const BUILD_ID = '2026-09-08 20:33 UTC · v78';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
