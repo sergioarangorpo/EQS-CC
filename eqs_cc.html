@@ -11072,16 +11072,29 @@ function _dashDatos(){
   });
 
   // ---------- RVI ----------
-  // Lo que ganamos es la UTILIDAD: comisión al cliente + margen − broker.
-  (historial||[]).forEach(h=>{
-    const cli = h.cliente || '';
-    const q = Number(h.qty)||0, px = Number(h.price)||0;
-    if(!q || !px) return;
-    const bruto = q * px;
-    const pxNos = Number(h.precioNuestro) || px;
-    const margen = String(h.side||'').toUpperCase()==='SELL' ? (pxNos - px)*q : (px - pxNos)*q;
-    const util = (Number(h.cost)||0) + margen - (Number(h.ccsi)||0);
-    sumar('RVI', _dashClave(cli), bruto, util, true);   // en RVI el dato ya es cierto
+  // En RVI actuamos como POSICIÓN PROPIA: la utilidad es LO QUE VENDEMOS MENOS
+  // LO QUE COMPRAMOS, sobre los NET AMOUNT de las dos patas — con el sec fee y
+  // los costos ya descontados, que es la plata que de verdad entra y sale
+  // (Sergio, 08-sep). Antes se calculaba comisión + margen − broker operación
+  // por operación, que daba un número distinto.
+  //
+  // Si el cliente COMPRA, nosotros le vendemos (su neto entra) y le compramos
+  // al mercado (nuestro neto sale). Y al revés.
+  const _clientesRVI = [...new Set((historial||[]).map(h=>_dashClave(h.cliente||'')).filter(Boolean))];
+  _clientesRVI.forEach(cli=>{
+    const filas = filasBODeCliente(cli);      // las dos patas, como la planilla
+    if(!filas.length) return;
+    let vendemos = 0, compramos = 0, volumen = 0;
+    filas.forEach(f=>{
+      const neto = Number(f['NET AMOUNT']) || 0;
+      if(String(f['PP B/S']||'').toUpperCase() === 'VENTA') vendemos += neto;
+      else compramos += neto;
+      // El volumen se cuenta SOLO de la pata del cliente, para no duplicarlo.
+      if(String(f.CLIENTE||'').toUpperCase() !== String(f.PORTFOLIO||'').toUpperCase()){
+        volumen += Number(f['GROSS AMOUNT']) || 0;
+      }
+    });
+    sumar('RVI', cli, volumen, vendemos - compramos, true);
   });
 
   // Lo que está FILLED en EMSX y todavía no se ha registrado: el volumen ya se
@@ -17630,8 +17643,17 @@ function generarTC(){
     // Nuestro precio de ejecución: si hay una línea NUESTRA marcada se usa la
   // suya; si no, la misma del cliente (no hubo margen). Va al histórico para
   // poder armar nuestra pata en la planilla del BO.
+  // 1) la línea NUESTRA marcada, si la hay
+  // 2) el AVGPR de la propia línea de EMSX — cuando se opera CON MARGEN el
+  //    precio del cliente se escribe a mano y el de ejecución es el de la
+  //    línea. Sin este caso el margen salía en cero y "lo que ganamos" en el
+  //    dashboard solo mostraba la comisión (Sergio, 08-sep).
   const _nuestraMarcada = getFiltradas().filter(r=>_rviMarcadas.has(r.id) && /CREDICORP/i.test(String(r.firm||'')))[0];
-  const precioNuestroBO = _nuestraMarcada ? Number(_nuestraMarcada.avgPr) : price;
+  const precioNuestroBO = _nuestraMarcada
+    ? Number(_nuestraMarcada.avgPr)
+    : (_modoRVI.margen === 'con'
+        ? (Number((emsxData.find(r=>r.id===lineaActiva)||{}).avgPr) || price)
+        : price);
 distribuciones.forEach(d=>{
     const grossAcc  = d.qty * price;
     // El MÍNIMO DE USD 20 también aplica al cliente, no solo a lo que nos cobra
@@ -18380,7 +18402,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 18:01 UTC · v68';
+const BUILD_ID = '2026-09-08 19:06 UTC · v70';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
