@@ -13956,6 +13956,83 @@ function frenarSiLadoSinOrden(folios){
   return true;
 }
 
+// Genera el reporte de UN macrogrupo de CREDICORPFFMM. Se llama una vez por
+// macrogrupo cuando la selección trae varios: por muralla china cada uno va en
+// su propio archivo (Sergio, 15-sep).
+async function _generarUnMacroFFMM(macro, lote, cliente, fechaReg){
+    const cfgMacro = CCFFMM_MACROGRUPOS[macro];
+  const _slug = String(fechaReg||'').replace(/-/g,'') ||
+    (()=>{ const d=new Date(); return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`; })();
+  // `lote` llega por parámetro
+  const version = proximaVersion(cfgMacro.nombre, 'RVL');
+  const qTot = lote.reduce((a,f)=>a+f.cantidad,0);
+  const brutoTot = lote.reduce((a,f)=>a+f.cantidad*f.precio,0);
+  const ok = await previsualizarReporte({
+    titulo: `CREDICORP CAPITAL — ${cfgMacro.nombre} — ${etiquetaVersion(version)}`,
+    archivo: `Operaciones_${cfgMacro.archivo}_${_slug}.xlsx`,
+    // Con COMISIÓN y NETO, como las confirmaciones de los demás clientes:
+    // sin esos dos no hay forma de revisar la plata antes de descargar
+    // (Sergio, 04-sep).
+    // Solo lo que se revisa: sin número de folios ni columnas de más
+    // (Sergio, 05-sep).
+    columnas: ['Account','Cantidad','Precio','Bruto','Comisión','% Com.','IVA','Valor Neto'],
+    filas: (()=>{
+      const g = {};
+      lote.forEach(f=>{
+        const fondo = cfgMacro.fondo || f.notes || '';
+        const k = f.especie + '|' + f.lado + '|' + fondo;
+        const a = g[k] || (g[k] = {especie:f.especie, lado:f.lado, fondo, qty:0, bruto:0, n:0});
+        a.qty += f.cantidad; a.bruto += f.cantidad*f.precio; a.n++;
+      });
+      return Object.values(g)
+        .sort((x,y)=>String(x.fondo).localeCompare(String(y.fondo)) || String(x.especie).localeCompare(String(y.especie)))
+        .map(a=>{
+          // 0,1% + IVA, sin override de ninguna especie.
+          const com = redondear(a.bruto * 0.001, 2);
+          const iva = redondear(com * 0.19, 2);
+          const neto = a.lado === 'Venta' ? redondear(a.bruto - com - iva, 2)
+                                          : redondear(a.bruto + com + iva, 2);
+          return [a.fondo, fmtInt(a.qty), fmtRate(a.qty?a.bruto/a.qty:0),
+                  fmtMoney(a.bruto), fmtMoney(com), '0,100%', fmtMoney(iva), fmtMoney(neto)];
+        });
+    })(),
+    totales: (()=>{
+      const comTot = redondear(brutoTot * 0.001, 2);
+      const ivaTot = redondear(comTot * 0.19, 2);
+      return `<b style="color:var(--accent,#818cf8);">Macrogrupo: ${cfgMacro.nombre}</b> · ` +
+             `${lote.length} folio(s) · ${fmtInt(qTot)} acciones · bruto ${fmtMoney(brutoTot)} · ` +
+             `comisión ${fmtMoney(comTot)} + IVA ${fmtMoney(ivaTot)}`;
+    })(),
+  });
+  if(!ok) return;
+  await generarExcelCCFFMM(macro, lote, _slug);
+  // CREDICORPFFMM reporta folio a folio: cada fila del lote lleva su propio
+  // portafolio (el Notes), así que se convierte al formato de loteOps.
+  // El nombre va COMPLETO: "CREDICORP CAPITAL ACCIONES COLOMBIA", no solo el
+  // macrogrupo, que por sí solo no identifica al cliente (Sergio, 07-sep).
+  const _nombreReporte = cfgMacro.fondo || ('CREDICORP CAPITAL ' + cfgMacro.nombre);
+  // CONSOLIDADO por especie + lado + portafolio, no una fila por folio: con
+  // seis folios el módulo Reportes mostraba seis líneas y la primera —800.000
+  // de un total de 813.868— parecía ser la ejecución completa
+  // (Sergio, 07-sep).
+  const _agr = {};
+  lote.forEach(f=>{
+    const port = cfgMacro.fondo || f.notes || f.portafolio || '';
+    const k = String(f.especie) + '|' + String(f.lado) + '|' + port;
+    const a = _agr[k] || (_agr[k] = {
+      portafolio: { nombre: port }, especie: f.especie, lado: f.lado,
+      cantidad: 0, bruto: 0, comMonto: 0,
+    });
+    const q = Number(f.cantidad)||0, px = Number(f.precio)||0;
+    a.cantidad += q;
+    a.bruto += q * px;
+    a.comMonto += q * px * 0.001;
+  });
+  await registrarLoteRVL(_nombreReporte, Object.values(_agr)
+    .map(o=>({ ...o, precio: o.cantidad > 0 ? o.bruto / o.cantidad : 0 })), version);
+
+}
+
 async function generarReporte(){
   const cliente = document.getElementById('filtroCliente').value;
   // Clientes de reparto manual con reporte genérico equity (FIDUCIARIA
@@ -14359,84 +14436,26 @@ async function generarReporte(){
             '\n\nSin esa marca no se sabe a qué macrogrupo pertenecen. Revísalo en Fidessa.');
       return;
     }
+    // Con varios macrogrupos se generan VARIOS ARCHIVOS, uno por macrogrupo.
+    // Antes frenaba pidiendo "deja seleccionadas solo las de uno", con un
+    // checkbox por folio que ya no existe — así que no había forma de separar
+    // y el cliente quedaba bloqueado (Sergio, 15-sep).
+    // La muralla china se respeta igual: cada macrogrupo en SU propio archivo.
     const macros = Object.keys(porMacro);
     if(macros.length > 1){
-      alert('No se generó el reporte: marcaste líneas de ' + macros.length + ' macrogrupos.\n\n' +
+      const ok = confirm('Se van a generar ' + macros.length + ' reportes SEPARADOS, ' +
+            'uno por macrogrupo:\n\n' +
             macros.map(k=>`   ${CCFFMM_MACROGRUPOS[k].nombre}: ${porMacro[k].length} folio(s)`).join('\n') +
-            '\n\nPor muralla china van en reportes SEPARADOS. Deja seleccionadas solo las de uno.');
+            '\n\nPor muralla china no pueden ir en el mismo archivo.\n\n¿Continuar?');
+      if(!ok) return;
+      for(const k of macros){
+        await _generarUnMacroFFMM(k, porMacro[k], cliente, fechaReg);
+      }
+      _limpiarTrasReportar();
       return;
     }
     const macro = macros[0];
-    const cfgMacro = CCFFMM_MACROGRUPOS[macro];
-    const _slug = String(fechaReg||'').replace(/-/g,'') ||
-      (()=>{ const d=new Date(); return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`; })();
-    const lote = porMacro[macro];
-    const version = proximaVersion(cfgMacro.nombre, 'RVL');
-    const qTot = lote.reduce((a,f)=>a+f.cantidad,0);
-    const brutoTot = lote.reduce((a,f)=>a+f.cantidad*f.precio,0);
-    const ok = await previsualizarReporte({
-      titulo: `CREDICORP CAPITAL — ${cfgMacro.nombre} — ${etiquetaVersion(version)}`,
-      archivo: `Operaciones_${cfgMacro.archivo}_${_slug}.xlsx`,
-      // Con COMISIÓN y NETO, como las confirmaciones de los demás clientes:
-      // sin esos dos no hay forma de revisar la plata antes de descargar
-      // (Sergio, 04-sep).
-      // Solo lo que se revisa: sin número de folios ni columnas de más
-      // (Sergio, 05-sep).
-      columnas: ['Account','Cantidad','Precio','Bruto','Comisión','% Com.','IVA','Valor Neto'],
-      filas: (()=>{
-        const g = {};
-        lote.forEach(f=>{
-          const fondo = cfgMacro.fondo || f.notes || '';
-          const k = f.especie + '|' + f.lado + '|' + fondo;
-          const a = g[k] || (g[k] = {especie:f.especie, lado:f.lado, fondo, qty:0, bruto:0, n:0});
-          a.qty += f.cantidad; a.bruto += f.cantidad*f.precio; a.n++;
-        });
-        return Object.values(g)
-          .sort((x,y)=>String(x.fondo).localeCompare(String(y.fondo)) || String(x.especie).localeCompare(String(y.especie)))
-          .map(a=>{
-            // 0,1% + IVA, sin override de ninguna especie.
-            const com = redondear(a.bruto * 0.001, 2);
-            const iva = redondear(com * 0.19, 2);
-            const neto = a.lado === 'Venta' ? redondear(a.bruto - com - iva, 2)
-                                            : redondear(a.bruto + com + iva, 2);
-            return [a.fondo, fmtInt(a.qty), fmtRate(a.qty?a.bruto/a.qty:0),
-                    fmtMoney(a.bruto), fmtMoney(com), '0,100%', fmtMoney(iva), fmtMoney(neto)];
-          });
-      })(),
-      totales: (()=>{
-        const comTot = redondear(brutoTot * 0.001, 2);
-        const ivaTot = redondear(comTot * 0.19, 2);
-        return `<b style="color:var(--accent,#818cf8);">Macrogrupo: ${cfgMacro.nombre}</b> · ` +
-               `${lote.length} folio(s) · ${fmtInt(qTot)} acciones · bruto ${fmtMoney(brutoTot)} · ` +
-               `comisión ${fmtMoney(comTot)} + IVA ${fmtMoney(ivaTot)}`;
-      })(),
-    });
-    if(!ok) return;
-    await generarExcelCCFFMM(macro, lote, _slug);
-    // CREDICORPFFMM reporta folio a folio: cada fila del lote lleva su propio
-    // portafolio (el Notes), así que se convierte al formato de loteOps.
-    // El nombre va COMPLETO: "CREDICORP CAPITAL ACCIONES COLOMBIA", no solo el
-    // macrogrupo, que por sí solo no identifica al cliente (Sergio, 07-sep).
-    const _nombreReporte = cfgMacro.fondo || ('CREDICORP CAPITAL ' + cfgMacro.nombre);
-    // CONSOLIDADO por especie + lado + portafolio, no una fila por folio: con
-    // seis folios el módulo Reportes mostraba seis líneas y la primera —800.000
-    // de un total de 813.868— parecía ser la ejecución completa
-    // (Sergio, 07-sep).
-    const _agr = {};
-    lote.forEach(f=>{
-      const port = cfgMacro.fondo || f.notes || f.portafolio || '';
-      const k = String(f.especie) + '|' + String(f.lado) + '|' + port;
-      const a = _agr[k] || (_agr[k] = {
-        portafolio: { nombre: port }, especie: f.especie, lado: f.lado,
-        cantidad: 0, bruto: 0, comMonto: 0,
-      });
-      const q = Number(f.cantidad)||0, px = Number(f.precio)||0;
-      a.cantidad += q;
-      a.bruto += q * px;
-      a.comMonto += q * px * 0.001;
-    });
-    await registrarLoteRVL(_nombreReporte, Object.values(_agr)
-      .map(o=>({ ...o, precio: o.cantidad > 0 ? o.bruto / o.cantidad : 0 })), version);
+    await _generarUnMacroFFMM(macro, porMacro[macro], cliente, fechaReg);
 
   } else if(formato === 'skandia'){
     const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
@@ -18573,7 +18592,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-15 20:27 UTC · v82';
+const BUILD_ID = '2026-09-15 20:59 UTC · v83';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
