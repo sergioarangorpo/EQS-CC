@@ -775,9 +775,12 @@
               Solo sale con TODO reportado.</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;">
-            <label class="field-note" style="font-size:11px;">TRM</label>
-            <input type="text" id="planillaTRM" style="width:100px;font-size:12px;padding:4px 8px;"
-                   title="Se toma del informe diario; edítala si necesitas otra">
+            <label class="field-note" style="font-size:11px;">USDCOP</label>
+            <input type="text" id="planillaTRM"
+                   style="width:110px;font-size:12px;padding:5px 9px;
+                          background:var(--bg-2,#161b26);color:var(--text-1,#e5e7eb);
+                          border:1px solid var(--border,#232938);border-radius:6px;"
+                   title="Se toma del informe diario; edítalo si necesitas otro">
             <button class="btn small purple" onclick="descargarPlanillaCOP()">📥 Planilla COP</button>
           </div>
         </div>
@@ -11556,6 +11559,35 @@ function filasPlanillaCOP(){
         liquidacion:parseFechaLocal(hoy), cumplimiento:sumarDiasHabiles(parseFechaLocal(hoy),2,'CO') });
     });
 
+  // ---- RVL: lo que NO se reporta (brokers de tarifa cierta) ----
+  // SCOTIA, CITI_NY, GOLDMAN, HSBC_NY, MLI, PLURAL y demás no llevan reporte,
+  // pero SÍ generan comisión y tienen que estar en la planilla. Se toman de
+  // Fidessa Trades con su tarifa fija (Sergio, 15-sep).
+  const _yaReportados = new Set(ultimaVersionPorLinea(_reportesGenerados||[])
+    .filter(r=>r.modulo === 'RVL')
+    .map(r=>_dashClave(r.cliente) + '|' + String(r.especie||'').toUpperCase() + '|' + String(r.lado||'')));
+  Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
+    const t = _fidessaTradesRaw[oid];
+    const cli = normalizarGrupo(t.grupo);
+    if(!cli) return;
+    if(typeof _lineasNoReportar !== 'undefined' && _lineasNoReportar.has(String(oid))) return;
+    const esp = nemoCanonico(t.security,'fidessa') || '';
+    const k = _dashClave(cli) + '|' + String(esp).toUpperCase() + '|' + String(t.lado||'');
+    if(_yaReportados.has(k)) return;          // ya entró por la vía del reporte
+    const q = Number(t.qtyDone)||0, px = Number(t.avgPx)||0;
+    if(!q || !px) return;
+    const tarifa = _dashTarifaCierta(cli);
+    if(tarifa == null){
+      // Tarifa variable sin reportar: no se puede saber la comisión.
+      faltan.push(`${cli} ${esp} — operado pero SIN reportar (tarifa variable)`);
+      return;
+    }
+    agregar({ cliente:cli, account:t.notes||'', fondo:t.grupo||cli,
+      nemo:esp, lado:t.lado, cantidad:q, precio:px, bruto:q*px,
+      comision:q*px*tarifa, mercado:'ACCIONES',
+      liquidacion:parseFechaLocal(hoy), cumplimiento:sumarDiasHabiles(parseFechaLocal(hoy),2,'CO') });
+  });
+
   // ---- RVI: la utilidad, pasada a pesos ----
   (historial||[]).forEach(h=>{
     const q = Number(h.qty)||0, px = Number(h.price)||0;
@@ -18813,7 +18845,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-15 21:10 UTC · v85';
+const BUILD_ID = '2026-09-15 21:21 UTC · v86';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
