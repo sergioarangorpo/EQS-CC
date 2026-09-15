@@ -17015,6 +17015,35 @@ function refrescarTraderRVI(){
     todos.map(t=>`<option value="${t}">${t}</option>`).join('');
 }
 
+// ¿El Account de EMSX corresponde a un portafolio del cliente, o es el nombre
+// del cliente a secas? Si no lo identifica, no se preasigna nada.
+function _esPortafolioRealRVI(account){
+  const a = String(account||'').trim();
+  if(!a || a === '—') return false;
+  const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const k = lim(a);
+  const cli = (document.getElementById('tc-cliente')||{}).value || '';
+  const cfg = (typeof clientesRVI !== 'undefined' ? clientesRVI[cli] : null) || {};
+  // El Account genérico —el nombre del cliente a secas— no es un portafolio.
+  // Se descarta ANTES de mirar la lista: con 48 portafolios de Porvenir, todos
+  // empiezan por "PORV." y una comparación laxa hacía que "PORVENIR" calzara
+  // con cualquiera (Sergio, 15-sep).
+  const nomCli = lim(cfg.nombre || cli);
+  const claveCli = lim(cli);
+  if(k === claveCli || k === nomCli) return false;
+
+  const ports = cfg.portafolios || cfg.accounts || [];
+  if(ports.length){
+    // Coincidencia EXACTA con el nombre o el id del portafolio.
+    return ports.some(p=>{
+      const n = lim(p.nombre || p.account || p);
+      const id = lim(p.id || '');
+      return (n && n === k) || (id && id === k);
+    });
+  }
+  return true;
+}
+
 function volcarLineaEnFormularioRVI(){
   setTimeout(()=>{ if(typeof refrescarTraderRVI === 'function') refrescarTraderRVI(); }, 0);
   // Con MARKET MAKER la comisión es cero y se pone sola; con broker que cobra
@@ -17424,9 +17453,13 @@ function seleccionarLinea(id){
     _sdEl.value = settlementRVI(linea.especie, _td).toISOString().slice(0,10);
   }
 
-  // Distribucion: si la linea ya tiene account definido, pre-asignar todo
+  // Distribución: se preasigna todo SOLO si el Account de EMSX es un portafolio
+  // real del cliente. Cuando viene genérico —"PORVENIR", que es el cliente y no
+  // un fondo— se deja en blanco para poder repartir: antes se asignaba todo a
+  // ese texto y el disponible quedaba en cero, así que no se podía dividir
+  // entre dos portafolios (Sergio, 15-sep).
   distribuciones = [];
-  if(linea.account){
+  if(linea.account && _esPortafolioRealRVI(linea.account)){
     distribuciones.push({account:linea.account, qty:linea.qty});
   }
 
@@ -18529,7 +18562,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-08 20:47 UTC · v80';
+const BUILD_ID = '2026-09-15 20:21 UTC · v81';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
