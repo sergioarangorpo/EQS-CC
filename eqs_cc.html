@@ -784,6 +784,26 @@
             <div id="dashTotalesVol" style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 14px;"></div>
             <div id="dashVolumen"></div>
           </div>
+          <!-- Planilla COP: el archivo que Sergio armaba a mano desde tres
+               libros con macros (Sergio, 15-sep). -->
+          <div class="card" style="padding:14px 16px;margin-bottom:14px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+              <div>
+                <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;">
+                  PLANILLA COP</div>
+                <div class="field-note" style="font-size:11px;margin-top:2px;">
+                  Una fila por operación del día: RVL, RVI y FX, con trader y categoría.
+                  Solo sale con TODO reportado.</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <label class="field-note" style="font-size:11px;">TRM</label>
+                <input type="text" id="planillaTRM" style="width:100px;font-size:12px;padding:4px 8px;"
+                       title="Se toma del informe diario; edítala si necesitas otra">
+                <button class="btn small purple" onclick="descargarPlanillaCOP()">📥 Planilla COP</button>
+              </div>
+            </div>
+            <div id="planillaEstado" style="margin-top:10px;"></div>
+          </div>
           <div class="card" style="padding:14px 16px;margin-bottom:14px;">
             <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:10px;">
               LOS CRUCES MÁS GRANDES DEL DÍA</div>
@@ -11437,6 +11457,205 @@ function renderDashTotales(M, campo, destino){
 // Matriz de lo que falta: una fila por módulo y una columna por etapa, con el
 // detalle de QUIÉN falta. Antes era una línea de texto y había que adivinar a
 // qué cliente correspondía cada número (Sergio, 03-sep).
+// =====================================================================
+// PLANILLA COP — una fila por operación del día
+// ---------------------------------------------------------------------
+// Reemplaza el archivo que Sergio armaba a mano desde tres libros con macros.
+// Toma las operaciones de RVL, RVI y FX, y les pega el TRADER y la CATEGORÍA
+// del maestro de grupos.
+//
+// Reglas:
+//   · IVA 19% solo en ACCIONES y solo si el portafolio lo paga.
+//   · La comisión de RVI nace en USD: se pasa a pesos con la TRM del día.
+//   · Si falta CUALQUIER dato no se genera nada: mejor no tener planilla que
+//     tener una a la que se le escapó una operación (Sergio, 15-sep).
+// =====================================================================
+let _maestroGrupos = [];
+
+async function cargarMaestroGrupos(){
+  try{
+    _maestroGrupos = await supaFetch('maestro_grupos', 'order=grupo.asc&limit=500') || [];
+    if(_maestroGrupos.length) console.log(`Planilla: ${_maestroGrupos.length} grupos cargados`);
+  }catch(e){ console.warn('maestro_grupos:', e.message); _maestroGrupos = []; }
+}
+
+// Encuentra el grupo de una operación. Busca por nombre, por alias, y para los
+// que llegan bajo CCSI (Moneda, Falcom, Tordesilhas, Impera) por el ACCOUNT.
+function grupoDeOperacion(cliente, account){
+  const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const c = lim(cliente), a = lim(account);
+  if(!c && !a) return null;
+  // 1) alias con cuenta: CCSI#MONEDA
+  for(const g of _maestroGrupos){
+    for(const al of String(g.alias||'').split('|').filter(Boolean)){
+      if(al.includes('#')){
+        const [book, cta] = al.split('#');
+        if(lim(book) === c && a && a.includes(lim(cta))) return g;
+      }
+    }
+  }
+  // 2) alias simple y nombre del grupo
+  for(const g of _maestroGrupos){
+    if(lim(g.grupo) === c) return g;
+    for(const al of String(g.alias||'').split('|').filter(Boolean)){
+      if(!al.includes('#') && lim(al) === c) return g;
+    }
+  }
+  // 3) coincidencia parcial, como último recurso
+  return _maestroGrupos.find(g=>{
+    const k = lim(g.grupo);
+    return k && c && (k.includes(c) || c.includes(k));
+  }) || null;
+}
+
+function _trmPlanilla(){
+  const manual = parseNum((document.getElementById('planillaTRM')||{}).value);
+  if(manual > 0) return manual;
+  const informe = parseNum((document.getElementById('usdcopAyudas')||{}).value);
+  return informe > 0 ? informe : 0;
+}
+
+// Arma las filas del día desde las tres fuentes. Devuelve {filas, faltantes}.
+function filasPlanillaCOP(){
+  const filas = [], faltan = [];
+  const trm = _trmPlanilla();
+  const hoy = _hoyISO();
+
+  const agregar = (o) => {
+    const g = grupoDeOperacion(o.cliente, o.account);
+    if(!g){ faltan.push(`${o.cliente || o.account || '—'} — sin grupo en el maestro`); return; }
+    if(!(Number(o.cantidad) > 0) || !(Number(o.precio) > 0)){
+      faltan.push(`${g.grupo} ${o.nemo} — sin cantidad o precio`); return;
+    }
+    if(o.comision == null || !isFinite(o.comision)){
+      faltan.push(`${g.grupo} ${o.nemo} — sin comisión (¿falta reportar?)`); return;
+    }
+    const bruto = o.bruto != null ? o.bruto : o.cantidad * o.precio;
+    const com = Number(o.comision) || 0;
+    const iva = o.mercado === 'ACCIONES' && o.iva !== false ? com * 0.19 : 0;
+    const giro = o.lado === 'Venta' ? bruto - com - iva : bruto + com + iva;
+    filas.push({
+      fondo: o.fondo || '', grupo: g.grupo, tipo: o.lado, nemo: o.nemo,
+      cantidad: o.cantidad, precio: o.precio, bruto,
+      comision: com, comisionPct: bruto ? com / bruto : 0, iva, giro,
+      trader: g.trader, mercado: o.mercado, categoria: g.categoria,
+      liquidacion: o.liquidacion, cumplimiento: o.cumplimiento,
+    });
+  };
+
+  // ---- RVL: lo reportado ----
+  ultimaVersionPorLinea(_reportesGenerados||[])
+    .filter(r=>r.modulo === 'RVL')
+    .forEach(r=>{
+      const q = Number(r.cantidad)||0, px = Number(r.precio)||0;
+      agregar({ cliente:r.cliente, account:r.portafolios, fondo:r.portafolios,
+        nemo:r.especie, lado:r.lado, cantidad:q, precio:px, bruto:q*px,
+        comision:Number(r.comision), mercado:'ACCIONES',
+        liquidacion:parseFechaLocal(hoy), cumplimiento:sumarDiasHabiles(parseFechaLocal(hoy),2,'CO') });
+    });
+
+  // ---- RVI: la utilidad, pasada a pesos ----
+  (historial||[]).forEach(h=>{
+    const q = Number(h.qty)||0, px = Number(h.price)||0;
+    if(!q || !px) return;
+    if(!trm){ faltan.push(`${h.cliente} ${h.symbol} — falta la TRM para pasar la comisión a pesos`); return; }
+    const pxNos = Number(h.precioNuestro) || px;
+    const margen = String(h.side||'').toUpperCase()==='SELL' ? (pxNos-px)*q : (px-pxNos)*q;
+    const utilUSD = (Number(h.cost)||0) + margen - (Number(h.ccsi)||0);
+    agregar({ cliente:h.cliente, account:h.account, fondo:h.account,
+      nemo:h.symbol, lado:String(h.side||'').toUpperCase()==='SELL'?'Venta':'Compra',
+      cantidad:q, precio:px, bruto:q*px, comision:utilUSD*trm,
+      mercado:(h.tipo==='ADR'?'ADR':'ETF'), iva:false,
+      liquidacion:h.tradeDate, cumplimiento:h.settleDate });
+  });
+
+  // ---- FX ----
+  (operaciones||[]).forEach(o=>{
+    if(o.fecha && String(o.fecha).slice(0,10) !== hoy) return;
+    const monto = Number(o.amount||o.monto)||0;
+    if(!monto) return;
+    let r = {};
+    try { r = calcularDesdeValores(o.modelo, o.side, monto, o.params) || {}; }catch(e){ r = {}; }
+    const tasa = Number(r.tasaFinalCliente) || Number((o.params||{}).rateUnica) || 0;
+    agregar({ cliente:o.cliente, account:'', fondo:o.cliente,
+      nemo:'USDCOP', lado:String(o.side||'').toUpperCase()==='BUY'?'Compra':'Venta',
+      cantidad:monto, precio:tasa, bruto:monto*tasa,
+      comision:Number(r.comEqs)||0, mercado:'FX', iva:false,
+      liquidacion:parseFechaLocal(hoy),
+      cumplimiento:(cumplimientoFX(hoy, o.side, o.cliente)||{}).fecha });
+  });
+
+  return { filas, faltan: [...new Set(faltan)] };
+}
+
+async function descargarPlanillaCOP(){
+  const est = document.getElementById('planillaEstado');
+  if(!_maestroGrupos.length) await cargarMaestroGrupos();
+  if(!_maestroGrupos.length){
+    est.innerHTML = `<div style="background:rgba(245,158,11,.10);border-left:3px solid var(--amber,#f59e0b);
+      border-radius:6px;padding:10px 14px;font-size:12px;color:var(--amber,#f59e0b);">
+      ⚠ No hay maestro de grupos. Corre el SQL de <b>maestro_grupos</b> antes de generar.</div>`;
+    return;
+  }
+  const { filas, faltan } = filasPlanillaCOP();
+
+  // FRENO: con datos incompletos no se genera nada.
+  if(faltan.length){
+    est.innerHTML = `<div style="background:rgba(245,158,11,.10);border-left:3px solid var(--amber,#f59e0b);
+      border-radius:6px;padding:10px 14px;font-size:12px;">
+      <b style="color:var(--amber,#f59e0b);">No se generó la planilla.</b>
+      Falta información en ${faltan.length} operación(es):
+      <ul style="margin:6px 0 0 16px;padding:0;">${faltan.slice(0,12).map(f=>`<li>${f}</li>`).join('')}</ul>
+      ${faltan.length>12 ? `<div style="opacity:.7;margin-top:4px;">… y ${faltan.length-12} más</div>` : ''}
+      </div>`;
+    return;
+  }
+  if(!filas.length){
+    est.innerHTML = `<div class="field-note" style="font-size:12px;">Todavía no hay operaciones hoy.</div>`;
+    return;
+  }
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Planilla COP');
+  const H = ['Fondo','Grupo','Tipo','Nemo','Cantidad','Precio','Valor Bruto','Comisión $',
+             'Comisión %','Iva','Giro Total','Trader','Mercado','Liquidación','Cumplimiento','Categoria'];
+  [28,26,8,16,14,14,18,16,13,14,18,8,11,13,13,15].forEach((w,i)=>{ ws.getColumn(i+2).width = w; });
+  H.forEach((h,i)=>{
+    const c = ws.getCell(1, i+2);
+    c.value = h;
+    c.font = { name:'Calibri', size:11, bold:true };
+  });
+  let r = 2;
+  filas.sort((a,b)=> String(a.categoria).localeCompare(String(b.categoria)) ||
+                     String(a.grupo).localeCompare(String(b.grupo)) ||
+                     String(a.nemo).localeCompare(String(b.nemo)));
+  filas.forEach(f=>{
+    [f.fondo, f.grupo, f.tipo, f.nemo, f.cantidad, f.precio, f.bruto, f.comision,
+     f.comisionPct, f.iva, f.giro, f.trader, f.mercado, f.liquidacion, f.cumplimiento, f.categoria]
+      .forEach((v,i)=>{ ws.getCell(r, i+2).value = v; });
+    ws.getCell(r,6).numFmt = '#,##0';
+    ['G','H','I','K','L'].forEach(c=>{ ws.getCell(`${c}${r}`).numFmt = '#,##0.00'; });
+    ws.getCell(r,10).numFmt = '0.00000000';
+    ['O','P'].forEach(c=>{ ws.getCell(`${c}${r}`).numFmt = 'dd/mm/yyyy'; });
+    r++;
+  });
+
+  const d = new Date();
+  const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  const a = document.createElement('a');
+  a.href = url; a.download = `PLANILLA_COP_${slug}.xlsx`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  const totCom = filas.reduce((t,f)=>t+f.comision, 0);
+  est.innerHTML = `<div style="background:rgba(34,197,94,.10);border-left:3px solid var(--buy,#22c55e);
+    border-radius:6px;padding:10px 14px;font-size:12px;color:var(--buy,#22c55e);">
+    ✓ ${filas.length} operación(es) · comisión total ${fmtMoney(totCom)}</div>`;
+}
+
 function renderDashPendientes(){
   const cont = document.getElementById('dashPendientes');
   if(!cont) return;
@@ -18592,7 +18811,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-15 20:59 UTC · v83';
+const BUILD_ID = '2026-09-15 21:06 UTC · v84';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -18607,6 +18826,13 @@ cargarLineasNoReportar().then(cargarReportesGenerados);
 // mismo antes de recargar— no aparecía nunca en la lista de asignación
 // (Sergio, 08-sep).
 if(typeof cargarMaestros === 'function') cargarMaestros();
+if(typeof cargarMaestroGrupos === 'function') cargarMaestroGrupos();
+// La TRM de la planilla arranca con la del informe diario; se puede editar.
+setTimeout(()=>{
+  const p = document.getElementById('planillaTRM');
+  const u = document.getElementById('usdcopAyudas');
+  if(p && u && !p.value && u.value) p.value = u.value;
+}, 2000);
 if(typeof cargarMaestroDeceval === 'function') cargarMaestroDeceval();
 if(typeof cargarFestivos === 'function') cargarFestivos().then(()=>{
   if(typeof renderListaFestivos === 'function') renderListaFestivos();
