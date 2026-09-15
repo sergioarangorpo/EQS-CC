@@ -763,6 +763,28 @@
       <!-- Pendientes: lo que falta por hacer, no solo lo hecho -->
       <div id="dashPendientes" style="margin-bottom:16px;"></div>
 
+          <!-- Planilla COP: el archivo que Sergio armaba a mano desde tres
+           libros con macros (Sergio, 15-sep). -->
+      <div class="card" style="padding:14px 16px;margin-bottom:14px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;">
+              PLANILLA COP</div>
+            <div class="field-note" style="font-size:11px;margin-top:2px;">
+              Una fila por operación del día: RVL, RVI y FX, con trader y categoría.
+              Solo sale con TODO reportado.</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <label class="field-note" style="font-size:11px;">TRM</label>
+            <input type="text" id="planillaTRM" style="width:100px;font-size:12px;padding:4px 8px;"
+                   title="Se toma del informe diario; edítala si necesitas otra">
+            <button class="btn small purple" onclick="descargarPlanillaCOP()">📥 Planilla COP</button>
+          </div>
+        </div>
+        <div id="planillaEstado" style="margin-top:10px;"></div>
+      </div>
+
+
       <!-- Una tarjeta por mercado -->
       <div id="dashMercados" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;"></div>
 
@@ -783,26 +805,6 @@
             <!-- Totales arriba, igual que en "lo que ganamos" (Sergio, 04-sep). -->
             <div id="dashTotalesVol" style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 14px;"></div>
             <div id="dashVolumen"></div>
-          </div>
-          <!-- Planilla COP: el archivo que Sergio armaba a mano desde tres
-               libros con macros (Sergio, 15-sep). -->
-          <div class="card" style="padding:14px 16px;margin-bottom:14px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-              <div>
-                <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;">
-                  PLANILLA COP</div>
-                <div class="field-note" style="font-size:11px;margin-top:2px;">
-                  Una fila por operación del día: RVL, RVI y FX, con trader y categoría.
-                  Solo sale con TODO reportado.</div>
-              </div>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <label class="field-note" style="font-size:11px;">TRM</label>
-                <input type="text" id="planillaTRM" style="width:100px;font-size:12px;padding:4px 8px;"
-                       title="Se toma del informe diario; edítala si necesitas otra">
-                <button class="btn small purple" onclick="descargarPlanillaCOP()">📥 Planilla COP</button>
-              </div>
-            </div>
-            <div id="planillaEstado" style="margin-top:10px;"></div>
           </div>
           <div class="card" style="padding:14px 16px;margin-bottom:14px;">
             <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:10px;">
@@ -18811,7 +18813,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-15 21:06 UTC · v84';
+const BUILD_ID = '2026-09-15 21:10 UTC · v85';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
