@@ -17017,12 +17017,23 @@ function refrescarTraderRVI(){
 
 // ¿El Account de EMSX corresponde a un portafolio del cliente, o es el nombre
 // del cliente a secas? Si no lo identifica, no se preasigna nada.
-function _esPortafolioRealRVI(account){
+function _esPortafolioRealRVI(account, clienteHint){
   const a = String(account||'').trim();
   if(!a || a === '—') return false;
   const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
   const k = lim(a);
-  const cli = (document.getElementById('tc-cliente')||{}).value || '';
+  // El cliente puede llegar por parámetro: al volcar la línea el selector
+  // TODAVÍA NO tiene valor, así que sin esto la función no tenía contra qué
+  // comparar y aprobaba cualquier Account — incluido "PORVENIR", que es el
+  // cliente (Sergio, 15-sep).
+  let cli = clienteHint || (document.getElementById('tc-cliente')||{}).value || '';
+  if(!cli && typeof clientesRVI !== 'undefined'){
+    // Se deduce del propio Account: si coincide con el nombre o la clave de un
+    // cliente de RVI, entonces es genérico y no es portafolio.
+    const esCliente = Object.keys(clientesRVI).some(key=>
+      lim(key) === k || lim((clientesRVI[key]||{}).nombre) === k);
+    if(esCliente) return false;
+  }
   const cfg = (typeof clientesRVI !== 'undefined' ? clientesRVI[cli] : null) || {};
   // El Account genérico —el nombre del cliente a secas— no es un portafolio.
   // Se descarta ANTES de mirar la lista: con 48 portafolios de Porvenir, todos
@@ -17459,7 +17470,7 @@ function seleccionarLinea(id){
   // ese texto y el disponible quedaba en cero, así que no se podía dividir
   // entre dos portafolios (Sergio, 15-sep).
   distribuciones = [];
-  if(linea.account && _esPortafolioRealRVI(linea.account)){
+  if(linea.account && _esPortafolioRealRVI(linea.account, claveClienteRVI(linea.cliente || linea.firm))){
     distribuciones.push({account:linea.account, qty:linea.qty});
   }
 
@@ -18562,7 +18573,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-15 20:21 UTC · v81';
+const BUILD_ID = '2026-09-15 20:27 UTC · v82';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
