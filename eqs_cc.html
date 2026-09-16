@@ -11492,6 +11492,11 @@ function renderDashTotales(M, campo, destino){
     });
   });
 
+  if(!esVol){
+    console.log('TARJETA USD -> total', acum.USD.total.toFixed(2),
+      '| por mercado', JSON.stringify(acum.USD.por),
+      '| clientes RVI', JSON.stringify(M.RVI ? M.RVI.clientes : null));
+  }
   const fmt = (v, moneda) => moneda === 'USD'
     ? '$' + v.toLocaleString('es-CO',{maximumFractionDigits:0})
     : (Math.abs(v) >= 1e6
