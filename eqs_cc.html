@@ -11256,21 +11256,34 @@ function _dashDatos(){
   // Lo que está FILLED en EMSX y todavía no se ha registrado: el volumen ya se
   // operó, así que debe verse desde ya. Cuando se guarde la operación sale de
   // aquí y entra arriba con su comisión (Sergio, 03-sep).
-  const yaEnHistorial = new Set((historial||[]).map(h=>
-    String(h.symbol||'').toUpperCase() + '|' + String(h.side||'') + '|' + Number(h.qty||0)));
+  // Lo ya registrado se mide por ESPECIE + LADO y por CANTIDAD ACUMULADA, no
+  // por la cantidad exacta de cada fila: una orden de EMSX de 458.000 se
+  // reparte en el histórico como 194.000 + 264.000, así que comparar fila a
+  // fila no la reconocía y el volumen se contaba DOS VECES (Sergio, 16-sep).
+  const qtyEnHistorial = {};
+  (historial||[]).forEach(h=>{
+    const k = String(h.symbol||'').toUpperCase() + '|' + String(h.side||'');
+    qtyEnHistorial[k] = (qtyEnHistorial[k] || 0) + (Number(h.qty)||0);
+  });
+  // También por el id de la línea de EMSX, que es lo más directo.
+  const emsxRegistrados = new Set((historial||[])
+    .map(h=>String(h.emsxId != null ? h.emsxId : h.emsx_id || '')).filter(x=>x && x!=='null'));
   (typeof emsxData !== 'undefined' ? emsxData : []).forEach(r=>{
     if(String(r.status||'').toUpperCase() !== 'FILLED') return;
     const q = Number(r.qty)||0, px = Number(r.avgPr)||0;
     if(!q || !px) return;
     const sym = tickerLimpioRVI(r.especie).toUpperCase();
-    // Si la línea ya se registró (por su especie, lado y cantidad), no se
-    // cuenta dos veces.
-    if(yaEnHistorial.has(sym + '|' + r.lado + '|' + q)) return;
+    // Si la línea ya se registró no se cuenta dos veces: primero por su id de
+    // EMSX, y si no, porque el histórico ya tiene esa cantidad de la especie.
+    if(emsxRegistrados.has(String(r.id))) return;
+    const yaQty = qtyEnHistorial[sym + '|' + r.lado] || 0;
+    if(yaQty >= q - 0.5) return;
     // Nuestra propia línea contra el mercado no es volumen de cliente.
     if(/CREDICORP/i.test(String(r.firm||'')) && !r.cliente) return;
     const cli = _dashClave(r.cliente || r.firm || '');
     if(!cli) return;
-    sumar('RVI', cli, q * px, 0, false);   // sin comisión: falta registrarla
+    // Solo la parte que todavía NO se registró.
+    sumar('RVI', cli, (q - yaQty) * px, 0, false);   // sin comisión: falta registrarla
   });
 
   // ---------- FX ----------
@@ -19024,7 +19037,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 18:41 UTC · v92';
+const BUILD_ID = '2026-09-16 18:45 UTC · v93';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
