@@ -4114,6 +4114,43 @@ const HORZ_NOMBRE = 'Fondo Bursatil Global X Colombia Select de S&P';
 let _rfiOperaciones = [];
 let _rfiVerificados = [];      // {clave, isin, cliente, utilidad, verificado_por, fecha}
 
+async function guardarBlotterRFI(){
+  if(!_rfiOperaciones.length) return;
+  try{
+    const iso = d => (d && typeof d.getFullYear === 'function')
+      ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+      : null;
+    await guardarEnLotesSupabase('rfi_operaciones', _rfiOperaciones.map((f,i)=>({
+      clave: `${_hoyISO()}|${f.isin}|${f.boleto}|${i}`,
+      fecha: _hoyISO(), isin: f.isin, security: f.security, bs: f.bs,
+      amount: f.amount, precio: f.precio, settle: iso(f.settle),
+      cpty: f.cpty, nombre_cpty: f.nombreCpty, principal: f.principal,
+      cupon: f.cupon, total: f.total, boleto: f.boleto, nuestra: !!f.nuestra,
+      vendedor: f.vendedor || '', fecha_op: iso(f.fechaOp),
+    })));
+  }catch(e){ console.warn('No se pudo guardar el blotter de RFI:', e.message); }
+}
+
+async function cargarBlotterRFIDesdeSupabase(){
+  try{
+    const filas = await supaFetch('rfi_operaciones', `fecha=eq.${_hoyISO()}&order=clave.asc&limit=1000`) || [];
+    if(!filas.length) return;
+    _rfiOperaciones = filas.map(f=>({
+      isin:f.isin, security:f.security, bs:f.bs, amount:Number(f.amount)||0,
+      precio:Number(f.precio)||0, settle:f.settle ? parseFechaLocal(f.settle) : null,
+      cpty:f.cpty, nombreCpty:f.nombre_cpty, principal:Number(f.principal)||0,
+      cupon:Number(f.cupon)||0, total:Number(f.total)||0, boleto:f.boleto,
+      nuestra: !!f.nuestra, vendedor:f.vendedor,
+      fechaOp: f.fecha_op ? parseFechaLocal(f.fecha_op) : null,
+    }));
+    const est = document.getElementById('rfiEstado');
+    if(est) est.innerHTML = `<span style="color:var(--buy,#22c55e);">${filas.length} línea(s) · recuperadas de hoy</span>`;
+    console.log(`RFI: ${filas.length} línea(s) del blotter recuperadas`);
+    renderRFI();
+    if(typeof renderDashboard === 'function') renderDashboard();
+  }catch(e){ console.warn('rfi_operaciones:', e.message); }
+}
+
 async function cargarVerificadosRFI(){
   try{
     _rfiVerificados = await supaFetch('rfi_verificados', `fecha=eq.${_hoyISO()}&limit=500`) || [];
@@ -4200,6 +4237,9 @@ async function cargarBlotterRFI(input){
 
     _rfiOperaciones = filas;
     est.innerHTML = `<span style="color:var(--buy,#22c55e);">${filas.length} línea(s) · ${file.name}</span>`;
+    // Se guardan en Supabase: si no, al recargar la página el blotter se pierde
+    // y el dashboard se queda sin RFI (Sergio, 16-sep).
+    await guardarBlotterRFI();
     renderRFI();
     if(typeof renderDashboard === 'function') renderDashboard();
   }catch(e){
@@ -19526,7 +19566,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 19:45 UTC · v98';
+const BUILD_ID = '2026-09-16 19:48 UTC · v99';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -19543,6 +19583,7 @@ cargarLineasNoReportar().then(cargarReportesGenerados);
 if(typeof cargarMaestros === 'function') cargarMaestros();
 if(typeof cargarMaestroGrupos === 'function') cargarMaestroGrupos();
 if(typeof cargarVerificadosRFI === 'function') cargarVerificadosRFI();
+if(typeof cargarBlotterRFIDesdeSupabase === 'function') cargarBlotterRFIDesdeSupabase();
 // La TRM de la planilla arranca con la del informe diario; se puede editar.
 setTimeout(()=>{
   const p = document.getElementById('planillaTRM');
