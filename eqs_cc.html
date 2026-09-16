@@ -11476,20 +11476,91 @@ function renderDashTotales(M, campo, destino){
 //     tener una a la que se le escapó una operación (Sergio, 15-sep).
 // =====================================================================
 let _maestroGrupos = [];
+let _portGrupo = {};        // deceval -> {grupo, categoria, id_fondo}
+let _portGrupoPorFondo = {};// ID de fondo (Account de EMSX) -> lo mismo
+let _portGrupoPorNombre = {};
 
 async function cargarMaestroGrupos(){
   try{
     _maestroGrupos = await supaFetch('maestro_grupos', 'order=grupo.asc&limit=500') || [];
     if(_maestroGrupos.length) console.log(`Planilla: ${_maestroGrupos.length} grupos cargados`);
   }catch(e){ console.warn('maestro_grupos:', e.message); _maestroGrupos = []; }
+  try{
+    const ps = await supaFetch('maestro_portafolio_grupo', 'order=deceval.asc&limit=3000') || [];
+    _portGrupo = {}; _portGrupoPorFondo = {}; _portGrupoPorNombre = {};
+    const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    ps.forEach(x=>{
+      _portGrupo[String(x.deceval).trim()] = x;
+      if(x.id_fondo) _portGrupoPorFondo[String(x.id_fondo).toUpperCase().trim()] = x;
+      if(x.nombre) _portGrupoPorNombre[lim(x.nombre)] = x;
+    });
+    if(ps.length) console.log(`Planilla: ${ps.length} portafolios con grupo`);
+  }catch(e){ console.warn('maestro_portafolio_grupo:', e.message); }
+}
+
+// El grupo de un PORTAFOLIO. Es la vía principal: el deceval identifica el
+// portafolio de forma única, así que no hay que adivinar por texto. Es lo que
+// separa los cuatro Skandia, que conviven bajo el mismo client/book
+// (Sergio, 16-sep).
+// Busca el deceval de un portafolio en la ficha del cliente, para poder
+// resolver su grupo por la vía exacta.
+function _decevalDePortafolio(cliente, portafolio){
+  if(!portafolio) return '';
+  const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const k = lim(portafolio);
+  const buscar = (ports) => (ports||[]).find(x=>{
+    const n = lim(x.nombre);
+    return n && k && (n === k || n.includes(k) || k.includes(n));
+  });
+  try{
+    const clave = (typeof grupoDeTrade === 'function') ? grupoDeTrade(cliente,'') : cliente;
+    let p = buscar((getClienteDB(clave)||{}).portafolios);
+    if(!p){
+      // También en la ficha que coincida por nombre completo del cliente.
+      for(const key in clientesDB){
+        if(lim(getClienteDB(key).nombre) !== lim(cliente)) continue;
+        p = buscar(getClienteDB(key).portafolios);
+        if(p) break;
+      }
+    }
+    return p ? String(p.deceval||'') : '';
+  }catch(e){ return ''; }
+}
+
+function grupoDePortafolio(portafolio, deceval){
+  const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const d = String(deceval||'').replace(/\D/g,'').trim();
+  if(d && _portGrupo[d]) return _portGrupo[d];
+  const p = String(portafolio||'').trim();
+  if(!p) return null;
+  // Por ID de fondo (lo que llega en el Account de EMSX): "29", "FVOL", "BA".
+  const idf = p.toUpperCase();
+  if(_portGrupoPorFondo[idf]) return _portGrupoPorFondo[idf];
+  // Por nombre del portafolio.
+  const k = lim(p);
+  if(_portGrupoPorNombre[k]) return _portGrupoPorNombre[k];
+  for(const n in _portGrupoPorNombre){
+    if(n && k && (n === k || n.includes(k) || k.includes(n))) return _portGrupoPorNombre[n];
+  }
+  return null;
 }
 
 // Encuentra el grupo de una operación. Busca por nombre, por alias, y para los
 // que llegan bajo CCSI (Moneda, Falcom, Tordesilhas, Impera) por el ACCOUNT.
-function grupoDeOperacion(cliente, account){
+function grupoDeOperacion(cliente, account, deceval){
   const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
   const c = lim(cliente), a = lim(account);
-  if(!c && !a) return null;
+  if(!c && !a && !deceval) return null;
+
+  // 0) EL PORTAFOLIO MANDA. Un deceval identifica al grupo sin ambigüedad, y
+  //    es lo único que separa SKANDIA FPO / FPV / SEGUROS / FIDUCIARIA.
+  const pg = grupoDePortafolio(account, deceval);
+  if(pg && pg.grupo){
+    const g = _maestroGrupos.find(x=>lim(x.grupo) === lim(pg.grupo));
+    if(g) return g;
+    // El portafolio sabe su grupo aunque no esté en el presupuesto.
+    return { grupo: pg.grupo, trader: '', categoria: pg.categoria || '' };
+  }
   // 1) alias con cuenta: CCSI#MONEDA
   for(const g of _maestroGrupos){
     for(const al of String(g.alias||'').split('|').filter(Boolean)){
@@ -11527,7 +11598,10 @@ function filasPlanillaCOP(){
   const hoy = _hoyISO();
 
   const agregar = (o) => {
-    const g = grupoDeOperacion(o.cliente, o.account);
+    const g = grupoDeOperacion(o.cliente, o.account, o.deceval);
+    if(g && !g.trader){
+      faltan.push(`${g.grupo} — el grupo no está en el presupuesto (falta trader)`); return;
+    }
     if(!g){ faltan.push(`${o.cliente || o.account || '—'} — sin grupo en el maestro`); return; }
     if(!(Number(o.cantidad) > 0) || !(Number(o.precio) > 0)){
       faltan.push(`${g.grupo} ${o.nemo} — sin cantidad o precio`); return;
@@ -11554,6 +11628,7 @@ function filasPlanillaCOP(){
     .forEach(r=>{
       const q = Number(r.cantidad)||0, px = Number(r.precio)||0;
       agregar({ cliente:r.cliente, account:r.portafolios, fondo:r.portafolios,
+        deceval:_decevalDePortafolio(r.cliente, r.portafolios),
         nemo:r.especie, lado:r.lado, cantidad:q, precio:px, bruto:q*px,
         comision:Number(r.comision), mercado:'ACCIONES',
         liquidacion:parseFechaLocal(hoy), cumplimiento:sumarDiasHabiles(parseFechaLocal(hoy),2,'CO') });
@@ -18845,7 +18920,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-15 21:21 UTC · v86';
+const BUILD_ID = '2026-09-16 13:46 UTC · v87';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
