@@ -10933,6 +10933,42 @@ function _precioNuestroRVI(h){
   return (avg && Math.abs(avg - px) > 1e-9) ? avg : (guardado || px);
 }
 
+// Filas de la planilla del BO para los negocios de RFI VERIFICADOS. Cada pata
+// del blotter es una fila: la compra a CCSI y cada venta al cliente. Va en el
+// mismo formato de 14 columnas que RVI, porque el BO recibe una sola planilla
+// (Sergio, 16-sep).
+function filasBORFI(){
+  if(typeof negociosRFI !== 'function') return [];
+  const filas = [];
+  negociosRFI().forEach(n=>{
+    if(!rfiEstaVerificado(n)) return;    // solo lo verificado pasa al BO
+    const agrega = (f, lado, cliente) => {
+      filas.push({
+        'TIPO OP': 'RFI',
+        'CLIENTE': cliente,
+        'PORTFOLIO': cliente,
+        'NEMO': n.security,
+        'ISIN': n.isin,
+        'PP B/S': lado,
+        // Se comprueba por método y no con `instanceof`, que falla cuando el
+        // Date viene de otro contexto (Sergio, 16-sep).
+        'TD': (f.fechaOp && typeof f.fechaOp.getFullYear === 'function') ? f.fechaOp : null,
+        'SD': (f.settle && typeof f.settle.getFullYear === 'function') ? f.settle : null,
+        'VLR/NM': f.amount,                  // nominal, en miles de valor facial
+        'PL': f.precio,                      // precio como % del par
+        'GROSS AMOUNT': redondear(f.principal, 4),
+        'COST': 0,                           // en RFI no hay comisión: el ingreso es el margen
+        'SEC FEE': redondear(f.cupon, 4),    // el cupón corrido, que suma al principal
+        'NET AMOUNT': redondear(f.total, 4),
+      });
+    };
+    // NUESTRA compra al mercado y cada venta al cliente.
+    n.compras.forEach(f=> agrega(f, 'COMPRA', f.nombreCpty || f.cpty));
+    n.ventas.forEach(f=> agrega(f, 'VENTA', n.cliente));
+  });
+  return filas;
+}
+
 function filasBODeCliente(cliente){
   // El nombre se compara NORMALIZADO: el módulo Reportes usa el del registro
   // ("SOCIEDAD ADMINISTRADORA PORVENIR SA") y el histórico puede tener otra
@@ -10958,7 +10994,10 @@ function filasBODeCliente(cliente){
   // se recalcula igual — si no, los dos archivos no coinciden (Sergio, 01-sep).
   if(usaDosDecimalesRVI(cliente)) ops = ops.map(recalcularDosDecimales);
   const filas = [];
-  const fmtF = v => v instanceof Date ? v : (v ? new Date(v) : new Date());
+  // Se comprueba por método y no con `instanceof`: un Date que viene de otro
+  // contexto no lo pasa, y las fechas salían inválidas (Sergio, 16-sep).
+  const fmtF = v => (v && typeof v.getFullYear === 'function') ? v
+                  : (v ? new Date(v) : new Date());
 
   // ---- Pata del CLIENTE ----
   // El lado se invierte: lo que el cliente vende, nosotros lo compramos.
@@ -11054,6 +11093,13 @@ async function descargarPlanillaBO(clientes){
     const f = filasBODeCliente(cli);
     if(f.length){ filas = filas.concat(f); resumen.push({cliente:cli, n:f.length}); }
   });
+  // RFI entra en la MISMA planilla: el BO recibe un solo archivo, sea de RVI o
+  // de RFI. Solo lo verificado (Sergio, 16-sep).
+  const fRFI = (typeof filasBORFI === 'function') ? filasBORFI() : [];
+  if(fRFI.length){
+    filas = filas.concat(fRFI);
+    resumen.push({ cliente:'RFI', n:fRFI.length });
+  }
   if(!filas.length){
     alert('No se encontraron operaciones de esos clientes en el histórico de hoy.');
     return;
@@ -19480,7 +19526,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 19:38 UTC · v96';
+const BUILD_ID = '2026-09-16 19:45 UTC · v98';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
