@@ -11651,6 +11651,12 @@ function filasPlanillaCOP(){
     if(_yaReportados.has(k)) return;          // ya entró por la vía del reporte
     const q = Number(t.qtyDone)||0, px = Number(t.avgPx)||0;
     if(!q || !px) return;
+    // La mesa de SWAPS lleva reporte propio: si la orden trae la marca y no se
+    // ha reportado, se frena en vez de aplicarle la tarifa del broker.
+    if(esSwapNotes(t.notes)){
+      faltan.push(`${cli} ${esp} — mesa de SWAPS operada pero SIN reportar`);
+      return;
+    }
     const tarifa = _dashTarifaCierta(cli);
     if(tarifa == null){
       // Tarifa variable sin reportar: no se puede saber la comisión.
@@ -12042,6 +12048,35 @@ const ALIAS_REPORTE = {
   'SANTNYCV': 'SANTANDER',
   'SANTNYCCV': 'SANTANDER',
 };
+
+// MESA DE SWAPS — bajo CITI_NY y MLI conviven el BROKER (que no se reporta y
+// va a tarifa fija) y la mesa de swaps, que SÍ lleva reporte. Se distinguen por
+// el Notes de Fidessa, que trae la marca SWAP + broker + trader: SWAPCITIANDRE.
+// En la planilla van al mismo grupo que el broker (Sergio, 16-sep).
+function esSwapNotes(notes){
+  return /^SWAP/i.test(String(notes||'').trim());
+}
+
+// De la marca salen el BROKER y el TRADER: SWAPCITIANDRE -> CITI / ANDRE.
+// El broker se reconoce contra la lista conocida, porque sin ella no hay forma
+// de saber dónde termina uno y empieza el otro.
+const SWAP_BROKERS = ['CITI','MLI','GOLDMAN','GS','HSBC','SCOTIA','SANT','JPM','MS','BNP'];
+function brokerDeSwap(notes){
+  const t = String(notes||'').trim().toUpperCase().replace(/^SWAP/,'');
+  return SWAP_BROKERS.find(b=>t.startsWith(b)) || '';
+}
+function traderDeSwap(notes){
+  const t = String(notes||'').trim().toUpperCase().replace(/^SWAP/,'');
+  const b = brokerDeSwap(notes);
+  return b ? t.slice(b.length) : t;
+}
+
+// ¿Esta orden es de la mesa de swaps? Mira el Notes del folio y el de su orden.
+function esOrdenSwap(f){
+  if(esSwapNotes(f && f.notes)) return true;
+  const t = (_fidessaTradesRaw||{})[String(f && f.parentOrderId)];
+  return !!(t && esSwapNotes(t.notes));
+}
 
 function clienteRequiereReporte(grupo){
   const g = ALIAS_REPORTE[String(grupo||'').trim().toUpperCase()] || grupo;
@@ -18920,7 +18955,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 13:46 UTC · v87';
+const BUILD_ID = '2026-09-16 17:00 UTC · v88';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
