@@ -10586,7 +10586,13 @@ function filasBODeCliente(cliente){
       'TD': fmtF(h.tradeDate), 'SD': fmtF(h.settleDate),
       'VLR/NM': qty, 'PL': px,
       'GROSS AMOUNT': gross, 'COST': cost, 'SEC FEE': secFee,
-      'NET AMOUNT': redondear(Number(h.net)||0, 4),
+      // El neto se RECALCULA desde gross, cost y sec fee. Antes se tomaba el
+      // `h.net` guardado, y si venía mal o en cero —operaciones viejas, o
+      // guardadas con un build anterior— la utilidad del dashboard salía
+      // disparada: en el trade de Colfondos del 16-sep mostró 27 millones en
+      // vez de 4.611 (Sergio, 16-sep).
+      'NET AMOUNT': redondear(
+        lado === 'COMPRA' ? gross - cost - secFee : gross + cost - secFee, 4),
     });
   });
 
@@ -18955,7 +18961,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 17:00 UTC · v88';
+const BUILD_ID = '2026-09-16 17:42 UTC · v89';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
