@@ -4116,6 +4116,7 @@ const HORZ_NOMBRE = 'Fondo Bursatil Global X Colombia Select de S&P';
 // (Sergio, 16-sep).
 // =====================================================================
 let _rfiOperaciones = [];
+let _rfiHoraCarga = '';        // hora en que se subió el blotter
 let _rfiVerificados = [];      // {clave, isin, cliente, utilidad, verificado_por, fecha}
 
 async function guardarBlotterRFI(){
@@ -4147,6 +4148,8 @@ async function cargarBlotterRFIDesdeSupabase(){
       nuestra: !!f.nuestra, vendedor:f.vendedor,
       fechaOp: f.fecha_op ? parseFechaLocal(f.fecha_op) : null,
     }));
+    _rfiHoraCarga = _rfiHoraCarga ||
+      (filas[0] && filas[0].creado_en ? new Date(filas[0].creado_en).toLocaleTimeString('es-CO') : '');
     const est = document.getElementById('rfiEstado');
     if(est) est.innerHTML = `<span style="color:var(--buy,#22c55e);">${filas.length} línea(s) · recuperadas de hoy</span>`;
     console.log(`RFI: ${filas.length} línea(s) del blotter recuperadas`);
@@ -4240,6 +4243,7 @@ async function cargarBlotterRFI(input){
     if(!filas.length){ est.textContent = 'El archivo no trae operaciones.'; return; }
 
     _rfiOperaciones = filas;
+    _rfiHoraCarga = new Date().toLocaleTimeString('es-CO');
     est.innerHTML = `<span style="color:var(--buy,#22c55e);">${filas.length} línea(s) · ${file.name}</span>`;
     // Se guardan en Supabase: si no, al recargar la página el blotter se pierde
     // y el dashboard se queda sin RFI (Sergio, 16-sep).
@@ -7474,7 +7478,13 @@ const _tradesConsolidar = new Set(); // folioOrden seleccionados
 function toggleTradeConsolidar(folioOrden){
   const cliente = document.getElementById('filtroCliente').value;
   const cfg = cliente ? getClienteDB(cliente) : null;
-  const esReparteManual = !!(cfg && cfg.reparteManual);
+  // CREDICORPFFMM NO usa el modo "enfocar una sola orden": sus líneas traen el
+  // fondo en el Account y hay que poder marcar VARIAS para generar un archivo
+  // por macrogrupo. Con el enfoque, marcar una desmarcaba las demás
+  // (Sergio, 16-sep).
+  const _esFFMM = /CREDICORPFFMM|CREDICORP CAPITAL AM/i.test(String(cliente||'')) ||
+                  String((cfg||{}).formatoReporte||'') === 'credicorpffmm';
+  const esReparteManual = !!(cfg && cfg.reparteManual) && !_esFFMM;
 
   // Antes de cambiar la selección, guardar el allocation de la orden que estaba
   // activa (para no perderlo al cambiar de orden).
@@ -10709,7 +10719,7 @@ function renderFichasCOR(){
       ? [...new Set((typeof operaciones !== 'undefined' ? operaciones : [])
           .filter(o=>!o.fecha || String(o.fecha).slice(0,10) === _hoyISO())
           .map(o=>o.cliente || o.grupo || '').filter(Boolean))].sort()
-      : [...new Set((_reportesGenerados||[])
+      : [...new Set((_reportesGenerados||[]).concat(lineasReporteRFI())
           .filter(r=>r.modulo === mkt).map(r=>r.cliente))].sort();
     if(!clientes.length){
       cont.innerHTML = `<span class="field-note" style="font-size:11px;">${
@@ -12490,6 +12500,24 @@ function ultimaVersionPorLinea(filas){
   return Object.values(mejor);
 }
 
+// Los negocios de RFI VERIFICADOS se presentan como reportes dentro del cuadro
+// de RVI, que es el que alimenta la planilla del BO (Sergio, 16-sep).
+function lineasReporteRFI(){
+  if(typeof negociosRFI !== 'function') return [];
+  return negociosRFI().filter(n=>rfiEstaVerificado(n)).map(n=>({
+    modulo:'RVI', cliente: n.cliente || 'RFI',
+    parent_order_id: 'RFI|' + n.isin,
+    especie: n.security, lado: 'Venta',
+    cantidad: n.ventas.reduce((a,f)=>a+f.amount, 0),
+    precio: n.ventas.length ? n.ventas[0].precio : 0,
+    comision: n.utilidad, portafolios: n.cliente || '',
+    // La columna lee `generado_en`: se le pone la hora de carga del blotter
+    // para que no quede vacía (Sergio, 16-sep).
+    generado_en: new Date().toISOString(),
+    hora: _rfiHoraCarga || '', version: 1,
+  }));
+}
+
 function renderModuloReportes(){
   // Las fichas se repintan con cada cambio: los clientes van apareciendo a
   // medida que se reporta.
@@ -12498,22 +12526,7 @@ function renderModuloReportes(){
   if(!document.getElementById('repRVL')) return;
   // Solo la última versión de cada línea: un reenvío reemplaza al original en
   // la vista, no se muestran los dos (Sergio, 07-sep).
-  let _vigentes = ultimaVersionPorLinea(_reportesGenerados);
-  // Los negocios de RFI VERIFICADOS aparecen en el módulo como si fueran
-  // reportes: van en el cuadro de RVI, que es el que alimenta la planilla del
-  // BO (Sergio, 16-sep).
-  if(typeof negociosRFI === 'function'){
-    negociosRFI().filter(n=>rfiEstaVerificado(n)).forEach(n=>{
-      _vigentes = _vigentes.concat([{
-        modulo:'RVI', cliente: n.cliente || 'RFI',
-        parent_order_id: 'RFI|' + n.isin,
-        especie: n.security, lado: 'Venta',
-        cantidad: n.ventas.reduce((a,f)=>a+f.amount, 0),
-        precio: n.ventas.length ? n.ventas[0].precio : 0,
-        comision: n.utilidad, portafolios: n.cliente || '', version: 1,
-      }]);
-    });
-  }
+  const _vigentes = ultimaVersionPorLinea(_reportesGenerados).concat(lineasReporteRFI());
   const total = _vigentes.length;
   if(resumen) resumen.textContent = total === 0
     ? 'Aún no se ha generado ningún reporte hoy'
@@ -19618,7 +19631,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 20:38 UTC · v102';
+const BUILD_ID = '2026-09-16 20:43 UTC · v104';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
