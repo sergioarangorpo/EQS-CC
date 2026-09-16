@@ -4095,6 +4095,10 @@ function fechaBNPCorta(d){
 // folio: el cliente no arquea contra folios. Comisión 0,06% + IVA 19%, que da
 // un all-in de 0,0714% (Sergio, 16-sep).
 // =====================================================================
+// Logo de Global X, sacado del archivo que genera la macro para que el reporte
+// salga idéntico (Sergio, 16-sep).
+const LOGO_GLOBALX_B64 = 'iVBORw0KGgoAAAANSUhEUgAAANcAAAAuCAMAAAH7OUzAAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAJSUExURQAvNwAwOAAxOQA0PAAyOgAvOAAwOQA1PgA+SgA4QgA0PgA9SQA2QAAxOgA3QQA/SgA0PQA9SAA/SwA5QwAzPAA4QwAyOwA8RwA+SQA7RgAzPQA6RgBCTwA8SAA1PwA6RQA5QgBATQBDUABATBgyMkg5KHhAHadHE6RHFG0/H0I5KRYyMn9BG4BBGzA2LU86Jn9BHJ9GFT84KRAxNEA4KXZAHVc8JDM2LFU7JXE/H/9UAHtBHb9LDt9PB5JEGPNSA/FSA51GFY9EGA4xNLZJELJJEQgwNUk6JyQ0L3ZAHkw6JhkzMRcyMkY5KHRAHttPCNBNCvBSA4BCGyA0MFA7JsBLDh0zMcJLDbpKD95PBwsxNSI0MJlFFu9SA4dDGh4zMbJJEBkzMoxDGeBPB3A/H69IEZFEGINCG65IEQQwNg8xNOtRBBIyMwA+S7BJEXlBHfdTAuhRBdROCfVTAspMCxMyMy02LQA7R1E7JdxPB+1RBDE2LGA9IotDGW4/H1E7JiM0L0s6J6BGFHNAHiY1L/ZTAr5LDs9NCuNQBjo3Ki82LblKD5BEGCg1LpdFFl08Iyo1LohDGq1IEvpTAflTAapIEm8/H189Is1NC1s8I8RLDUE4KTY3K2M9ItJNCpxGFV09IzI2LKBGFWk+IE46Ji01LQcwNjw4Klg8JMhMDIVCGv1UALhKDw0xNMBLDUc5KOFQBnpBHQA2PwwxNGw/IJtGFWo+IIBCHH9GIYBIIwA6RDE2LUU5KAA5RAA3QgA7RQAyPABBTgBCUAA/TABBTQAAACz9C+MAAADGdFJOU///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////AMYa5+oAAAAJcEhZcwAADsQAAA7EAZUrDhsAAAU9SURBVFhH3Vk7buM8ENYNfIctuIVLFyF4gz2CgRwgRYA0qgwY8B0IFz/sVOpYqHMn6Gz/Nw9ST9uKLRtJvqzJ0UicB4ccDbXZvci1B6z2BB+bEIhq33om/mTZJsvqrMoy43BNxuRsESNaGXLcIbZhzo2otRd0ry4BRjKcK4XYOgeDnTPExE8NBmm3QrawFM/SHAfywbFXwsgsyRnAk6u1Q8uU9yZbo6eZACmjOwOnO3QGUwTcraTBZFG361xQ4xzmn0MgFDVZhQAKkzulWhAOtfTz+KPJllDgxxiOAisYo0N4WCgRd7tTBiENb0GCGYeV1NLYwD2jodqwHtvHFRi48a94guzTf2zqAHUzmdOndY6gx030RUxRffkZXgNzojWFA8wxU5dR7Yt3Jj64ZdjTUYjtdmuUbJLDdpiTUjIaRXTC7dEsWYxTnnEk3vgVWodFG3QL+FJXW2QoaK9ZevAaKKEGrFl61EnIdnEBU49blAEJOZKnJGLaHh1YHn8VKkiUMSlKAMvK6P4GOwueEgq601Nm8dC+r38U3tvlrvSccOqqKEi4x2UhO9SHl4MhU1YijVsoqwBmqD30JHdTcWmd3oPHr3FG/ec5iq7oqefKH48Kx+2Y3aJ6cVbiA7w/K/JBE/0gsaOo0+vy3ewlDXw0aXxntvIOOBrzkTL5NqYHyRYR00v7EqURF0egmIGcxCyqO7Mjk8yVvC6E9ozgWFm6eR5rfuRETenUV8dHFSp4syM1+tpYen7bAF2xrGyCqszpcKDUV0tM3JSUK6Jjht2s4x3pIsJKDLsCkQWgK/WdyacEgOqzil8ncu12UclA8Hjp1kNBDwUuEVO86C1KyDGVFcrHk0gid/Xl0Zc8SZXEQ91LuvRkSVPHN0Q2eyiPS5tAXD9hNXoW3NGlpQD7qrqW4qEJ/oWvqUlgAz4nKFv59S57oSKadBWmwJC1f9sdNzy48oeDzUmYVBxS5fjsCBAFaFkw6WC6wcxwGKDLORZ5TLPVrA0VpTTx+Rq6tO9u8DaavNHgUelwTO4DdD3xvfmkiuOJuFbczOnwFVlzqRpb4n3MpOv26blQCX0X3GRh/cTdeCPqxWLxZSsxRKnfhR/lVf0Dds2NGCxIw9U00LzL85FitlrrY6emiK2UBaZyIryjQqYFaFFqiJMU6wLrxj4SfRU72LQ21ft7ZWB39AzHit46xM2NQam6tHTkiF854BcNWdkWj5H79OVdcckvmln1jCSdr5UmY9tXL4DtnQWLAxIflATG+zehUMBp4eY7clCcV777bcz4836xZ/RFbiavyN5RMeRXe732vEfFKjYrsbRr7+n7tuI/Yhe+U3yHVMKOA8MtgjyHVzgYOT0wYjaBNPvsl5AELLe2iVT3S/ikEKexfpM+puIIwvX6a8dXBFmpM7CQ04nwHagcf0NUpDDw/mph6Xoavf/LfTPiM61Nuis5o2y7ciVe0au37gTeCsxzK7ud84ssbOvLvZfoNCMoOnwa5LsJzX+BXoxXihWIKefU68DGwKFfAKHRr/4mx2zHhbakb+BC4lgaR4DSxA4HhQBawi/Eq7MCsS1n8WyFWESUcT/Ar5pyFHZOnHKYG9FspYNyCLIyKS7N0kY8YyLgeOl+TE4I+JN5g97lVIwUikfzWn7qKmKY7b86s3lZlnmZZjx7sWFfVM26BScIjI2jDya0U5oJ4SBUMLD2qM8LK2KQA7/uV41T39CvIX5vufUDgFfstCj9MPwulxCl2x36ruElp+4w7a7Bj8EsBn2vdMjpYR6/tP8mmGROlv0PWMVA7Tc3158AAAAASUVORK5CYII=';
+
 const HORZ_FEE = 0.0006;
 const HORZ_IVA = 0.19;
 const HORZ_TAXID = '900.720.180-1';
@@ -4360,9 +4364,15 @@ async function generarExcelHORZ(lineas, fechaOp){
   const d = fechaOp instanceof Date ? fechaOp : new Date();
 
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('Hoja1');
+  // Sin líneas de cuadrícula y con el logo, como el archivo de la macro.
+  const ws = wb.addWorksheet('Hoja1', { views: [{ showGridLines: false }] });
   [7.1, 17.8, 12.9, 12.6, 14.8, 21.8, 16.9, 14.8, 24, 16.9, 15.1, 14.2, 15.4, 33.8]
     .forEach((w,i)=>{ ws.getColumn(i+1).width = w; });
+  try{
+    const imgId = wb.addImage({ base64: LOGO_GLOBALX_B64, extension:'png' });
+    // Misma posición que la macro: columna L, fila 3.
+    ws.addImage(imgId, { tl:{ col:11, row:2 }, ext:{ width:215, height:46 } });
+  }catch(e){ console.warn('logo Global X:', e.message); }
 
   const NEG = { name:'Calibri', size:11, bold:true };
   // ---------- Encabezado del fondo ----------
@@ -5758,7 +5768,9 @@ const clientesDB = {
     comisionBloque: 0.0015, comisionPantalla: 0.0008,
   },
   'HORZ': {
-    nombre: 'Fondo Bursatil Global X Colombia Select de S&P',
+    // En el filtro de Client/Book va corto y en mayúscula, como los demás; el
+    // nombre largo solo va dentro del reporte (Sergio, 16-sep).
+    nombre: 'GLOBAL X',
     // Proforma propia: una fila por línea de Fidessa Trades, sin arqueo contra
     // folios. Comisión 0,06% + IVA, all-in 0,0714% (Sergio, 16-sep).
     formatoReporte: 'horz', reparteManual: false,
@@ -6279,6 +6291,8 @@ function opcionesFondoFFMM(){
       if(!/FIDUCIARIA CREDICORP/i.test(String(x.client_book||''))) return;
       const n = String(x.id_fondo || x.portafolio || '').trim();
       if(!n || vistos.has(n)) return;
+      // BOLSA es un cliente aparte, no un portafolio de AM (Sergio, 16-sep).
+      if(/\bBOLSA\b/i.test(n)) return;
       vistos.add(n);
       fondos.push({ valor:n, etiqueta:n, macro:'FIDUCIARIA' });
     });
@@ -7064,6 +7078,8 @@ function getClienteDB(key){
         if(!/FIDUCIARIA CREDICORP/i.test(String(x.client_book||''))) return;
         const fondo = String(x.id_fondo || x.portafolio || '').trim();
         if(!fondo) return;
+        // BOLSA es un cliente aparte, no un portafolio de AM (Sergio, 16-sep).
+        if(/\bBOLSA\b/i.test(fondo)) return;
         const nombre = 'CC_FIDUCIARIA ' + fondo;
         if(yaEsta(nombre)) return;
         cfg.portafolios.push({ id:'FFMM_'+String(x.deceval||fondo).replace(/[^A-Z0-9]/gi,''),
@@ -12467,7 +12483,22 @@ function renderModuloReportes(){
   if(!document.getElementById('repRVL')) return;
   // Solo la última versión de cada línea: un reenvío reemplaza al original en
   // la vista, no se muestran los dos (Sergio, 07-sep).
-  const _vigentes = ultimaVersionPorLinea(_reportesGenerados);
+  let _vigentes = ultimaVersionPorLinea(_reportesGenerados);
+  // Los negocios de RFI VERIFICADOS aparecen en el módulo como si fueran
+  // reportes: van en el cuadro de RVI, que es el que alimenta la planilla del
+  // BO (Sergio, 16-sep).
+  if(typeof negociosRFI === 'function'){
+    negociosRFI().filter(n=>rfiEstaVerificado(n)).forEach(n=>{
+      _vigentes = _vigentes.concat([{
+        modulo:'RVI', cliente: n.cliente || 'RFI',
+        parent_order_id: 'RFI|' + n.isin,
+        especie: n.security, lado: 'Venta',
+        cantidad: n.ventas.reduce((a,f)=>a+f.amount, 0),
+        precio: n.ventas.length ? n.ventas[0].precio : 0,
+        comision: n.utilidad, portafolios: n.cliente || '', version: 1,
+      }]);
+    });
+  }
   const total = _vigentes.length;
   if(resumen) resumen.textContent = total === 0
     ? 'Aún no se ha generado ningún reporte hoy'
@@ -19566,7 +19597,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 19:48 UTC · v99';
+const BUILD_ID = '2026-09-16 20:30 UTC · v100';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
