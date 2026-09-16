@@ -11236,8 +11236,6 @@ function _dashDatos(){
   //
   // Si el cliente COMPRA, nosotros le vendemos (su neto entra) y le compramos
   // al mercado (nuestro neto sale). Y al revés.
-  console.log(`RVI: el histórico tiene ${(historial||[]).length} operación(es)`,
-    (historial||[]).map(h=>`${h.cliente} ${h.symbol} ${h.qty} px ${h.price} nuestro ${h.precioNuestro} espejo ${!!h.espejo}`));
   const _clientesRVI = [...new Set((historial||[]).map(h=>_dashClave(h.cliente||'')).filter(Boolean))];
   _clientesRVI.forEach(cli=>{
     const filas = filasBODeCliente(cli);      // las dos patas, como la planilla
@@ -11252,11 +11250,6 @@ function _dashDatos(){
         volumen += Number(f['GROSS AMOUNT']) || 0;
       }
     });
-    // Diagnóstico: deja ver de dónde sale la utilidad de cada cliente sin tener
-    // que adivinar desde el número final (Sergio, 16-sep).
-    console.log(`RVI ${cli}: vendemos ${vendemos.toFixed(2)} − compramos ${compramos.toFixed(2)} = ` +
-                `${(vendemos-compramos).toFixed(2)}  ·  ${filas.length} fila(s)`,
-                filas.map(f=>`${f['PP B/S']} ${f['VLR/NM']} @ ${f.PL}`));
     sumar('RVI', _dashCorto(cli), volumen, vendemos - compramos, true);
   });
 
@@ -11304,6 +11297,12 @@ function _dashDatos(){
   // Encima de todo: lo REPORTADO manda. Se reemplaza la estimación por el dato
   // real y el cliente deja de estar pendiente.
   Object.keys(M).forEach(mkt=>{
+    // RVI NO: ahí operamos como posición propia y el ingreso es VENTAS MENOS
+    // COMPRAS, que ya se calculó desde las dos patas. La comisión que queda en
+    // el registro de RVI es el cost del cliente, así que reemplazar por ella
+    // borraba el margen: el 16-sep mostró 1.882 —la suma de costos— en vez de
+    // 4.662 (Sergio, 16-sep).
+    if(mkt === 'RVI') return;
     Object.keys(M[mkt].clientes).forEach(cli=>{
       const real = comReportada[mkt + '|' + _dashClave(cli)];
       if(real == null) return;
@@ -11492,11 +11491,6 @@ function renderDashTotales(M, campo, destino){
     });
   });
 
-  if(!esVol){
-    console.log('TARJETA USD -> total', acum.USD.total.toFixed(2),
-      '| por mercado', JSON.stringify(acum.USD.por),
-      '| clientes RVI', JSON.stringify(M.RVI ? M.RVI.clientes : null));
-  }
   const fmt = (v, moneda) => moneda === 'USD'
     ? '$' + v.toLocaleString('es-CO',{maximumFractionDigits:0})
     : (Math.abs(v) >= 1e6
@@ -19030,7 +19024,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 18:08 UTC · v92-diag';
+const BUILD_ID = '2026-09-16 18:41 UTC · v92';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
