@@ -11236,6 +11236,8 @@ function _dashDatos(){
   //
   // Si el cliente COMPRA, nosotros le vendemos (su neto entra) y le compramos
   // al mercado (nuestro neto sale). Y al revés.
+  console.log(`RVI: el histórico tiene ${(historial||[]).length} operación(es)`,
+    (historial||[]).map(h=>`${h.cliente} ${h.symbol} ${h.qty} px ${h.price} nuestro ${h.precioNuestro} espejo ${!!h.espejo}`));
   const _clientesRVI = [...new Set((historial||[]).map(h=>_dashClave(h.cliente||'')).filter(Boolean))];
   _clientesRVI.forEach(cli=>{
     const filas = filasBODeCliente(cli);      // las dos patas, como la planilla
@@ -11250,6 +11252,11 @@ function _dashDatos(){
         volumen += Number(f['GROSS AMOUNT']) || 0;
       }
     });
+    // Diagnóstico: deja ver de dónde sale la utilidad de cada cliente sin tener
+    // que adivinar desde el número final (Sergio, 16-sep).
+    console.log(`RVI ${cli}: vendemos ${vendemos.toFixed(2)} − compramos ${compramos.toFixed(2)} = ` +
+                `${(vendemos-compramos).toFixed(2)}  ·  ${filas.length} fila(s)`,
+                filas.map(f=>`${f['PP B/S']} ${f['VLR/NM']} @ ${f.PL}`));
     sumar('RVI', _dashCorto(cli), volumen, vendemos - compramos, true);
   });
 
@@ -19018,7 +19025,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 18:02 UTC · v91';
+const BUILD_ID = '2026-09-16 18:08 UTC · v92-diag';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
