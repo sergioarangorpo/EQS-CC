@@ -1975,9 +1975,24 @@
 
   <!-- ===== RFI placeholder ===== -->
   <div id="mod-RFI" class="mod-section">
-    <div style="text-align:center;padding:80px 20px;color:var(--text-2);font-size:13px;">
-      Módulo RFI (Renta Fija Internacional) — próximamente
+    <div class="toolbar">
+      <div class="tb-field" style="flex:1;min-width:340px;">
+        <label>Blotter RFI (.xlsx)</label>
+        <input type="file" id="fileRFI" accept=".xlsx,.xls" onchange="cargarBlotterRFI(this)"
+               style="font-size:12px;width:100%;"
+               title="El archivo que arma Agudelo. Trae TODAS las patas: la compra a CCSI y las ventas al cliente.">
+      </div>
+      <div class="tb-field">
+        <label>&nbsp;</label>
+        <span class="field-note" id="rfiEstado">Sin cargar</span>
+      </div>
     </div>
+
+    <div class="section-label" style="margin-top:8px;">Utilidad del día</div>
+    <div id="rfiUtilidad" style="padding:0 24px 8px;"></div>
+
+    <div class="section-label" style="margin-top:12px;">Operaciones del blotter</div>
+    <div id="rfiTabla" style="padding:0 24px 24px;"></div>
   </div>
 
   <!-- ===== AYUDAS ===== -->
@@ -2232,7 +2247,7 @@
                   border:1px solid var(--border,#232938);border-radius:8px;
                   display:flex;flex-direction:column;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
-          <span style="font-size:13px;font-weight:700;">RVI</span>
+          <span style="font-size:13px;font-weight:700;">RVI / RFI</span>
           <span class="field-note" style="font-size:10px;">planilla del Back Office</span>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
@@ -4085,6 +4100,165 @@ const HORZ_IVA = 0.19;
 const HORZ_TAXID = '900.720.180-1';
 const HORZ_NOMBRE = 'Fondo Bursatil Global X Colombia Select de S&P';
 
+// =====================================================================
+// RFI — Renta Fija Internacional
+// ---------------------------------------------------------------------
+// Agudelo carga el Blotter RFI y ahí vienen TODAS las patas de cada negocio:
+// la compra a CCSI (Tipo de boleto TT = nosotros compramos) y las ventas al
+// cliente (MT = nosotros vendemos). Las patas se empatan POR ISIN.
+//
+// Aquí nunca hay comisión: el ingreso es el MARGEN, igual que en RVI. Y el
+// negocio es en USD, así que para la planilla COP se pasa con el USDCOP
+// (Sergio, 16-sep).
+// =====================================================================
+let _rfiOperaciones = [];
+
+async function cargarBlotterRFI(input){
+  const file = input && input.files && input.files[0];
+  if(!file) return;
+  const est = document.getElementById('rfiEstado');
+  est.textContent = 'Leyendo…';
+  try{
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await file.arrayBuffer());
+    const ws = wb.worksheets[0];
+
+    // La fecha de OPERACIÓN va sola en A2; la de cumplimiento, en cada fila.
+    const fechaOp = _rfiFecha(ws.getCell('A2').value);
+
+    const filas = [];
+    ws.eachRow((row, n)=>{
+      if(n <= 2) return;
+      const isin = String(row.getCell(1).value||'').trim();
+      if(!isin || !/^[A-Z]{2}/.test(isin)) return;
+      const boleto = String(row.getCell(17).value||'').trim().toUpperCase();
+      filas.push({
+        isin,
+        security: String(row.getCell(2).value||'').trim(),
+        bs: String(row.getCell(3).value||'').trim().toUpperCase(),
+        amount: Number(row.getCell(4).value)||0,
+        precio: Number(row.getCell(5).value)||0,
+        settle: _rfiFecha(row.getCell(6).value),
+        cpty: String(row.getCell(7).value||'').trim(),
+        nombreCpty: String(row.getCell(8).value||'').trim(),
+        principal: Number(row.getCell(9).value)||0,
+        cupon: Number(row.getCell(10).value)||0,
+        liquidacion: Number(row.getCell(11).value)||0,
+        total: Number(row.getCell(13).value)||0,
+        boleto,
+        // TT = NOSOTROS COMPRAMOS (al mercado). MT = nosotros vendemos (al cliente).
+        nuestra: boleto === 'TT',
+        vendedor: String(row.getCell(18).value||'').trim(),
+        fechaOp,
+      });
+    });
+    if(!filas.length){ est.textContent = 'El archivo no trae operaciones.'; return; }
+
+    _rfiOperaciones = filas;
+    est.innerHTML = `<span style="color:var(--buy,#22c55e);">${filas.length} línea(s) · ${file.name}</span>`;
+    renderRFI();
+    if(typeof renderDashboard === 'function') renderDashboard();
+  }catch(e){
+    est.innerHTML = `<span style="color:var(--sell,#ef4444);">No se pudo leer: ${e.message}</span>`;
+  }
+}
+
+function _rfiFecha(v){
+  if(v instanceof Date) return v;
+  const t = String(v||'').trim();
+  const m = t.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if(m) return new Date(Number(m[3]), Number(m[1])-1, Number(m[2]));   // mm/dd/yyyy
+  const d = new Date(t);
+  return isNaN(d) ? null : d;
+}
+
+// Agrupa el blotter por ISIN y calcula la utilidad de cada negocio:
+// lo que VENDIMOS menos lo que COMPRAMOS, igual que en RVI.
+function negociosRFI(){
+  const porIsin = {};
+  (_rfiOperaciones||[]).forEach(f=>{
+    const g = porIsin[f.isin] || (porIsin[f.isin] = {
+      isin:f.isin, security:f.security, compras:[], ventas:[],
+      compradoUSD:0, vendidoUSD:0, cliente:'', fechaOp:f.fechaOp, settle:f.settle,
+    });
+    if(f.nuestra){ g.compras.push(f); g.compradoUSD += f.total; }
+    else { g.ventas.push(f); g.vendidoUSD += f.total; if(!g.cliente) g.cliente = f.nombreCpty || f.cpty; }
+  });
+  return Object.values(porIsin).map(g=>({ ...g, utilidad: g.vendidoUSD - g.compradoUSD }));
+}
+
+function renderRFI(){
+  const cont = document.getElementById('rfiTabla');
+  const util = document.getElementById('rfiUtilidad');
+  if(!cont) return;
+  const negocios = negociosRFI();
+  if(!negocios.length){
+    util.innerHTML = '';
+    cont.innerHTML = '<div class="field-note">Carga el Blotter RFI para ver las operaciones.</div>';
+    return;
+  }
+  const totU = negocios.reduce((t,n)=>t+n.utilidad, 0);
+  const totV = negocios.reduce((t,n)=>t+n.vendidoUSD, 0);
+  util.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:200px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);
+                  border-radius:8px;padding:12px 14px;">
+        <div style="font-size:10.5px;font-weight:700;opacity:.6;letter-spacing:.4px;">UTILIDAD DEL DÍA</div>
+        <div style="font-size:24px;font-weight:800;color:var(--buy,#22c55e);">USD ${fmtMoney(totU)}</div>
+      </div>
+      <div style="flex:1;min-width:200px;background:var(--bg-2,#161b26);border:1px solid var(--border,#232938);
+                  border-radius:8px;padding:12px 14px;">
+        <div style="font-size:10.5px;font-weight:700;opacity:.6;letter-spacing:.4px;">VENDIDO AL CLIENTE</div>
+        <div style="font-size:24px;font-weight:800;">USD ${fmtMoney(totV)}</div>
+      </div>
+      <div style="flex:1;min-width:200px;background:var(--bg-2,#161b26);border:1px solid var(--border,#232938);
+                  border-radius:8px;padding:12px 14px;">
+        <div style="font-size:10.5px;font-weight:700;opacity:.6;letter-spacing:.4px;">NEGOCIOS</div>
+        <div style="font-size:24px;font-weight:800;">${negocios.length}</div>
+      </div>
+    </div>`;
+
+  cont.innerHTML = negocios.map(n=>`
+    <div class="card" style="padding:12px 14px;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px;">
+        <div>
+          <b>${n.security}</b>
+          <span class="field-note" style="font-size:11px;"> · ${n.isin} · ${n.cliente || '—'}</span>
+        </div>
+        <div style="font-size:13px;">
+          compró <b>${fmtMoney(n.compradoUSD)}</b> ·
+          vendió <b>${fmtMoney(n.vendidoUSD)}</b> ·
+          utilidad <b style="color:${n.utilidad>=0?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};">
+            ${fmtMoney(n.utilidad)}</b>
+        </div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:11.5px;">
+        <tr style="opacity:.6;font-size:10px;letter-spacing:.3px;">
+          <th style="text-align:left;padding:4px 6px;">LADO</th>
+          <th style="text-align:left;padding:4px 6px;">CONTRAPARTE</th>
+          <th style="text-align:right;padding:4px 6px;">NOMINAL</th>
+          <th style="text-align:right;padding:4px 6px;">PRECIO</th>
+          <th style="text-align:right;padding:4px 6px;">PRINCIPAL</th>
+          <th style="text-align:right;padding:4px 6px;">CUPÓN CORRIDO</th>
+          <th style="text-align:right;padding:4px 6px;">TOTAL</th>
+          <th style="padding:4px 6px;">CUMPLE</th>
+        </tr>
+        ${[...n.compras, ...n.ventas].map(f=>`
+          <tr style="border-top:1px solid var(--border,#232938);">
+            <td style="padding:4px 6px;font-weight:700;color:${f.nuestra?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};">
+              ${f.nuestra ? 'COMPRA' : 'VENTA'}</td>
+            <td style="padding:4px 6px;">${f.nombreCpty || f.cpty}</td>
+            <td style="padding:4px 6px;text-align:right;">${fmtInt(f.amount)}</td>
+            <td style="padding:4px 6px;text-align:right;">${f.precio.toFixed(6)}</td>
+            <td style="padding:4px 6px;text-align:right;">${fmtMoney(f.principal)}</td>
+            <td style="padding:4px 6px;text-align:right;">${fmtMoney(f.cupon)}</td>
+            <td style="padding:4px 6px;text-align:right;font-weight:600;">${fmtMoney(f.total)}</td>
+            <td style="padding:4px 6px;text-align:center;">${f.settle ? f.settle.toLocaleDateString('es-CO') : '—'}</td>
+          </tr>`).join('')}
+      </table>
+    </div>`).join('');
+}
+
 async function generarExcelHORZ(lineas, fechaOp){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
   if(!lineas || !lineas.length){ alert('No hay operaciones de HORZ para reportar.'); return; }
@@ -5618,6 +5792,10 @@ const PRESUPUESTO_DB = [{"grupo":"ALLIANZ","trader":"SAR","categoria":"INSTITUCI
 // clientes de reporte genérico cuyo nombre en EMSX/Fidessa difiere del grupo.
 const ALIAS_GRUPO = {
   LV_CO: 'LARRAIN VIAL PP',
+  // En Fidessa llega como FIDUSURA y el cliente con sus portafolios se llama
+  // FIDUCIARIA SURA: sin esto el Client/Book no mostraba nada (Sergio, 16-sep).
+  FIDUSURA: 'FIDUCIARIA SURA',
+  'FIDU SURA': 'FIDUCIARIA SURA',
   VALORES_AM: 'FIDUCIARIA BANCOLOMBIA',
   ITAU: 'ITAU ASSET MANAGEMENT',
   ITAU_AM: 'ITAU ASSET MANAGEMENT',
@@ -11287,7 +11465,9 @@ function _dashDatos(){
     FX:  { nombre:'FX',  moneda:'COP', vol:0, com:0, clientes:{} },
     RVL: { nombre:'RVL', moneda:'COP', vol:0, com:0, clientes:{} },
     RVI: { nombre:'RVI', moneda:'USD', vol:0, com:0, clientes:{} },
-    RFI: { nombre:'RFI', moneda:'COP', vol:0, com:0, clientes:{} },
+    // RFI es negocio en USD, como RVI: aparece bajo VALORES EN USD
+    // (Sergio, 16-sep).
+    RFI: { nombre:'RFI', moneda:'USD', vol:0, com:0, clientes:{} },
   };
   // Lo ya REPORTADO tiene la comisión real: manda sobre cualquier estimación.
   // Sin esto, COLFONDOS y PROTECCIÓN salían en blanco pese a estar reportados
@@ -11397,6 +11577,17 @@ function _dashDatos(){
     sumar('RVI', cli, (q - yaQty) * px, 0, false);   // sin comisión: falta registrarla
   });
 
+  // ---------- RFI ----------
+  // Igual que RVI: la utilidad es lo vendido menos lo comprado, en USD
+  // (Sergio, 16-sep).
+  if(typeof negociosRFI === 'function'){
+    negociosRFI().forEach(n=>{
+      const cli = _dashClave(n.cliente || 'RFI');
+      if(!cli) return;
+      sumar('RFI', _dashCorto(cli), n.vendidoUSD, n.utilidad, true);
+    });
+  }
+
   // ---------- FX ----------
   (typeof operaciones !== 'undefined' ? operaciones : []).forEach(o=>{
     if(o.fecha && String(o.fecha).slice(0,10) !== hoy) return;
@@ -11426,7 +11617,7 @@ function _dashDatos(){
     // el registro de RVI es el cost del cliente, así que reemplazar por ella
     // borraba el margen: el 16-sep mostró 1.882 —la suma de costos— en vez de
     // 4.662 (Sergio, 16-sep).
-    if(mkt === 'RVI') return;
+    if(mkt === 'RVI' || mkt === 'RFI') return;
     Object.keys(M[mkt].clientes).forEach(cli=>{
       const real = comReportada[mkt + '|' + _dashClave(cli)];
       if(real == null) return;
@@ -12142,7 +12333,7 @@ function renderModuloReportes(){
     : `${total} línea(s) reportada(s) · ${new Set(_vigentes.map(r=>r.cliente)).size} cliente(s)`;
 
   [['RVL','repRVL','Renta Variable Local'],
-   ['RVI','repRVI','Renta Variable Internacional'],
+   ['RVI','repRVI','Renta Variable Internacional / Renta Fija'],
    ['FX','repFX','Divisas']].forEach(([mod, divId, titulo])=>{
     const cont = document.getElementById(divId);
     if(!cont) return;
@@ -19234,7 +19425,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 19:14 UTC · v94';
+const BUILD_ID = '2026-09-16 19:32 UTC · v95';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
