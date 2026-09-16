@@ -6301,6 +6301,19 @@ function opcionesFondoFFMM(){
   return { propios, fondos };
 }
 
+// Las órdenes de CREDICORP CAPITAL BOLSA llegan bajo el mismo Client/Book que
+// AM y se distinguen por el Account. BOLSA es otro cliente, así que sus líneas
+// no deben salir al filtrar por AM (Sergio, 16-sep).
+function esCuentaBolsaFFMM(notes){
+  return /\bBOLSA\b/i.test(String(notes||''));
+}
+
+function esLineaBolsaFFMM(f){
+  if(esCuentaBolsaFFMM(f && (f.notes || f.portafolio))) return true;
+  const t = (_fidessaTradesRaw||{})[String(f && f.parentOrderId)];
+  return !!(t && esCuentaBolsaFFMM(t.notes));
+}
+
 function macrogrupoCCFFMM(notes){
   const t = String(notes||'').trim().toUpperCase();
   if(!t) return '';
@@ -7239,6 +7252,8 @@ function getFiltrados(){
     // calzaba con "FIDUCIARIA SKANDIA" por compartir la palabra FIDUCIARIA y
     // se colaban folios ajenos (Sergio, 14-ago).
     coincideFiltroRVL({cliente: f.cliente, especie: f.especie, lado: f.lado, exacto: true}) &&
+    // BOLSA es otro cliente aunque comparta el Client/Book (Sergio, 16-sep).
+    !(normalizarGrupo(f.cliente) === 'CREDICORPFFMM' && esLineaBolsaFFMM(f)) &&
     // El zoom por orden aplica a TODOS los clientes. Antes COLFONDOS traía una
     // bandera (grupoColfondos) que lo dejaba pasar entero: al seleccionar una
     // sola línea de Trades el cuadro de folios seguía mostrando las 7 órdenes,
@@ -13280,6 +13295,12 @@ function renderPanelListo(filtrados){
     if(!tarifaUnica && !conOverride) conBloque.push(item);
   });
 
+  // Las órdenes de BOLSA se sacan de la vista de AM: son otro cliente aunque
+  // compartan el Client/Book (Sergio, 16-sep).
+  // `folios` es constante aquí, así que se trabaja sobre una copia.
+  const foliosVista = cfg.formatoReporte === 'credicorpffmm'
+    ? folios.filter(f=>!esLineaBolsaFFMM(f)) : folios;
+
   // CREDICORPFFMM: lo que importa no es el portafolio sino el MACROGRUPO. Se
   // muestra cuál se detectó y se avisa si hay mezcla, que es lo que impide
   // generar por muralla china.
@@ -13287,7 +13308,7 @@ function renderPanelListo(filtrados){
   if(cfg.formatoReporte === 'credicorpffmm'){
     const cuenta = {};
     let sinMarca = 0;
-    folios.forEach(f=>{
+    foliosVista.forEach(f=>{
       const notes = fondoDeFolioFFMM(f);
       const k = macrogrupoCCFFMM(notes);
       if(!k){ sinMarca++; return; }
@@ -19597,7 +19618,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 20:30 UTC · v100';
+const BUILD_ID = '2026-09-16 20:38 UTC · v102';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
