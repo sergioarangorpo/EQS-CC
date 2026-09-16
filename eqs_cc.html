@@ -6339,20 +6339,54 @@ function macrogrupoCCFFMM(notes){
 // al maestro, así que se compara sin espacios ni signos y aceptando que uno
 // contenga al otro. Devuelve el nombre del fondo, o '' si no lo reconoce.
 function fondoFiduciariaCCFFMM(account){
-  const limpiar = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-  const n = limpiar(account);
-  if(!n || n.length < 3) return '';
-  if(typeof _maestroDeceval === 'undefined') return '';
-  let mejor = '';
-  Object.values(_maestroDeceval).forEach(x=>{
-    if(!/FIDUCIARIA CREDICORP/i.test(String(x.client_book||''))) return;
-    const nombre = String(x.id_fondo || x.portafolio || '').trim();
-    const f = limpiar(nombre);
-    if(!f || f.length < 3) return;
-    if(f === n){ mejor = nombre; return; }
-    // Coincidencia parcial: se queda con el nombre más largo que calce, que es
-    // el más específico (FI SMURFIT II antes que FI SMURFIT).
-    if((f.includes(n) || n.includes(f)) && nombre.length > mejor.length) mejor = nombre;
+  const a = String(account||'').toUpperCase().trim();
+  if(!a || a.length < 3) return '';
+
+  // Se compara POR PALABRAS y aceptando abreviaciones: el Account llega
+  // recortado ("ESTRAT INMOBILIARIAS") y la base tiene el nombre completo
+  // ("CC FIDUCIARIA ESTRATEGIAS INMOBILIARIAS"). Exigir que uno contuviera al
+  // otro no los emparejaba (Sergio, 16-sep).
+  const RUIDO = new Set(['CC','FIDUCIARIA','FIDU','CREDICORP','CAPITAL','FI','FIC',
+                         'FVP','FPV','FAP','FAPI','FG','FGI','PA','P','DE','DEL','LA','EL','Y']);
+  const palabras = t => String(t||'').toUpperCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .split(/[^A-Z0-9]+/).filter(w=>w && !RUIDO.has(w));
+
+  const pa = palabras(a);
+  if(!pa.length) return '';
+
+  // Dos palabras calzan si una es prefijo de la otra: ESTRAT ~ ESTRATEGIAS.
+  const calza = (x,y) => x === y ||
+    (x.length >= 4 && y.startsWith(x)) || (y.length >= 4 && x.startsWith(y));
+
+  const candidatos = [];
+  const agrega = (nombre) => { if(nombre) candidatos.push(String(nombre).trim()); };
+  if(typeof _maestroDeceval !== 'undefined'){
+    Object.values(_maestroDeceval).forEach(x=>{
+      if(!/FIDUCIARIA CREDICORP/i.test(String(x.client_book||''))) return;
+      agrega(x.id_fondo); agrega(x.portafolio);
+    });
+  }
+  // También la base nueva de portafolios, que trae los 83 de CREDICORPFFMM.
+  if(typeof _portGrupo !== 'undefined'){
+    Object.values(_portGrupo).forEach(x=>{
+      if(String(x.grupo||'').toUpperCase() !== 'CREDICORPFFMM') return;
+      agrega(x.nombre);
+    });
+  }
+
+  let mejor = '', mejorPuntaje = 0;
+  [...new Set(candidatos)].forEach(nombre=>{
+    const pb = palabras(nombre);
+    if(!pb.length) return;
+    // Cuántas palabras del Account están en el nombre del fondo.
+    const aciertos = pa.filter(x=>pb.some(y=>calza(x,y))).length;
+    if(!aciertos) return;
+    // Todas las palabras del Account tienen que estar: si no, es otro fondo.
+    if(aciertos < pa.length) return;
+    // Entre varios, gana el que menos palabras sobrantes tenga.
+    const puntaje = aciertos * 100 - (pb.length - aciertos);
+    if(puntaje > mejorPuntaje){ mejorPuntaje = puntaje; mejor = nombre; }
   });
   return mejor;
 }
@@ -19631,7 +19665,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 20:43 UTC · v104';
+const BUILD_ID = '2026-09-16 20:52 UTC · v105';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
