@@ -4073,6 +4073,105 @@ function fechaBNPCorta(d){
   return String(d.getDate()).padStart(2,'0') + MES[d.getMonth()] + String(d.getFullYear()).slice(-2);
 }
 
+// =====================================================================
+// HORZ — Fondo Bursátil Global X Colombia Select de S&P
+// ---------------------------------------------------------------------
+// Proforma propia del cliente. UNA FILA POR LÍNEA DE FIDESSA TRADES, no por
+// folio: el cliente no arquea contra folios. Comisión 0,06% + IVA 19%, que da
+// un all-in de 0,0714% (Sergio, 16-sep).
+// =====================================================================
+const HORZ_FEE = 0.0006;
+const HORZ_IVA = 0.19;
+const HORZ_TAXID = '900.720.180-1';
+const HORZ_NOMBRE = 'Fondo Bursatil Global X Colombia Select de S&P';
+
+async function generarExcelHORZ(lineas, fechaOp){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  if(!lineas || !lineas.length){ alert('No hay operaciones de HORZ para reportar.'); return; }
+  const d = fechaOp instanceof Date ? fechaOp : new Date();
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Hoja1');
+  [7.1, 17.8, 12.9, 12.6, 14.8, 21.8, 16.9, 14.8, 24, 16.9, 15.1, 14.2, 15.4, 33.8]
+    .forEach((w,i)=>{ ws.getColumn(i+1).width = w; });
+
+  const NEG = { name:'Calibri', size:11, bold:true };
+  // ---------- Encabezado del fondo ----------
+  ws.getCell('B2').value = 'From:';       ws.getCell('B2').font = NEG;
+  ws.getCell('C2').value = HORZ_NOMBRE;
+  ws.getCell('B3').value = 'Tax ID';      ws.getCell('B3').font = NEG;
+  ws.getCell('C3').value = HORZ_TAXID;
+  ws.getCell('B4').value = 'DCV account'; ws.getCell('B4').font = NEG;   // va vacío siempre
+  ws.getCell('B5').value = 'Market';      ws.getCell('B5').font = NEG;
+  ws.getCell('C5').value = 'Colombia';
+  ws.getCell('I5').value = 'VAT (Tax)';   ws.getCell('I5').font = NEG;
+  ws.getCell('J5').value = 'all in';      ws.getCell('J5').font = NEG;
+  ws.getCell('B6').value = 'Currency';    ws.getCell('B6').font = NEG;
+  ws.getCell('C6').value = 'COP';
+  ws.getCell('G6').value = 'fees';        ws.getCell('G6').font = NEG;
+  ws.getCell('H6').value = HORZ_FEE;      ws.getCell('H6').numFmt = '0.000%';
+  ws.getCell('I6').value = HORZ_IVA;
+  ws.getCell('J6').value = HORZ_FEE * (1 + HORZ_IVA);
+  ws.getCell('J6').numFmt = '0.0000%';
+
+  // ---------- Tabla: encabezados en la fila 9 ----------
+  const H = ['Tax ID','Trade Date','Settle Date','BUY / SELL','Security','ISIN','Quantity',
+             'Price Avg (per share)','Gross amount','Broker commision','VAT','Total fees',
+             'Net amount (local currency)'];
+  H.forEach((h,i)=>{
+    const c = ws.getCell(9, i+2);
+    c.value = h;
+    c.font = NEG;
+  });
+
+  const CONTABLE = '_(* #,##0.00_);_(* \\(#,##0.00\\);_(* "-"??_);_(@_)';
+  const MONEDA   = '"$"#,##0.00_);\\("$"#,##0.00\\)';
+  const CONT_USD = '_("$"* #,##0.00_);_("$"* \\(#,##0.00\\);_("$"* "-"??_);_(@_)';
+
+  let r = 10;
+  lineas.forEach(l=>{
+    const q = Number(l.cantidad) || 0;
+    const px = Number(l.precio) || 0;
+    if(!q || !px) return;
+    const gross = q * px;
+    const com = gross * HORZ_FEE;
+    const iva = com * HORZ_IVA;
+    const fees = com + iva;
+    const esVenta = /VENTA|SELL/i.test(String(l.lado||''));
+    const neto = esVenta ? gross - fees : gross + fees;
+
+    ws.getCell(r,2).value = HORZ_TAXID;
+    ws.getCell(r,3).value = l.fechaOp instanceof Date ? l.fechaOp : d;
+    ws.getCell(r,4).value = l.fechaCumpl instanceof Date ? l.fechaCumpl
+                          : sumarDiasHabiles(d, 2, 'CO');
+    ws.getCell(r,5).value = esVenta ? 'SELL' : 'BUY';
+    ws.getCell(r,6).value = l.especie || '';
+    ws.getCell(r,7).value = l.isin || isinDeNemo(l.especie) || '';
+    ws.getCell(r,8).value = q;
+    ws.getCell(r,9).value = px;
+    ws.getCell(r,10).value = gross;
+    ws.getCell(r,11).value = com;
+    ws.getCell(r,12).value = iva;
+    ws.getCell(r,13).value = fees;
+    ws.getCell(r,14).value = neto;
+    // Fechas en formato americano, como las espera el cliente.
+    [3,4].forEach(c=>{ ws.getCell(r,c).numFmt = 'mm-dd-yy'; });
+    ws.getCell(r,8).numFmt = CONTABLE;
+    ws.getCell(r,9).numFmt = CONT_USD;
+    ws.getCell(r,10).numFmt = CONT_USD;
+    [11,12,13,14].forEach(c=>{ ws.getCell(r,c).numFmt = MONEDA; });
+    r++;
+  });
+
+  const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  const a = document.createElement('a');
+  a.href = url; a.download = `Trade_Confirmation_Global_X_ETFs_${slug}.xlsx`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 async function generarExcelBNP(lineas, tipoOrden, fechaOp){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
   if(!lineas || !lineas.length){ alert('No hay operaciones de BNP para reportar.'); return; }
@@ -5388,6 +5487,18 @@ const clientesDB = {
     portafolios: [],
     fileNombre: 'Itau Asset Management',
     comisionBloque: 0.0015, comisionPantalla: 0.0008,
+  },
+  'HORZ': {
+    nombre: 'Fondo Bursatil Global X Colombia Select de S&P',
+    // Proforma propia: una fila por línea de Fidessa Trades, sin arqueo contra
+    // folios. Comisión 0,06% + IVA, all-in 0,0714% (Sergio, 16-sep).
+    formatoReporte: 'horz', reparteManual: false,
+    fileNombre: 'Trade_Confirmation_Global_X_ETFs',
+    comisionBloque: 0.0006, comisionPantalla: 0.0006,
+    portafolios: [{ id:'HORZ', nombre:'Fondo Bursatil Global X Colombia Select de S&P',
+                    nit:'900720180', dv:'1', iva:true }],
+    autoPortafolio: 'HORZ',
+    iva: true,
   },
   'BNPB': {
     nombre: 'BNP PARIBAS ARBITRAJE S.N.C',
@@ -14863,6 +14974,92 @@ async function generarReporte(){
     const nuevas = await registrarLoteRVL(cliente, loteOps, version);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'CREDICORPCAPITAL-PORVENIR + Archivo plano');
     renderFidessaTradesPanel();
+  } else if(formato === 'horz'){
+    // Una fila por LÍNEA DE FIDESSA TRADES, no por folio: el cliente no arquea
+    // contra folios (Sergio, 16-sep).
+    const porOrdenH = {};
+    seleccionados.forEach(f=>{
+      const k = String(f.parentOrderId || (f.especie + '|' + f.lado));
+      const a = porOrdenH[k] || (porOrdenH[k] = { especie:f.especie, lado:f.lado,
+                                                 isin:f.isin, cantidad:0, bruto:0 });
+      a.cantidad += Number(f.cantidad)||0;
+      a.bruto += (Number(f.cantidad)||0) * (Number(f.precio)||0);
+    });
+    const lineasH = Object.values(porOrdenH)
+      .map(a=>({ ...a, precio: a.cantidad > 0 ? a.bruto / a.cantidad : 0 }));
+    const versionH = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
+    const _fOpH = fechaReg ? parseFechaLocal(fechaReg) : new Date();
+    const _slugH = `${_fOpH.getFullYear()}${String(_fOpH.getMonth()+1).padStart(2,'0')}${String(_fOpH.getDate()).padStart(2,'0')}`;
+    const okH = await previsualizarReporte({
+      titulo: `GLOBAL X ETFs — ${etiquetaVersion(versionH)}`,
+      archivo: `Trade_Confirmation_Global_X_ETFs_${_slugH}.xlsx`,
+      columnas: ['Especie','Lado','Cantidad','Precio','Gross','Comisión','IVA','Total fees','Neto'],
+      filas: lineasH.map(a=>{
+        const com = redondear(a.bruto * HORZ_FEE, 2);
+        const iva = redondear(com * HORZ_IVA, 2);
+        const esVenta = /VENTA/i.test(String(a.lado||''));
+        return [a.especie, a.lado, fmtInt(a.cantidad), fmtRate(a.precio),
+                fmtMoney(a.bruto), fmtMoney(com), fmtMoney(iva), fmtMoney(com+iva),
+                fmtMoney(esVenta ? a.bruto - com - iva : a.bruto + com + iva)];
+      }),
+      totales: `${lineasH.length} línea(s) · comisión 0,060% + IVA · all-in 0,0714% · ` +
+               `bruto ${fmtMoney(lineasH.reduce((t,a)=>t+a.bruto,0))}`,
+    });
+    if(!okH) return;
+    const _cumH = fechaCum ? parseFechaLocal(fechaCum) : sumarDiasHabiles(_fOpH, 2, 'CO');
+    await generarExcelHORZ(lineasH.map(a=>({ ...a, fechaOp:_fOpH, fechaCumpl:_cumH })), _fOpH);
+    const cfgH = getClienteDB(cliente);
+    const portH = (cfgH.portafolios||[])[0] || { nombre: cfgH.nombre };
+    const nuevasH = await registrarLoteRVL(cliente, lineasH.map(a=>({
+      portafolio: portH, especie:a.especie, lado:a.lado,
+      cantidad:a.cantidad, precio:a.precio, comMonto: a.bruto * HORZ_FEE,
+    })), versionH);
+    avisoLoteGenerado(cliente, seleccionados, versionH, nuevasH, 'Trade Confirmation Global X');
+    renderFidessaTradesPanel();
+
+  } else if(formato === 'bnp'){
+    // RESTAURADA: la rama se había perdido, así que BNP caía en el reporte
+    // genérico aunque su generador existía (Sergio, 16-sep).
+    const tipo = window._bnpTipoOrden ||
+      (prompt('¿La orden de BNP es VWAP o MOC?\n\nEscribe VWAP o MOC:', 'VWAP') || '').toUpperCase();
+    if(!tipo) return;
+    if(!/^(VWAP|MOC)$/.test(tipo)){ alert('Solo VWAP o MOC.'); return; }
+    const agrB = {};
+    seleccionados.forEach(f=>{
+      const k = String(f.especie) + '|' + String(f.lado);
+      const a = agrB[k] || (agrB[k] = { especie:f.especie, lado:f.lado, cantidad:0, bruto:0 });
+      a.cantidad += Number(f.cantidad)||0;
+      a.bruto += (Number(f.cantidad)||0) * (Number(f.precio)||0);
+    });
+    const lineasBNP = Object.values(agrB)
+      .map(a=>({ ...a, precio: a.cantidad > 0 ? a.bruto / a.cantidad : 0 }));
+    const versionB = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
+    const _fOpB = fechaReg ? parseFechaLocal(fechaReg) : new Date();
+    const _slugB = `${_fOpB.getFullYear()}${String(_fOpB.getMonth()+1).padStart(2,'0')}${String(_fOpB.getDate()).padStart(2,'0')}`;
+    const okB = await previsualizarReporte({
+      titulo: `BNP PARIBAS — orden ${tipo} — ${etiquetaVersion(versionB)}`,
+      archivo: `CREDICORP_CAPITAL_COLOMBIA_-_EQTY_EXECUTION_BNP_${_slugB}.xlsx` +
+               `  +  ${tipo}_-_Colombia_${fechaBNPCorta(_fOpB)}.xlsx`,
+      columnas: ['Especie','Código BNP','Lado','Cantidad','Precio','Bruto','Comisión','Net Cash'],
+      filas: lineasBNP.map(a=>{
+        const com = redondear(a.bruto * BNP_COMISION, 2);
+        return [a.especie, nemoBNP(a.especie).bnp, a.lado, fmtInt(a.cantidad),
+                fmtRate(a.precio), fmtMoney(a.bruto), fmtMoney(com), fmtMoney(a.bruto + com)];
+      }),
+      totales: `${lineasBNP.length} línea(s) · comisión 0,10% · ` +
+               `bruto ${fmtMoney(lineasBNP.reduce((t,a)=>t+a.bruto,0))}`,
+    });
+    if(!okB) return;
+    await generarExcelBNP(lineasBNP, tipo, _fOpB);
+    const cfgB = getClienteDB(cliente);
+    const portB = (cfgB.portafolios||[])[0] || { nombre: cfgB.nombre };
+    const nuevasB = await registrarLoteRVL(cliente, lineasBNP.map(a=>({
+      portafolio: portB, especie:a.especie, lado:a.lado,
+      cantidad:a.cantidad, precio:a.precio, comMonto: a.bruto * BNP_COMISION,
+    })), versionB);
+    avisoLoteGenerado(cliente, seleccionados, versionB, nuevasB, `EQTY EXECUTION + ${tipo}`);
+    renderFidessaTradesPanel();
+
   } else if(formato === 'credicorpffmm'){
     // Cada línea trae su macrogrupo en el Notes. Si hay mezcla se FRENA: por
     // muralla china no pueden ir en el mismo archivo (Sergio, 24-ago).
@@ -19037,7 +19234,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 18:45 UTC · v93';
+const BUILD_ID = '2026-09-16 19:14 UTC · v94';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
