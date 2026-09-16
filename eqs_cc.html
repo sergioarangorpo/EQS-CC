@@ -10646,7 +10646,14 @@ function filasBODeCliente(cliente){
   const porBroker = {};
   ops.forEach(h=>{
     const brk = String(h.broker||'').toUpperCase() || 'CCSI';
-    const k = brk + '|' + (h.symbol||'') + '|' + (h.espejo ? h.account : '');
+    // La clave incluye el PRECIO DE EJECUCIÓN y el lado: si en el día hay dos
+    // ejecuciones de la misma especie a precios distintos —VWO a 59,5741 y a
+    // 59,45 el 16-sep— fusionarlas en una sola pata valora unas al precio de
+    // las otras y el margen sale inventado. El dashboard mostraba 1.882, que
+    // era solo la suma de comisiones (Sergio, 16-sep).
+    const _pxNos = _precioNuestroRVI(h);
+    const k = brk + '|' + (h.symbol||'') + '|' + String(h.side||'') + '|' +
+              _pxNos.toFixed(6) + '|' + (h.espejo ? h.account : '');
     const a = porBroker[k] || (porBroker[k] = {
       broker: brk, symbol: h.symbol, isin: h.isin, side: h.side,
       tradeDate: h.tradeDate, settleDate: h.settleDate,
@@ -10656,7 +10663,7 @@ function filasBODeCliente(cliente){
       // el AVG PX de su línea. Hacerlo al cargar no servía: el histórico llega
       // antes que EMSX y la búsqueda quedaba vacía, así que el dashboard
       // mostraba solo la comisión (Sergio, 16-sep).
-      px: _precioNuestroRVI(h),
+      px: _pxNos,
       tipo: h.tipo, qty: 0, comUnit: 0, espejo: !!h.espejo, account: h.account,
     });
     a.qty += Number(h.qty)||0;
@@ -19011,7 +19018,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 17:50 UTC · v90';
+const BUILD_ID = '2026-09-16 18:02 UTC · v91';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
