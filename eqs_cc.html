@@ -1638,6 +1638,12 @@
     <div id="negociarFXCabeza" class="field-note" style="margin-bottom:12px;"></div>
 
     <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+      <!-- El trader nombra el archivo y lo exige el paso siguiente: sin él la
+           pantalla no avanzaba (Sergio, 17-sep). -->
+      <div class="field" style="width:240px;">
+        <label>Trader</label>
+        <select id="negTrader" onchange="_cruceFXPendiente && (_cruceFXPendiente.trader = this.value);"></select>
+      </div>
       <div class="field" style="width:180px;">
         <label>Tasa mercado</label>
         <input type="text" inputmode="decimal" id="negTasaMercado" oninput="recalcularNegociacionFX()">
@@ -7784,6 +7790,15 @@ function abrirNegociacionFX(){
     `<b>${nombre}</b> · ${p.bloques.length} lado(s) · ` +
     `el monto en USD sale del COP del cruce y la tasa que le des al cliente.`;
   // Arranca con la tasa del mercado si hay alguna reciente; si no, en blanco.
+  // Lista de traders del broker, con el que ya esté elegido marcado.
+  const selT = document.getElementById('negTrader');
+  const traders = tradersDeCliente(p.cliente) || [];
+  selT.innerHTML = traders.length
+    ? `<option value="">— selecciona el trader —</option>` +
+      traders.map(t=>`<option value="${t}"${p.trader===t?' selected':''}>${t}</option>`).join('')
+    : `<option value="">(este cliente no tiene lista de traders)</option>`;
+  selT.parentNode.style.display = traders.length ? '' : 'none';
+
   const sug = (typeof _ultimaTasaFX !== 'undefined' && _ultimaTasaFX) ? _ultimaTasaFX : '';
   document.getElementById('negTasaMercado').value = sug ? String(sug) : '';
   document.getElementById('negTasaCliente').value = '';
@@ -7874,6 +7889,15 @@ function aplicarNegociacionFX(){
   const mkt0 = parseNum(document.getElementById('negTasaMercado').value);
   const cli0 = parseNum(document.getElementById('negTasaCliente').value);
   if(!(cli0 > 0) && !separadas){ alert('Falta la tasa final del cliente.'); return; }
+  const _traders = tradersDeCliente(p.cliente) || [];
+  // Se lee del selector, no solo del onchange: así no depende de que el evento
+  // haya corrido (Sergio, 17-sep).
+  const _tSel = (document.getElementById('negTrader')||{}).value || '';
+  if(_tSel) p.trader = _tSel;
+  if(_traders.length && !p.trader){
+    alert('Selecciona el trader: es el que nombra el archivo del reporte.');
+    return;
+  }
   p.bloques.forEach((b,i)=>{
     b.tasaMercado = separadas ? (parseNum((document.getElementById('negMkt'+i)||{}).value) || mkt0) : mkt0;
     b.tasaCliente = separadas ? (parseNum((document.getElementById('negCli'+i)||{}).value) || cli0) : cli0;
@@ -20447,7 +20471,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 22:48 UTC · v122';
+const BUILD_ID = '2026-09-17 22:56 UTC · v123';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
