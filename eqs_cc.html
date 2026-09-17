@@ -15775,6 +15775,10 @@ async function generarReporte(){
   const formato = getClienteDB(cliente).formatoReporte;
   if(formato === 'porvenir'){
     const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
+    // El trader de PORVENIR se elige a mano en la confirmación: va en NOTES y
+    // cambia con cada orden. Si la lista no salió es porque no se reconoció el
+    // portafolio de los folios (Sergio, 17-sep).
+    window._porvExigirTrader = true;
     const loteDetPorv = window._loteDetPorv || null;
     // La comisión de cada folio se calcula aquí igual que en el generador:
     // `f.comisionPct` solo existe dentro del lote ya armado, así que en la
@@ -15784,6 +15788,27 @@ async function generarReporte(){
     const _registrarPorv = () => loteDetPorv || loteDet;
     const ok = await confirmarPorvenir(cliente, seleccionados, comUnica, version);
     if(!ok) return;
+    // Cada portafolio tiene que tener SU trader elegido: va en NOTES y cambia
+    // con cada orden. Antes, si la lista no salía, el reporte tomaba el primero
+    // de la lista y salía a nombre de quien no dio la orden (Sergio, 17-sep).
+    {
+      const _portsFolios = {};
+      seleccionados.forEach(f=>{ const pp = _porvPortDeFolio(f); if(pp) _portsFolios[pp.nombre] = pp; });
+      const _elegidos = window._porvTraderPorPort || {};
+      const _sinTrader = Object.keys(_portsFolios).filter(n=>!_elegidos[n]);
+      if(!Object.keys(_portsFolios).length){
+        alert('No se generó el reporte: no se reconoció el portafolio de los folios,\n' +
+              'así que no se pudo pedir el trader que dio la orden.\n\n' +
+              'Revisa el Instruction de la orden en Fidessa o asigna el portafolio a mano.');
+        return;
+      }
+      if(_sinTrader.length){
+        alert('No se generó el reporte: falta elegir el trader de:\n\n' +
+              _sinTrader.map(n=>'   ' + n).join('\n') +
+              '\n\nEl trader va en la columna NOTES y cambia con cada orden.');
+        return;
+      }
+    }
     window._sufijoReporte = sufijoVersion(version);
     // Si hay reparto manual (Porvenir fraccionó por chat en vez de mandarlo en
     // el Instruction), se usa el lote YA repartido: cada pedazo con el
@@ -17258,8 +17283,23 @@ function _porvPortDeFolio(f){
   // cliente, no del fondo) y no sirve para identificar el portafolio.
   const norm = t => String(t||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9]/g,'');
   const candidatos = [];
+  // MANDA LO QUE SE ASIGNÓ A MANO. Si el folio ya trae su portafolio del
+  // reparto, ese es el bueno: antes ganaba el Instruction de la orden y por eso
+  // al escoger "Cesantías LP" la confirmación mostraba "Táctico Porvenir"
+  // (Sergio, 17-sep).
+  candidatos.push(f.portNombre);
+  if(f.portafolioObj && f.portafolioObj.nombre) candidatos.push(f.portafolioObj.nombre);
+  if(f.parentOrderId && typeof _allocPorOrden !== 'undefined' && _allocPorOrden[String(f.parentOrderId)]){
+    const a = _allocPorOrden[String(f.parentOrderId)];
+    // Con un solo portafolio asignado a esa orden, no hay ambigüedad.
+    if(a.length === 1){
+      const cfgP = getClienteDB('PORVENIR') || {};
+      const p = (cfgP.portafolios||[]).find(x=>x.id === a[0].portId);
+      if(p) candidatos.push(p.nombre);
+    }
+  }
   if(f.parentOrderId && _fidessaTradesRaw && _fidessaTradesRaw[String(f.parentOrderId)]){
-    candidatos.push(_fidessaTradesRaw[String(f.parentOrderId)].notes);   // el Instruction de la orden manda
+    candidatos.push(_fidessaTradesRaw[String(f.parentOrderId)].notes);   // el Instruction de la orden
   }
   candidatos.push(f.notes, f.portafolio);
   for(const c of candidatos){
@@ -17326,11 +17366,14 @@ function confirmarPorvenir(cliente, folios, comUnica, version){
           ${Object.values(ports).map(p=>{
             const grupo = grupoTraderPorvenir(p.nombre);
             const opciones = PORVENIR_TRADERS[grupo];
-            const actual = window._porvTraderPorPort[p.nombre] || opciones[0];
+            // Sin elegir arranca VACÍO: antes tomaba el primero de la lista y
+            // el reporte salía con un trader que no era (Sergio, 17-sep).
+            const actual = window._porvTraderPorPort[p.nombre] || '';
             return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
               <span style="width:230px;font-size:12px;">${p.nombre}</span>
               <span class="field-note" style="width:40px;">${grupo}</span>
               <select id="porvTrader_${p.deceval}" style="width:220px;">
+                <option value=""${actual ? '' : ' selected'}>— elige el trader —</option>
                 ${opciones.map(t=>`<option value="${t}" ${t===actual?'selected':''}>${t}</option>`).join('')}
               </select></div>`;
           }).join('')}
@@ -17357,6 +17400,17 @@ function confirmarPorvenir(cliente, folios, comUnica, version){
     document.body.appendChild(div);
     const cerrar = v => {
       if(v){
+        // Sin trader elegido no se genera: iba a salir el primero de la lista
+        // y el reporte quedaba con quien no dio la orden (Sergio, 17-sep).
+        const sinTrader = Object.values(ports).filter(p=>{
+          const sel = document.getElementById('porvTrader_'+p.deceval);
+          return sel && !sel.value;
+        });
+        if(sinTrader.length){
+          alert('Falta elegir el trader que dio la orden en:\n\n' +
+                sinTrader.map(p=>'   ' + p.nombre).join('\n'));
+          return;
+        }
         Object.values(ports).forEach(p=>{
           const sel = document.getElementById('porvTrader_'+p.deceval);
           if(sel) window._porvTraderPorPort[p.nombre] = sel.value;
@@ -17399,7 +17453,10 @@ async function generarReportePorvenir(cliente, loteDet, opciones){
     return { folio:Number(f.folio), hora:f.hora, especie:f.especie, lado:f.lado,
              cantidad:f.cantidad, precio:f.precio, pct, bruto, com, iva, neto,
              port, deceval: port ? port.deceval : '', fechaCum: aFecha(f.fechaCum),
-             trader: trader || (port ? PORVENIR_TRADERS[grupoTraderPorvenir(port.nombre)][0] : 'Marcela Ramirez'),
+             // SIN VALOR POR DEFECTO: antes tomaba el primero de la lista y el
+             // reporte salía a nombre de un trader que no dio la orden
+             // (Sergio, 17-sep). Si falta, la validación de abajo frena.
+             trader: trader || '',
              fechaReg: aFecha(f.fechaReg), cumplimiento: opts.cumplimiento || 'T+2' };
   });
 
@@ -20195,7 +20252,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 20:28 UTC · v117';
+const BUILD_ID = '2026-09-17 20:48 UTC · v118';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
