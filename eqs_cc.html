@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -4589,9 +4590,25 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
   if(!registrados || registrados.length===0){ alert('No hay lados registrados para el reporte del cruce.'); return; }
 
-  const hoyDate = new Date();
+  // Fechas SIN HORA: el archivo del broker las lleva a medianoche y la app las
+  // escribía con la hora de generación y con 05:00 por zona horaria
+  // (Sergio, 17-sep).
+  const _soloFecha = d => {
+    if(!d) return null;
+    const x = (d && typeof d.getFullYear === 'function') ? d : new Date(d);
+    return isNaN(x) ? null : new Date(x.getFullYear(), x.getMonth(), x.getDate());
+  };
+  const hoyDate = (()=>{ const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); })();
   const C = REPORTE_COLOR;
-  const nombreCliente = (getClienteDB(clienteKey) && getClienteDB(clienteKey).nombre) || clienteKey;
+  // En el reporte va el nombre COMPLETO del broker, que es más formal que la
+  // sigla con la que se filtra en la app (Sergio, 17-sep).
+  const NOMBRE_FORMAL = {
+    MLI: 'MERRILL LYNCH INTERNATIONAL',
+    CITI_NY: 'CITIGROUP GLOBAL MARKETS LTD',
+  };
+  const _k = String(clienteKey||'').toUpperCase().trim();
+  const nombreCliente = NOMBRE_FORMAL[_k] ||
+    (getClienteDB(clienteKey) && getClienteDB(clienteKey).nombre) || clienteKey;
 
   const wb = new ExcelJS.Workbook();
   wb.creator = 'EQS CC — Credicorp Capital';
@@ -4714,8 +4731,8 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
       const gross = redondear(d.gross, 2);
       const comision = redondear(d.gross * MLI_COMISION_ALL_IN, 2);
       const neto = redondear(lado.ladoAccion === 'Compra' ? gross + comision : gross - comision, 2);
-      ws.getCell(r,1).value = lado.tradeDate;
-      ws.getCell(r,2).value = lado.settleDate;
+      ws.getCell(r,1).value = _soloFecha(lado.tradeDate);
+      ws.getCell(r,2).value = _soloFecha(lado.settleDate);
       ws.getCell(r,3).value = lado.ladoAccion === 'Compra' ? 'BUY' : 'SELL';
       ws.getCell(r,4).value = d.security;
       ws.getCell(r,5).value = isinDeNemo(d.security);
@@ -7884,15 +7901,19 @@ function mostrarPanelExcelCruce(cli, reg, trader){
   if(!panel){
     panel = document.createElement('div');
     panel.id = 'cruceExcelPanel';
-    panel.style.cssText = 'background:var(--accent-dim,#1e2a1e);border:1px solid var(--buy,#2ecc71);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12.5px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;';
+    // En COLUMNA: en fila empujaba el selector de cliente fuera de la vista
+    // (Sergio, 17-sep).
+    panel.style.cssText = 'background:var(--accent-dim,#1e2a1e);border:1px solid var(--buy,#2ecc71);' +
+      'border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12.5px;' +
+      'display:flex;flex-direction:column;align-items:stretch;gap:8px;';
     const form = document.getElementById('cliente').closest('div');
     if(form && form.parentNode){ form.parentNode.insertBefore(panel, form); }
     else { switchModule('FX'); document.body.insertBefore(panel, document.body.firstChild); }
   }
   const nombreCliente = (getClienteDB(cli) && getClienteDB(cli).nombre) || cli;
-  panel.innerHTML = `✅ <b>Cruce FX listo</b> — ${nombreCliente} · ${reg.length} lado(s).
-    <button class="btn small purple" onclick="generarExcelCrucePendiente()" style="margin-left:4px;">📄 Generar Excel de cruce</button>
-    <button class="btn small ghost" onclick="cerrarPanelExcelCruce()">Cerrar</button>`;
+  panel.innerHTML = `<div>✅ <b>Cruce FX listo</b> — ${nombreCliente} · ${reg.length} lado(s).</div>
+    <button class="btn small purple" onclick="generarExcelCrucePendiente()" style="width:100%;">📄 Generar Excel de cruce</button>
+    <button class="btn small ghost" onclick="cerrarPanelExcelCruce()" style="width:100%;">Cerrar</button>`;
   panel.style.display = 'flex';
 }
 
@@ -7969,7 +7990,9 @@ function irACalculadoraCruce(){
   document.getElementById('modalCruceFX').style.display = 'none';
   const b = p.bloques[p.idx];
 
-  switchModule('Dashboard');   // el dashboard es la pantalla de entrada
+  // A FX, que es donde vive la calculadora. Decía Dashboard y por eso al elegir
+  // "VWAP del día" el cruce terminaba en la pantalla de entrada (Sergio, 17-sep).
+  switchModule('FX');
 
   // Cliente: si el grupo existe como opción de la calculadora, se selecciona;
   // MLI existe. Se usa su modelo (UNICA — extranjero no-Andes).
@@ -20263,7 +20286,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 22:14 UTC · v119';
+const BUILD_ID = '2026-09-17 22:35 UTC · v121';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
