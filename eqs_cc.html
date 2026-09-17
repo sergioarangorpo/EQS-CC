@@ -16401,22 +16401,49 @@ function allocDesdeEmsx(cliente, folios){
   // portafolios distintos las fusionaba en una (Sergio, 17-sep).
   const _poidsFolios = new Set(folios.map(f=>String(f.parentOrderId||'')).filter(Boolean));
   const _unaOrden = _poidsFolios.size === 1;
-  (_emsxCBCache || []).forEach(r => {
+  const _qtyOrden = folios.reduce((a,f)=>a+f.cantidad, 0);
+
+  // Candidatas: las filas de EMSX de esta especie, este lado y este cliente.
+  const _cand = (_emsxCBCache || []).filter(r=>{
     const especie = nemoCanonico(r.ticker || r.nombre_completo || '', 'emsx');
     const lado = _ladoEmsxGlobal(r);
-    if(!combos.has(especie + '|' + lado)) return;
-    if(_unaOrden){
-      const poid = String(r.parent_order_id || r.parentOrderId || '').trim();
-      // Si la fila de EMSX dice a qué orden pertenece, tiene que ser ESTA.
-      if(poid && !_poidsFolios.has(poid)) return;
-    }
-    // La línea de EMSX tiene que ser de ESTE cliente.
+    if(!combos.has(especie + '|' + lado)) return false;
     const firm = String(r.originate_trader_firm || r.firm || '').toUpperCase();
     const cuenta = String(r.account || '').trim();
-    const delCliente = normalizarGrupo(firm) === cliente
+    return !!cuenta && (normalizarGrupo(firm) === cliente
       || _normAcc(firm).includes(_normAcc(cfg.nombre).slice(0,9))
-      || !!portafolioPorCuentaEmsx(cfg, cuenta);
-    if(!delCliente || !cuenta) return;
+      || !!portafolioPorCuentaEmsx(cfg, cuenta));
+  });
+
+  // Con UNA sola orden hay que quedarse con SU línea, no con todas las de la
+  // especie: si hay tres órdenes de PFGRUPSURA, sumarlas daba 289.165 contra
+  // los 3.000 de la orden y el arqueo fallaba (Sergio, 17-sep).
+  let _filas = _cand;
+  if(_unaOrden && _cand.length > 1){
+    // 1) por Parent Order ID, cuando EMSX lo trae.
+    const porPoid = _cand.filter(r=>{
+      const poid = String(r.parent_order_id || r.parentOrderId || '').trim();
+      return poid && _poidsFolios.has(poid);
+    });
+    if(porPoid.length) _filas = porPoid;
+    else {
+      // 2) por CANTIDAD: la línea cuya ejecución coincide con la de la orden.
+      const exactas = _cand.filter(r=>Math.abs((Number(r.filled)||0) - _qtyOrden) < 0.5);
+      if(exactas.length) _filas = exactas;
+      // 3) o una combinación de líneas que sume exacto (dos cuentas en una orden).
+      else {
+        for(let i=0; i<_cand.length && _filas === _cand; i++){
+          for(let j=i+1; j<_cand.length; j++){
+            const suma = (Number(_cand[i].filled)||0) + (Number(_cand[j].filled)||0);
+            if(Math.abs(suma - _qtyOrden) < 0.5){ _filas = [_cand[i], _cand[j]]; break; }
+          }
+        }
+      }
+    }
+  }
+
+  _filas.forEach(r => {
+    const cuenta = String(r.account || '').trim();
     porCuenta[cuenta] = (porCuenta[cuenta] || 0) + (Number(r.filled) || 0);
   });
 
@@ -20060,7 +20087,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 18:08 UTC · v111';
+const BUILD_ID = '2026-09-17 18:42 UTC · v112';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
