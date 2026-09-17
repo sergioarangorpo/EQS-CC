@@ -13589,7 +13589,11 @@ function renderValidadorAlloc(){
     // juntaba GEB y PFCIBEST del mismo fondo en una fila y mostraba la especie
     // de la primera con la cantidad de las dos (Sergio, 01-sep).
     o.allocations.forEach(a=>{
-      const k = a.portId + '|' + especie + '|' + lado;
+      // La clave lleva además la ORDEN: dos órdenes distintas al mismo
+      // portafolio y especie se reportan por separado —Colfondos las quiere tal
+      // como llegaron—, y agruparlas mostraba una sola línea con la suma: las
+      // de 56.000 y 14.700 salían como 70.700 (Sergio, 17-sep).
+      const k = o.parentOrderId + '|' + a.portId + '|' + especie + '|' + lado;
       if(!acc[k]) acc[k] = {cant:0, bruto:0, com:0, lado, especie, portId:a.portId};
       const bruto = a.cantidad * precioPond;
       acc[k].cant += a.cantidad;
@@ -20086,7 +20090,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 19:14 UTC · v113';
+const BUILD_ID = '2026-09-17 19:26 UTC · v114';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
