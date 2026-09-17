@@ -15378,10 +15378,32 @@ async function generarReporte(){
     }
   }
   if(!esProteccionRep && _necesitaAlloc && (getClienteDB(cliente).portafolios||[]).length > 0 && !_yaRepartido){
-    const auto = allocDesdeEmsx(cliente, seleccionados);
+    // El reparto se arma ORDEN POR ORDEN, no con todos los folios juntos: si no,
+    // dos órdenes al mismo portafolio se fusionan en una sola línea. COLFONDOS
+    // reporta SIEMPRE por línea, tal como llegaron las órdenes
+    // (Sergio, 17-sep).
+    const _porOrdenSel = {};
+    seleccionados.forEach(f=>{
+      const k = String(f.parentOrderId || '');
+      if(!k) return;
+      (_porOrdenSel[k] = _porOrdenSel[k] || []).push(f);
+    });
+    let _todasOk = Object.keys(_porOrdenSel).length > 0;
+    let _ultimoFallo = null;
+    Object.keys(_porOrdenSel).forEach(oid=>{
+      const r = allocDesdeEmsx(cliente, _porOrdenSel[oid]);
+      if(r.ok){
+        _allocPorOrden[oid] = r.allocations.map(a=>({ portId:a.portafolio.id, cantidad:a.cantidad }));
+      }else{ _todasOk = false; _ultimoFallo = r; }
+    });
+    const auto = _todasOk ? { ok:true, allocations:[] }
+                          : (_ultimoFallo || allocDesdeEmsx(cliente, seleccionados));
     if(auto.ok){
-      allocations = auto.allocations.map(a=>({ portId:a.portafolio.id, cantidad:a.cantidad }));
-      if(typeof renderAllocations === 'function') renderAllocations();
+      // `allocations` (la vista) solo se llena cuando hay UNA orden marcada.
+      if(Object.keys(_porOrdenSel).length === 1){
+        allocations = (_allocPorOrden[Object.keys(_porOrdenSel)[0]] || []).slice();
+        if(typeof renderAllocations === 'function') renderAllocations();
+      }
     }else{
       let msg = 'No se generó el reporte: falta el reparto a portafolios.\n\n';
       if(auto.allocations.length === 0 && auto.faltan.length === 0){
@@ -16318,10 +16340,21 @@ function allocDesdeEmsx(cliente, folios){
   const cfg = getClienteDB(cliente);
   const porCuenta = {};      // cuenta EMSX -> cantidad
   const combos = new Set(folios.map(f => f.especie + '|' + f.lado));
+  // Si los folios vienen de UNA sola orden, la línea de EMSX se busca por su
+  // PARENT ORDER ID. Emparejar solo por especie+lado sumaba las cuentas de
+  // todas las órdenes de esa especie, y con dos órdenes de PFGRUPSURA a
+  // portafolios distintos las fusionaba en una (Sergio, 17-sep).
+  const _poidsFolios = new Set(folios.map(f=>String(f.parentOrderId||'')).filter(Boolean));
+  const _unaOrden = _poidsFolios.size === 1;
   (_emsxCBCache || []).forEach(r => {
     const especie = nemoCanonico(r.ticker || r.nombre_completo || '', 'emsx');
     const lado = _ladoEmsxGlobal(r);
     if(!combos.has(especie + '|' + lado)) return;
+    if(_unaOrden){
+      const poid = String(r.parent_order_id || r.parentOrderId || '').trim();
+      // Si la fila de EMSX dice a qué orden pertenece, tiene que ser ESTA.
+      if(poid && !_poidsFolios.has(poid)) return;
+    }
     // La línea de EMSX tiene que ser de ESTE cliente.
     const firm = String(r.originate_trader_firm || r.firm || '').toUpperCase();
     const cuenta = String(r.account || '').trim();
@@ -19972,7 +20005,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 17:22 UTC · v109';
+const BUILD_ID = '2026-09-17 17:58 UTC · v110';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
