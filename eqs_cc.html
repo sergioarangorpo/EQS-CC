@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1626,6 +1625,40 @@
     </div>
     <div class="edit-actions" style="margin-top:16px;">
       <button class="btn ghost" onclick="cancelarCruce();document.getElementById('modalTipoCierreFX').style.display='none';">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- VWAP: los dos lados juntos para negociar la tasa antes de registrar.
+     Se parte del COP del cruce; el USD y los P&G salen de las tasas
+     (Sergio, 17-sep). -->
+<div class="edit-overlay" id="modalNegociarFX" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(900px,96vw);margin-top:6vh;">
+    <h3 style="font-size:15px;">Negociar el FX del cruce</h3>
+    <div id="negociarFXCabeza" class="field-note" style="margin-bottom:12px;"></div>
+
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+      <div class="field" style="width:180px;">
+        <label>Tasa mercado</label>
+        <input type="text" inputmode="decimal" id="negTasaMercado" oninput="recalcularNegociacionFX()">
+        <div class="field-note" style="font-size:10.5px;">A la que cierras contra la mesa.</div>
+      </div>
+      <div class="field" style="width:180px;">
+        <label>Tasa final cliente</label>
+        <input type="text" inputmode="decimal" id="negTasaCliente" oninput="recalcularNegociacionFX()">
+        <div class="field-note" style="font-size:10.5px;">La que se le reporta.</div>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="negTasasSeparadas" onchange="recalcularNegociacionFX()">
+        Tasas distintas por lado
+      </label>
+    </div>
+
+    <div id="negociarFXCuerpo"></div>
+
+    <div class="edit-actions" style="margin-top:16px;">
+      <button class="btn ghost" onclick="document.getElementById('modalNegociarFX').style.display='none';">Cancelar</button>
+      <button class="btn primary" onclick="aplicarNegociacionFX()">Registrar los lados y seguir</button>
     </div>
   </div>
 </div>
@@ -7734,13 +7767,132 @@ function mostrarMenuTipoCierreFX(){
   document.getElementById('modalTipoCierreFX').style.display = 'flex';
 }
 
+// =====================================================================
+// NEGOCIACIÓN DEL FX DEL CRUCE (VWAP)
+// ---------------------------------------------------------------------
+// Los dos lados en una sola pantalla. Se parte del COP que ya trae el cruce:
+//   USD = COP / tasa final cliente
+//   cliente COMPRA USD -> P&G = USD * (tasa cliente - tasa mercado)
+//   cliente VENDE  USD -> P&G = USD * (tasa mercado - tasa cliente)
+// El neto es lo que queda por cerrar contra la mesa (Sergio, 17-sep).
+// =====================================================================
+function abrirNegociacionFX(){
+  const p = _cruceFXPendiente;
+  if(!p || !p.bloques || !p.bloques.length) return;
+  const nombre = (getClienteDB(p.cliente) && getClienteDB(p.cliente).nombre) || p.cliente;
+  document.getElementById('negociarFXCabeza').innerHTML =
+    `<b>${nombre}</b> · ${p.bloques.length} lado(s) · ` +
+    `el monto en USD sale del COP del cruce y la tasa que le des al cliente.`;
+  // Arranca con la tasa del mercado si hay alguna reciente; si no, en blanco.
+  const sug = (typeof _ultimaTasaFX !== 'undefined' && _ultimaTasaFX) ? _ultimaTasaFX : '';
+  document.getElementById('negTasaMercado').value = sug ? String(sug) : '';
+  document.getElementById('negTasaCliente').value = '';
+  document.getElementById('negTasasSeparadas').checked = false;
+  recalcularNegociacionFX();
+  document.getElementById('modalNegociarFX').style.display = 'flex';
+}
+
+function _negLados(){
+  const p = _cruceFXPendiente;
+  return (p && p.bloques) ? p.bloques : [];
+}
+
+function recalcularNegociacionFX(){
+  const cuerpo = document.getElementById('negociarFXCuerpo');
+  const separadas = document.getElementById('negTasasSeparadas').checked;
+  const mkt0 = parseNum(document.getElementById('negTasaMercado').value);
+  const cli0 = parseNum(document.getElementById('negTasaCliente').value);
+  const lados = _negLados();
+
+  let netoUSD = 0, pygTotal = 0;
+  const filas = lados.map((b,i)=>{
+    const esCompraCliente = b.ladoFX === 'BUY';      // el cliente compra USD
+    const mkt = separadas ? (parseNum((document.getElementById('negMkt'+i)||{}).value) || mkt0) : mkt0;
+    const cli = separadas ? (parseNum((document.getElementById('negCli'+i)||{}).value) || cli0) : cli0;
+    const cop = Number(b.netoCOP) || 0;
+    const usd = cli > 0 ? cop / cli : 0;
+    const pyg = (mkt > 0 && cli > 0)
+      ? (esCompraCliente ? usd * (cli - mkt) : usd * (mkt - cli)) : 0;
+    netoUSD += esCompraCliente ? usd : -usd;
+    pygTotal += pyg;
+    return `<tr style="border-top:1px solid var(--border,#232938);">
+      <td style="padding:6px 8px;font-weight:700;color:${esCompraCliente?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};">
+        ${esCompraCliente ? 'COMPRA USD' : 'VENTA USD'}</td>
+      <td style="padding:6px 8px;text-align:right;">${fmtMoney(cop)}</td>
+      <td style="padding:6px 8px;text-align:right;">
+        ${separadas
+          ? `<input type="text" inputmode="decimal" id="negMkt${i}" value="${mkt||''}"
+               oninput="recalcularNegociacionFX()" style="width:92px;text-align:right;">`
+          : (mkt ? fmtRate(mkt) : '—')}</td>
+      <td style="padding:6px 8px;text-align:right;">
+        ${separadas
+          ? `<input type="text" inputmode="decimal" id="negCli${i}" value="${cli||''}"
+               oninput="recalcularNegociacionFX()" style="width:92px;text-align:right;">`
+          : (cli ? fmtRate(cli) : '—')}</td>
+      <td style="padding:6px 8px;text-align:right;font-weight:600;">${usd ? fmtMoney(usd) : '—'}</td>
+      <td style="padding:6px 8px;text-align:right;font-weight:700;
+                 color:${pyg>=0?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};">
+        ${(mkt&&cli) ? fmtMoney(pyg) : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  cuerpo.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+      <tr style="opacity:.6;font-size:10px;letter-spacing:.3px;">
+        <th style="text-align:left;padding:4px 8px;">LADO</th>
+        <th style="text-align:right;padding:4px 8px;">COP DEL CRUCE</th>
+        <th style="text-align:right;padding:4px 8px;">T. MERCADO</th>
+        <th style="text-align:right;padding:4px 8px;">T. FINAL CLIENTE</th>
+        <th style="text-align:right;padding:4px 8px;">MONTO USD</th>
+        <th style="text-align:right;padding:4px 8px;">P&amp;G</th>
+      </tr>
+      ${filas}
+    </table>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+      <div style="flex:1;min-width:210px;background:var(--bg-2,#161b26);border:1px solid var(--border,#232938);
+                  border-radius:8px;padding:10px 14px;">
+        <div style="font-size:10.5px;font-weight:700;opacity:.6;">NETO A CERRAR CONTRA LA MESA</div>
+        <div style="font-size:20px;font-weight:800;">
+          ${netoUSD ? (netoUSD>0?'COMPRAR ':'VENDER ') + fmtMoney(Math.abs(netoUSD)) + ' USD' : '—'}</div>
+      </div>
+      <div style="flex:1;min-width:210px;background:${pygTotal>=0?'rgba(34,197,94,.08)':'rgba(239,68,68,.08)'};
+                  border:1px solid ${pygTotal>=0?'rgba(34,197,94,.25)':'rgba(239,68,68,.25)'};
+                  border-radius:8px;padding:10px 14px;">
+        <div style="font-size:10.5px;font-weight:700;opacity:.6;">UTILIDAD TOTAL</div>
+        <div style="font-size:20px;font-weight:800;
+                    color:${pygTotal>=0?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};">
+          ${pygTotal ? fmtMoney(pygTotal) : '—'}</div>
+      </div>
+    </div>`;
+}
+
+// Guarda las tasas en cada lado y sigue al flujo de siempre: la calculadora,
+// lado por lado, ya con la tasa puesta.
+function aplicarNegociacionFX(){
+  const p = _cruceFXPendiente;
+  const separadas = document.getElementById('negTasasSeparadas').checked;
+  const mkt0 = parseNum(document.getElementById('negTasaMercado').value);
+  const cli0 = parseNum(document.getElementById('negTasaCliente').value);
+  if(!(cli0 > 0) && !separadas){ alert('Falta la tasa final del cliente.'); return; }
+  p.bloques.forEach((b,i)=>{
+    b.tasaMercado = separadas ? (parseNum((document.getElementById('negMkt'+i)||{}).value) || mkt0) : mkt0;
+    b.tasaCliente = separadas ? (parseNum((document.getElementById('negCli'+i)||{}).value) || cli0) : cli0;
+  });
+  if(p.bloques.some(b=>!(b.tasaCliente > 0))){ alert('Falta la tasa final de algún lado.'); return; }
+  document.getElementById('modalNegociarFX').style.display = 'none';
+  p.idx = 0;
+  irACalculadoraCruce();
+}
+
 function elegirModoCierreFX(modo){
   const p = _cruceFXPendiente;
   if(!p){ return; }
   p.modoCierre = modo;
   document.getElementById('modalTipoCierreFX').style.display = 'none';
   if(modo === 'vwap'){
-    mostrarResumenCruceFX();
+    // Los dos lados se negocian juntos ANTES de ir a la calculadora
+    // (Sergio, 17-sep).
+    abrirNegociacionFX();
   } else {
     mostrarSelectorPreviosWMCO();
   }
@@ -8014,6 +8166,15 @@ function irACalculadoraCruce(){
   // Marcar la calculadora en modo cruce: mostrar el campo COP objetivo y dejar
   // el Monto USD como derivado (se llena solo al meter la tasa final cliente).
   _cruceActivo = { ...b, idxLado: p.idx, total: p.bloques.length };
+  // Las tasas ya negociadas en la pantalla anterior entran puestas; se pueden
+  // corregir aquí si algo cambió (Sergio, 17-sep).
+  if(b.tasaCliente > 0){
+    const _rate = document.getElementById('rate');
+    if(_rate){ _rate.value = String(b.tasaCliente); }
+    const _mkt = document.getElementById('rateMesa') || document.getElementById('tasaMesa');
+    if(_mkt && b.tasaMercado > 0){ _mkt.value = String(b.tasaMercado); }
+    if(typeof calcular === 'function') calcular();
+  }
   document.getElementById('campoCruceCOP').style.display = '';
   document.getElementById('cruceCOP').value = b.netoCOP.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   document.getElementById('amount').readOnly = true;
@@ -20286,7 +20447,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 22:35 UTC · v121';
+const BUILD_ID = '2026-09-17 22:48 UTC · v122';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
