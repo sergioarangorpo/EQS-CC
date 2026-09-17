@@ -15487,7 +15487,55 @@ async function generarReporte(){
   // `allocations` juntas, así que con varias líneas marcadas repartía las tres
   // especies entre todos los portafolios y escribía la especie de la primera en
   // todas — el archivo salía cruzado (Sergio, 01-sep).
-  const _ordenesDelLote = getOrdenesConAlloc(false);
+  // EL ARQUEO ES CONTRA FIDESSA TRADES: una línea del reporte por cada LÍNEA DE
+  // TRADES, que es donde están la especie, la cantidad y el precio. Los folios
+  // solo aportan la comisión, según cuáles se marcaron como bloque.
+  //
+  // Antes se partía de `getOrdenesConAlloc`, que junta las órdenes que
+  // comparten reparto: las dos de PFGRUPSURA a Retiro Programado salían como
+  // una sola línea de 70.700 al promedio de todo (Sergio, 17-sep).
+  const _ordenesDelLote = (()=>{
+    const porOid = {};
+    seleccionados.forEach(f=>{
+      const k = String(f.parentOrderId || '');
+      if(!k) return;
+      (porOid[k] = porOid[k] || []).push(f);
+    });
+    const out = Object.keys(porOid).map(oid=>({
+      parentOrderId: oid,
+      allocations: (_allocPorOrden[oid] || []).slice(),
+      qty: porOid[oid].reduce((a,f)=>a+f.cantidad, 0),
+    }));
+    // El reparto de cada orden tiene que SUMAR LO QUE ESA ORDEN EJECUTÓ. Un
+    // reparto viejo puede traer el de varias órdenes juntas —quedaba de cuando
+    // se repartía todo de una— y entonces las cantidades salían duplicadas
+    // (Sergio, 17-sep).
+    out.forEach(o=>{
+      const suma = o.allocations.reduce((a,x)=>a+(Number(x.cantidad)||0), 0);
+      if(o.allocations.length && Math.abs(suma - o.qty) < 0.5) return;
+      const r = allocDesdeEmsx(cliente, porOid[o.parentOrderId]);
+      if(r.ok){
+        o.allocations = r.allocations.map(a=>({ portId:a.portafolio.id, cantidad:a.cantidad }));
+        _allocPorOrden[o.parentOrderId] = o.allocations.slice();
+      }else if(o.allocations.length && suma > 0){
+        // Sin EMSX: se deja lo repartido a mano solo si cuadra; si no, se
+        // descarta para no inventar cantidades.
+        o.allocations = [];
+      }
+    });
+    // Y las que siguen sin reparto caen al camino de antes, por si el cliente
+    // es de portafolio único o se repartió a mano de otra forma.
+    const faltan = out.filter(o=>!o.allocations.length);
+    if(faltan.length){
+      const viejas = getOrdenesConAlloc(false);
+      faltan.forEach(o=>{
+        const v = viejas.find(x=>String(x.parentOrderId) === String(o.parentOrderId));
+        if(v) o.allocations = (v.allocations||[]).slice();
+      });
+    }
+    return out.filter(o=>o.allocations.length);
+  })();
+
   _ordenesDelLote.forEach(o=>{
     const foliosOrden = seleccionados.filter(f=>String(f.parentOrderId) === String(o.parentOrderId));
     if(!foliosOrden.length) return;
@@ -20090,7 +20138,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 19:26 UTC · v114';
+const BUILD_ID = '2026-09-17 19:38 UTC · v115';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
