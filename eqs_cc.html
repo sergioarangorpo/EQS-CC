@@ -17283,8 +17283,15 @@ function confirmarPorvenir(cliente, folios, comUnica, version){
     // Grupos por especie+lado, con su comisión única y de dónde salió.
     const grupos = {};
     folios.forEach(f=>{ const k = f.especie+'|'+f.lado;
-      const g = grupos[k] || (grupos[k] = {especie:f.especie, lado:f.lado, cantidad:0, bruto:0, bloques:0, qBloque:0});
+      const g = grupos[k] || (grupos[k] = {especie:f.especie, lado:f.lado, cantidad:0, bruto:0,
+                                           bloques:0, qBloque:0, ordNums:new Set()});
       g.cantidad += f.cantidad; g.bruto += f.cantidad*f.precio;
+      // El número de orden se guarda para mostrarlo al lado de la especie: la
+      // plantilla lo pedía (`ordNumTxt`) pero nunca se definía, así que la
+      // confirmación reventaba y el botón de generar no hacía nada
+      // (Sergio, 17-sep).
+      const on = f.ordNum || f.parentOrderId;
+      if(on) g.ordNums.add(String(on));
       if(f.marca === 'bloque'){ g.bloques++; g.qBloque += f.cantidad; } });
     // Portafolios presentes, para el menú de traders.
     const ports = {};
@@ -17306,7 +17313,8 @@ function confirmarPorvenir(cliente, folios, comUnica, version){
             <th class="num">Giro bruto</th><th class="num">Comisión a reportar</th>
           </tr></thead><tbody>
           ${Object.values(grupos).map(g=>`<tr>
-            <td class="mono-id">${g.especie}${ordNumTxt}</td><td>${g.lado}</td>
+            <td class="mono-id">${g.especie}${g.ordNums && g.ordNums.size
+              ? `<span class="field-note" style="font-size:10px;"> · ${[...g.ordNums].join(', ')}</span>` : ''}</td><td>${g.lado}</td>
             <td class="num">${fmtInt(g.cantidad)}</td>
             <td class="num" style="opacity:.75;">${g.qBloque? fmtInt(g.qBloque)+' ('+g.bloques+' folios)' : '—'}</td>
             <td class="num">${fmtMoney(g.bruto)}</td>
@@ -20187,7 +20195,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 19:50 UTC · v116';
+const BUILD_ID = '2026-09-17 20:28 UTC · v117';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
