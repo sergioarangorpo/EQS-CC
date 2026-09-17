@@ -1378,6 +1378,13 @@
             </div>
           </div>
           <button class="btn small purple" id="btnAgregarPort" style="width:100%;" onclick="agregarPortafolio()">+ Agregar a la asignación</button>
+          <!-- Cuando EMSX ya trae el Account (Colfondos, Protección), el reparto
+               no hay que escribirlo: se toma de ahí para TODAS las órdenes
+               marcadas, cada una con el suyo (Sergio, 17-sep). -->
+          <button class="btn small" id="btnAllocEmsx" style="width:100%;margin-top:6px;"
+                  onclick="asignarDesdeEmsxRVL()"
+                  title="Toma el Account de cada línea de EMSX y arma el reparto de las órdenes marcadas">
+            ⚡ Asignar allocation desde EMSX</button>
           <button class="btn small" id="btnPegarAllocIA" style="width:100%;margin-top:6px;" onclick="abrirPegarAllocIA()">📋 Pegar allocation del trader (IA)</button>
           <div class="field-note" id="errorCantidad" style="color:var(--sell);min-height:14px;margin-top:4px;"></div>
         </div>
@@ -13825,6 +13832,54 @@ function _refrescarPanelTrasAlloc(){
   }catch(e){ /* el panel es informativo: nunca debe tumbar la asignación */ }
 }
 
+// Arma el reparto de TODAS las órdenes marcadas tomando el Account de su línea
+// de EMSX. Cada orden queda con el suyo, sin fusionarse (Sergio, 17-sep).
+function asignarDesdeEmsxRVL(){
+  const cliente = document.getElementById('filtroCliente').value;
+  if(!cliente){ alert('Selecciona primero el cliente.'); return; }
+  const sel = getFiltrados().filter(f=>selectedFolios.has(f.id));
+  const base = sel.length ? sel : getFiltrados();
+  if(!base.length){ alert('No hay folios para asignar.'); return; }
+
+  const porOrden = {};
+  base.forEach(f=>{
+    const k = String(f.parentOrderId || '');
+    if(!k) return;
+    (porOrden[k] = porOrden[k] || []).push(f);
+  });
+  const oids = Object.keys(porOrden);
+  if(!oids.length){ alert('Los folios no traen orden de Fidessa.'); return; }
+
+  const ok = [], fallan = [];
+  oids.forEach(oid=>{
+    const r = allocDesdeEmsx(cliente, porOrden[oid]);
+    if(r.ok){
+      _allocPorOrden[oid] = r.allocations.map(a=>({ portId:a.portafolio.id, cantidad:a.cantidad }));
+      ok.push({ oid, n:r.allocations.length,
+                ports:r.allocations.map(a=>a.portafolio.nombre).join(', ') });
+    }else{
+      const t = (_fidessaTradesRaw||{})[oid] || {};
+      fallan.push(`${nemoCanonico(t.security,'fidessa')||oid}: ` +
+        (r.faltan && r.faltan.length ? 'cuentas sin portafolio (' + r.faltan.join(', ') + ')'
+         : `EMSX suma ${fmtInt(r.suma)} y los folios ${fmtInt(r.qtyFolios)}`));
+    }
+  });
+
+  // Si quedó una sola orden marcada, se refleja en el panel de asignación.
+  if(oids.length === 1 && _allocPorOrden[oids[0]]){
+    _ordenActiva = oids[0];
+    allocations = _allocPorOrden[oids[0]].slice();
+    if(typeof renderAllocations === 'function') renderAllocations();
+  }
+  renderFolios();
+  renderFidessaTradesPanel();
+
+  alert(`${ok.length} orden(es) con su reparto listo desde EMSX.` +
+    (ok.length ? '\n\n' + ok.map(x=>'   ' + x.ports).join('\n') : '') +
+    (fallan.length ? `\n\nNo se pudo con ${fallan.length}:\n` + fallan.map(x=>'   '+x).join('\n') : '') +
+    '\n\nAhora marca los bloques y genera el reporte.');
+}
+
 function agregarPortafolio(){
   const cliente = document.getElementById('filtroCliente').value;
   const errorEl = document.getElementById('errorCantidad');
@@ -20005,7 +20060,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 17:58 UTC · v110';
+const BUILD_ID = '2026-09-17 18:08 UTC · v111';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
