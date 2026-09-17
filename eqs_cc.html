@@ -8190,13 +8190,21 @@ function irACalculadoraCruce(){
   // Marcar la calculadora en modo cruce: mostrar el campo COP objetivo y dejar
   // el Monto USD como derivado (se llena solo al meter la tasa final cliente).
   _cruceActivo = { ...b, idxLado: p.idx, total: p.bloques.length };
-  // Las tasas ya negociadas en la pantalla anterior entran puestas; se pueden
-  // corregir aquí si algo cambió (Sergio, 17-sep).
+  // Las tasas negociadas entran PUESTAS, para no volver a escribirlas: la tasa
+  // final del cliente va en `rateUnica` (modelo única, que es el de los
+  // extranjeros) y la de mercado en `spotReal`. Antes apuntaba a campos que no
+  // existen y por eso pedía llenarlas de nuevo (Sergio, 17-sep).
   if(b.tasaCliente > 0){
-    const _rate = document.getElementById('rate');
-    if(_rate){ _rate.value = String(b.tasaCliente); }
-    const _mkt = document.getElementById('rateMesa') || document.getElementById('tasaMesa');
-    if(_mkt && b.tasaMercado > 0){ _mkt.value = String(b.tasaMercado); }
+    ['rateUnica','rate'].forEach(id=>{
+      const el = document.getElementById(id);
+      if(el) el.value = String(b.tasaCliente);
+    });
+    if(b.tasaMercado > 0){
+      const mkt = document.getElementById('spotReal');
+      if(mkt) mkt.value = String(b.tasaMercado);
+    }
+    // El USD sale del COP objetivo entre la tasa del cliente.
+    if(typeof recalcularCruceUSD === 'function') recalcularCruceUSD();
     if(typeof calcular === 'function') calcular();
   }
   document.getElementById('campoCruceCOP').style.display = '';
@@ -20471,7 +20479,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 22:56 UTC · v123';
+const BUILD_ID = '2026-09-17 23:03 UTC · v124';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
