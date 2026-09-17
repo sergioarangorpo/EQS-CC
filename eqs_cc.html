@@ -1638,31 +1638,18 @@
   <div id="mod-RVI" class="mod-section">
 <!-- TOOLBAR -->
   <div class="toolbar">
-    <div class="tb-field">
-      <label>Cliente</label>
-      <select id="filtroClienteRVI" onchange="filtrar()">
-        <option value="">Todos</option>
-      </select>
-    </div>
-    <div class="tb-field">
-      <label>Especie</label>
-      <select id="filtroEspecieRVI" onchange="filtrar()">
-        <option value="">Todas</option>
-      </select>
-    </div>
-    <div class="tb-field">
-      <label>Lado</label>
-      <select id="filtroLadoRVI" onchange="filtrar()">
-        <option value="">Todos</option>
-        <option value="Sell">Sell (vendemos al cliente)</option>
-        <option value="Buy">Buy (compramos del cliente)</option>
-      </select>
-    </div>
+    <!-- Los filtros de Cliente, Especie y Lado salieron: no hacían nada y
+         estorbaban a lo que sí importa, que son los binomios de abajo
+         (Sergio, 17-sep). Los selects quedan ocultos porque `filtrar()` los
+         sigue leyendo. -->
+    <select id="filtroClienteRVI" style="display:none;"><option value=""></option></select>
+    <select id="filtroEspecieRVI" style="display:none;"><option value=""></option></select>
+    <select id="filtroLadoRVI" style="display:none;"><option value=""></option></select>
     <div class="tb-field">
       <label>&nbsp;</label>
       <div style="display:flex;gap:8px;">
         <button class="btn small" onclick="cargarEmsx()">↻ Cargar EMSX</button>
-        <button class="btn small ghost" onclick="borrarFiltrosRVI()">✕ Borrar filtros</button>
+
       </div>
     </div>
     <div class="tb-field" style="flex:1;min-width:120px;">
@@ -1694,19 +1681,24 @@
        lo que viene después. */
     .modo-rvi.pendiente{ border-color:var(--amber,#f59e0b); color:var(--amber,#f59e0b); }
   </style>
-  <div style="padding:0 24px 14px;display:flex;gap:22px;flex-wrap:wrap;align-items:center;">
+  <!-- Es lo PRIMERO que hay que llenar, así que va destacado (Sergio, 17-sep). -->
+  <div style="margin:0 24px 14px;padding:12px 16px;border-radius:8px;
+              background:var(--bg-2,#161b26);border:1px solid var(--border,#232938);
+              display:flex;gap:22px;flex-wrap:wrap;align-items:center;">
+    <span style="font-size:11px;font-weight:700;letter-spacing:.5px;opacity:.55;
+                 width:100%;margin-bottom:2px;">CÓMO SE OPERÓ — elige antes de nada</span>
     <div style="display:flex;align-items:center;gap:8px;">
-      <span class="field-note" style="width:66px;">Margen</span>
+      <span class="field-note" style="width:66px;font-size:12px;font-weight:700;">Margen</span>
       <button class="btn small modo-rvi" data-modo="margen" data-val="con" onclick="setModoRVI('margen','con')">Con margen</button>
       <button class="btn small ghost modo-rvi" data-modo="margen" data-val="sin" onclick="setModoRVI('margen','sin')">Sin margen</button>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
-      <span class="field-note" style="width:52px;">Costo</span>
+      <span class="field-note" style="width:52px;font-size:12px;font-weight:700;">Costo</span>
       <button class="btn small modo-rvi" data-modo="costo" data-val="con" onclick="setModoRVI('costo','con')">Con costo</button>
       <button class="btn small ghost modo-rvi" data-modo="costo" data-val="sin" onclick="setModoRVI('costo','sin')">Sin costo (all-in)</button>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
-      <span class="field-note" style="width:52px;">Alloc</span>
+      <span class="field-note" style="width:52px;font-size:12px;font-weight:700;">Alloc</span>
       <button class="btn small ghost modo-rvi" data-modo="espejo" data-val="si" onclick="setModoRVI('espejo','si')"
         title="Nuestras líneas de CCSI se parten igual que las del cliente, para que cada cumplimiento vaya de a uno">Espejo del cliente</button>
     </div>
@@ -13972,7 +13964,11 @@ async function aplicarCanastaRVI(){
       symbol: a.ticker, isin, tipo,
       qty, price: px, gross,
       cost, secFee, net, ccsi: 0,
-      tradeDate, settleDate: settlementRVI(a.ticker + ' ' + (ln ? '' : 'LN'), tdVal),
+      tradeDate,
+      // La especie COMPLETA ("CEMA LN Equity"): con el ticker pelado la función
+      // no ve el exchange y cae a T+1. Los UCITS de Londres son T+2
+      // (Sergio, 17-sep).
+      settleDate: settlementRVI(ln ? ln.especie : (a.ticker + ' LN Equity'), tdVal),
       broker: ln ? (ln.broker||'') : '',
       precioNuestro: pxNuestro,
       espejo: false, comBrokerUnit: 0,
@@ -19367,6 +19363,39 @@ function marcarSoloClienteHist(){
   });
 }
 
+// Elimina una línea del histórico y de Supabase. Sin esto, una operación
+// registrada dos veces —por ejemplo si Sergio y Miguel la guardan a la vez—
+// duplica la pata del cliente Y la nuestra en la planilla del BO
+// (Sergio, 17-sep).
+async function eliminarLineaRVI(id){
+  const h = historial.find(x=>String(x.id) === String(id));
+  if(!h) return;
+  if(!confirm(`¿Eliminar esta línea del histórico?\n\n` +
+      `${h.cliente} · ${h.symbol} · ${fmtInt(h.qty)} @ ${h.price}\n` +
+      `${h.account || ''}\n\nNo se puede deshacer.`)) return;
+  historial = historial.filter(x=>String(x.id) !== String(id));
+  try{
+    await fetch(`${SUPA_URL}/rest/v1/rvi_historico?id=eq.${encodeURIComponent(id)}`, {
+      method:'DELETE', headers:{ apikey:SUPA_KEY, Authorization:`Bearer ${SUPA_KEY}` },
+    });
+  }catch(e){ console.warn('No se pudo borrar de Supabase:', e.message); }
+  renderHistorial();
+  if(typeof renderDashboard === 'function') renderDashboard();
+}
+
+// Señala las líneas que parecen repetidas: mismo cliente, cuenta, especie,
+// lado, cantidad y precio. No las borra — solo avisa.
+function duplicadosRVI(){
+  const vistos = {}, dup = new Set();
+  (historial||[]).forEach(h=>{
+    const k = [h.cliente, h.account, h.side, h.symbol, h.qty,
+               Number(h.price||0).toFixed(6)].join('|');
+    if(vistos[k]) dup.add(String(h.id));
+    else vistos[k] = String(h.id);
+  });
+  return dup;
+}
+
 function renderHistorial(){
   poblarFiltroHistorial();
   const tbody=document.getElementById('hist-body');
@@ -19385,8 +19414,13 @@ function renderHistorial(){
     document.getElementById('histHint').textContent = historial.length?`(${historial.length} en total)`:'';
     return;
   }
-  tbody.innerHTML=filas.map(h=>`<tr>
-    <td style="text-align:center;"><input type="checkbox" class="hist-check" data-id="${h.id}" checked></td>
+  // Las líneas repetidas se marcan en rojo para verlas de una (Sergio, 17-sep).
+  const _dup = duplicadosRVI();
+  tbody.innerHTML=filas.map(h=>`<tr${_dup.has(String(h.id))
+      ? ' style="background:rgba(239,68,68,.10);" title="Parece repetida: misma operación ya está en el histórico"'
+      : ''}>
+    <td style="text-align:center;"><input type="checkbox" class="hist-check" data-id="${h.id}"${
+      _dup.has(String(h.id)) ? '' : ' checked'}></td>
     <td>${h.cliente}</td>
     <td>${h.account}</td>
     <td><span class="side-badge ${h.side==='Buy'?'buy':'sell'}">${h.side}</span></td>
@@ -19398,7 +19432,15 @@ function renderHistorial(){
     <td class="num">${fmtRateRVI(h.secFee,4)}</td>
     <td class="num">${fmtMoneyRVI(h.net,2)}</td>
     <td class="num">${fmtMoneyRVI(h.ccsi,2)}</td>
-    <td><button class="icon-btn" title="Corregir" onclick="abrirEdicionRVI('${String(h.id).replace(/'/g,"\\'")}')">✎</button></td>
+    <td style="white-space:nowrap;">
+      <button class="icon-btn" title="Corregir" onclick="abrirEdicionRVI('${String(h.id).replace(/'/g,"\\'")}')">✎</button>
+      <!-- Eliminar: si dos personas registran la misma operación, la pata del
+           cliente y la del BO quedan duplicadas y la planilla no cuadra
+           (Sergio, 17-sep). -->
+      <button class="icon-btn" title="Eliminar esta línea"
+        onclick="eliminarLineaRVI('${String(h.id).replace(/'/g,"\\'")}')"
+        style="color:var(--sell,#ef4444);">🗑</button>
+    </td>
   </tr>`).join('');
   document.getElementById('histHint').textContent=`(${filas.length}${filtro?' de '+historial.length:''} línea${filas.length!==1?'s':''}${filtro?' · '+filtro:''})`;
 }
@@ -19957,7 +19999,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 16:45 UTC · v106';
+const BUILD_ID = '2026-09-17 17:10 UTC · v108';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
