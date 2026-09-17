@@ -1504,6 +1504,43 @@
   </div>
 </div>
 
+<!-- Canasta de RVI: ejecución + allocation del cliente, para procesar varias
+     especies de una sola vez (Sergio, 17-sep). -->
+<div id="modalCanastaRVI" class="modal-backdrop" style="display:none;">
+  <div class="modal-card" style="max-width:1100px;">
+    <div class="modal-head">
+      <span>Canasta RVI — ejecución + allocation</span>
+      <button class="btn small ghost" onclick="cerrarCanastaRVI()">Cerrar</button>
+    </div>
+    <div class="modal-body">
+      <div class="field-note" style="margin-bottom:10px;">
+        Pega los dos cuadros tal como llegan. Se empatan por <b>ticker</b> y se
+        valida que las cantidades coincidan antes de aplicar nada.
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:320px;">
+          <label class="field-note" style="font-weight:700;">EJECUCIÓN — lo que se le reporta al cliente</label>
+          <textarea id="canastaEjec" rows="11" placeholder="Side	Security	Exch	FillQty	AvgPr&#10;Buy	CEMA	LN	15	299,9295"
+            style="width:100%;font-family:var(--mono,monospace);font-size:11.5px;
+                   background:var(--bg-2,#0f1116);color:var(--text-1,#e5e7eb);
+                   border:1px solid var(--border,#2a2f3a);border-radius:6px;padding:8px;"></textarea>
+        </div>
+        <div style="flex:1;min-width:320px;">
+          <label class="field-note" style="font-weight:700;">ALLOCATION DEL CLIENTE</label>
+          <textarea id="canastaAlloc" rows="11" placeholder="Lado	PORT	ISIN	Ticker	UNITS&#10;BUY	PA TRILIUM	IE00B4PY7Y77	IHYU LN Equity	32"
+            style="width:100%;font-family:var(--mono,monospace);font-size:11.5px;
+                   background:var(--bg-2,#0f1116);color:var(--text-1,#e5e7eb);
+                   border:1px solid var(--border,#2a2f3a);border-radius:6px;padding:8px;"></textarea>
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <button class="btn small purple" onclick="interpretarCanastaRVI()">Interpretar y validar</button>
+      </div>
+      <div id="canastaRVIResultado" style="margin-top:12px;"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Pegar allocation del trader e interpretarlo con IA (COLFONDOS y clientes de reparto manual) -->
 <div class="edit-overlay" id="modalPegarAlloc" style="align-items:flex-start;">
   <div class="edit-modal" style="width:min(820px,95vw);margin-top:5vh;max-height:88vh;overflow:auto;">
@@ -1883,6 +1920,10 @@
       </div>
 
       <button class="btn primary" style="width:100%;" id="btn-generar" onclick="generarTC()" disabled>💾 Guardar operación</button>
+      <!-- Canastas grandes: en vez de repetir el proceso especie por especie,
+           se pegan la ejecución y el allocation del cliente (Sergio, 17-sep). -->
+      <button class="btn small" style="width:100%;margin-top:6px;" onclick="abrirCanastaRVI()">
+        📋 Pegar canasta (ejecución + allocation)</button>
       <div class="footer-note">Guarda la operación en el <b>histórico de hoy</b>. Luego filtra por cliente en el histórico, marca las que vas a enviar y usa <b>Exportar Trade Confirmation</b> arriba. (PORVENIR usa proforma extendida.)</div>
         </div>
       </div>
@@ -13865,6 +13906,238 @@ let _allocInterpretado = null; // { ordenes:[{cantidadTotal, lineas:[{portTexto,
 
 // ===== Pegar allocation del trader (IA) para RVI — reusa el parser de RVL =====
 let _allocInterpretadoRVI = null;
+// =====================================================================
+// CANASTA RVI — ejecución + allocation del cliente
+// ---------------------------------------------------------------------
+// Para canastas de varias especies (Fiduciaria Sura manda 8-10 por orden).
+// En vez de repetir el proceso especie por especie, se pegan los dos cuadros:
+//   · EJECUCIÓN: lo que se le reporta al cliente, con el margen ya puesto.
+//   · ALLOCATION: cómo lo reparte el cliente entre sus portafolios.
+// Se empatan POR TICKER y se valida que las cantidades cuadren antes de
+// aplicar nada — una especie mal repartida se ve de una (Sergio, 17-sep).
+// =====================================================================
+let _canastaRVI = null;
+
+// Guarda la canasta en el histórico: una operación por línea del allocation.
+// Nuestro precio sale de la línea de EMSX de esa especie; el del cliente, del
+// cuadro de ejecución (Sergio, 17-sep).
+async function aplicarCanastaRVI(){
+  if(!_canastaRVI){ alert('Primero interpreta la canasta.'); return; }
+  const { ejec, alloc, avisos, cliente } = _canastaRVI;
+  if(avisos.length && !confirm('La canasta tiene avisos:\n\n' + avisos.join('\n') +
+      '\n\n¿La aplicas de todos modos?')) return;
+
+  const cfg = clientesRVI[cliente] || {};
+  const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const hoyD = new Date();
+  const tdVal = (document.getElementById('tc-trade-date')||{}).value;
+  const tradeDate = tdVal ? parseFechaLocal(tdVal) : hoyD;
+  let n = 0;
+
+  alloc.forEach(a=>{
+    const e = ejec[a.ticker];
+    if(!e) return;
+    const qty = Number(a.units)||0;
+    const px  = Number(e.precio)||0;
+    if(!qty || !px) return;
+
+    // Nuestro precio de ejecución: la línea de EMSX de esa especie.
+    const ln = (emsxData||[]).find(r=>
+      tickerLimpioRVI(r.especie) === a.ticker &&
+      String(r.lado||'').toUpperCase() === String(e.lado||'').toUpperCase());
+    const pxNuestro = ln ? (Number(ln.avgPr)||px) : px;
+    const isin = a.isin || (ln ? ln.isin : '') || '';
+    const tipo = /^(IE|LU|GB)/i.test(isin) ? 'UCIT' : (ln && ln.tipo ? ln.tipo : 'ETF');
+
+    const gross = qty * px;
+    // Comisión del cliente: UCITS como % del gross, ETF/ADR por acción.
+    // Siempre con el mínimo de USD 20.
+    const base = tipo === 'UCIT' ? gross * (cfg.comUCIT||0) : qty * (cfg.comETF||0);
+    const cost = Math.max(base, 20);
+    const secFee = secFeeRVI(tipo, e.lado === 'Sell' ? 'Sell' : 'Buy', gross, isin);
+    const net = e.lado === 'Sell' ? gross - cost - secFee : gross + cost;
+
+    // El portafolio, con el nombre completo de la ficha.
+    const port = (cfg.portafolios||[]).find(x=>{
+      const k = lim(a.port), nn = lim(x);
+      return nn === k || nn.includes(k) || k.includes(nn);
+    }) || a.port;
+
+    historial.push({
+      id: Date.now() + Math.random(),
+      emsxId: ln ? ln.id : null,
+      cliente: cfg.nombre || cliente,
+      account: port,
+      side: e.lado === 'Sell' ? 'Sell' : 'Buy',
+      symbol: a.ticker, isin, tipo,
+      qty, price: px, gross,
+      cost, secFee, net, ccsi: 0,
+      tradeDate, settleDate: settlementRVI(a.ticker + ' ' + (ln ? '' : 'LN'), tdVal),
+      broker: ln ? (ln.broker||'') : '',
+      precioNuestro: pxNuestro,
+      espejo: false, comBrokerUnit: 0,
+      trader: (document.getElementById('tc-trader-rvi')||{}).value || '',
+    });
+    n++;
+  });
+
+  if(!n){ alert('No se pudo armar ninguna línea.'); return; }
+  try{ await guardarHistoricoRVI(); }catch(e){ console.warn('guardar histórico:', e.message); }
+  renderHistorial();
+  if(typeof renderDashboard === 'function') renderDashboard();
+  cerrarCanastaRVI();
+  alert(`${n} línea(s) guardadas en el histórico de hoy.\n\n` +
+        'Revísalas abajo y genera el Trade Confirmation desde el histórico.');
+}
+
+function abrirCanastaRVI(){
+  const cli = document.getElementById('tc-cliente').value;
+  if(!cli){ alert('Selecciona primero el cliente RVI.'); return; }
+  document.getElementById('canastaRVIResultado').innerHTML = '';
+  _canastaRVI = null;
+  document.getElementById('modalCanastaRVI').style.display = 'flex';
+}
+function cerrarCanastaRVI(){
+  document.getElementById('modalCanastaRVI').style.display = 'none';
+}
+
+// El ticker llega de varias formas: "CEMA", "CEMA LN Equity", "CEMA LN EQUITY".
+function _tickerCanasta(t){
+  return String(t||'').toUpperCase().trim()
+    .replace(/\s+(LN|US|UN|CN|GY|FP)\s+EQUITY$/i, '')
+    .replace(/\s+EQUITY$/i, '')
+    .split(/\s+/)[0];
+}
+
+function _filasCanasta(texto){
+  return String(texto||'').split(/\r?\n/)
+    .map(l=>l.trim()).filter(Boolean)
+    .map(l=>l.split(/\t|\s{2,}|;/).map(x=>x.trim()).filter(x=>x !== ''))
+    .filter(c=>c.length >= 2);
+}
+
+function _numCanasta(t){
+  // Acepta 299,9295 y 299.9295; y 1.020 o 1,020 como miles.
+  let x = String(t||'').trim().replace(/[^\d.,-]/g,'');
+  if(!x) return NaN;
+  const ultimaComa = x.lastIndexOf(','), ultimoPunto = x.lastIndexOf('.');
+  if(ultimaComa > ultimoPunto){ x = x.replace(/\./g,'').replace(',', '.'); }
+  else { x = x.replace(/,/g,''); }
+  return Number(x);
+}
+
+function interpretarCanastaRVI(){
+  const cont = document.getElementById('canastaRVIResultado');
+  const cli = document.getElementById('tc-cliente').value;
+  const cfg = clientesRVI[cli] || {};
+
+  // ---- Ejecución: ticker, cantidad y precio AL CLIENTE ----
+  const ejec = {};
+  _filasCanasta(document.getElementById('canastaEjec').value).forEach(c=>{
+    // Se buscan los dos últimos números: cantidad y precio.
+    const nums = c.map(_numCanasta).map((n,i)=>({n,i})).filter(x=>isFinite(x.n));
+    if(nums.length < 2) return;
+    const precio = nums[nums.length-1].n;
+    const qty = nums[nums.length-2].n;
+    // El ticker es el primer campo que no es número ni lado.
+    const tk = c.map(_tickerCanasta).find(x=>x && !/^(BUY|SELL|B|S)$/i.test(x) && !isFinite(_numCanasta(x)));
+    if(!tk || !qty) return;
+    const lado = /SELL|^S$/i.test(c[0]) ? 'Sell' : 'Buy';
+    ejec[tk] = { ticker:tk, qty, precio, lado };
+  });
+
+  // ---- Allocation: portafolio, ticker y unidades ----
+  const alloc = [];
+  _filasCanasta(document.getElementById('canastaAlloc').value).forEach(c=>{
+    const nums = c.map(_numCanasta).filter(n=>isFinite(n));
+    const units = nums.length ? nums[nums.length-1] : NaN;
+    if(!units) return;
+    const isin = c.find(x=>/^[A-Z]{2}[A-Z0-9]{9}\d$/i.test(String(x).trim()));
+    // El ticker es el campo que trae "Equity", o el que calce con la ejecución.
+    let tk = '';
+    c.forEach(x=>{ if(/EQUITY/i.test(x)) tk = _tickerCanasta(x); });
+    if(!tk) tk = c.map(_tickerCanasta).find(x=>ejec[x]) || '';
+    // El portafolio: el campo de texto más largo que no sea ISIN ni ticker.
+    const port = c.filter(x=>
+      !/^[A-Z]{2}[A-Z0-9]{9}\d$/i.test(String(x).trim()) &&
+      !/EQUITY/i.test(x) && !/^(BUY|SELL|B|S)$/i.test(String(x).trim()) &&
+      !isFinite(_numCanasta(x)))
+      .sort((a,b)=>b.length - a.length)[0] || '';
+    if(!tk) return;
+    alloc.push({ port: String(port).trim(), ticker: tk, units, isin: isin || '' });
+  });
+
+  if(!Object.keys(ejec).length || !alloc.length){
+    cont.innerHTML = `<div style="color:var(--amber,#f59e0b);font-size:12.5px;">
+      No se pudo leer alguno de los dos cuadros. Revisa que traigan ticker y cantidad.</div>`;
+    return;
+  }
+
+  // ---- Validación: las cantidades tienen que cuadrar ----
+  const porTicker = {};
+  alloc.forEach(a=>{ porTicker[a.ticker] = (porTicker[a.ticker]||0) + a.units; });
+  const avisos = [];
+  Object.keys(ejec).forEach(tk=>{
+    const e = ejec[tk].qty, a = porTicker[tk] || 0;
+    if(Math.abs(e - a) > 0.001){
+      avisos.push(`${tk}: se ejecutaron ${fmtInt(e)} y el allocation reparte ${fmtInt(a)}`);
+    }
+  });
+  Object.keys(porTicker).forEach(tk=>{
+    if(!ejec[tk]) avisos.push(`${tk}: está en el allocation pero no en la ejecución`);
+  });
+  // Los portafolios tienen que existir en la ficha del cliente.
+  const ports = cfg.portafolios || [];
+  const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const sinPort = [...new Set(alloc.map(a=>a.port))].filter(pz=>{
+    const k = lim(pz);
+    return !ports.some(x=>{ const n = lim(x); return n === k || n.includes(k) || k.includes(n); });
+  });
+  sinPort.forEach(pz=> avisos.push(`El portafolio "${pz}" no está en la ficha de ${cfg.nombre||cli}`));
+
+  _canastaRVI = { ejec, alloc, avisos, cliente: cli };
+
+  const filas = alloc.map(a=>{
+    const e = ejec[a.ticker] || {};
+    const bruto = (Number(a.units)||0) * (Number(e.precio)||0);
+    return `<tr style="border-top:1px solid var(--border,#232938);">
+      <td style="padding:4px 8px;">${a.port}</td>
+      <td style="padding:4px 8px;font-weight:600;">${a.ticker}</td>
+      <td style="padding:4px 8px;font-size:10.5px;opacity:.7;">${a.isin}</td>
+      <td style="padding:4px 8px;">${e.lado || 'Buy'}</td>
+      <td style="padding:4px 8px;text-align:right;">${fmtInt(a.units)}</td>
+      <td style="padding:4px 8px;text-align:right;">${e.precio ? e.precio.toFixed(4) : '—'}</td>
+      <td style="padding:4px 8px;text-align:right;">${fmtMoney(bruto)}</td>
+    </tr>`;
+  }).join('');
+
+  cont.innerHTML = `
+    ${avisos.length
+      ? `<div style="background:rgba(245,158,11,.10);border-left:3px solid var(--amber,#f59e0b);
+           border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:10px;">
+           ${avisos.map(a=>`<div style="color:var(--amber,#f59e0b);">⚠ ${a}</div>`).join('')}</div>`
+      : `<div style="font-size:12px;color:var(--buy,#22c55e);margin-bottom:10px;">
+           ✓ Las cantidades cuadran · ${Object.keys(ejec).length} especie(s) ·
+           ${[...new Set(alloc.map(a=>a.port))].length} portafolio(s)</div>`}
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <tr style="opacity:.6;font-size:10px;letter-spacing:.3px;">
+        <th style="text-align:left;padding:4px 8px;">PORTAFOLIO</th>
+        <th style="text-align:left;padding:4px 8px;">TICKER</th>
+        <th style="text-align:left;padding:4px 8px;">ISIN</th>
+        <th style="text-align:left;padding:4px 8px;">LADO</th>
+        <th style="text-align:right;padding:4px 8px;">UNITS</th>
+        <th style="text-align:right;padding:4px 8px;">PRECIO</th>
+        <th style="text-align:right;padding:4px 8px;">BRUTO</th>
+      </tr>
+      ${filas}
+    </table>
+    <div style="margin-top:12px;">
+      <button class="btn small purple" onclick="aplicarCanastaRVI()"
+        ${avisos.length ? 'title="Hay avisos: revísalos antes de aplicar"' : ''}>
+        Aplicar y guardar las ${alloc.length} línea(s)</button>
+    </div>`;
+}
+
 function abrirPegarAllocIARVI(){
   const cli = document.getElementById('tc-cliente').value;
   if(!cli){ alert('Selecciona primero el cliente RVI.'); return; }
@@ -17672,6 +17945,25 @@ const clientesRVI = {
     comETF:0.007, comUCIT:0.1/100, comADR:0.007,
     portafolios:['ITAU FIC MEDIANO PLAZO','ITAU FIC RENTA FIJA DOLAR','ITAU OTTO'],
   },
+  FIDUCIARIA_SURA: {
+    nombre:'FIDUCIARIA SURA',
+    // El TAX ID del Trade Confirmation es SIEMPRE el de Credicorp.
+    taxId:'860.068.182-5',
+    // ETF y ADR por acción; UCITS al 0,1% del gross. Mínimo USD 20
+    // (Sergio, 17-sep).
+    comETF:0.01, comUCIT:0.1/100, comADR:0.01,
+    portafolios:['FIDUCIARIA SURA - PA MASAN INVERSIONES',
+                 'FIDUCIARIA SURA - PA MOCHUELO',
+                 'FIDUCIARIA SURA - PA MONCAUDELO',
+                 'FIDUCIARIA SURA - PA PEREZ TORO',
+                 'FIDUCIARIA SURA - PA TRILIUM',
+                 'FIDUCIARIA SURA - PA FAMCHAV',
+                 'FIDUCIARIA SURA - PA FICUS BENJAMINA',
+                 'FIDUCIARIA SURA - PA PRIMIUS',
+                 // Aparece en los allocations pero faltaba en la lista; queda
+                 // pendiente su deceval (Sergio, 17-sep).
+                 'FIDUCIARIA SURA - PA PIEDRAMART GROUP'],
+  },
   CAXDAC: {
     nombre:'CAXDAC',
     // El TAX ID del Trade Confirmation es SIEMPRE el de Credicorp, no el del
@@ -19665,7 +19957,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-16 20:52 UTC · v105';
+const BUILD_ID = '2026-09-17 16:45 UTC · v106';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
