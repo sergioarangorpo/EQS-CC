@@ -13855,8 +13855,7 @@ function asignarDesdeEmsxRVL(){
     const r = allocDesdeEmsx(cliente, porOrden[oid]);
     if(r.ok){
       _allocPorOrden[oid] = r.allocations.map(a=>({ portId:a.portafolio.id, cantidad:a.cantidad }));
-      ok.push({ oid, n:r.allocations.length,
-                ports:r.allocations.map(a=>a.portafolio.nombre).join(', ') });
+      ok.push({ oid, ports:r.allocations.map(a=>a.portafolio.nombre).join(', ') });
     }else{
       const t = (_fidessaTradesRaw||{})[oid] || {};
       fallan.push(`${nemoCanonico(t.security,'fidessa')||oid}: ` +
@@ -20087,7 +20086,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 18:42 UTC · v112';
+const BUILD_ID = '2026-09-17 19:14 UTC · v113';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
