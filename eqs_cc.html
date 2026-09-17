@@ -13534,34 +13534,12 @@ function renderFolioSummary(){
 // portafolios (mismo % que el reparto), y de ahí saca por portafolio la
 // cantidad, precio ponderado, bruto, comisión (según bloque/pantalla de los
 // folios de esa orden), IVA y giro neto. Luego agrega por portafolio.
-function renderValidadorAlloc(){
-  const wrap = document.getElementById('validadorAllocWrap');
-  const body = document.getElementById('validadorAllocBody');
-  const hint = document.getElementById('validadorAllocHint');
-  if(!wrap || !body) return;
-  const cliente = document.getElementById('filtroCliente').value;
-  const cfg = cliente ? getClienteDB(cliente) : null;
-  if(!cfg || !cfg.reparteManual){ wrap.style.display='none'; return; }
+// EL CÁLCULO DEL RESUMEN, en un solo sitio. El panel y el Excel usaban caminos
+// distintos y por eso el panel salía con las 4 líneas y el archivo con 3
+// (Sergio, 17-sep).
+function _accAsignadoRVL(cliente, cfg, ordenes, tarifaUnica, comBloque, comPantalla){
+  const acc = {};
 
-  const ordenes = getOrdenesConAlloc(true);
-  if(ordenes.length===0){ wrap.style.display='none'; return; }
-  wrap.style.display='';
-
-  // Clientes de tarifa ÚNICA (BTG 0,1%, FIDUASHMORE 0,09%, AVAL 0,1%...): la
-  // comisión sale de clientesDB, NO del selector "Comisión del día". Antes el
-  // reporte tomaba siempre el selector: si estaba en el default de Cruce
-  // (0,15%) el archivo de BTG salía con la tarifa equivocada, y la marca
-  // bloque/pantalla movía un número que para estos clientes no se mueve.
-  // Para los de tarifa variable no cambia nada: sigue mandando el selector.
-  const tarifaUnica = (cfg.comisionBloque != null && cfg.comisionBloque === cfg.comisionPantalla)
-    ? cfg.comisionBloque : null;
-  const comBloque   = tarifaUnica != null ? tarifaUnica : leerComisionSeleccionada('Cruce');
-  const comPantalla = tarifaUnica != null ? tarifaUnica : leerComisionSeleccionada('Pantalla');
-  const ports = cfg.portafolios || [];
-  const nomPort = id => { const p = ports.find(x=>x.id===id); return p?p.nombre:id; };
-
-  // Acumulador por portafolio.
-  const acc = {}; // portId -> {cant, bruto, com, lado, especie}
   ordenes.forEach(o=>{
     const folios = foliosFidessa.filter(f=>String(f.parentOrderId)===String(o.parentOrderId));
     if(folios.length===0) return;
@@ -13601,6 +13579,61 @@ function renderValidadorAlloc(){
       acc[k].com += bruto * comOrden;
     });
   });
+
+  return acc;
+}
+
+// Las filas del resumen, tal como se ven abajo. Es lo que usa el Excel.
+function lineasAsignadasRVL(cliente){
+  const cfg = cliente ? getClienteDB(cliente) : null;
+  if(!cfg) return [];
+  const ordenes = getOrdenesConAlloc(true);
+  if(!ordenes.length) return [];
+  const tarifaUnica = (cfg.comisionBloque != null && cfg.comisionBloque === cfg.comisionPantalla)
+    ? cfg.comisionBloque : null;
+  const comBloque   = tarifaUnica != null ? tarifaUnica : leerComisionSeleccionada('Cruce');
+  const comPantalla = tarifaUnica != null ? tarifaUnica : leerComisionSeleccionada('Pantalla');
+  const acc = _accAsignadoRVL(cliente, cfg, ordenes, tarifaUnica, comBloque, comPantalla);
+  const ports = cfg.portafolios || [];
+  return Object.keys(acc).map(k=>{
+    const d = acc[k];
+    const port = ports.find(x=>x.id === d.portId) || { nombre: d.portId };
+    const precio = d.cant > 0 ? d.bruto / d.cant : 0;
+    const comPct = d.bruto > 0 ? d.com / d.bruto : 0;
+    const iva = port.iva ? d.com * 0.19 : 0;
+    const neto = d.lado === 'Venta' ? (d.bruto - d.com - iva) : (d.bruto + d.com + iva);
+    return { port, especie:d.especie, lado:d.lado, cant:d.cant, precio,
+             comPct, com:d.com, iva, neto };
+  });
+}
+
+function renderValidadorAlloc(){
+  const wrap = document.getElementById('validadorAllocWrap');
+  const body = document.getElementById('validadorAllocBody');
+  const hint = document.getElementById('validadorAllocHint');
+  if(!wrap || !body) return;
+  const cliente = document.getElementById('filtroCliente').value;
+  const cfg = cliente ? getClienteDB(cliente) : null;
+  if(!cfg || !cfg.reparteManual){ wrap.style.display='none'; return; }
+
+  const ordenes = getOrdenesConAlloc(true);
+  if(ordenes.length===0){ wrap.style.display='none'; return; }
+  wrap.style.display='';
+
+  // Clientes de tarifa ÚNICA (BTG 0,1%, FIDUASHMORE 0,09%, AVAL 0,1%...): la
+  // comisión sale de clientesDB, NO del selector "Comisión del día". Antes el
+  // reporte tomaba siempre el selector: si estaba en el default de Cruce
+  // (0,15%) el archivo de BTG salía con la tarifa equivocada, y la marca
+  // bloque/pantalla movía un número que para estos clientes no se mueve.
+  // Para los de tarifa variable no cambia nada: sigue mandando el selector.
+  const tarifaUnica = (cfg.comisionBloque != null && cfg.comisionBloque === cfg.comisionPantalla)
+    ? cfg.comisionBloque : null;
+  const comBloque   = tarifaUnica != null ? tarifaUnica : leerComisionSeleccionada('Cruce');
+  const comPantalla = tarifaUnica != null ? tarifaUnica : leerComisionSeleccionada('Pantalla');
+  const ports = cfg.portafolios || [];
+  const nomPort = id => { const p = ports.find(x=>x.id===id); return p?p.nombre:id; };
+
+  const acc = _accAsignadoRVL(cliente, cfg, ordenes, tarifaUnica, comBloque, comPantalla);
 
   // La clave ahora es portafolio|especie|lado, así que el portId se lee del
   // propio objeto.
@@ -15479,7 +15512,7 @@ async function generarReporte(){
     }
   }
 
-  const loteOps = [];
+  let loteOps = [];
   const loteDet = [];
 
   // El consolidado se arma ORDEN POR ORDEN, cada una con SU especie, SU precio
@@ -15559,6 +15592,9 @@ async function generarReporte(){
       const fila = {
         id: Date.now() + Math.random(),
         loteId,
+        // La orden de Fidessa viaja con la fila: es lo que evita que dos
+        // órdenes al mismo portafolio se fusionen (Sergio, 17-sep).
+        parentOrderId: o.parentOrderId,
         hora, cliente: getClienteDB(cliente).nombre, portafolio: port,
         especie: espOrden, lado: ladoOrden,
         cantidad: a.cantidad, precio: pppOrden, comPct: comOrden, comMonto: comisionMonto,
@@ -15943,6 +15979,9 @@ async function generarReporte(){
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos Operaciones + BO');
     renderFidessaTradesPanel();
   } else if(formato === 'colfondos'){
+    // `loteOps` ya viene ORDEN POR ORDEN y cada fila lleva su parentOrderId, que
+    // es lo que mantiene separadas las dos órdenes al mismo portafolio
+    // (Sergio, 17-sep).
     const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
     const ok = await previsualizarReporte({
       titulo: `${getClienteDB(cliente).nombre} — ${etiquetaVersion(version)}`,
@@ -17005,7 +17044,12 @@ function repartirFolioAFolio(cantidades, folios){
 }
 
 function repartirFoliosColfondos(alocaciones, folios){
-  const clave = x => String(nemoCanonico(x.especie)||x.especie||'') + '|' + String(x.lado||'');
+  // La clave incluye la ORDEN de Fidessa: los folios de una orden se reparten
+  // SOLO entre los portafolios de ESA orden. Sin esto, con dos órdenes de la
+  // misma especie cada folio se esparcía entre todos los portafolios y salían
+  // más filas de las debidas (Sergio, 17-sep).
+  const clave = x => String(x.parentOrderId || '') + '|' +
+                     String(nemoCanonico(x.especie)||x.especie||'') + '|' + String(x.lado||'');
   const grupos = [...new Set((alocaciones||[]).map(clave))];
   if(grupos.length > 1){
     let salida = [];
@@ -17763,7 +17807,12 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
       f.folio,
       ...construirFilaBase(op.portafolio, f.especie, f.lado, cantidad, f.precio, comPct, comMon, ivaMon, neto, f.fechaReg, f.fechaCum),
     ]);
-    const k = op.portafolio.id + '|' + f.especie + '|' + f.lado;
+    // La clave lleva la ORDEN de Fidessa: dos órdenes al mismo portafolio y
+    // especie se reportan por separado. Agrupar solo por portafolio las sumaba
+    // en una línea —las de 56.000 y 14.700 salían como 70.700 al promedio de
+    // todo— aunque el resumen de abajo ya las mostrara bien (Sergio, 17-sep).
+    const _oid = String(op.parentOrderId || f.parentOrderId || '');
+    const k = _oid + '|' + op.portafolio.id + '|' + f.especie + '|' + f.lado;
     const a = acum.get(k) || { portafolio:op.portafolio, especie:f.especie, lado:f.lado,
                                cantidad:0, bruto:0, com:0, iva:0, neto:0,
                                fechaReg:f.fechaReg, fechaCum:f.fechaCum };
@@ -20138,7 +20187,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 19:38 UTC · v115';
+const BUILD_ID = '2026-09-17 19:50 UTC · v116';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
