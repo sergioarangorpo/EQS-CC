@@ -11042,10 +11042,161 @@ function descargarCORSeleccionados(){
   descargarCOR(sel);
 }
 
+// =====================================================================
+// LÍNEAS DEL COR — se guardan AL REPORTAR, no después
+// ---------------------------------------------------------------------
+// El COR se reconstruía desde el registro, repartiendo lo reportado entre los
+// folios. Esa reconstrucción puede salir distinta a lo enviado: el 18-sep, con
+// COLFONDOS en dos correos, los dos folios grandes absorbieron cada uno el
+// total del otro correo (2.095.570 acciones contra 1.047.785 reportadas).
+//
+// Ahora se guardan CUANDO SE REPORTA, con los mismos folios y cantidades que
+// van al detalle del cliente. El archivo es lo acumulado del día: sin repartos
+// ni remanentes. Lo que se reporta y lo que se sube a bolsa son lo mismo por
+// construcción (Sergio, 18-sep).
+// =====================================================================
+let _corLineas = [];
+
+async function cargarCorLineas(){
+  try{
+    _corLineas = await supaFetch('cor_lineas',
+      `fecha=eq.${_hoyISO()}&order=folio.asc&limit=5000`) || [];
+    if(_corLineas.length) console.log(`COR: ${_corLineas.length} línea(s) guardadas hoy`);
+  }catch(e){ console.warn('cor_lineas:', e.message); _corLineas = []; }
+}
+
+// ¿Este cliente lleva COR? Solo los locales, que tienen deceval en sus
+// portafolios. Los brokers extranjeros no generan estas líneas.
+function clienteLlevaCOR(claveCli){
+  const cfg = getClienteDB(claveCli) || {};
+  return (cfg.portafolios||[]).some(p=>String(p.deceval||'').trim());
+}
+
+// Guarda las líneas del COR de lo que se acaba de reportar. `loteDet` son los
+// folios tal como fueron al detalle del cliente, ya con su portafolio.
+async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version){
+  if(!clienteLlevaCOR(claveCli)) return 0;
+  const cfg = getClienteDB(claveCli) || {};
+  const ports = cfg.portafolios || [];
+  const norm = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const hoy = _hoyISO();
+  const nombreCli = cfg.nombre || claveCli;
+
+  // Una fila por folio y fracción, agrupando por folio + portafolio.
+  const porFolioPort = {};
+  (loteDet||[]).forEach(f=>{
+    const q = Number(f.cantidad) || 0;
+    if(!q) return;
+    const nomPort = f.portNombre || (f.portafolio && f.portafolio.nombre) || String(f.portafolio||'');
+    const port = ports.find(x=>norm(x.nombre) === norm(nomPort)) ||
+                 ports.find(x=>norm(x.nombre).includes(norm(nomPort)) ||
+                               norm(nomPort).includes(norm(x.nombre))) || null;
+    if(!port || !String(port.deceval||'').trim()) return;
+    const k = String(f.parentOrderId||'') + '|' + String(f.folio||f.id) + '|' + port.deceval;
+    const a = porFolioPort[k] || (porFolioPort[k] = { f, port, cantidad:0, orden:f.parentOrderId||'' });
+    a.cantidad += q;
+  });
+
+  const filas = [];
+  let n = 0;
+  Object.values(porFolioPort).forEach(a=>{
+    const f = a.f, port = a.port;
+    n++;
+    const orion = String(port.orion||'');
+    const esNit = orion.replace(/\D/g,'').length === 9;
+    const pct = Number(f.comisionPct) || 0;
+    filas.push({
+      clave: `${hoy}|${nombreCli}|${a.orden}|${f.folio||f.id}|${port.deceval}`,
+      fecha: hoy, modulo, cliente: nombreCli, parent_order_id: a.orden,
+      col_cliente: orion,
+      dv_cliente: esNit ? (port.dv || '') : '',
+      especial_fiduciario: esNit ? '' : (port.especialFid || ''),
+      nemotecnico: f.especie,
+      folio: String(folioCOR(f.folio, f.especie, f.fechaReg)),
+      cantidad_fraccion: a.cantidad,
+      precio: Number(f.precio) || 0,
+      comision: Number(pct.toFixed(4)),
+      usuario_bolsa: '',
+      cv: f.lado === 'Venta' ? 'V' : 'C',
+      fraccion: n,
+      deceval: String(port.deceval||''),
+      medioverificable: '5',
+      fecha_folio: hoy,
+      usuariocomercial: 'SARANGO',
+      idorioncomercial: (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
+      nombreordenante: '',
+      version: version || 1,
+      generado_por: (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
+    });
+  });
+  if(!filas.length) return 0;
+
+  try{
+    // Un reenvío del MISMO DÍA reemplaza lo anterior de esas órdenes; los días
+    // anteriores no se tocan.
+    const ordenes = [...new Set(filas.map(x=>x.parent_order_id).filter(Boolean))];
+    for(const oid of ordenes){
+      await fetch(`${SUPA_URL}/rest/v1/cor_lineas?fecha=eq.${hoy}` +
+        `&cliente=eq.${encodeURIComponent(nombreCli)}` +
+        `&parent_order_id=eq.${encodeURIComponent(oid)}`,
+        { method:'DELETE', headers:{ apikey:SUPA_KEY, Authorization:`Bearer ${SUPA_KEY}` } });
+    }
+    await guardarEnLotesSupabase('cor_lineas', filas);
+    await cargarCorLineas();
+    console.log(`COR: ${filas.length} línea(s) guardadas para ${nombreCli}`);
+  }catch(e){ console.warn('No se pudieron guardar las líneas del COR:', e.message); }
+  return filas.length;
+}
+
+// Las filas del archivo, desde lo GUARDADO al reportar.
+function filasCORGuardadas(modulo, cliente){
+  return (_corLineas||[])
+    .filter(x=>x.modulo === modulo && x.cliente === cliente)
+    .sort((a,b)=> String(a.folio).localeCompare(String(b.folio)) ||
+                  (Number(a.fraccion)||0) - (Number(b.fraccion)||0))
+    .map(x=>({
+      cliente: x.col_cliente || '',
+      dv_cliente: x.dv_cliente || '',
+      EspecialFiduciario: x.especial_fiduciario || '',
+      Nemotecnico: x.nemotecnico || '',
+      Folio: x.folio || '',
+      CantidadFraccion: Number(x.cantidad_fraccion) || 0,
+      precio: Number(x.precio) || 0,
+      Comision: Number(x.comision) || 0,
+      usuarioBolsa: x.usuario_bolsa || '',
+      'C/V': x.cv || '',
+      Fraccion: Number(x.fraccion) || 0,
+      deceval: x.deceval || '',
+      medioverificable: 5,
+      fechaFoliio: x.fecha_folio ? parseFechaLocal(x.fecha_folio) : new Date(),
+      usuariocomercial: x.usuariocomercial || 'SARANGO',
+      idorioncomercial: x.idorioncomercial || 'SAR',
+      nombreordenante: x.nombreordenante || '',
+      _cliente: cliente,
+    }));
+}
+
 // Arma las filas del COR a partir de lo que ya se reportó. Se apoya en los
 // folios de Fidessa, que son los que llevan el TCN y el reparto por portafolio.
 function filasCORDeCliente(modulo, cliente){
-  const lineas = _reportesGenerados.filter(r=>r.modulo===modulo && r.cliente===cliente);
+  // LO GUARDADO AL REPORTAR MANDA. Es lo mismo que fue al detalle del cliente,
+  // folio por folio, así que no hay nada que repartir ni reconstruir
+  // (Sergio, 18-sep).
+  const guardadas = filasCORGuardadas(modulo, cliente);
+  if(guardadas.length) return guardadas;
+
+  // Respaldo, solo para lo reportado ANTES de que existiera el guardado: se
+  // reconstruye desde el registro. Puede no cuadrar si el cliente se reportó
+  // varias veces en el día.
+  // SOLO LA ÚLTIMA VERSIÓN DE CADA LÍNEA. Tomaba todas las versiones, así que
+  // cuando un cliente se reporta en DOS CORREOS el COR sumaba los dos envíos y
+  // mandaba a bolsa el doble de lo reportado: el 18-sep salió con 2.095.570
+  // acciones de EXITO cuando se reportaron 1.047.785 (Sergio, 18-sep).
+  //
+  // Lo que se sube a bolsa y lo que se le reporta al cliente TIENEN que ser lo
+  // mismo; si no cuadran es un problema de otro nivel.
+  const lineas = ultimaVersionPorLinea(
+    _reportesGenerados.filter(r=>r.modulo===modulo && r.cliente===cliente));
   if(!lineas.length) return [];
   // El identificador del registro es "ESPECIE|Lado#Portafolio", no el Parent
   // Order ID de Fidessa. Para encontrar el reparto se buscan las órdenes del
@@ -16065,7 +16216,7 @@ async function generarReporte(){
       medio: window._porvMedio || 'BBL',
     });
     window._sufijoReporte = '';
-    const nuevas = await registrarLoteRVL(cliente, loteOps, version);
+    const nuevas = await registrarLoteRVLConCOR(cliente, loteOps, version, loteDet);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'CREDICORPCAPITAL-PORVENIR + Archivo plano');
     renderFidessaTradesPanel();
   } else if(formato === 'horz'){
@@ -16238,7 +16389,7 @@ async function generarReporte(){
     window._sufijoReporte = sufijoVersion(version);
     await generarReporteSkandia(cliente, loteDetSk || loteDet);
     window._sufijoReporte = '';
-    const nuevas = await registrarLoteRVL(cliente, loteOps, version);
+    const nuevas = await registrarLoteRVLConCOR(cliente, loteOps, version, loteDet);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos Operaciones + BO');
     renderFidessaTradesPanel();
   } else if(formato === 'colfondos'){
@@ -16258,7 +16409,7 @@ async function generarReporte(){
     window._sufijoReporte = sufijoVersion(version);
     await generarReporteColfondos(cliente, loteOps, loteDet);
     window._sufijoReporte = '';
-    const nuevas = await registrarLoteRVL(cliente, loteOps, version);
+    const nuevas = await registrarLoteRVLConCOR(cliente, loteOps, version, loteDet);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos Operaciones + Detalle');
     renderFidessaTradesPanel();
   } else if(formato === 'andes_fxequity'){
@@ -16932,6 +17083,18 @@ function revisarComisiones(cliente, folios){
 // con su especie, su cantidad y su comisión. Antes recibía `loteDet` (los
 // folios crudos) y había que reconstruir el reparto, cosa que salía mal
 // (Sergio, 01-sep).
+// Guarda las líneas del COR junto con el registro del reporte. Se llama con el
+// DETALLE (los folios), que es lo que va al cliente (Sergio, 18-sep).
+async function registrarLoteRVLConCOR(cliente, loteOps, version, loteDet){
+  const nuevas = await registrarLoteRVL(cliente, loteOps, version);
+  try{
+    if(typeof guardarCorLineasDeReporte === 'function'){
+      await guardarCorLineasDeReporte('RVL', cliente, loteDet || [], version);
+    }
+  }catch(e){ console.warn('COR:', e.message); }
+  return nuevas;
+}
+
 async function registrarLoteRVL(cliente, loteOps, version){
   // Respaldo: si no llegó el reparto (`loteOps` vacío) pero sí hay folios
   // seleccionados, se arma desde ellos. El archivo se generaba bien pero el
@@ -20490,7 +20653,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-18 17:13 UTC · v126';
+const BUILD_ID = '2026-09-18 18:09 UTC · v129';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -20529,6 +20692,7 @@ const _repintarDash = () => {
   }
 };
 if(typeof cargarHistoricoRVI === 'function') cargarHistoricoRVI().then(_repintarDash).catch(()=>{});
+if(typeof cargarCorLineas === 'function') cargarCorLineas();
 if(typeof cargarRegistroCOR === 'function'){
   cargarRegistroCOR().then(()=>{
     if(typeof renderModuloReportes === 'function') renderModuloReportes();
