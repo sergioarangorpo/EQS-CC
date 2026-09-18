@@ -12180,22 +12180,27 @@ function renderDashBarras(M){
       Object.keys(M[k].clientes).forEach(c=>{
         if(_dashCliente && c !== _dashCliente) return;
         const v = M[k].clientes[c][campo];
-        if(v > 0) filas.push({ cliente:c, mercado:k, moneda:M[k].moneda, valor:v,
-                               pend:M[k].clientes[c].pendiente });
+        // Entran también los NEGATIVOS: una pérdida en FX es información que hay
+        // que ver, y antes desaparecía de las barras aunque sí restara del
+        // total (Sergio, 18-sep).
+        if(Math.abs(v) > 0.5) filas.push({ cliente:c, mercado:k, moneda:M[k].moneda, valor:v,
+                                           pend:M[k].clientes[c].pendiente });
       });
     });
     if(!filas.length){
       cont.innerHTML = '<div class="field-note">Sin datos todavía.</div>';
       return;
     }
+    // El largo de la barra y el porcentaje van sobre el valor ABSOLUTO, para que
+    // una pérdida se vea igual de grande que una ganancia del mismo tamaño.
     const maxPorMoneda = {};
-    filas.forEach(f=>{ maxPorMoneda[f.moneda] = Math.max(maxPorMoneda[f.moneda]||0, f.valor); });
+    filas.forEach(f=>{ maxPorMoneda[f.moneda] = Math.max(maxPorMoneda[f.moneda]||0, Math.abs(f.valor)); });
     const totPorMoneda = {};
-    filas.forEach(f=>{ totPorMoneda[f.moneda] = (totPorMoneda[f.moneda]||0) + f.valor; });
+    filas.forEach(f=>{ totPorMoneda[f.moneda] = (totPorMoneda[f.moneda]||0) + Math.abs(f.valor); });
     const pinta = f => {
       const i = filas.indexOf(f);
-      const pct = f.valor / maxPorMoneda[f.moneda] * 100;
-      const share = f.valor / totPorMoneda[f.moneda] * 100;
+      const pct = Math.abs(f.valor) / (maxPorMoneda[f.moneda]||1) * 100;
+      const share = Math.abs(f.valor) / (totPorMoneda[f.moneda]||1) * 100;
       const txt = f.moneda === 'USD'
         ? '$' + f.valor.toLocaleString('es-CO',{maximumFractionDigits:0})
         : '$' + (f.valor/1e6).toLocaleString('es-CO',{maximumFractionDigits:1}) + ' MM';
@@ -12204,8 +12209,8 @@ function renderDashBarras(M){
         <span style="width:34px;font-size:10px;opacity:.6;">${f.mercado}</span>
         <span style="flex:1;background:rgba(255,255,255,.06);border-radius:3px;height:16px;display:block;">
           <span style="display:block;width:${pct.toFixed(1)}%;height:16px;border-radius:3px;
-                background:${paleta[i%paleta.length]};"></span></span>
-        <span style="width:96px;text-align:right;">${txt}</span>
+                background:${f.valor < 0 ? 'var(--sell,#ef4444)' : paleta[i%paleta.length]};"></span></span>
+        <span style="width:96px;text-align:right;${f.valor < 0 ? 'color:var(--sell,#ef4444);font-weight:700;' : ''}">${txt}</span>
         <span style="width:44px;text-align:right;opacity:.6;font-size:11px;">${share.toFixed(0)}%</span>
         ${f.pend && campo==='com' ? '<span style="color:var(--amber,#f59e0b);font-size:10px;">falta</span>' : '<span style="width:34px;"></span>'}
       </div>`;
@@ -20485,7 +20490,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-18 17:00 UTC · v125';
+const BUILD_ID = '2026-09-18 17:13 UTC · v126';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
