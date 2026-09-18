@@ -12265,9 +12265,15 @@ function renderDashTotales(M, campo, destino){
   const tarjeta = (moneda, etiqueta) => {
     const a = acum[moneda];
     if(!a.total && !a.pend) return '';
-    const detalle = Object.keys(a.por).filter(k=>a.por[k] > 0)
+    // Se muestran TODOS los mercados con valor, incluidos los NEGATIVOS: antes
+    // solo salían los positivos, así que una pérdida en FX restaba del total
+    // sin aparecer en el desglose y los números no cuadraban — el 18-sep el
+    // total decía 5,4 MM con RVL en 25,3 MM (Sergio, 18-sep).
+    const detalle = Object.keys(a.por).filter(k=>Math.abs(a.por[k]) > 0.5)
       .sort((x,y)=>a.por[y] - a.por[x])
-      .map(k=>`<span style="opacity:.75;">${k}</span> ${fmt(a.por[k], moneda)}`)
+      .map(k=>`<span style="opacity:.75;">${k}</span> <span style="${
+        a.por[k] < 0 ? 'color:var(--sell,#ef4444);font-weight:700;' : ''
+      }">${fmt(a.por[k], moneda)}</span>`)
       .join('<span style="opacity:.3;"> · </span>');
     // El volumen va en el color de acento; lo que ganamos, en verde.
     const col = esVol ? 'var(--accent,#818cf8)' : 'var(--buy,#22c55e)';
@@ -20479,7 +20485,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-17 23:03 UTC · v124';
+const BUILD_ID = '2026-09-18 17:00 UTC · v125';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
