@@ -11179,16 +11179,196 @@ function filasCORGuardadas(modulo, cliente){
 // Arma las filas del COR a partir de lo que ya se reportó. Se apoya en los
 // folios de Fidessa, que son los que llevan el TCN y el reparto por portafolio.
 function filasCORDeCliente(modulo, cliente){
-  // LO GUARDADO AL REPORTAR MANDA. Es lo mismo que fue al detalle del cliente,
-  // folio por folio, así que no hay nada que repartir ni reconstruir
-  // (Sergio, 18-sep).
+  // LO GUARDADO AL REPORTAR MANDA: es lo mismo que fue al detalle del cliente,
+  // folio por folio, sin repartir nada (Sergio, 18-sep).
   const guardadas = filasCORGuardadas(modulo, cliente);
   if(guardadas.length) return guardadas;
 
-  // SIN RESPALDO: el COR sale SOLO de lo guardado al reportar. La
-  // reconstrucción desde el registro era un segundo camino que podía no cuadrar
-  // con lo enviado, y ya falló una vez con COLFONDOS (Sergio, 18-sep).
-  return [];
+  // RESPALDO, mientras no todos los caminos de reporte guardan sus líneas: hoy
+  // solo lo hacen 4 (Colfondos, Porvenir y dos más). Al quitarlo el 21-sep, el
+  // COR de todos los clientes salió solo con Colfondos. Se reconstruye desde el
+  // registro con la última versión de cada línea. Sale en cuanto cada camino
+  // guarde su COR al reportar (Sergio, 21-sep).
+  return _filasCORReconstruidas(modulo, cliente);
+}
+
+function _filasCORReconstruidas(modulo, cliente){
+  // Solo la ÚLTIMA versión de cada línea, para no sumar reenvíos.
+  const lineas = ultimaVersionPorLinea(
+    _reportesGenerados.filter(r=>r.modulo===modulo && r.cliente===cliente));
+  if(!lineas.length) return [];
+  // El identificador del registro es "ESPECIE|Lado#Portafolio", no el Parent
+  // Order ID de Fidessa. Para encontrar el reparto se buscan las órdenes del
+  // cliente cuya especie y lado coincidan con lo reportado — antes se comparaba
+  // contra el POID y no encontraba nada, así que el COR salía vacío
+  // (Sergio, 04-sep).
+  const reportadas = new Set(lineas.map(r=>
+    String(r.especie||'').toUpperCase() + '|' + String(r.lado||'')));
+  const poids = new Set();
+  Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
+    const t = _fidessaTradesRaw[oid];
+    if(normalizarGrupo(t.grupo) !== normalizarGrupo(cliente) &&
+       (getClienteDB(normalizarGrupo(t.grupo)).nombre||'') !== cliente) return;
+    const k = String(nemoCanonico(t.security,'fidessa')||'').toUpperCase() + '|' + String(t.lado||'');
+    if(reportadas.has(k)) poids.add(String(oid));
+  });
+  // Respaldo: si el registro guardó el POID directamente (formato viejo).
+  lineas.forEach(r=>{
+    const p = String(r.parent_order_id||'').split('#')[0];
+    if((_fidessaTradesRaw||{})[p]) poids.add(p);
+  });
+  // Se busca la clave del cliente para poder leer sus portafolios.
+  const claveCli = Object.keys(clientesDB).find(k=>(getClienteDB(k).nombre||k) === cliente) || cliente;
+  const cfg = getClienteDB(claveCli);
+  const ports = cfg.portafolios || [];
+  // ===================================================================
+  // EL REPARTO SALE DEL REGISTRO, no de la memoria de la sesión.
+  // `_allocPorOrden` se pierde al recargar la página, y el COR se genera al
+  // CIERRE — cuando bien pudo haberse recargado, o cuando lo baja otra persona
+  // desde otro PC. Sin reparto, cada folio se mandaba entero a un portafolio
+  // genérico: el archivo del 04-sep salió con DOS líneas en vez de las 36 del
+  // reparto real (Sergio, 04-sep).
+  //
+  // En `reportes_generados` quedó una fila por portafolio con su cantidad, que
+  // es justo lo que el COR necesita. La memoria queda solo como respaldo.
+  // ===================================================================
+  const alloc = {};   // parentOrderId -> [{portId, cantidad}]
+  const norm = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  // Lo reportado, agrupado por especie+lado y por portafolio.
+  const repPorEspecie = {};
+  lineas.forEach(r=>{
+    const port = String(r.portafolios||'').trim();
+    const q = Number(r.cantidad) || 0;
+    if(!port || !q) return;
+    const k = String(r.especie||'').toUpperCase() + '|' + String(r.lado||'');
+    (repPorEspecie[k] = repPorEspecie[k] || []).push({ port, cantidad:q });
+  });
+  poids.forEach(oid=>{
+    const t = (_fidessaTradesRaw||{})[oid] || {};
+    const k = String(nemoCanonico(t.security,'fidessa')||'').toUpperCase() + '|' + String(t.lado||'');
+    const reparto = repPorEspecie[k];
+    if(reparto && reparto.length){
+      alloc[oid] = reparto.map(x=>{
+        // El portafolio se busca por nombre; el registro guarda el nombre completo.
+        const p = ports.find(y=>norm(y.nombre) === norm(x.port)) ||
+                  ports.find(y=>norm(y.nombre).includes(norm(x.port)) ||
+                                norm(x.port).includes(norm(y.nombre)));
+        return { portId: p ? p.id : null, cantidad: x.cantidad };
+      }).filter(a=>a.portId);
+    }
+    // Respaldo: si el reporte es de esta misma sesión, la memoria sirve igual.
+    if((!alloc[oid] || !alloc[oid].length) && (_allocPorOrden||{})[oid]){
+      alloc[oid] = _allocPorOrden[oid];
+    }
+  });
+
+  // La comisión sale de LO QUE SE LE REPORTÓ AL CLIENTE, no de un recálculo:
+  // el COR y la confirmación tienen que decir lo mismo. Recalcular hacía que
+  // Andes saliera con 0,08% cuando su tarifa es 0,1% (Sergio, 27-ago).
+  // La comisión se indexa por ESPECIE|LADO, no por el identificador del
+  // registro, que ahora lleva el portafolio pegado. Sin esto no encontraba la
+  // tarifa reportada y caía al recálculo, que daba 0,08% cuando Bancolombia va
+  // a 0,2% en bloque (Sergio, 04-sep).
+  const comPorOrden = {};
+  const comPorEspecie = {};
+  lineas.forEach(r=>{
+    const q = Number(r.cantidad) || 0;
+    const c = Number(r.comision) || 0;
+    const px = Number(r.precio) || 0;
+    if(!q || !px) return;
+    const pct = c / (q * px) * 100;    // `comision` viene en pesos
+    comPorOrden[String(r.parent_order_id)] = pct;
+    const k = String(r.especie||'').toUpperCase() + '|' + String(r.lado||'');
+    // Si una especie se reportó con varias tarifas, se pondera por monto.
+    const acc = comPorEspecie[k] || (comPorEspecie[k] = { bruto:0, com:0 });
+    acc.bruto += q * px;
+    acc.com += c;
+  });
+  Object.keys(comPorEspecie).forEach(k=>{
+    const a = comPorEspecie[k];
+    comPorEspecie[k] = a.bruto ? a.com / a.bruto * 100 : 0;
+  });
+
+  // Si el cliente reportó una sola especie, el promedio ponderado ES la tarifa;
+  // con varias, no sirve como respaldo.
+  const _unaSolaEspecie = new Set(lineas.map(r=>String(r.especie||'').toUpperCase())).size <= 1;
+  const filas = [];
+  const folios = (foliosFidessa||[]).filter(f=>poids.has(String(f.parentOrderId)));
+  // Agrupado por orden, para repartir cada folio entre los portafolios.
+  const porOrden = {};
+  folios.forEach(f=>{ (porOrden[f.parentOrderId] = porOrden[f.parentOrderId] || []).push(f); });
+
+  Object.keys(porOrden).forEach(oid=>{
+    const fol = porOrden[oid].slice().sort((a,b)=>Number(a.folio)-Number(b.folio));
+    const total = fol.reduce((a,f)=>a+f.cantidad,0);
+    // Reparto de la orden: si no hay allocation, todo va al portafolio del folio.
+    let reparto = (alloc[oid]||[]).filter(a=>a.cantidad>0)
+      .map(a=>{ const p = ports.find(x=>x.id===a.portId) || {}; return { port:p, cantidad:a.cantidad }; });
+    if(!reparto.length){
+      reparto = [{ port: ports.find(p=>p.id===cfg.autoPortafolio) || ports[0] || {}, cantidad: total }];
+    }
+    // Reparto entero por folio: ni una acción de más ni de menos.
+    const _matriz = repartirFolioAFolio(reparto.map(a=>a.cantidad), fol);
+    fol.forEach((f, _k)=>{
+      let n = 0;
+      reparto.forEach((a,i)=>{
+        const q = _matriz[_k][i];
+        if(q <= 0) return;
+        n++;
+        // La comisión sale de la TARIFA DEL FOLIO —bloque o pantalla, con el
+        // override por especie de cada cliente—, no de dividir el total
+        // reportado entre el bruto: con varias especies esa división daba
+        // promedios como 0,1079%, que no es ninguna tarifa real
+        // (Sergio, 07-sep).
+        let pct = Number(f.comisionPct);
+        if(pct == null || !isFinite(pct) || pct <= 0){
+          pct = (typeof comisionFolioPct === 'function') ? comisionFolioPct(claveCli, f) : 0;
+        }
+        // Los promedios ponderados solo se usan si la tarifa no se pudo
+        // resolver, y únicamente cuando el cliente reportó UNA sola especie.
+        if((pct == null || !isFinite(pct) || pct <= 0) && _unaSolaEspecie){
+          pct = comPorOrden[String(oid)];
+          if(pct == null || !isFinite(pct) || pct <= 0){
+            pct = comPorEspecie[String(f.especie||'').toUpperCase() + '|' + String(f.lado||'')];
+          }
+        }
+        filas.push({
+          cliente: a.port.orion || '',            // Código Orión — llega con la tabla de Miguel
+          // El DV solo se manda cuando el Código Orión es el NIT (9 dígitos),
+          // como el Fondo Abierto por Compartimentos. En los códigos cortos va
+          // vacío (Sergio, 04-sep).
+          dv_cliente: (String(a.port.orion||'').replace(/\D/g,'').length === 9)
+            ? (a.port.dv || '') : '',
+          // Con Código Orión de 9 dígitos (el NIT) va el DV y el Especial
+          // Fiduciario queda VACÍO; con código corto es al revés
+          // (Sergio, 04-sep).
+          EspecialFiduciario: (String(a.port.orion||'').replace(/\D/g,'').length === 9)
+            ? '' : (a.port.especialFid || ''),
+          Nemotecnico: f.especie,
+          Folio: folioCOR(f.folio, f.especie, f.fechaReg),
+          CantidadFraccion: q,
+          precio: f.precio,
+          Comision: Number(pct.toFixed(4)),       // 0.08 = 0,08%, sin el signo
+          usuarioBolsa: '',
+          'C/V': f.lado === 'Venta' ? 'V' : 'C',
+          Fraccion: n,
+          deceval: a.port.deceval || '',
+          medioverificable: 5,
+          // Fecha SIN hora, como el =HOY() de Excel: con hora la bolsa puede
+          // rechazar el archivo.
+          fechaFoliio: (()=>{ const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); })(),
+          usuariocomercial: 'SARANGO',
+          idorioncomercial: 'SAR',
+          nombreordenante: '',
+          _cliente: cliente,
+        });
+      });
+    });
+  });
+  // Ordenado por folio y luego por fracción, que es como se lee en bolsa.
+  filas.sort((a,b)=> String(a.Folio).localeCompare(String(b.Folio)) ||
+                     (Number(a.Fraccion)||0) - (Number(b.Fraccion)||0));
+  return filas;
 }
 
 // =====================================================================
@@ -20510,7 +20690,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-21 20:51 UTC · v132';
+const BUILD_ID = '2026-09-21 20:57 UTC · v133';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
