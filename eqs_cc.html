@@ -14392,7 +14392,9 @@ async function aplicarCanastaRVI(){
     // Comisión del cliente: UCITS como % del gross, ETF/ADR por acción.
     // Siempre con el mínimo de USD 20.
     const base = tipo === 'UCIT' ? gross * (cfg.comUCIT||0) : qty * (cfg.comETF||0);
-    const cost = Math.max(base, 20);
+    // El mínimo de USD 20 respeta la lista de exentos (Protección, Colfondos,
+    // Porvenir). Antes se aplicaba a todos sin mirar (Sergio, 18-sep).
+    const cost = costoClienteRVI(cfg.nombre || cliente, base);
     const secFee = secFeeRVI(tipo, e.lado === 'Sell' ? 'Sell' : 'Buy', gross, isin);
     const net = e.lado === 'Sell' ? gross - cost - secFee : gross + cost;
 
@@ -18549,7 +18551,8 @@ const clientesRVI = {
     // El TAX ID del Trade Confirmation es SIEMPRE el de Credicorp, no el del
     // cliente (Sergio, 18-sep).
     taxId:'860.068.182-5',
-    // UCITS al 0,04% del gross; ETF y ADR a 0,004 por acción. Mínimo USD 20.
+    // UCITS al 0,04% del gross; ETF y ADR a 0,004 por acción. SIN mínimo de
+    // USD 20: está en RVI_SIN_MINIMO, exenta por volumen (Sergio, 18-sep).
     comETF:0.004, comUCIT:0.04/100, comADR:0.004,
     // En NOMBRE CORTO, que es como llegan en el Account de EMSX. Se quitaron los
     // nombres largos —OBLIGATORIO MODERADO, MAYOR RIESGO, CONSERVADOR—, que eran
@@ -20669,7 +20672,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-21 17:17 UTC · v130';
+const BUILD_ID = '2026-09-21 17:23 UTC · v131';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
