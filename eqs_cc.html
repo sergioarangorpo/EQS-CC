@@ -11080,11 +11080,40 @@ async function cargarCorLineas(){
   }catch(e){ console.warn('cor_lineas:', e.message); _corLineas = []; }
 }
 
-// ¿Este cliente lleva COR? Solo los locales, que tienen deceval en sus
-// portafolios. Los brokers extranjeros no generan estas líneas.
+// ¿Este cliente lleva COR? Manda la CATEGORÍA del maestro de grupos:
+// INSTITUCIONAL complementa en bolsa, EXTRANJEROS no —operan por cuentas
+// ómnibus y mandan el allocation al día siguiente, que el BO procesa aparte.
+//
+// Dos excepciones que sí complementan aunque sean extranjeros: ANDES y BTG
+// CAYMAN, que tienen NIT y deceval en sus portafolios (Sergio, 22-sep).
+const COR_EXTRANJEROS_SI = ['LARRAIN VIAL PP', 'ANDES', 'BTG PACTUAL PP', 'BTG CAYMAN'];
+
 function clienteLlevaCOR(claveCli){
   const cfg = getClienteDB(claveCli) || {};
+  const nombre = cfg.nombre || claveCli;
+  const g = (typeof grupoDeOperacion === 'function')
+    ? grupoDeOperacion(nombre, '', '') : null;
+  const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(g){
+    const cat = String(g.categoria||'').toUpperCase();
+    if(cat === 'INSTITUCIONAL') return true;
+    if(cat === 'EXTRANJEROS'){
+      return COR_EXTRANJEROS_SI.some(x=>lim(g.grupo) === lim(x) ||
+                                        lim(g.grupo).includes(lim(x)));
+    }
+  }
+  // Sin maestro cargado: se cae a lo de antes, tener deceval.
   return (cfg.portafolios||[]).some(p=>String(p.deceval||'').trim());
+}
+
+// El comercial que firma el COR sale del TRADER del grupo (Sergio, 22-sep).
+const COR_USUARIOS = { SAR:'SARANGO', JAJ:'JJIMENEZ' };
+function comercialDeCOR(nombreCli){
+  const g = (typeof grupoDeOperacion === 'function')
+    ? grupoDeOperacion(nombreCli, '', '') : null;
+  const t = (g && g.trader) ? String(g.trader).toUpperCase().trim()
+                            : (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR');
+  return { usuario: COR_USUARIOS[t] || COR_USUARIOS.SAR, id: t };
 }
 
 // Guarda las líneas del COR de lo que se acaba de reportar. `loteDet` son los
@@ -11113,9 +11142,17 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version){
   });
 
   const filas = [];
+  const faltan = [];
+  const _com = comercialDeCOR(nombreCli);
   let n = 0;
   Object.values(porFolioPort).forEach(a=>{
     const f = a.f, port = a.port;
+    // Sin código Orión no se puede armar la fila: se frena y se dice cuál falta,
+    // en vez de mandar a bolsa el campo vacío (Sergio, 22-sep).
+    if(!String(port.orion||'').trim()){
+      faltan.push(`${port.nombre} (deceval ${port.deceval||'—'})`);
+      return;
+    }
     n++;
     const orion = String(port.orion||'');
     const esNit = orion.replace(/\D/g,'').length === 9;
@@ -11137,13 +11174,19 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version){
       deceval: String(port.deceval||''),
       medioverificable: '5',
       fecha_folio: hoy,
-      usuariocomercial: 'SARANGO',
-      idorioncomercial: (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
+      usuariocomercial: _com.usuario,
+      idorioncomercial: _com.id,
       nombreordenante: '',
       version: version || 1,
       generado_por: (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
     });
   });
+  if(faltan.length){
+    alert('No se guardaron las líneas del COR: falta el CÓDIGO ORIÓN de:\n\n' +
+          [...new Set(faltan)].map(x=>'   ' + x).join('\n') +
+          '\n\nSe puede reportar al cliente, pero el archivo del COR no se puede' +
+          ' armar hasta tener ese dato.');
+  }
   if(!filas.length) return 0;
 
   try{
@@ -15552,6 +15595,9 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
   // Una fila por (orden × portafolio): precio ponderado de la orden, comisión
   // ponderada por bloque/pantalla, lado y especie de los folios.
   const filasEquity = [];
+  // Los folios de todas las órdenes, para poder guardar el COR con el mismo
+  // detalle que va al pie del reporte (Sergio, 22-sep).
+  const _detalleCOR = [];
   completas.forEach(o=>{
     const folios = foliosFidessa.filter(f=>String(f.parentOrderId)===String(o.parentOrderId));
     if(folios.length===0) return;
@@ -15565,6 +15611,18 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
       if(a.cantidad<=0) return;
       filasEquity.push({ lado, especie, portNombre: nomPort(a.portId), cantidad:a.cantidad,
                          precio:precioPond, comPct:comOrden, parentOrderId:o.parentOrderId });
+    });
+    // Para el COR: los folios de ESTA orden, repartidos entre sus portafolios
+    // en la misma proporción. Es el detalle que va al pie del reporte.
+    repartirFoliosColfondos(
+      o.allocations.filter(a=>a.cantidad>0).map(a=>({
+        portafolio:{ id:a.portId, nombre:nomPort(a.portId) },
+        especie, lado, cantidad:a.cantidad, parentOrderId:o.parentOrderId })),
+      folios
+    ).forEach(({folio:f, alloc:op, cantidad})=>{
+      _detalleCOR.push({ ...f, cantidad, portNombre: op.portafolio.nombre,
+                         parentOrderId: o.parentOrderId,
+                         comisionPct: f.marca==='bloque' ? comBloque*100 : comPantalla*100 });
     });
   });
   if(filasEquity.length===0){ alert('No hay folios para las órdenes con reparto.'); return; }
@@ -15659,6 +15717,9 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
   // portafolio de cada línea. Antes se rearmaba desde los folios sin él, y por
   // eso BTG Cayman y Fiduashmore aparecían con el account vacío en el módulo
   // Reportes (Sergio, 02-sep).
+  if(typeof guardarCorLineasDeReporte === 'function' && _detalleCOR.length){
+    await guardarCorLineasDeReporte('RVL', cliente, _detalleCOR, version);
+  }
   const nuevas = await registrarLoteRVL(cliente, filasEquity.map(l=>({
     portafolio: { nombre: l.portNombre || '' },
     especie: l.especie, lado: l.lado,
@@ -15766,6 +15827,11 @@ async function _generarUnMacroFFMM(macro, lote, cliente, fechaReg){
     a.bruto += q * px;
     a.comMonto += q * px * 0.001;
   });
+  // Un COR por MACROGRUPO: son cuatro clientes distintos y la muralla china
+  // aplica igual que al reporte (Sergio, 22-sep).
+  if(typeof guardarCorLineasDeReporte === 'function'){
+    await guardarCorLineasDeReporte('RVL', _nombreReporte, lote, version);
+  }
   await registrarLoteRVL(_nombreReporte, Object.values(_agr)
     .map(o=>({ ...o, precio: o.cantidad > 0 ? o.bruto / o.cantidad : 0 })), version);
 
@@ -16621,6 +16687,11 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
       a.bruto += q*px;
       a.comMonto += q*px*((Number(f.comisionPct)||0)/100);
     });
+    // ANDES es extranjero pero SÍ complementa: está en COR_EXTRANJEROS_SI
+    // (Sergio, 22-sep).
+    if(typeof guardarCorLineasDeReporte === 'function'){
+      await guardarCorLineasDeReporte('RVL', cliente, loteDet, version);
+    }
     const nuevasRVL = await registrarLoteRVL(cliente,
       Object.values(_opsAndes).map(o=>({...o, precio: o.cantidad>0 ? o.bruto/o.cantidad : 0})), version);
     let nuevasFX = 0;
@@ -16767,6 +16838,9 @@ function mostrarAprobacionProteccion(cliente, loteDet){
     });
     const _loteOpsProt = Object.values(_opsProt)
       .map(o=>({ ...o, precio: o.cantidad > 0 ? o.bruto / o.cantidad : 0 }));
+    if(typeof guardarCorLineasDeReporte === 'function'){
+      await guardarCorLineasDeReporte('RVL', cliente, loteDet, version);
+    }
     const nuevas = await registrarLoteRVL(cliente, _loteOpsProt, version);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos rtpcredicorp + credicorp');
     renderFidessaTradesPanel();
@@ -20749,7 +20823,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-22 18:11 UTC · v134';
+const BUILD_ID = '2026-09-22 19:16 UTC · v136';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
