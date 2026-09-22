@@ -1879,9 +1879,24 @@
         <div class="field-row">
           <div class="field" style="flex:1 1 100%;">
             <label>Comisión Broker (¢/acción o % según tipo) — la que nos cobran</label>
-            <input type="text" inputmode="decimal" id="tc-com-ccsi" oninput="calcularRVI()" onblur="fmtInput(this,4);calcularRVI()" placeholder="0.003">
+            <input type="text" inputmode="decimal" id="tc-com-ccsi"
+                   oninput="_tocaComBroker('unit');calcularRVI()"
+                   onblur="fmtInput(this,4);calcularRVI()" placeholder="0.003">
           </div>
         </div>
+        <!-- Monto TOTAL en dólares, para cuando se pacta una cifra redonda: un
+             BAP de 5.500 acciones a 50 USD daría 0,00909 por acción, incómodo
+             de escribir (Sergio, 22-sep). Los dos campos son EXCLUYENTES: el
+             último que se toca manda. -->
+        <div class="field-row">
+          <div class="field" style="flex:1 1 100%;">
+            <label>— o comisión Broker en USD TOTALES</label>
+            <input type="text" inputmode="decimal" id="tc-com-ccsi-usd"
+                   oninput="_tocaComBroker('usd');calcularRVI()"
+                   onblur="fmtInput(this,2);calcularRVI()" placeholder="50.00">
+          </div>
+        </div>
+        <div class="field-note" id="tc-com-ccsi-nota" style="margin-top:-4px;"></div>
         <div class="field-note">Al vincular, el precio nuestro sale de la(s) línea(s) de EMSX con Originating Firm CREDICORP CAPITAL COLOMBIA SA (broker CCSI). La comisión que nos cobran es editable — por defecto la de la tabla.</div>
       </div>
 
@@ -19728,6 +19743,25 @@ function calcularSecFee(lado, gross, tipo, isin){
   return lado==='Sell' ? gross * SEC_FEE_RATE : 0;
 }
 
+// Los dos campos de comisión del broker son EXCLUYENTES: al escribir en uno se
+// limpia el otro, para que nunca haya duda de cuál se aplicó (Sergio, 22-sep).
+let _comBrokerModo = 'unit';   // 'unit' = ¢/acción o %, 'usd' = monto total
+
+function _tocaComBroker(modo){
+  _comBrokerModo = modo;
+  const otro = modo === 'usd' ? 'tc-com-ccsi' : 'tc-com-ccsi-usd';
+  const el = document.getElementById(otro);
+  if(el) el.value = '';
+}
+
+// Lo que nos cobra el broker por ESTA operación, en dólares.
+// Devuelve null cuando no hay monto total escrito y manda la tarifa unitaria.
+function _comBrokerTotalUSD(){
+  if(_comBrokerModo !== 'usd') return null;
+  const v = parseNum((document.getElementById('tc-com-ccsi-usd')||{}).value);
+  return v > 0 ? v : null;
+}
+
 function calcularRVI(){
   const clienteKey = document.getElementById('tc-cliente').value;
   const tipo = document.getElementById('tc-tipo').value;
@@ -19742,8 +19776,21 @@ function calcularRVI(){
     return;
   }
 
+  // Si se pactó un MONTO TOTAL en dólares, se convierte a tarifa por acción para
+  // que todo lo de abajo siga igual: 50 USD sobre 5.500 acciones = 0,00909 por
+  // acción. El reparto entre portafolios sale proporcional a la cantidad, como
+  // con los folios (Sergio, 22-sep).
+  const _comTotalUSD = _comBrokerTotalUSD();
+  const _notaCB = document.getElementById('tc-com-ccsi-nota');
+  if(_notaCB){
+    _notaCB.innerHTML = _comTotalUSD
+      ? `Se aplican <b>USD ${fmtMoney(_comTotalUSD)}</b> en total · equivale a ` +
+        `${(_comTotalUSD/qty).toFixed(6)} por acción sobre ${fmtInt(qty)}.`
+      : '';
+  }
   const c = calcularComisiones(clienteKey, tipo, qty, price, {
-    comCCSI: parseNum(document.getElementById('tc-com-ccsi').value),
+    comCCSI: _comTotalUSD != null ? (_comTotalUSD / qty)
+                                  : parseNum(document.getElementById('tc-com-ccsi').value),
     // El broker decide si hay comisión: CCSI/BTGH/TFSC cobran, los market
     // makers (RFQE) van con cero.
     broker: (emsxData.find(r=>r.id===lineaActiva)||{}).broker || '',
@@ -19820,7 +19867,11 @@ function generarTC(){
     const _cobra = _brk && RVI_BROKERS_CON_COSTO.some(x=>_brk.includes(x));
     const _el = document.getElementById('tc-com-ccsi');
     const _val = _el ? String(_el.value||'').trim() : '';
-    if(_cobra && (!_val || parseNum(_val) <= 0)){
+    // Vale cualquiera de los dos campos: la tarifa unitaria o el MONTO TOTAL en
+    // dólares. Antes solo miraba el unitario y frenaba aunque se hubiera pactado
+    // una cifra redonda (Sergio, 22-sep).
+    const _totUSD = (typeof _comBrokerTotalUSD === 'function') ? _comBrokerTotalUSD() : null;
+    if(_cobra && _totUSD == null && (!_val || parseNum(_val) <= 0)){
       alert(`Falta la comisión del broker (${_brk}).\n\n` +
             'Escríbela en el campo "Comisión Broker" del panel del medio:\n' +
             '   ETF    0.003 por acción\n' +
@@ -19917,7 +19968,15 @@ distribuciones.forEach(d=>{
       // Trader que dio la orden: va en la columna NOTES de la proforma de
       // PORVENIR (Sergio, 08-sep).
       trader: (document.getElementById('tc-trader-rvi')||{}).value || '',
-      comBrokerUnit: parseNum((document.getElementById('tc-com-ccsi')||{}).value) || 0,
+      // La tarifa unitaria que de verdad se aplicó: si se pactó un MONTO TOTAL
+      // en dólares, es ese entre la cantidad. Antes leía solo el campo unitario
+      // y el monto pactado se perdía al guardar (Sergio, 22-sep).
+      comBrokerUnit: (()=>{
+        const tot = (typeof _comBrokerTotalUSD === 'function') ? _comBrokerTotalUSD() : null;
+        const q = getQtyTotal();
+        if(tot != null && q > 0) return tot / q;
+        return parseNum((document.getElementById('tc-com-ccsi')||{}).value) || 0;
+      })(),
     });
   });
 
@@ -20690,7 +20749,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-21 20:57 UTC · v133';
+const BUILD_ID = '2026-09-22 18:11 UTC · v134';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
