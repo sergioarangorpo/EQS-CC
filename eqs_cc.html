@@ -18761,6 +18761,16 @@ const clientesRVI = {
                  // pendiente su deceval (Sergio, 17-sep).
                  'FIDUCIARIA SURA - PA PIEDRAMART GROUP'],
   },
+  FIDUASHMORE: {
+    nombre:'FIDUASHMORE',
+    // La proforma SIEMPRE lleva el TAX ID de Credicorp.
+    taxId:'860.068.182-5',
+    // Solo opera ADR, a 0,0075 por acción. SIN mínimo de USD 20: está en
+    // RVI_SIN_MINIMO (Sergio, 23-sep).
+    comETF:0.0075, comUCIT:0.0075/100, comADR:0.0075,
+    // Por ahora un solo portafolio; entra otro pronto.
+    portafolios:['FIDUASHMORE'],
+  },
   CAXDAC: {
     nombre:'CAXDAC',
     // El TAX ID del Trade Confirmation es SIEMPRE el de Credicorp, no el del
@@ -19315,7 +19325,7 @@ function comisionContraparteRVI(broker, tipo, qty, gross, isin){
 // grandes están exentas por volumen (Sergio, 19-ago). Validado con el Trade
 // Confirmation de AVAL: IAU 3.150 daban 9,45 por acción y se cobraron 20.
 const RVI_MINIMO_USD = 20;
-const RVI_SIN_MINIMO = ['PROTECCION', 'COLFONDOS', 'PORVENIR'];
+const RVI_SIN_MINIMO = ['PROTECCION', 'COLFONDOS', 'PORVENIR', 'FIDUASHMORE'];
 function aplicaMinimoRVI(cliente){
   const c = String(cliente||'').toUpperCase();
   return !RVI_SIN_MINIMO.some(x => c.includes(x));
@@ -20844,7 +20854,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-22 19:35 UTC · v137';
+const BUILD_ID = '2026-09-23 17:15 UTC · v138';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
