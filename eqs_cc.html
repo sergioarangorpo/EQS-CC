@@ -11139,7 +11139,14 @@ function comercialDeCOR(nombreCli){
 
 // Guarda las líneas del COR de lo que se acaba de reportar. `loteDet` son los
 // folios tal como fueron al detalle del cliente, ya con su portafolio.
-async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version){
+// `loteOps` es el reparto a portafolios. Si viene, las líneas del COR se arman
+// con el MISMO reparto que el detalle del cliente: un folio partido en tres
+// fondos son tres líneas de COR, no una. Sin esto, el 23-sep los 2.347.000 de
+// EXITO —repartidos en Conservador, Mayor Riesgo y Cesantías— quedaron todos
+// en un solo deceval (Sergio, 23-sep).
+//
+// LA REGLA: archivo COR = reporte al cliente, cada uno en su formato.
+async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version, loteOps){
   if(!clienteLlevaCOR(claveCli)) return 0;
   const cfg = getClienteDB(claveCli) || {};
   const ports = cfg.portafolios || [];
@@ -11147,9 +11154,22 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version){
   const hoy = _hoyISO();
   const nombreCli = cfg.nombre || claveCli;
 
+  // Las MISMAS líneas que ve el cliente: si hay reparto, cada folio se parte
+  // entre los portafolios de su orden, igual que en el detalle.
+  let _lineas = loteDet || [];
+  if(loteOps && loteOps.length && typeof repartirFoliosColfondos === 'function'){
+    const _part = repartirFoliosColfondos(loteOps, loteDet || []);
+    if(_part && _part.length){
+      _lineas = _part.map(({folio:f, alloc:op, cantidad})=>({
+        ...f, cantidad,
+        portNombre: (op.portafolio && op.portafolio.nombre) || op.portafolio || f.portNombre,
+      }));
+    }
+  }
+
   // Una fila por folio y fracción, agrupando por folio + portafolio.
   const porFolioPort = {};
-  (loteDet||[]).forEach(f=>{
+  (_lineas||[]).forEach(f=>{
     const q = Number(f.cantidad) || 0;
     if(!q) return;
     const nomPort = f.portNombre || (f.portafolio && f.portafolio.nombre) || String(f.portafolio||'');
@@ -16711,7 +16731,7 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
     // ANDES es extranjero pero SÍ complementa: está en COR_EXTRANJEROS_SI
     // (Sergio, 22-sep).
     if(typeof guardarCorLineasDeReporte === 'function'){
-      await guardarCorLineasDeReporte('RVL', cliente, loteDet, version);
+      await guardarCorLineasDeReporte('RVL', cliente, loteDet, version, loteOps);
     }
     const nuevasRVL = await registrarLoteRVL(cliente,
       Object.values(_opsAndes).map(o=>({...o, precio: o.cantidad>0 ? o.bruto/o.cantidad : 0})), version);
@@ -16860,7 +16880,7 @@ function mostrarAprobacionProteccion(cliente, loteDet){
     const _loteOpsProt = Object.values(_opsProt)
       .map(o=>({ ...o, precio: o.cantidad > 0 ? o.bruto / o.cantidad : 0 }));
     if(typeof guardarCorLineasDeReporte === 'function'){
-      await guardarCorLineasDeReporte('RVL', cliente, loteDet, version);
+      await guardarCorLineasDeReporte('RVL', cliente, loteDet, version, loteOps);
     }
     const nuevas = await registrarLoteRVL(cliente, _loteOpsProt, version);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos rtpcredicorp + credicorp');
@@ -17219,7 +17239,7 @@ async function registrarLoteRVLConCOR(cliente, loteOps, version, loteDet){
   const nuevas = await registrarLoteRVL(cliente, loteOps, version);
   try{
     if(typeof guardarCorLineasDeReporte === 'function'){
-      await guardarCorLineasDeReporte('RVL', cliente, loteDet || [], version);
+      await guardarCorLineasDeReporte('RVL', cliente, loteDet || [], version, loteOps);
     }
   }catch(e){ console.warn('COR:', e.message); }
   return nuevas;
@@ -20854,7 +20874,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-23 17:15 UTC · v138';
+const BUILD_ID = '2026-09-23 19:48 UTC · v139';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
