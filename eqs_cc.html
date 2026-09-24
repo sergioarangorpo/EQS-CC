@@ -1976,7 +1976,8 @@
       <button class="btn primary" style="width:100%;" id="btn-generar" onclick="generarTC()" disabled>💾 Guardar operación</button>
       <!-- Canastas grandes: en vez de repetir el proceso especie por especie,
            se pegan la ejecución y el allocation del cliente (Sergio, 17-sep). -->
-      <button class="btn small" style="width:100%;margin-top:6px;" onclick="abrirCanastaRVI()">
+      <button class="btn purple" style="width:100%;margin-top:8px;font-weight:700;"
+              onclick="abrirCanastaRVI()">
         📋 Pegar canasta (ejecución + allocation)</button>
       <div class="footer-note">Guarda la operación en el <b>histórico de hoy</b>. Luego filtra por cliente en el histórico, marca las que vas a enviar y usa <b>Exportar Trade Confirmation</b> arriba. (PORVENIR usa proforma extendida.)</div>
         </div>
@@ -14912,13 +14913,38 @@ function interpretarCanastaRVI(){
     // El ticker es el primer campo que no es número ni lado.
     const tk = c.map(_tickerCanasta).find(x=>x && !/^(BUY|SELL|B|S)$/i.test(x) && !isFinite(_numCanasta(x)));
     if(!tk || !qty) return;
-    const lado = /SELL|^S$/i.test(c[0]) ? 'Sell' : 'Buy';
+    // El lado se busca en CUALQUIER columna: el UPDATE de Porvenir trae
+    // "Security | Side | FillQty | AvgPr", así que en la primera va el ticker y
+    // el lado queda en la segunda. Antes miraba solo la primera y todo salía
+    // como Buy (Sergio, 24-sep).
+    const lado = c.some(x=>/^(SELL|S|VENTA)$/i.test(String(x).trim())) ? 'Sell'
+               : c.some(x=>/^(BUY|B|COMPRA)$/i.test(String(x).trim())) ? 'Buy'
+               : 'Buy';
     ejec[tk] = { ticker:tk, qty, precio, lado };
   });
 
   // ---- Allocation: portafolio, ticker y unidades ----
   const alloc = [];
-  _filasCanasta(document.getElementById('canastaAlloc').value).forEach(c=>{
+  // El allocation puede llegar en TABLA (columnas) o COMO LO ESCRIBE EL CLIENTE,
+  // en una frase: "Orden de venta 820 ACWI. VOL. ACCIONES INT. DOLAR".
+  // Ahí la cantidad es el primer número, el ticker lo que sigue y el fondo el
+  // resto de la línea (Sergio, 24-sep).
+  const _crudo = String(document.getElementById('canastaAlloc').value||'')
+    .split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  const _esTabla = _crudo.some(l=>/\t|\s{2,}/.test(l));
+  if(!_esTabla){
+    _crudo.forEach(l=>{
+      const m = l.match(/(\d[\d.,]*)\s+([A-Z]{1,6})\b[.\s]*(.*)$/i);
+      if(!m) return;
+      const units = _numCanasta(m[1]);
+      const tk = _tickerCanasta(m[2]);
+      const port = String(m[3]||'').replace(/^[.\s-]+/,'').trim();
+      // El lado sale de la propia frase: "Orden de venta" -> Sell.
+      const _lado = /VENTA|SELL/i.test(l) ? 'Sell' : (/COMPRA|BUY/i.test(l) ? 'Buy' : '');
+      if(units && tk) alloc.push({ port, ticker: tk, units, isin:'', lado:_lado });
+    });
+  }
+  if(!alloc.length) _filasCanasta(document.getElementById('canastaAlloc').value).forEach(c=>{
     const nums = c.map(_numCanasta).filter(n=>isFinite(n));
     const units = nums.length ? nums[nums.length-1] : NaN;
     if(!units) return;
@@ -14959,10 +14985,46 @@ function interpretarCanastaRVI(){
   // Los portafolios tienen que existir en la ficha del cliente.
   const ports = cfg.portafolios || [];
   const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-  const sinPort = [...new Set(alloc.map(a=>a.port))].filter(pz=>{
-    const k = lim(pz);
-    return !ports.some(x=>{ const n = lim(x); return n === k || n.includes(k) || k.includes(n); });
-  });
+  // El fondo del allocation se empareja POR PALABRAS con la cuenta de la ficha:
+  // el cliente escribe "VOL. ACCIONES INT. DOLAR" y la ficha dice
+  // "PORVENIR FPV ACC INTER DOL" (Sergio, 24-sep).
+  const RUIDO_PORT = new Set(['PORVENIR','FPV','FPO','VOL','CESANTIAS','FIC','FIDUCIARIA',
+                              'SA','PA','DE','DEL','LA','EL','Y','FONDO','ORDEN','VENTA','COMPRA']);
+  const pal = t => String(t||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/([A-Z])(\d)/g,'$1 $2').replace(/(\d)([A-Z])/g,'$1 $2')
+    .split(/[^A-Z0-9+]+/).filter(w=>w && !RUIDO_PORT.has(w));
+  const calzaPal = (x,y) => x === y || (x.length >= 3 && y.startsWith(x)) ||
+                                       (y.length >= 3 && x.startsWith(y));
+  // Fondos cuyo nombre comercial no comparte palabras con el de la cuenta.
+  // Se agregan aquí a medida que aparecen (Sergio, 24-sep).
+  const ALIAS_FONDO = {
+    'ACCIONESIAYBIGDATA': 'ACC TECH+',
+    'IAYBIGDATA':         'ACC TECH+',
+  };
+  const buscaPort = (texto) => {
+    const k = lim(texto);
+    const ali = ALIAS_FONDO[k];
+    if(ali){
+      const p = ports.find(x=>lim(x).includes(lim(ali)));
+      if(p) return p;
+    }
+    const directo = ports.find(x=>{ const n = lim(x); return n === k || n.includes(k) || k.includes(n); });
+    if(directo) return directo;
+    const pa = pal(texto);
+    if(!pa.length) return null;
+    let mejor = null, puntaje = 0;
+    ports.forEach(x=>{
+      const pb = pal(x);
+      if(!pb.length) return;
+      const ok = pa.filter(wd=>pb.some(y=>calzaPal(wd,y))).length;
+      if(ok < pa.length) return;
+      const p = ok * 100 - (pb.length - ok);
+      if(p > puntaje){ puntaje = p; mejor = x; }
+    });
+    return mejor;
+  };
+  alloc.forEach(a=>{ const p = buscaPort(a.port); if(p) a.port = p; });
+  const sinPort = [...new Set(alloc.map(a=>a.port))].filter(pz=>!buscaPort(pz));
   sinPort.forEach(pz=> avisos.push(`El portafolio "${pz}" no está en la ficha de ${cfg.nombre||cli}`));
 
   _canastaRVI = { ejec, alloc, avisos, cliente: cli };
@@ -19465,22 +19527,17 @@ function setModoRVI(grupo, valor){
     b.classList.toggle('active', act);
     b.classList.toggle('ghost', !act);
   });
-  // Sin margen es UNA sola línea: si había varias marcadas, se deja la primera.
-  if(_modoRVI.margen === 'sin' && _rviMarcadas.size > 1){
-    const primera = [..._rviMarcadas][0];
-    _rviMarcadas = new Set([primera]);
-  }
+  // La selección múltiple vale SIEMPRE, con o sin margen: una canasta de
+  // Porvenir son 7 especies de una sola orden. Antes, al elegir "sin margen"
+  // se borraban todas menos la primera (Sergio, 24-sep).
   renderEmsx();
   renderArqueoRVI();
 }
 
 function toggleMarcaRVI(id){
+  // Marcar y desmarcar, sin reemplazar: cada clic afecta solo a esa línea.
   if(_rviMarcadas.has(id)) _rviMarcadas.delete(id);
-  else {
-    // Sin margen: una sola línea, la nueva reemplaza a la anterior.
-    if(_modoRVI.margen === 'sin') _rviMarcadas.clear();
-    _rviMarcadas.add(id);
-  }
+  else _rviMarcadas.add(id);
   volcarLineaEnFormularioRVI();
   renderEmsx();
   renderArqueoRVI();
@@ -21189,7 +21246,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-24 18:49 UTC · v146';
+const BUILD_ID = '2026-09-24 18:59 UTC · v147';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
