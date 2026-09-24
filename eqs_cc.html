@@ -1513,13 +1513,16 @@
 
 <!-- Canasta de RVI: ejecución + allocation del cliente, para procesar varias
      especies de una sola vez (Sergio, 17-sep). -->
-<div id="modalCanastaRVI" class="modal-backdrop" style="display:none;">
-  <div class="modal-card" style="max-width:1100px;">
-    <div class="modal-head">
+<!-- Se usan las clases que EXISTEN en el CSS (edit-overlay / edit-modal): con
+     modal-backdrop, que no existe, el modal se abría sin estilos y no se veía
+     (Sergio, 24-sep). -->
+<div id="modalCanastaRVI" class="edit-overlay" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(1100px,96vw);margin-top:5vh;">
+    <h3 style="font-size:15px;display:flex;justify-content:space-between;align-items:center;">
       <span>Canasta RVI — ejecución + allocation</span>
       <button class="btn small ghost" onclick="cerrarCanastaRVI()">Cerrar</button>
-    </div>
-    <div class="modal-body">
+    </h3>
+    <div>
       <div class="field-note" style="margin-bottom:10px;">
         Pega los dos cuadros tal como llegan. Se empatan por <b>ticker</b> y se
         valida que las cantidades coincidan antes de aplicar nada.
@@ -21246,7 +21249,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-24 18:59 UTC · v147';
+const BUILD_ID = '2026-09-24 19:20 UTC · v148';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
