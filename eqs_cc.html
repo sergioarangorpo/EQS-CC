@@ -1771,7 +1771,10 @@
         <table>
           <thead>
             <tr>
-              <th style="width:34px;"><input type="checkbox" class="chk" id="chkAllRVI" onclick="toggleTodasRVI(this.checked)" title="Marcar todas las líneas visibles"></th>
+              <!-- El checkbox de "marcar todas" llamaba a toggleTodasRVI, que no
+                   existe, así que no hacía nada. Se quita: se marcan una por
+                   una, que es como se usa (Sergio, 24-sep). -->
+              <th style="width:34px;"></th>
               <th class="sortable" onclick="aplicarOrdenGenerico('rvi','hora')">Hora<span class="sort-arrow" id="arrow-rvi-hora"></span></th>
               <th class="sortable" onclick="aplicarOrdenGenerico('rvi','firm')">Originating Firm<span class="sort-arrow" id="arrow-rvi-firm"></span></th>
               <th class="sortable" onclick="aplicarOrdenGenerico('rvi','especie')">Especie<span class="sort-arrow" id="arrow-rvi-especie"></span></th>
@@ -2004,6 +2007,12 @@
             <button class="btn small ghost" onclick="marcarSoloClienteHist()"
                     title="Marca solo las operaciones del cliente filtrado y desmarca el resto">
               Marcar solo este cliente</button>
+            <!-- Borrar varias de una: una operación mal digitada deja líneas
+                 duplicadas y había que eliminarlas de a una (Sergio, 24-sep). -->
+            <button class="btn small" onclick="eliminarSeleccionadasRVI()"
+                    style="color:var(--sell,#ef4444);border-color:var(--sell,#ef4444);"
+                    title="Elimina del histórico todas las líneas marcadas">
+              🗑 Eliminar marcadas</button>
             <span class="hint" style="font-size:11px;flex:1;">marca las que vas a enviar</span>
           </div>
           <table>
@@ -20632,6 +20641,30 @@ function marcarSoloClienteHist(){
 // registrada dos veces —por ejemplo si Sergio y Miguel la guardan a la vez—
 // duplica la pata del cliente Y la nuestra en la planilla del BO
 // (Sergio, 17-sep).
+// Borra TODAS las marcadas de una. Una operación mal digitada deja varias
+// líneas duplicadas y eliminarlas de a una es un desgaste (Sergio, 24-sep).
+async function eliminarSeleccionadasRVI(){
+  const ids = [...document.querySelectorAll('.hist-check')]
+    .filter(c=>c.checked).map(c=>String(c.dataset.id));
+  if(!ids.length){ alert('No hay líneas marcadas.'); return; }
+  const filas = historial.filter(h=>ids.includes(String(h.id)));
+  const resumen = filas.slice(0,10)
+    .map(h=>`   ${h.cliente} · ${h.symbol} ${fmtInt(h.qty)} @ ${h.price}`).join('\n');
+  if(!confirm(`¿Eliminar ${filas.length} línea(s) del histórico?\n\n${resumen}` +
+              (filas.length>10 ? `\n   … y ${filas.length-10} más` : '') +
+              '\n\nNo se puede deshacer.')) return;
+  historial = historial.filter(h=>!ids.includes(String(h.id)));
+  for(const id of ids){
+    try{
+      await fetch(`${SUPA_URL}/rest/v1/rvi_historico?id=eq.${encodeURIComponent(id)}`, {
+        method:'DELETE', headers:{ apikey:SUPA_KEY, Authorization:`Bearer ${SUPA_KEY}` },
+      });
+    }catch(e){ console.warn('No se pudo borrar', id, e.message); }
+  }
+  renderHistorial();
+  if(typeof renderDashboard === 'function') renderDashboard();
+}
+
 async function eliminarLineaRVI(id){
   const h = historial.find(x=>String(x.id) === String(id));
   if(!h) return;
@@ -21264,7 +21297,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-24 19:49 UTC · v152';
+const BUILD_ID = '2026-09-24 20:15 UTC · v153';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
