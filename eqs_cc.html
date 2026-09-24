@@ -6012,8 +6012,17 @@ const clientesDB = {
     // Cliente de portafolio ÚNICO, como BTG Cayman: no hay nada que repartir,
     // toda la orden va a FIDUASHMORE. Antes pedía asignación manual sin razón.
     reparteManual: false,
-    portafolios: [ {id:'FIDUASHMORE', nombre:'FIDUASHMORE', nit:'', iva:true} ],
-    autoPortafolio: 'FIDUASHMORE',
+    // DOS portafolios desde el 24-sep. El Account de EMSX llega corto
+    // ("CO + LATAM", "LATAM OBL") y el nombre completo es el que va al reporte;
+    // el puente entre los dos está en ALIAS_CUENTA_PORTAFOLIO.
+    // IVA siempre en RVL. Falta el código Orión de los dos: hasta tenerlo, el
+    // COR frena y avisa cuál falta (Sergio, 24-sep).
+    portafolios: [
+      { id:'FIC_CO_LATAM', nombre:'FIC ASHMORE ACCIONES COLOMBIA + LATAM',
+        deceval:'2326832', nit:'', iva:true },
+      { id:'FIC_LATAM_OBL', nombre:'FIC ASHMORE LATAM COLOMBIA OBLIGATORIAS',
+        deceval:'4616608', nit:'', iva:true },
+    ],
     fileNombre: 'Fiduashmore',
     // Siempre 0,09%, en bloque y en pantalla.
     comisionBloque: 0.0009, comisionPantalla: 0.0009,
@@ -17302,6 +17311,12 @@ function _normAcc(t){ return String(t||'').toUpperCase()
 // por texto. Se agregan aquí a medida que aparezcan; si una cuenta no está y no
 // cruza sola, la app FRENA y la nombra, que es lo seguro.
 const ALIAS_CUENTA_PORTAFOLIO = {
+  // FIDUASHMORE: el Account de EMSX viene corto (Sergio, 24-sep).
+  'FIDUASHMORE': {
+    'COLATAM':   'FIC_CO_LATAM',
+    'CO+LATAM':  'FIC_CO_LATAM',
+    'LATAMOBL':  'FIC_LATAM_OBL',
+  },
   'COLFONDOS': {
     'CESANTIASLP': 'CESLP',
     'CESANTIASLARGOPLAZO': 'CESLP',
@@ -19077,8 +19092,9 @@ const clientesRVI = {
     // Solo opera ADR, a 0,0075 por acción. SIN mínimo de USD 20: está en
     // RVI_SIN_MINIMO (Sergio, 23-sep).
     comETF:0.0075, comUCIT:0.0075/100, comADR:0.0075,
-    // Por ahora un solo portafolio; entra otro pronto.
-    portafolios:['FIDUASHMORE'],
+    // Los mismos dos de RVL; los dos operan ADR (Sergio, 24-sep).
+    portafolios:['FIC ASHMORE ACCIONES COLOMBIA + LATAM',
+                 'FIC ASHMORE LATAM COLOMBIA OBLIGATORIAS'],
   },
   CAXDAC: {
     nombre:'CAXDAC',
@@ -21163,7 +21179,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-24 15:40 UTC · v143';
+const BUILD_ID = '2026-09-24 16:53 UTC · v144';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
