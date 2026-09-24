@@ -19915,16 +19915,19 @@ function renderArqueoRVI(){
     const kCli = (document.getElementById('tc-cliente')||{}).value ||
                  claveClienteRVI(refCli.firm) || claveClienteRVI(refCli.cliente);
     const db = kCli ? clientesRVI[kCli] : null;
-    if(!db){
-      // Sin cliente no se puede saber su tarifa: se deja en 0 y el aviso de
-      // arriba lo señala, en vez de mostrar la del broker como si fuera suya.
-      return 0;
-    }
+    // Sin cliente elegido no se puede saber su tarifa. Se devuelve null —no 0—
+    // para que abajo NO se le aplique el mínimo de USD 20 a una comisión que ni
+    // siquiera se pudo calcular (Sergio, 24-sep).
+    if(!db) return null;
     const t = String(refCli.tipo||'').toUpperCase();
     if(t === 'UCIT' || /^(IE|LU)/i.test(String(isin||''))) return redondear(grossCli * db.comUCIT, 2);
     return redondear((qCli||qEjec) * (t === 'ADR' ? db.comADR : db.comETF), 2);
   })();
-  const comCli = _modoRVI.costo === 'sin' ? 0 : costoClienteRVI(refCli.firm, comCliCalc);
+  const _sinCliente = comCliCalc === null;
+  const comCli = (_modoRVI.costo === 'sin' || _sinCliente)
+    ? 0 : costoClienteRVI(refCli.firm, comCliCalc);
+  if(_sinCliente) avisos.push('Falta elegir el CLIENTE arriba: sin él no se puede ' +
+                              'calcular su comisión ni la utilidad.');
   // CCSI nos cobra a nosotros, y también con mínimo de USD 20.
   const comNosCalc = comisionContraparteRVI(brokers[0]||'', refCli.tipo, qEjec, grossNos, isin);
   const comNos = comNosCalc > 0 ? redondear(Math.max(comNosCalc, RVI_MINIMO_USD), 2) : 0;
@@ -21256,7 +21259,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-24 19:38 UTC · v150';
+const BUILD_ID = '2026-09-24 19:43 UTC · v151';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
