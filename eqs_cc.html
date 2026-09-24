@@ -2122,6 +2122,38 @@
       <div id="maestroGruposTabla" style="max-height:440px;overflow:auto;"></div>
     </div>
 
+    <div class="section-label" style="margin-top:16px;">Maestro de especies</div>
+    <div style="padding:0 24px 8px;">
+      <div class="field-note" style="margin-bottom:8px;">
+        El <b>ISIN</b> y el <b>SEDOL</b> salen en las proformas. Una especie sin ISIN sale
+        en blanco en el reporte, así que las incompletas aparecen marcadas arriba.
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <input type="text" id="espBuscar" placeholder="Buscar nemo, ISIN, SEDOL o nombre…"
+               oninput="renderMaestroEspecies()"
+               style="width:280px;font-size:12px;padding:5px 9px;background:var(--bg-2,#161b26);
+                      color:var(--text-1,#e5e7eb);border:1px solid var(--border,#232938);border-radius:6px;">
+        <select id="espMercado" onchange="renderMaestroEspecies()" style="font-size:12px;">
+          <option value="">Todos los mercados</option>
+          <option value="RVL">RVL</option>
+          <option value="US">US</option>
+          <option value="LN">LN</option>
+        </select>
+        <select id="espOrden" onchange="renderMaestroEspecies()" style="font-size:12px;">
+          <option value="especie">Ordenar por nemo</option>
+          <option value="mercado">Ordenar por mercado</option>
+          <option value="falta">Incompletas primero</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
+          <input type="checkbox" id="espSoloFaltan" onchange="renderMaestroEspecies()">
+          Solo incompletas
+        </label>
+        <button class="btn small" id="btnEspNueva" onclick="nuevaEspecieDesdePanel()">+ Especie nueva</button>
+      </div>
+      <div id="espAviso" style="margin-bottom:8px;"></div>
+      <div id="maestroEspeciesTabla" style="max-height:440px;overflow:auto;"></div>
+    </div>
+
     <div class="section-label" style="margin-top:16px;">Cargas y maestros</div>
     <div class="toolbar">
       <div class="tb-field" style="flex:1;min-width:340px;">
@@ -11395,192 +11427,17 @@ function filasCORDeCliente(modulo, cliente){
   const guardadas = filasCORGuardadas(modulo, cliente);
   if(guardadas.length) return guardadas;
 
-  // RESPALDO, mientras no todos los caminos de reporte guardan sus líneas: hoy
-  // solo lo hacen 4 (Colfondos, Porvenir y dos más). Al quitarlo el 21-sep, el
-  // COR de todos los clientes salió solo con Colfondos. Se reconstruye desde el
-  // registro con la última versión de cada línea. Sale en cuanto cada camino
-  // guarde su COR al reportar (Sergio, 21-sep).
-  return _filasCORReconstruidas(modulo, cliente);
-}
-
-function _filasCORReconstruidas(modulo, cliente){
-  // Solo la ÚLTIMA versión de cada línea, para no sumar reenvíos.
-  const lineas = ultimaVersionPorLinea(
-    _reportesGenerados.filter(r=>r.modulo===modulo && r.cliente===cliente));
-  if(!lineas.length) return [];
-  // El identificador del registro es "ESPECIE|Lado#Portafolio", no el Parent
-  // Order ID de Fidessa. Para encontrar el reparto se buscan las órdenes del
-  // cliente cuya especie y lado coincidan con lo reportado — antes se comparaba
-  // contra el POID y no encontraba nada, así que el COR salía vacío
-  // (Sergio, 04-sep).
-  const reportadas = new Set(lineas.map(r=>
-    String(r.especie||'').toUpperCase() + '|' + String(r.lado||'')));
-  const poids = new Set();
-  Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
-    const t = _fidessaTradesRaw[oid];
-    if(normalizarGrupo(t.grupo) !== normalizarGrupo(cliente) &&
-       (getClienteDB(normalizarGrupo(t.grupo)).nombre||'') !== cliente) return;
-    const k = String(nemoCanonico(t.security,'fidessa')||'').toUpperCase() + '|' + String(t.lado||'');
-    if(reportadas.has(k)) poids.add(String(oid));
-  });
-  // Respaldo: si el registro guardó el POID directamente (formato viejo).
-  lineas.forEach(r=>{
-    const p = String(r.parent_order_id||'').split('#')[0];
-    if((_fidessaTradesRaw||{})[p]) poids.add(p);
-  });
-  // Se busca la clave del cliente para poder leer sus portafolios.
-  const claveCli = Object.keys(clientesDB).find(k=>(getClienteDB(k).nombre||k) === cliente) || cliente;
-  const cfg = getClienteDB(claveCli);
-  const ports = cfg.portafolios || [];
-  // ===================================================================
-  // EL REPARTO SALE DEL REGISTRO, no de la memoria de la sesión.
-  // `_allocPorOrden` se pierde al recargar la página, y el COR se genera al
-  // CIERRE — cuando bien pudo haberse recargado, o cuando lo baja otra persona
-  // desde otro PC. Sin reparto, cada folio se mandaba entero a un portafolio
-  // genérico: el archivo del 04-sep salió con DOS líneas en vez de las 36 del
-  // reparto real (Sergio, 04-sep).
+  // SIN RESPALDO. La reconstrucción desde el registro repartía lo reportado
+  // entre los folios, y ese reparto puede no cuadrar con lo que de verdad se
+  // envió — ya falló con COLFONDOS. Un archivo que "puede no cuadrar" no sirve
+  // para subir a bolsa (Sergio, 24-sep).
   //
-  // En `reportes_generados` quedó una fila por portafolio con su cantidad, que
-  // es justo lo que el COR necesita. La memoria queda solo como respaldo.
-  // ===================================================================
-  const alloc = {};   // parentOrderId -> [{portId, cantidad}]
-  const norm = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-  // Lo reportado, agrupado por especie+lado y por portafolio.
-  const repPorEspecie = {};
-  lineas.forEach(r=>{
-    const port = String(r.portafolios||'').trim();
-    const q = Number(r.cantidad) || 0;
-    if(!port || !q) return;
-    const k = String(r.especie||'').toUpperCase() + '|' + String(r.lado||'');
-    (repPorEspecie[k] = repPorEspecie[k] || []).push({ port, cantidad:q });
-  });
-  poids.forEach(oid=>{
-    const t = (_fidessaTradesRaw||{})[oid] || {};
-    const k = String(nemoCanonico(t.security,'fidessa')||'').toUpperCase() + '|' + String(t.lado||'');
-    const reparto = repPorEspecie[k];
-    if(reparto && reparto.length){
-      alloc[oid] = reparto.map(x=>{
-        // El portafolio se busca por nombre; el registro guarda el nombre completo.
-        const p = ports.find(y=>norm(y.nombre) === norm(x.port)) ||
-                  ports.find(y=>norm(y.nombre).includes(norm(x.port)) ||
-                                norm(x.port).includes(norm(y.nombre)));
-        return { portId: p ? p.id : null, cantidad: x.cantidad };
-      }).filter(a=>a.portId);
-    }
-    // Respaldo: si el reporte es de esta misma sesión, la memoria sirve igual.
-    if((!alloc[oid] || !alloc[oid].length) && (_allocPorOrden||{})[oid]){
-      alloc[oid] = _allocPorOrden[oid];
-    }
-  });
-
-  // La comisión sale de LO QUE SE LE REPORTÓ AL CLIENTE, no de un recálculo:
-  // el COR y la confirmación tienen que decir lo mismo. Recalcular hacía que
-  // Andes saliera con 0,08% cuando su tarifa es 0,1% (Sergio, 27-ago).
-  // La comisión se indexa por ESPECIE|LADO, no por el identificador del
-  // registro, que ahora lleva el portafolio pegado. Sin esto no encontraba la
-  // tarifa reportada y caía al recálculo, que daba 0,08% cuando Bancolombia va
-  // a 0,2% en bloque (Sergio, 04-sep).
-  const comPorOrden = {};
-  const comPorEspecie = {};
-  lineas.forEach(r=>{
-    const q = Number(r.cantidad) || 0;
-    const c = Number(r.comision) || 0;
-    const px = Number(r.precio) || 0;
-    if(!q || !px) return;
-    const pct = c / (q * px) * 100;    // `comision` viene en pesos
-    comPorOrden[String(r.parent_order_id)] = pct;
-    const k = String(r.especie||'').toUpperCase() + '|' + String(r.lado||'');
-    // Si una especie se reportó con varias tarifas, se pondera por monto.
-    const acc = comPorEspecie[k] || (comPorEspecie[k] = { bruto:0, com:0 });
-    acc.bruto += q * px;
-    acc.com += c;
-  });
-  Object.keys(comPorEspecie).forEach(k=>{
-    const a = comPorEspecie[k];
-    comPorEspecie[k] = a.bruto ? a.com / a.bruto * 100 : 0;
-  });
-
-  // Si el cliente reportó una sola especie, el promedio ponderado ES la tarifa;
-  // con varias, no sirve como respaldo.
-  const _unaSolaEspecie = new Set(lineas.map(r=>String(r.especie||'').toUpperCase())).size <= 1;
-  const filas = [];
-  const folios = (foliosFidessa||[]).filter(f=>poids.has(String(f.parentOrderId)));
-  // Agrupado por orden, para repartir cada folio entre los portafolios.
-  const porOrden = {};
-  folios.forEach(f=>{ (porOrden[f.parentOrderId] = porOrden[f.parentOrderId] || []).push(f); });
-
-  Object.keys(porOrden).forEach(oid=>{
-    const fol = porOrden[oid].slice().sort((a,b)=>Number(a.folio)-Number(b.folio));
-    const total = fol.reduce((a,f)=>a+f.cantidad,0);
-    // Reparto de la orden: si no hay allocation, todo va al portafolio del folio.
-    let reparto = (alloc[oid]||[]).filter(a=>a.cantidad>0)
-      .map(a=>{ const p = ports.find(x=>x.id===a.portId) || {}; return { port:p, cantidad:a.cantidad }; });
-    if(!reparto.length){
-      reparto = [{ port: ports.find(p=>p.id===cfg.autoPortafolio) || ports[0] || {}, cantidad: total }];
-    }
-    // Reparto entero por folio: ni una acción de más ni de menos.
-    const _matriz = repartirFolioAFolio(reparto.map(a=>a.cantidad), fol);
-    fol.forEach((f, _k)=>{
-      let n = 0;
-      reparto.forEach((a,i)=>{
-        const q = _matriz[_k][i];
-        if(q <= 0) return;
-        n++;
-        // La comisión sale de la TARIFA DEL FOLIO —bloque o pantalla, con el
-        // override por especie de cada cliente—, no de dividir el total
-        // reportado entre el bruto: con varias especies esa división daba
-        // promedios como 0,1079%, que no es ninguna tarifa real
-        // (Sergio, 07-sep).
-        let pct = Number(f.comisionPct);
-        if(pct == null || !isFinite(pct) || pct <= 0){
-          pct = (typeof comisionFolioPct === 'function') ? comisionFolioPct(claveCli, f) : 0;
-        }
-        // Los promedios ponderados solo se usan si la tarifa no se pudo
-        // resolver, y únicamente cuando el cliente reportó UNA sola especie.
-        if((pct == null || !isFinite(pct) || pct <= 0) && _unaSolaEspecie){
-          pct = comPorOrden[String(oid)];
-          if(pct == null || !isFinite(pct) || pct <= 0){
-            pct = comPorEspecie[String(f.especie||'').toUpperCase() + '|' + String(f.lado||'')];
-          }
-        }
-        filas.push({
-          cliente: a.port.orion || '',            // Código Orión — llega con la tabla de Miguel
-          // El DV solo se manda cuando el Código Orión es el NIT (9 dígitos),
-          // como el Fondo Abierto por Compartimentos. En los códigos cortos va
-          // vacío (Sergio, 04-sep).
-          dv_cliente: (String(a.port.orion||'').replace(/\D/g,'').length === 9)
-            ? (a.port.dv || '') : '',
-          // Con Código Orión de 9 dígitos (el NIT) va el DV y el Especial
-          // Fiduciario queda VACÍO; con código corto es al revés
-          // (Sergio, 04-sep).
-          EspecialFiduciario: (String(a.port.orion||'').replace(/\D/g,'').length === 9)
-            ? '' : (a.port.especialFid || ''),
-          Nemotecnico: f.especie,
-          Folio: folioCOR(f.folio, f.especie, f.fechaReg),
-          CantidadFraccion: q,
-          precio: f.precio,
-          Comision: Number(pct.toFixed(4)),       // 0.08 = 0,08%, sin el signo
-          usuarioBolsa: '',
-          'C/V': f.lado === 'Venta' ? 'V' : 'C',
-          Fraccion: n,
-          deceval: a.port.deceval || '',
-          medioverificable: 5,
-          // Fecha SIN hora, como el =HOY() de Excel: con hora la bolsa puede
-          // rechazar el archivo.
-          fechaFoliio: (()=>{ const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); })(),
-          usuariocomercial: 'SARANGO',
-          idorioncomercial: 'SAR',
-          nombreordenante: '',
-          _cliente: cliente,
-        });
-      });
-    });
-  });
-  // Ordenado por folio y luego por fracción, que es como se lee en bolsa.
-  filas.sort((a,b)=> String(a.Folio).localeCompare(String(b.Folio)) ||
-                     (Number(a.Fraccion)||0) - (Number(b.Fraccion)||0));
-  return filas;
+  // LA REGLA: archivo COR = reporte al cliente, en otro formato y con los
+  // campos extra de la complementación. Si no hay líneas guardadas, es que el
+  // cliente no se ha reportado todavía.
+  return [];
 }
+
 
 // =====================================================================
 // PLANILLA DEL BACK OFFICE — RVI
@@ -12702,6 +12559,167 @@ const PRESUPUESTO_ANIO = 8668000000;
 
 function puedeEditarGrupos(){ return USUARIO === 'SAR'; }
 
+// =====================================================================
+// PANEL DEL MAESTRO DE ESPECIES (Ayudas)
+// ---------------------------------------------------------------------
+// Son cientos, así que hay buscador, filtro por mercado y orden. Lo importante
+// son las INCOMPLETAS: una especie sin ISIN sale en blanco en la proforma, como
+// pasó con ISACCO. Editable por Sergio y Miguel (Sergio, 24-sep).
+// =====================================================================
+function puedeEditarEspecies(){ return USUARIO === 'SAR' || USUARIO === 'MIG'; }
+
+function _espIncompleta(e){
+  return !String(e.isin||'').trim() || !String(e.sedol||'').trim();
+}
+
+function renderMaestroEspecies(){
+  const cont = document.getElementById('maestroEspeciesTabla');
+  if(!cont) return;
+  const editable = puedeEditarEspecies();
+  const btn = document.getElementById('btnEspNueva');
+  if(btn) btn.style.display = editable ? '' : 'none';
+
+  const q = String((document.getElementById('espBuscar')||{}).value||'').toUpperCase().trim();
+  const mkt = (document.getElementById('espMercado')||{}).value || '';
+  const orden = (document.getElementById('espOrden')||{}).value || 'especie';
+  const soloFaltan = !!(document.getElementById('espSoloFaltan')||{}).checked;
+
+  let lista = (_maestroEspecies||[]).slice();
+  const sinIsin = lista.filter(e=>!String(e.isin||'').trim()).length;
+  const sinSedol = lista.filter(e=>!String(e.sedol||'').trim()).length;
+
+  if(q) lista = lista.filter(e=>
+    String(e.especie||'').toUpperCase().includes(q) ||
+    String(e.isin||'').toUpperCase().includes(q) ||
+    String(e.sedol||'').toUpperCase().includes(q) ||
+    String(e.descripcion||'').toUpperCase().includes(q));
+  if(mkt) lista = lista.filter(e=>String(e.mercado||'').toUpperCase() === mkt);
+  if(soloFaltan) lista = lista.filter(_espIncompleta);
+
+  if(orden === 'mercado'){
+    lista.sort((a,b)=>String(a.mercado||'').localeCompare(String(b.mercado||'')) ||
+                      String(a.especie).localeCompare(String(b.especie)));
+  }else if(orden === 'falta'){
+    lista.sort((a,b)=>(_espIncompleta(b)?1:0) - (_espIncompleta(a)?1:0) ||
+                      String(a.especie).localeCompare(String(b.especie)));
+  }else{
+    lista.sort((a,b)=>String(a.especie).localeCompare(String(b.especie)));
+  }
+
+  const aviso = document.getElementById('espAviso');
+  if(aviso){
+    aviso.innerHTML = `<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px;align-items:center;">
+      <span>${(_maestroEspecies||[]).length} especie(s)</span>
+      <span style="color:${sinIsin?'var(--amber,#f59e0b)':'var(--buy,#22c55e)'};font-weight:${sinIsin?700:400};">
+        ${sinIsin ? sinIsin + ' sin ISIN' : '✓ todas con ISIN'}</span>
+      <span style="opacity:.7;">${sinSedol} sin SEDOL</span>
+      <span style="opacity:.5;">· mostrando ${lista.length}</span>
+      ${editable ? '' : '<span style="color:var(--amber,#f59e0b);">· solo lectura</span>'}
+    </div>`;
+  }
+
+  if(!lista.length){
+    cont.innerHTML = '<div class="field-note">Sin resultados.</div>';
+    return;
+  }
+  const dis = editable ? '' : ' disabled';
+  const MAX = 300;   // no se pintan más de 300 de un tirón: con cientos, la
+                     // tabla se vuelve lenta y el buscador es lo que se usa.
+  const vista = lista.slice(0, MAX);
+  cont.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <tr style="opacity:.6;font-size:10px;letter-spacing:.3px;position:sticky;top:0;
+                 background:var(--bg-1,#0f1116);">
+        <th style="text-align:left;padding:5px 8px;">NEMO</th>
+        <th style="text-align:left;padding:5px 8px;">ISIN</th>
+        <th style="text-align:left;padding:5px 8px;">SEDOL</th>
+        <th style="text-align:left;padding:5px 8px;">MERCADO</th>
+        <th style="text-align:left;padding:5px 8px;">DESCRIPCIÓN</th>
+        <th></th>
+      </tr>
+      ${vista.map(e=>{
+        const id = _slugId(e.especie);
+        const falta = _espIncompleta(e);
+        return `<tr style="border-top:1px solid var(--border,#232938);${
+          falta ? 'background:rgba(245,158,11,.07);' : ''}">
+          <td style="padding:4px 8px;font-weight:600;">${e.especie}</td>
+          <td style="padding:4px 8px;">
+            <input type="text" id="eI_${id}"${dis} value="${e.isin||''}" placeholder="falta"
+                   style="width:140px;font-size:11.5px;${!String(e.isin||'').trim()
+                     ? 'border-color:var(--amber,#f59e0b);' : ''}"></td>
+          <td style="padding:4px 8px;">
+            <input type="text" id="eS_${id}"${dis} value="${e.sedol||''}" placeholder="—"
+                   style="width:92px;font-size:11.5px;"></td>
+          <td style="padding:4px 8px;">
+            <select id="eM_${id}"${dis} style="font-size:11.5px;">
+              ${['RVL','US','LN','UN','CN'].map(m=>
+                `<option value="${m}"${String(e.mercado||'')===m?' selected':''}>${m}</option>`).join('')}
+            </select></td>
+          <td style="padding:4px 8px;">
+            <input type="text" id="eD_${id}"${dis} value="${String(e.descripcion||'').replace(/"/g,'&quot;')}"
+                   style="width:100%;min-width:180px;font-size:11.5px;"></td>
+          <td style="padding:4px 8px;">
+            ${editable ? `<button class="btn small purple"
+              onclick="guardarEspeciePanel('${String(e.especie).replace(/'/g,"\\'")}')">Guardar</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('')}
+    </table>
+    ${lista.length > MAX ? `<div class="field-note" style="margin-top:8px;">
+      Mostrando ${MAX} de ${lista.length}. Usa el buscador para acotar.</div>` : ''}`;
+}
+
+async function guardarEspeciePanel(especie){
+  if(!puedeEditarEspecies()){ alert('El maestro de especies lo editan Sergio y Miguel.'); return; }
+  const e = (_maestroEspecies||[]).find(x=>String(x.especie) === String(especie));
+  if(!e) return;
+  const id = _slugId(especie);
+  const isin  = String((document.getElementById('eI_'+id)||{}).value||'').toUpperCase().trim();
+  const sedol = String((document.getElementById('eS_'+id)||{}).value||'').toUpperCase().trim();
+  const mercado = (document.getElementById('eM_'+id)||{}).value || e.mercado;
+  const desc  = String((document.getElementById('eD_'+id)||{}).value||'').trim();
+
+  if(isin && !/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(isin) &&
+     !confirm(`"${isin}" no tiene forma de ISIN (2 letras + 9 caracteres + 1 dígito).\n\n¿Lo guardo así?`)) return;
+
+  try{
+    await guardarEnLotesSupabase('maestro_especies', [{
+      especie, isin: isin||null, sedol: sedol||null, mercado,
+      descripcion: desc||null, creado_por: USUARIO,
+      actualizado_en: new Date().toISOString(),
+    }]);
+    Object.assign(e, { isin, sedol, mercado, descripcion: desc });
+    renderMaestroEspecies();
+    const t = document.getElementById('toast');
+    if(t){ t.textContent = `✓ ${especie} actualizada`; t.classList.add('show');
+           setTimeout(()=>t.classList.remove('show'), 2000); }
+  }catch(err){ alert('No se pudo guardar: ' + err.message); }
+}
+
+async function nuevaEspecieDesdePanel(){
+  if(!puedeEditarEspecies()){ alert('El maestro de especies lo editan Sergio y Miguel.'); return; }
+  const nemo = (prompt('Nemo de la especie nueva:')||'').toUpperCase().trim();
+  if(!nemo) return;
+  if((_maestroEspecies||[]).some(e=>String(e.especie).toUpperCase() === nemo)){
+    // Ya existe: en vez de duplicarla se busca, que es lo que se quería hacer.
+    const b = document.getElementById('espBuscar');
+    if(b){ b.value = nemo; renderMaestroEspecies(); }
+    alert(`${nemo} ya existe. Te la dejo filtrada abajo para completarla.`);
+    return;
+  }
+  try{
+    await guardarEnLotesSupabase('maestro_especies', [{
+      especie: nemo, isin: null, sedol: null, mercado: 'RVL',
+      descripcion: null, creado_por: USUARIO,
+      actualizado_en: new Date().toISOString(),
+    }]);
+    _maestroEspecies.push({ especie:nemo, isin:null, sedol:null, mercado:'RVL', descripcion:null });
+    const b = document.getElementById('espBuscar');
+    if(b) b.value = nemo;
+    renderMaestroEspecies();
+  }catch(err){ alert('No se pudo crear: ' + err.message); }
+}
+
 function renderMaestroGrupos(){
   const cont = document.getElementById('maestroGruposTabla');
   if(!cont) return;
@@ -12863,6 +12881,7 @@ async function cargarMaestroGrupos(){
       if(x.nombre) _portGrupoPorNombre[lim(x.nombre)] = x;
     });
     if(ps.length) console.log(`Planilla: ${ps.length} portafolios con grupo`);
+    if(typeof renderMaestroEspecies === 'function') renderMaestroEspecies();
   }catch(e){ console.warn('maestro_portafolio_grupo:', e.message); }
 }
 
@@ -21144,7 +21163,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-24 15:03 UTC · v142';
+const BUILD_ID = '2026-09-24 15:40 UTC · v143';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
