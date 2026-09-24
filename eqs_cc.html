@@ -2092,6 +2092,37 @@
 
   <!-- ===== AYUDAS ===== -->
   <div id="mod-Ayudas" class="mod-section">
+    <!-- Quién está usando la app: firma los cambios del maestro de grupos y
+         decide si el panel es editable (Sergio, 24-sep). -->
+    <div class="toolbar" style="border-bottom:none;padding-bottom:0;">
+      <div class="tb-field">
+        <label>Usuario</label>
+        <select id="selUsuario" onchange="cambiarUsuario(this.value)" style="width:150px;">
+          <option value="SAR">Sergio Arango</option>
+          <option value="JAJ">Juan A. Jiménez</option>
+          <option value="MIG">Miguel</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="section-label" style="margin-top:14px;">Maestro de grupos</div>
+    <div style="padding:0 24px 8px;">
+      <div class="field-note" style="margin-bottom:8px;">
+        El <b>trader</b> y la <b>categoría</b> salen en la planilla COP; la categoría además
+        decide quién complementa en bolsa. Los <b>alias</b> son los nombres con que el cliente
+        llega en Fidessa: si le quitas uno, deja de reconocerse.
+      </div>
+      <div id="grupoAviso" style="margin-bottom:10px;"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+        <input type="text" id="grupoBuscar" placeholder="Buscar grupo…" oninput="renderMaestroGrupos()"
+               style="width:220px;font-size:12px;padding:5px 9px;background:var(--bg-2,#161b26);
+                      color:var(--text-1,#e5e7eb);border:1px solid var(--border,#232938);border-radius:6px;">
+        <button class="btn small" id="btnGrupoNuevo" onclick="agregarGrupoNuevo()">+ Grupo nuevo</button>
+      </div>
+      <div id="maestroGruposTabla" style="max-height:440px;overflow:auto;"></div>
+    </div>
+
+    <div class="section-label" style="margin-top:16px;">Cargas y maestros</div>
     <div class="toolbar">
       <div class="tb-field" style="flex:1;min-width:340px;">
         <label>Trades del mercado (All_Trades .csv)</label>
@@ -11198,6 +11229,18 @@ function clienteLlevaCOR(claveCli){
 
 // El comercial que firma el COR sale del TRADER del grupo (Sergio, 22-sep).
 const COR_USUARIOS = { SAR:'SARANGO', JAJ:'JJIMENEZ' };
+
+// QUIÉN ESTÁ USANDO LA APP. Se usaba en varios sitios pero nunca se definía, así
+// que todo quedaba firmado como SAR. No es seguridad —la app no tiene login y
+// cualquiera puede cambiar el selector— pero evita el error honesto y deja
+// rastro de quién hizo cada cambio (Sergio, 24-sep).
+let USUARIO = (()=>{ try{ return localStorage.getItem('eqs_usuario') || 'SAR'; }
+                     catch(e){ return 'SAR'; } })();
+function cambiarUsuario(v){
+  USUARIO = String(v||'SAR').toUpperCase();
+  try{ localStorage.setItem('eqs_usuario', USUARIO); }catch(e){}
+  if(typeof renderMaestroGrupos === 'function') renderMaestroGrupos();
+}
 function comercialDeCOR(nombreCli){
   const g = (typeof grupoDeOperacion === 'function')
     ? grupoDeOperacion(nombreCli, '', '') : null;
@@ -12647,10 +12690,168 @@ let _portGrupo = {};        // deceval -> {grupo, categoria, id_fondo}
 let _portGrupoPorFondo = {};// ID de fondo (Account de EMSX) -> lo mismo
 let _portGrupoPorNombre = {};
 
+// =====================================================================
+// PANEL DEL MAESTRO DE GRUPOS (Ayudas)
+// ---------------------------------------------------------------------
+// Editable SOLO con el usuario SAR. No es seguridad —la app no tiene login—
+// pero evita el error honesto, y cada cambio queda firmado con quién y cuándo.
+// El riesgo real no es el sabotaje: es tocar una categoría sin ver que deja a
+// un cliente sin COR (Sergio, 24-sep).
+// =====================================================================
+const PRESUPUESTO_ANIO = 8668000000;
+
+function puedeEditarGrupos(){ return USUARIO === 'SAR'; }
+
+function renderMaestroGrupos(){
+  const cont = document.getElementById('maestroGruposTabla');
+  if(!cont) return;
+  const sel = document.getElementById('selUsuario');
+  if(sel && sel.value !== USUARIO) sel.value = USUARIO;
+
+  const editable = puedeEditarGrupos();
+  const btnNuevo = document.getElementById('btnGrupoNuevo');
+  if(btnNuevo) btnNuevo.style.display = editable ? '' : 'none';
+
+  const filtro = String((document.getElementById('grupoBuscar')||{}).value||'').toUpperCase().trim();
+  const grupos = (_maestroGrupos||[])
+    .filter(g=>!filtro || String(g.grupo).toUpperCase().includes(filtro) ||
+                          String(g.alias||'').toUpperCase().includes(filtro))
+    .sort((a,b)=>String(a.grupo).localeCompare(String(b.grupo)));
+
+  // El presupuesto del año tiene que seguir cuadrando: se muestra el total y
+  // cuánto se desvía, para verlo al instante.
+  const total = (_maestroGrupos||[]).reduce((t,g)=>t+(Number(g.presupuesto)||0), 0);
+  const dif = total - PRESUPUESTO_ANIO;
+  const aviso = document.getElementById('grupoAviso');
+  if(aviso){
+    aviso.innerHTML = `
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12px;">
+        <span>Presupuesto del año: <b>${fmtMoney(total)}</b></span>
+        <span style="color:${Math.abs(dif)<1 ? 'var(--buy,#22c55e)' : 'var(--amber,#f59e0b)'};font-weight:700;">
+          ${Math.abs(dif)<1 ? '✓ cuadra' : (dif>0?'sobran ':'faltan ') + fmtMoney(Math.abs(dif))}</span>
+        <span style="opacity:.6;">· ${(_maestroGrupos||[]).length} grupo(s)</span>
+        ${editable ? '' : '<span style="color:var(--amber,#f59e0b);">· solo lectura: el maestro lo edita Sergio</span>'}
+      </div>`;
+  }
+
+  if(!grupos.length){
+    cont.innerHTML = '<div class="field-note">Sin grupos. ¿Corriste el SQL de maestro_grupos?</div>';
+    return;
+  }
+  const dis = editable ? '' : ' disabled';
+  cont.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <tr style="opacity:.6;font-size:10px;letter-spacing:.3px;position:sticky;top:0;
+                 background:var(--bg-1,#0f1116);">
+        <th style="text-align:left;padding:5px 8px;">GRUPO</th>
+        <th style="text-align:left;padding:5px 8px;">TRADER</th>
+        <th style="text-align:left;padding:5px 8px;">CATEGORÍA</th>
+        <th style="text-align:right;padding:5px 8px;">PRESUPUESTO</th>
+        <th style="text-align:left;padding:5px 8px;">ALIAS (separados por |)</th>
+        <th></th>
+      </tr>
+      ${grupos.map(g=>`
+        <tr style="border-top:1px solid var(--border,#232938);" data-grupo="${g.grupo}">
+          <td style="padding:4px 8px;font-weight:600;">${g.grupo}</td>
+          <td style="padding:4px 8px;">
+            <select id="gT_${_slugId(g.grupo)}"${dis} style="font-size:12px;">
+              <option value="SAR"${g.trader==='SAR'?' selected':''}>SAR</option>
+              <option value="JAJ"${g.trader==='JAJ'?' selected':''}>JAJ</option>
+            </select></td>
+          <td style="padding:4px 8px;">
+            <select id="gC_${_slugId(g.grupo)}"${dis} style="font-size:12px;">
+              <option value="INSTITUCIONAL"${g.categoria==='INSTITUCIONAL'?' selected':''}>INSTITUCIONAL</option>
+              <option value="EXTRANJEROS"${g.categoria==='EXTRANJEROS'?' selected':''}>EXTRANJEROS</option>
+            </select></td>
+          <td style="padding:4px 8px;text-align:right;">
+            <input type="text" id="gP_${_slugId(g.grupo)}"${dis} value="${fmtInt(Number(g.presupuesto)||0)}"
+                   style="width:130px;text-align:right;font-size:12px;"></td>
+          <td style="padding:4px 8px;">
+            <input type="text" id="gA_${_slugId(g.grupo)}"${dis} value="${(g.alias||'').replace(/"/g,'&quot;')}"
+                   style="width:100%;min-width:220px;font-size:11.5px;"></td>
+          <td style="padding:4px 8px;">
+            ${editable ? `<button class="btn small purple" onclick="guardarGrupo('${g.grupo.replace(/'/g,"\\'")}')">Guardar</button>` : ''}
+          </td>
+        </tr>`).join('')}
+    </table>`;
+}
+
+function _slugId(t){ return String(t||'').replace(/[^A-Za-z0-9]/g,'_'); }
+
+async function guardarGrupo(nombre){
+  if(!puedeEditarGrupos()){ alert('El maestro de grupos lo edita Sergio.'); return; }
+  const g = (_maestroGrupos||[]).find(x=>x.grupo === nombre);
+  if(!g) return;
+  const id = _slugId(nombre);
+  const trader = (document.getElementById('gT_'+id)||{}).value || g.trader;
+  const categoria = (document.getElementById('gC_'+id)||{}).value || g.categoria;
+  const presupuesto = parseNum((document.getElementById('gP_'+id)||{}).value) || 0;
+  const alias = String((document.getElementById('gA_'+id)||{}).value||'').trim();
+
+  // Avisos ANTES de guardar: cambiar la categoría cambia quién complementa en
+  // bolsa, y quitar un alias hace que el cliente deje de reconocerse.
+  const avisos = [];
+  if(categoria !== g.categoria){
+    avisos.push(categoria === 'EXTRANJEROS'
+      ? `${nombre} DEJARÁ de generar archivo COR (pasa a EXTRANJEROS).`
+      : `${nombre} EMPEZARÁ a generar archivo COR (pasa a INSTITUCIONAL).`);
+  }
+  const aliasAntes = String(g.alias||'').split('|').filter(Boolean);
+  const aliasAhora = alias.split('|').filter(Boolean);
+  const quitados = aliasAntes.filter(x=>!aliasAhora.includes(x));
+  if(quitados.length){
+    avisos.push('Se quitan alias: ' + quitados.join(', ') +
+                '. Si el cliente llega con ese nombre, la planilla no lo va a reconocer.');
+  }
+  const difPres = presupuesto - (Number(g.presupuesto)||0);
+  if(Math.abs(difPres) > 0.5){
+    const totalNuevo = (_maestroGrupos||[]).reduce((t,x)=>t+(x.grupo===nombre?presupuesto:(Number(x.presupuesto)||0)), 0);
+    avisos.push(`El presupuesto del año quedaría en ${fmtMoney(totalNuevo)} ` +
+                `(${Math.abs(totalNuevo-PRESUPUESTO_ANIO)<1 ? 'cuadra' :
+                   (totalNuevo>PRESUPUESTO_ANIO?'sobran ':'faltan ') + fmtMoney(Math.abs(totalNuevo-PRESUPUESTO_ANIO))}).`);
+  }
+  if(avisos.length && !confirm('Antes de guardar:\n\n' + avisos.map(a=>'   • '+a).join('\n') +
+                               '\n\n¿Sigo?')) return;
+
+  try{
+    await guardarEnLotesSupabase('maestro_grupos', [{
+      grupo: nombre, trader, categoria, presupuesto, alias,
+      origen: g.origen || null, anio: g.anio || 2026,
+      actualizado: new Date().toISOString(),
+      actualizado_por: USUARIO,
+    }]);
+    Object.assign(g, { trader, categoria, presupuesto, alias });
+    await cargarMaestroGrupos();
+    renderMaestroGrupos();
+    const t = document.getElementById('toast');
+    if(t){ t.textContent = `✓ ${nombre} actualizado`; t.classList.add('show');
+           setTimeout(()=>t.classList.remove('show'), 2200); }
+  }catch(e){ alert('No se pudo guardar: ' + e.message); }
+}
+
+async function agregarGrupoNuevo(){
+  if(!puedeEditarGrupos()){ alert('El maestro de grupos lo edita Sergio.'); return; }
+  const nombre = (prompt('Nombre del grupo nuevo (como va en el presupuesto):')||'').trim().toUpperCase();
+  if(!nombre) return;
+  if((_maestroGrupos||[]).some(g=>String(g.grupo).toUpperCase() === nombre)){
+    alert('Ese grupo ya existe.'); return;
+  }
+  const fila = { grupo:nombre, trader:'SAR', categoria:'INSTITUCIONAL',
+                 presupuesto:0, alias:'', origen:null, anio:2026,
+                 actualizado:new Date().toISOString(), actualizado_por:USUARIO };
+  try{
+    await guardarEnLotesSupabase('maestro_grupos', [fila]);
+    await cargarMaestroGrupos();
+    renderMaestroGrupos();
+    alert(`${nombre} creado. Completa su trader, categoría, presupuesto y alias.`);
+  }catch(e){ alert('No se pudo crear: ' + e.message); }
+}
+
 async function cargarMaestroGrupos(){
   try{
     _maestroGrupos = await supaFetch('maestro_grupos', 'order=grupo.asc&limit=500') || [];
     if(_maestroGrupos.length) console.log(`Planilla: ${_maestroGrupos.length} grupos cargados`);
+    if(typeof renderMaestroGrupos === 'function') renderMaestroGrupos();
   }catch(e){ console.warn('maestro_grupos:', e.message); _maestroGrupos = []; }
   try{
     const ps = await supaFetch('maestro_portafolio_grupo', 'order=deceval.asc&limit=3000') || [];
@@ -20943,7 +21144,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-23 20:49 UTC · v141';
+const BUILD_ID = '2026-09-24 15:03 UTC · v142';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
