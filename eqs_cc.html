@@ -20119,11 +20119,16 @@ function onCambioCliente(){
   const acc = document.getElementById('nuevo-account');
   if(!key || !clientesRVI[key]){
     acc.innerHTML='<option value="">Selecciona cliente primero</option>';
-    calcularRVI(); return;
+    calcularRVI();
+    if(typeof renderArqueoRVI === 'function') renderArqueoRVI();
+    return;
   }
   const ports = clientesRVI[key].portafolios;
   acc.innerHTML = ports.map(p=>`<option value="${p}">${p}</option>`).join('');
   calcularRVI();
+  // El cuadro de revisión se repinta al cambiar de cliente: cada uno tiene su
+  // tarifa, y antes se quedaba con la del cliente anterior (Sergio, 24-sep).
+  if(typeof renderArqueoRVI === 'function') renderArqueoRVI();
 }
 
 // =====================================================================
@@ -21259,7 +21264,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-24 19:43 UTC · v151';
+const BUILD_ID = '2026-09-24 19:49 UTC · v152';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
