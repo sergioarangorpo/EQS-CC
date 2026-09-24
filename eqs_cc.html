@@ -6565,17 +6565,27 @@ function fondoFiduciariaCCFFMM(account){
   // ("CC FIDUCIARIA ESTRATEGIAS INMOBILIARIAS"). Exigir que uno contuviera al
   // otro no los emparejaba (Sergio, 16-sep).
   const RUIDO = new Set(['CC','FIDUCIARIA','FIDU','CREDICORP','CAPITAL','FI','FIC',
-                         'FVP','FPV','FAP','FAPI','FG','FGI','PA','P','DE','DEL','LA','EL','Y']);
+                         'FVP','FPV','FAP','FAPI','FG','FGI','PA','P','DE','DEL','LA','EL','Y',
+                         // "NO"/"N" son relleno en "AHORRO ESPECIAL NO 39".
+                         'NO','N']);
+  // Las palabras se parten además entre LETRAS y NÚMEROS: el Account escribe
+  // "ESP39" pegado y el fondo se llama "AHORRO ESPECIAL NO 39", así que sin
+  // separarlos no calzaba ninguno (Sergio, 24-sep).
   const palabras = t => String(t||'').toUpperCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/([A-Z])(\d)/g, '$1 $2').replace(/(\d)([A-Z])/g, '$1 $2')
     .split(/[^A-Z0-9]+/).filter(w=>w && !RUIDO.has(w));
 
   const pa = palabras(a);
   if(!pa.length) return '';
 
   // Dos palabras calzan si una es prefijo de la otra: ESTRAT ~ ESTRATEGIAS.
+  // Prefijo desde 3 letras: el Account abrevia "ESPECIAL" como "ESP", y con el
+  // mínimo de 4 no calzaba (Sergio, 24-sep). El riesgo de falso positivo es
+  // bajo porque se exige que TODAS las palabras del Account calcen y gana el
+  // candidato con menos palabras sobrantes.
   const calza = (x,y) => x === y ||
-    (x.length >= 4 && y.startsWith(x)) || (y.length >= 4 && x.startsWith(y));
+    (x.length >= 3 && y.startsWith(x)) || (y.length >= 3 && x.startsWith(y));
 
   const candidatos = [];
   const agrega = (nombre) => { if(nombre) candidatos.push(String(nombre).trim()); };
@@ -21179,7 +21189,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-24 16:53 UTC · v144';
+const BUILD_ID = '2026-09-24 18:25 UTC · v145';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
