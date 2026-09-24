@@ -17259,8 +17259,12 @@ function mostrarAprobacionProteccion(cliente, loteDet){
     });
     const _loteOpsProt = Object.values(_opsProt)
       .map(o=>({ ...o, precio: o.cantidad > 0 ? o.bruto / o.cantidad : 0 }));
+    // Se pasa `_loteOpsProt`, que es el reparto armado ARRIBA: `loteOps` no
+    // existe en esta función y al usarla reventaba antes de registrar, así que
+    // el archivo salía pero PROTECCIÓN no quedaba reportada (Sergio, 24-sep).
     if(typeof guardarCorLineasDeReporte === 'function'){
-      await guardarCorLineasDeReporte('RVL', cliente, loteDet, version, loteOps);
+      try{ await guardarCorLineasDeReporte('RVL', cliente, loteDet, version, _loteOpsProt); }
+      catch(e){ console.warn('COR de PROTECCIÓN:', e.message); }
     }
     const nuevas = await registrarLoteRVL(cliente, _loteOpsProt, version);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos rtpcredicorp + credicorp');
@@ -21297,7 +21301,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-24 20:15 UTC · v153';
+const BUILD_ID = '2026-09-24 20:20 UTC · v154';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
