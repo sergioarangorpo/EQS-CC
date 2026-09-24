@@ -19908,9 +19908,18 @@ function renderArqueoRVI(){
   // una comisión menor a la real (Sergio, 02-sep). El Excel siempre estuvo bien
   // porque lo calcula por otro lado; era solo la vista.
   const comCliCalc = (()=>{
-    const kCli = claveClienteRVI(refCli.firm) || claveClienteRVI(refCli.cliente);
+    // El CLIENTE ELEGIDO manda. Antes solo miraba el Originating Firm de la
+    // línea, y cuando no lo reconocía caía a la tarifa de CCSI: la comisión del
+    // cliente salía IGUAL a la del broker —los dos en 3.732— aunque Colfondos
+    // cobra 0,004 y CCSI 0,003 (Sergio, 24-sep).
+    const kCli = (document.getElementById('tc-cliente')||{}).value ||
+                 claveClienteRVI(refCli.firm) || claveClienteRVI(refCli.cliente);
     const db = kCli ? clientesRVI[kCli] : null;
-    if(!db) return comisionContraparteRVI('CCSI', refCli.tipo, (qCli||qEjec), grossCli, isin);
+    if(!db){
+      // Sin cliente no se puede saber su tarifa: se deja en 0 y el aviso de
+      // arriba lo señala, en vez de mostrar la del broker como si fuera suya.
+      return 0;
+    }
     const t = String(refCli.tipo||'').toUpperCase();
     if(t === 'UCIT' || /^(IE|LU)/i.test(String(isin||''))) return redondear(grossCli * db.comUCIT, 2);
     return redondear((qCli||qEjec) * (t === 'ADR' ? db.comADR : db.comETF), 2);
@@ -21247,7 +21256,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-24 19:33 UTC · v149';
+const BUILD_ID = '2026-09-24 19:38 UTC · v150';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
