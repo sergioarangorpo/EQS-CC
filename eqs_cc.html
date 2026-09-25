@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1352,6 +1351,14 @@
             <input type="text" inputmode="decimal" id="comisionPantallaOtro" placeholder="0.00" oninput="recalcularTodo()">
           </div>
         </div>
+      </div>
+
+      <!-- Resumen de lo seleccionado — SOLO PORVENIR. Es el unico cliente que
+           reporta con comision promedio ponderada, y Sergio necesita verla en
+           pantalla para cantarla en el chat de Bloomberg (Sergio, 25-sep). -->
+      <div id="porvResumenCard" style="display:none;">
+        <div class="section-label">Resumen Porvenir</div>
+        <div class="panel" id="porvResumenPanel"></div>
       </div>
 
       <div class="section-label">Asignación a portafolios</div>
@@ -16100,6 +16107,152 @@ function recalcularTodo(){
   // actualiza su estado teniendo en cuenta también la asignación: para clientes
   // de reparto manual la diferencia debe quedar en 0 antes de poder generar.
   actualizarBotonGenerar();
+  if(typeof renderResumenPorvenir === 'function') renderResumenPorvenir(cliente, seleccionados);
+}
+
+// =====================================================================
+// RESUMEN PORVENIR — lo que se va a cantar en el chat de Bloomberg
+// ---------------------------------------------------------------------
+// Porvenir es el UNICO cliente que reporta con comision promedio ponderada por
+// especie+lado, asi que este panel solo sale para el. Muestra lo mismo que va
+// a salir en el archivo — si aqui dice 0,128%, con 0,128% quedan TODOS los
+// folios — y deja copiar la linea lista para el chat (Sergio, 25-sep).
+// =====================================================================
+function _porvFmtQ(n){ return Number(n||0).toLocaleString('en-US'); }
+// Precios a 4 decimales, tanto en el panel como en la linea que se copia al
+// chat (Sergio, 25-sep). La COMISION sigue a 3 decimales hacia arriba, que es
+// la regla acordada y lo que queda en el archivo.
+function _porvFmtP(n){ return Number(n||0).toLocaleString('en-US',{minimumFractionDigits:4, maximumFractionDigits:4}); }
+
+function renderResumenPorvenir(cliente, seleccionados){
+  const card = document.getElementById('porvResumenCard');
+  const panel = document.getElementById('porvResumenPanel');
+  if(!card || !panel) return;
+  const esPorv = normalizarGrupo(String(cliente||'')) === 'PORVENIR';
+  if(!esPorv){ card.style.display = 'none'; window._porvResumenTexto = ''; return; }
+  card.style.display = '';
+
+  const fs = (seleccionados||[]).filter(f=>Number(f.cantidad) > 0);
+  if(!fs.length){
+    panel.innerHTML = '<div class="field-note">Selecciona folios para ver el resumen.</div>';
+    window._porvResumenTexto = '';
+    return;
+  }
+
+  // Una sola especie y un solo lado: no tiene sentido decirle al cliente que
+  // vendio 350K con promedio 0,12% si son dos especies distintas (Sergio).
+  const combos = [...new Set(fs.map(f=>f.especie + '|' + f.lado))];
+  if(combos.length > 1){
+    const detalle = combos.map(k=>{
+      const [e,l] = k.split('|');
+      const q = fs.filter(f=>f.especie===e && f.lado===l).reduce((a,f)=>a+f.cantidad,0);
+      return `<div style="padding:2px 0;">${e} ${l} · ${_porvFmtQ(q)}</div>`;
+    }).join('');
+    panel.innerHTML = `<div class="field-note" style="color:var(--amber,#f59e0b);">
+        Hay ${combos.length} especie/lado seleccionados. El promedio se canta por especie y lado,
+        así que filtra uno solo para ver el resumen.</div>
+      <div style="font-size:12px;margin-top:8px;opacity:.85;">${detalle}</div>`;
+    window._porvResumenTexto = '';
+    return;
+  }
+
+  const especie = fs[0].especie, lado = fs[0].lado;
+  const agg = arr => {
+    const q = arr.reduce((a,f)=>a+f.cantidad, 0);
+    const bruto = arr.reduce((a,f)=>a+f.cantidad*f.precio, 0);
+    return { q, bruto, px: q ? bruto/q : 0 };
+  };
+  const esBloque = f => String(f.marca||'').toLowerCase() !== 'pantalla';
+  const tot = agg(fs), blo = agg(fs.filter(esBloque)), pan = agg(fs.filter(f=>!esBloque(f)));
+  // La MISMA comision que va al archivo: ponderada por plata, 3 decimales
+  // hacia arriba. No se recalcula distinto aqui a proposito.
+  const pct = comisionPromedioPonderada(fs, f=>comisionFolioPct(cliente, f));
+  const pctTxt = Number(pct).toFixed(3);
+
+  const partes = [];
+  if(blo.q) partes.push(`Bloque ${_porvFmtQ(blo.q)} @ ${_porvFmtP(blo.px)}`);
+  if(pan.q) partes.push(`Pantalla ${_porvFmtQ(pan.q)} @ ${_porvFmtP(pan.px)}`);
+  const texto = `${especie} · TOTAL ${lado.toUpperCase()} ${_porvFmtQ(tot.q)} @ ${_porvFmtP(tot.px)} · com ${pctTxt}%` +
+                (partes.length ? '. ' + partes.join(' · ') : '');
+  window._porvResumenTexto = texto;
+
+  const fila = (lbl, val, fuerte) => `<div class="result-row"><span class="label">${lbl}</span>
+      <span class="value"${fuerte?' style="font-weight:700;"':''}>${val}</span></div>`;
+
+  panel.innerHTML =
+    `<div style="font-size:15px;font-weight:700;letter-spacing:.3px;margin-bottom:8px;">
+       ${especie} <span style="opacity:.7;font-weight:600;">· ${lado}</span></div>` +
+    fila('Acciones', _porvFmtQ(tot.q), true) +
+    fila('Precio promedio', _porvFmtP(tot.px), true) +
+    fila('Comisión promedio', pctTxt + '%', true) +
+    '<div class="divider"></div>' +
+    fila('Bloque/Cruce', blo.q ? `${_porvFmtQ(blo.q)} @ ${_porvFmtP(blo.px)}` : '—') +
+    fila('Pantalla', pan.q ? `${_porvFmtQ(pan.q)} @ ${_porvFmtP(pan.px)}` : '—') +
+    `<div class="divider"></div>
+     <div style="font-size:11.5px;font-family:ui-monospace,Menlo,Consolas,monospace;
+                 background:var(--bg2,#0f1320);border:1px solid var(--border,#232938);
+                 border-radius:6px;padding:8px;line-height:1.5;word-break:break-word;">${texto}</div>
+     <button class="btn small purple" style="width:100%;margin-top:6px;"
+             onclick="copiarResumenPorvenir(this)">📋 Copiar para el chat</button>
+     <div class="field-note" style="margin-top:6px;">Con esta comisión quedan <b>todos</b> los folios seleccionados.</div>` +
+    _porvBloqueTrader(fs);
+}
+
+// Trader por portafolio, arriba y a la vista. Escribe en la MISMA variable que
+// lee la ventana de confirmacion (window._porvTraderPorPort), asi que lo que
+// elijas aqui ya queda elegido alla. No se preselecciona nada a proposito: el
+// 17-sep un reporte salio a nombre de quien no dio la orden por preseleccionar
+// el primero de la lista (Sergio, 25-sep).
+function _porvBloqueTrader(fs){
+  window._porvTraderPorPort = window._porvTraderPorPort || {};
+  const ports = {};
+  fs.forEach(f=>{ const p = _porvPortDeFolio(f); if(p) ports[p.nombre] = p; });
+  const lista = Object.values(ports);
+  if(!lista.length){
+    return `<div class="divider"></div>
+      <div class="field-note" style="color:var(--amber,#f59e0b);">
+        No se reconoció el portafolio de estos folios, así que todavía no se puede
+        elegir el trader. Revisa el Account en EMSX o asígnalo a mano.</div>`;
+  }
+  // FPV nunca va en el mismo archivo que FPO/Cesantias: se avisa YA, no al final.
+  const g = { FPO: [], FPV: [] };
+  lista.forEach(p=>{ g[_porvGrupoArchivo(p)].push(p.nombre); });
+  const aviso = (g.FPO.length && g.FPV.length)
+    ? `<div class="field-note" style="color:var(--sell,#ef4444);margin-top:6px;">
+         Estás mezclando FPV con FPO/Cesantías. Son archivos distintos — repórtalos por separado.</div>`
+    : '';
+  const filas = lista.map(p=>{
+    const grupo = _porvGrupoArchivo(p);
+    const ops = (PORVENIR_TRADERS[grupoTraderPorvenir(p.nombre)] || []);
+    const actual = window._porvTraderPorPort[p.nombre] || '';
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+      <span style="flex:1;font-size:11.5px;">${p.nombre}
+        <span class="field-note">· ${grupo}${_porvPagaIva(p.nombre) ? ' · IVA' : ' · sin IVA'}</span></span>
+      <select style="width:150px;" onchange="window._porvTraderPorPort[${JSON.stringify(p.nombre)}]=this.value;">
+        <option value=""${actual ? '' : ' selected'}>— trader —</option>
+        ${ops.map(t=>`<option value="${t}"${t===actual?' selected':''}>${t}</option>`).join('')}
+      </select></div>`;
+  }).join('');
+  return `<div class="divider"></div>
+    <div class="section-label" style="margin-bottom:8px;">Trader por portafolio</div>${filas}${aviso}`;
+}
+
+function copiarResumenPorvenir(btn){
+  const txt = window._porvResumenTexto || '';
+  if(!txt) return;
+  const listo = ()=>{ if(btn){ const p = btn.innerHTML; btn.innerHTML = '✓ Copiado';
+                      setTimeout(()=>{ btn.innerHTML = p; }, 1400); } };
+  try{
+    navigator.clipboard.writeText(txt).then(listo, ()=>_porvCopiaRespaldo(txt, listo));
+  }catch(e){ _porvCopiaRespaldo(txt, listo); }
+}
+// Respaldo para cuando el navegador no da permiso al portapapeles.
+function _porvCopiaRespaldo(txt, listo){
+  const ta = document.createElement('textarea');
+  ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); listo(); }catch(e){}
+  ta.remove();
 }
 
 // ----------------------------------------------------------------------
@@ -16914,6 +17067,20 @@ async function generarReporte(){
               _sinTrader.map(n=>'   ' + n).join('\n') +
               '\n\nEl trader va en la columna NOTES y cambia con cada orden.');
         return;
+      }
+      // FPV nunca viaja en el mismo archivo que FPO/Cesantías. FPO + Cesantías
+      // sí pueden ir juntos, aunque tengan IVA distinto (Sergio, 25-sep).
+      {
+        const _porGrupo = { FPO: [], FPV: [] };
+        Object.values(_portsFolios).forEach(p=>{ _porGrupo[_porvGrupoArchivo(p)].push(p.nombre); });
+        if(_porGrupo.FPO.length && _porGrupo.FPV.length){
+          alert('No se generó el reporte: estás mezclando FPV con FPO/Cesantías ' +
+                'en el mismo archivo.\n\n' +
+                'FPO y Cesantías:\n' + _porGrupo.FPO.map(n=>'   ' + n).join('\n') + '\n\n' +
+                'FPV:\n' + _porGrupo.FPV.map(n=>'   ' + n).join('\n') + '\n\n' +
+                'Reporta primero un grupo y después el otro.');
+          return;
+        }
       }
     }
     window._sufijoReporte = sufijoVersion(version);
@@ -18412,6 +18579,94 @@ function grupoTraderPorvenir(nombrePort){
   return _PORV_FPO.some(x=>n.toLowerCase().includes(x.toLowerCase())) ? 'FPO' : 'FPV';
 }
 
+// =====================================================================
+// PORVENIR — fondo, IVA y grupo de reporte  (Sergio, 25-sep)
+// ---------------------------------------------------------------------
+// Reglas acordadas:
+//  · El fondo llega por EMSX (Account). Si Sergio lo asigno A MANO, gana la
+//    mano: si tuvo que asignarlo es porque EMSX vino mal marcado.
+//  · IVA: SOLO Cesantias. Todos los demas van en CERO (no vacio) y la formula
+//    no cambia: bruto +/- com +/- iva.
+//  · Un archivo NO puede mezclar FPV con FPO/Cesantias. FPO + Cesantias si.
+// =====================================================================
+// ALT/ALTER/ALTERNA marcan la FAMILIA (alternativos), no el fondo: EMSX dice
+// "ALTERNA ARQUIMED" y PARAMETROS dice "Arquimed". Verificado contra las 48
+// cuentas: suma 2 emparejamientos y no cambia ni rompe ninguno (Sergio, 25-sep).
+const _PORV_RUIDO = new Set(['PORVENIR','FPV','FPO','PA','SA','DE','DEL','LA','EL','Y',
+                             'FONDO','FONDOS','PENSIONES','VOLUNTARIAS','OBLIGATORIAS',
+                             'ALT','ALTER','ALTERNA','ALTNA']);
+function _porvPalabras(t){
+  return String(t||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/([A-Z])(\d)/g,'$1 $2').replace(/(\d)([A-Z])/g,'$1 $2')
+    .split(/[^A-Z0-9+]+/).filter(w=>w && !_PORV_RUIDO.has(w));
+}
+// "DIVER" calza con "DIVERSIFICADA"; "DINAMICO" con "DINAMICA" (misma raiz de 5).
+function _porvCalza(x,y){
+  if(x === y) return true;
+  // Prefijo de 3 basta: EMSX abrevia mucho (GEN -> GENERACION, DIVER ->
+  // DIVERSIFICADA). Probado contra las 48 cuentas de RVI: resuelve 15 y NO
+  // produce un solo emparejamiento ambiguo (Sergio, 25-sep).
+  if(x.length >= 3 && y.startsWith(x)) return true;
+  if(y.length >= 3 && x.startsWith(y)) return true;
+  // Misma raiz de 5: DINAMICO / DINAMICA.
+  return x.length >= 5 && y.length >= 5 && x.slice(0,5) === y.slice(0,5);
+}
+// El Account de EMSX ("PORVENIR FPV DIVER DINAMICO") contra los 39 de
+// PARAMETROS ("Diversificada Dinamica"). TODAS las palabras del account tienen
+// que calzar. Si empatan dos fondos, devuelve null: preferimos no saber.
+function _porvPortPorPalabras(texto){
+  const pa = _porvPalabras(texto);
+  if(!pa.length) return null;
+  let mejor = null, puntaje = -1, empate = false;
+  PORVENIR_PORTAFOLIOS.forEach(p=>{
+    const pb = _porvPalabras(p.nombre);
+    if(!pb.length) return;
+    const ok = pa.filter(w=>pb.some(y=>_porvCalza(w,y))).length;
+    if(ok < pa.length) return;
+    const sc = ok * 100 - (pb.length - ok);
+    if(sc > puntaje){ puntaje = sc; mejor = p; empate = false; }
+    else if(sc === puntaje && mejor && mejor.nombre !== p.nombre){ empate = true; }
+  });
+  return empate ? null : mejor;
+}
+// El Account de EMSX del folio: por Parent Order ID, y si EMSX no lo trae, por
+// (especie, lado) cuando hay UNA sola cuenta — con varias no se adivina.
+function _porvAccountEmsx(f){
+  let cache = [];
+  try{ cache = _emsxCBCache || []; }catch(e){ return ''; }
+  if(!cache || !cache.length) return '';
+  const poid = String(f.parentOrderId||'').trim();
+  if(poid){
+    const hit = cache.find(r=>String(r.parent_order_id || r.parentOrderId || '').trim() === poid);
+    if(hit && hit.account) return String(hit.account).trim();
+  }
+  const esPorv = r => /PORVENIR/i.test(String(r.originate_trader_firm || r.firm || r.account || ''));
+  const cuentas = new Set();
+  cache.forEach(r=>{
+    if(!esPorv(r)) return;
+    if(f.especie && nemoCanonico(r.ticker || r.nombre_completo || '', 'emsx') !== f.especie) return;
+    const sd = String(r.side||'').trim().toUpperCase();
+    const lado = sd ? (sd.startsWith('B') ? 'Compra' : 'Venta') : '';
+    if(lado && f.lado && lado !== f.lado) return;
+    const acc = String(r.account||'').trim();
+    if(acc && acc.toUpperCase() !== 'PORVENIR') cuentas.add(acc);
+  });
+  return cuentas.size === 1 ? [...cuentas][0] : '';
+}
+// SOLO Cesantias paga IVA (Sergio, 25-sep).
+function _porvPagaIva(port){
+  const n = String((port && port.nombre) || port || '')
+    .toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  return /CESANT/.test(n);
+}
+// Grupo de REPORTE: FPO y Cesantias pueden ir en el mismo archivo; FPV no.
+const _PORV_FPO_NOMBRES = ['Moderado','Mayor Riesgo','Retiro Programado','Conservador'];
+function _porvGrupoArchivo(port){
+  const n = String((port && port.nombre) || port || '');
+  if(_porvPagaIva(n)) return 'FPO';                       // Cesantias viaja con FPO
+  return _PORV_FPO_NOMBRES.some(x=>n.toLowerCase() === x.toLowerCase()) ? 'FPO' : 'FPV';
+}
+
 function _porvPortDeFolio(f){
   // El portafolio llega en el Notes/Instruction de la orden ("CESANTIAS" ->
   // Cesantías LP). Se prueban VARIOS candidatos y gana el primero que exista en
@@ -18435,18 +18690,36 @@ function _porvPortDeFolio(f){
       if(p) candidatos.push(p.nombre);
     }
   }
-  if(f.parentOrderId && _fidessaTradesRaw && _fidessaTradesRaw[String(f.parentOrderId)]){
-    candidatos.push(_fidessaTradesRaw[String(f.parentOrderId)].notes);   // el Instruction de la orden
-  }
-  candidatos.push(f.notes, f.portafolio);
-  for(const c of candidatos){
+  const _literal = c => {
     const objetivo = norm(c);
-    if(!objetivo || objetivo === 'PORVENIR') continue;   // el nombre del cliente no es un portafolio
-    const hit = PORVENIR_PORTAFOLIOS.find(p=>norm(p.nombre)===objetivo)
-             || PORVENIR_PORTAFOLIOS.find(p=>norm(p.nombre).startsWith(objetivo))
-             || PORVENIR_PORTAFOLIOS.find(p=>objetivo.startsWith(norm(p.nombre)));
-    if(hit) return hit;
+    if(!objetivo || objetivo === 'PORVENIR') return null;   // el cliente no es un portafolio
+    return PORVENIR_PORTAFOLIOS.find(p=>norm(p.nombre)===objetivo)
+        || PORVENIR_PORTAFOLIOS.find(p=>norm(p.nombre).startsWith(objetivo))
+        || PORVENIR_PORTAFOLIOS.find(p=>objetivo.startsWith(norm(p.nombre)))
+        || null;
+  };
+  // 1) LO ASIGNADO A MANO manda sobre todo lo demas.
+  for(const c of candidatos){ const hit = _literal(c); if(hit) return hit; }
+  // 2) EMSX: es la fuente automatica. El Account llega con el vocabulario de
+  //    EMSX ("PORVENIR FPV DIVER DINAMICO"), no con el de PARAMETROS
+  //    ("Diversificada Dinamica"), asi que se empareja por PALABRAS. Si queda
+  //    ambiguo devuelve null y se sigue de largo (Sergio, 25-sep).
+  {
+    const acc = _porvAccountEmsx(f);
+    if(acc){
+      const hit = _literal(acc) || _porvPortPorPalabras(acc);
+      if(hit) return hit;
+    }
   }
+  // 3) El Instruction de la orden de Fidessa y lo que traiga el propio folio.
+  const resto = [];
+  if(f.parentOrderId && _fidessaTradesRaw && _fidessaTradesRaw[String(f.parentOrderId)]){
+    resto.push(_fidessaTradesRaw[String(f.parentOrderId)].notes);
+  }
+  resto.push(f.notes, f.portafolio);
+  for(const c of resto){ const hit = _literal(c); if(hit) return hit; }
+  // 4) Ultimo recurso: por palabras sobre esos mismos textos.
+  for(const c of resto){ const hit = _porvPortPorPalabras(c); if(hit) return hit; }
   return null;
 }
 
@@ -18584,7 +18857,9 @@ async function generarReportePorvenir(cliente, loteDet, opciones){
     const pct   = (comUnica[f.especie+'|'+f.lado] || 0) / 100;   // fracción
     const bruto = f.cantidad * f.precio;
     const com   = redondear(bruto * pct, 3);
-    const iva   = redondear(com * 0.19, 3);
+    // SOLO Cesantias paga IVA; el resto va en CERO, no vacio. La formula no
+    // cambia: neto = bruto -/+ com -/+ iva (Sergio, 25-sep).
+    const iva   = _porvPagaIva(port) ? redondear(com * 0.19, 3) : 0;
     const neto  = f.lado === 'Venta' ? bruto - com - iva : bruto + com + iva;
     const trader = (opts.traderPorPort && port) ? (opts.traderPorPort[port.nombre] || null) : null;
     return { folio:Number(f.folio), hora:f.hora, especie:f.especie, lado:f.lado,
@@ -21500,7 +21775,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-25 18:50 UTC · v160';
+const BUILD_ID = '2026-09-25 19:52 UTC · v162';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
