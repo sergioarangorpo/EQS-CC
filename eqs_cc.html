@@ -17790,11 +17790,23 @@ function portafolioPorCuentaEmsx(cfg, cuenta){
   const claveAlias = Object.keys(ALIAS_CUENTA_PORTAFOLIO).find(k => nomNorm.includes(_normAcc(k)));
   const alias = claveAlias ? ALIAS_CUENTA_PORTAFOLIO[claveAlias][objetivo] : null;
   if(alias){ const p = ports.find(x => x.id === alias); if(p) return p; }
-  return ports.find(p => _normAcc(p.id) === objetivo)
-      || ports.find(p => _normAcc(p.nombre) === objetivo)
-      || ports.find(p => _normAcc(p.nombre).endsWith(objetivo))
-      || ports.find(p => _normAcc(p.nombre).includes(objetivo))
-      || null;
+  // El Account puede traer el NOMBRE DEL CLIENTE en vez del fondo: Porvenir
+  // manda literalmente "PORVENIR". Eso no identifica ningun portafolio, y el
+  // comodin de abajo lo emparejaba con el primer nombre que CONTUVIERA esa
+  // palabra — "Tactico Porvenir" — y de ahi salia un allocation clavado al
+  // fondo equivocado que ni asignando a mano se quitaba (Sergio, 25-sep).
+  if(objetivo === nomNorm || (nomNorm && nomNorm.includes(objetivo) && objetivo.length >= 4)) return null;
+  const exacto = ports.find(p => _normAcc(p.id) === objetivo)
+              || ports.find(p => _normAcc(p.nombre) === objetivo);
+  if(exacto) return exacto;
+  // Los comodines (termina en / contiene) solo valen si hay UN solo candidato.
+  // Con varios, antes ganaba el primero del arreglo: eso es adivinar.
+  if(objetivo.length < 4) return null;
+  const porFinal = ports.filter(p => _normAcc(p.nombre).endsWith(objetivo));
+  if(porFinal.length === 1) return porFinal[0];
+  if(porFinal.length > 1) return null;
+  const porDentro = ports.filter(p => _normAcc(p.nombre).includes(objetivo));
+  return porDentro.length === 1 ? porDentro[0] : null;
 }
 
 // Devuelve {ok, allocations, faltan, detalle} para los folios dados.
@@ -21775,7 +21787,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-25 19:52 UTC · v162';
+const BUILD_ID = '2026-09-25 20:20 UTC · v163';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
