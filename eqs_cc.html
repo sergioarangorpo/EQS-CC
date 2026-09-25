@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -4746,6 +4747,7 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
     BNPA: 'BNP AGENCY',
     'BNP AGENCY': 'BNP AGENCY',
   };
+  const _tarifaCli = tarifaCruce(clienteKey);
   const _k = String(clienteKey||'').toUpperCase().trim();
   const nombreCliente = NOMBRE_FORMAL[_k] ||
     (getClienteDB(clienteKey) && getClienteDB(clienteKey).nombre) || clienteKey;
@@ -4798,7 +4800,7 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
     if(!lado) return null;
     return lado.detalle.reduce(function(a,d){
       const gross = redondear(d.gross, 2);
-      const com = redondear(d.gross * MLI_COMISION_ALL_IN, 2);
+      const com = redondear(d.gross * _tarifaCli.tasa, 2);
       return a + (lado.ladoAccion === 'Compra' ? gross + com : gross - com);
     }, 0);
   }
@@ -4869,7 +4871,7 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
   registrados.forEach(function(lado){
     lado.detalle.forEach(function(d){
       const gross = redondear(d.gross, 2);
-      const comision = redondear(d.gross * MLI_COMISION_ALL_IN, 2);
+      const comision = redondear(d.gross * _tarifaCli.tasa, 2);
       const neto = redondear(lado.ladoAccion === 'Compra' ? gross + comision : gross - comision, 2);
       ws.getCell(r,1).value = _soloFecha(lado.tradeDate);
       ws.getCell(r,2).value = _soloFecha(lado.settleDate);
@@ -4880,7 +4882,7 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
       ws.getCell(r,7).value = redondear(d.precio, 2);
       ws.getCell(r,8).value = gross;
       ws.getCell(r,9).value = comision;
-      ws.getCell(r,10).value = 'ALL IN';
+      ws.getCell(r,10).value = _tarifaCli.etiqueta;
       ws.getCell(r,11).value = neto;
       r++;
     });
@@ -5013,7 +5015,7 @@ async function generarExcelCruce(clienteKey, registrados, trader){
     lado.detalle.forEach(d=>{
       // Valores redondeados a 2 decimales reales (misma regla que el FX).
       const gross = redondear(d.gross, 2);
-      const comision = redondear(d.gross * MLI_COMISION_ALL_IN, 2);
+      const comision = redondear(d.gross * tarifaCruce(clienteKey).tasa, 2);
       const neto = redondear(lado.ladoAccion === 'Compra' ? gross + comision : gross - comision, 2);
       ws.getCell(`B${r}`).value = tdTxt;
       ws.getCell(`C${r}`).value = sdTxt;
@@ -5984,12 +5986,14 @@ const clientesDB = {
   },
   'CREDIBOLSA': {
     // Client/Book CREDIBOLSA en Fidessa, account Credibolsa. Mismo esquema que
-    // MLI y CITI: orden VWAP/MOC + FX, reporte cruzado, 0,1% all in, sin
-    // trader. Es DISTINTO de 'CREDICORP CAPITAL BOLSA' (la mesa de Perú, que
-    // reporta su propio BO y desde acá no se toca) (Sergio, 23-sep).
+    // MLI y CITI: orden VWAP/MOC + FX, reporte cruzado, sin trader. Es DISTINTO
+    // de 'CREDICORP CAPITAL BOLSA' (la mesa de Perú, que reporta su propio BO y
+    // desde acá no se toca) (Sergio, 23-sep).
+    // Tarifa 0,15% + IVA (Sergio, 25-sep) — ya NO es all-in como MLI/CITI/BNP.
+    // La tarifa del cruce vive en CRUCE_TARIFAS; esto es para el resto del app.
     nombre: 'CREDIBOLSA',
     formatoReporte: 'cruce_fx', reparteManual: false,
-    comisionBloque: 0.001, comisionPantalla: 0.001,
+    comisionBloque: 0.0015, comisionPantalla: 0.0015, iva: true,
     portafolios: [{ id:'CREDIBOLSA', nombre:'CREDIBOLSA' }],
     autoPortafolio: 'CREDIBOLSA',
   },
@@ -6164,7 +6168,12 @@ const ALIAS_GRUPO = {
   'FIDUCIARIA BOGOTA': 'AVAL FIDUCIARIA',
   ALIANZA: 'ALIANZA VALORES',
   ALIANZAVAL: 'ALIANZA VALORES',
-  CREDIBOLSA: 'CREDICORP CAPITAL BOLSA',
+  // CREDIBOLSA YA NO es alias de la mesa de Peru: desde el 23-sep es un cliente
+  // propio (clientesDB['CREDIBOLSA']). El alias quedo vivo aunque grupoDeTrade
+  // se parcheo, asi que el folio se resolvia a CREDIBOLSA y el filtro lo
+  // normalizaba a CREDICORP CAPITAL BOLSA: al elegir Credibolsa salian 0 folios
+  // y al elegir la mesa de Peru salian los de Credibolsa (Sergio, 25-sep).
+  // La mesa de Peru entra por su book CSI, que sigue abajo.
   CSI: 'CREDICORP CAPITAL BOLSA',
   BRSE: 'BRADESCO',
   ITAU: 'ITAU_NY',
@@ -7968,6 +7977,25 @@ function toggleTodosTrades(checked){
 // (el impuesto existe pero va incluido en el all-in).
 const MLI_COMISION_ALL_IN = 0.001; // 0.1%
 
+// Tarifa del cruce POR CLIENTE. MLI, CITI y BNP AGENCY van 0,1% ALL IN: la
+// comision lo incluye todo y no hay linea de IVA. CREDIBOLSA es 0,15% + IVA
+// (Sergio, 25-sep): el IVA se factura aparte, asi que NO entra al neto del
+// Trade Confirmation ni al COP que se cierra en FX — la plata que se mueve es
+// bruto +/- 0,15%. Lo unico que cambia es la etiqueta de la tarifa, que deja de
+// decir ALL IN porque ya no es cierto.
+const CRUCE_TARIFAS = {
+  CREDIBOLSA: { tasa: 0.0015, etiqueta: '0,15% + IVA' },
+};
+function tarifaCruce(clienteKey){
+  const k = String(clienteKey||'').toUpperCase().trim();
+  let nom = '';
+  try{ nom = String(((getClienteDB(clienteKey)||{}).nombre)||'').toUpperCase(); }catch(e){}
+  const directa = CRUCE_TARIFAS[k];
+  if(directa) return directa;
+  const porNombre = Object.keys(CRUCE_TARIFAS).find(x => k.includes(x) || nom.includes(x));
+  return porNombre ? CRUCE_TARIFAS[porNombre] : { tasa: MLI_COMISION_ALL_IN, etiqueta: 'ALL IN' };
+}
+
 // Traders de los clientes extranjeros que operan cruce FX. Se usan para (a) el
 // selector de trader al consolidar, y (b) nombrar el archivo:
 // Trade_Confirmation_MLI_<TRADER>_<yyyymmdd>.xlsx. De la base (hojas MLI y
@@ -8015,7 +8043,7 @@ function consolidarTradesParaFX(){
       bruto += g;
       return { security: nemoCanonico(t.security,'fidessa'), qty: t.qtyDone, precio: t.avgPx, gross: g };
     });
-    const comision = bruto * MLI_COMISION_ALL_IN;
+    const comision = bruto * tarifaCruce(trades[0].grupo).tasa;
     // Compra de acción: el cliente paga (neto = bruto + comisión).
     // Venta de acción: el cliente recibe (neto = bruto − comisión).
     const netoCOP = ladoAccion === 'Compra' ? bruto + comision : bruto - comision;
@@ -8421,7 +8449,7 @@ async function generarExcelCrucePendiente(){
           especie: nemoCanonico(d.security) || d.security,
           lado: b.ladoAccion,
           cantidad: q, precio: px,
-          comMonto: q * px * MLI_COMISION_ALL_IN,
+          comMonto: q * px * tarifaCruce(cli).tasa,
         });
       });
     });
@@ -8433,8 +8461,9 @@ async function generarExcelCrucePendiente(){
     }
   }catch(e){ console.warn('No se pudo registrar el cruce:', e.message); }
   // MLI y CITI usan el formato que pidió el broker; los demás, el estándar.
-  // BNP AGENCY y CREDIBOLSA usan el MISMO formato y la misma comisión all-in
-  // de 0,1%; la única diferencia es que no llevan trader (Sergio, 23-sep).
+  // BNP AGENCY y CREDIBOLSA usan el MISMO formato y no llevan trader. La
+  // comisión YA NO es la misma: BNP sigue en 0,1% all in y CREDIBOLSA pasó a
+  // 0,15% + IVA — la decide tarifaCruce(), no este if (Sergio, 25-sep).
   if(/^(MLI|CITI|CREDIBOLSA|BNPA)/i.test(String(cli)) ||
      /MERRILL|CITIGROUP|CREDIBOLSA|BNP AGENCY/i.test(String((getClienteDB(cli)||{}).nombre||''))){
     generarExcelCruceMLI(cli, reg, trader);
@@ -8479,7 +8508,7 @@ function mostrarResumenCruceFX(){
     </div>`;
   document.getElementById('cruceFXBody').innerHTML = `
     <div class="field-note" style="margin-bottom:12px;">
-      Cliente <b>${nombreCliente}</b> · comisión <b>0.1% ALL IN</b>. El neto COP de cada lado ya la incluye.
+      Cliente <b>${nombreCliente}</b> · comisión <b>${(tarifaCruce(p.cliente).tasa*100).toFixed(2).replace('.',',')}% ${tarifaCruce(p.cliente).etiqueta}</b>. El neto COP de cada lado ya la incluye${/IVA/.test(tarifaCruce(p.cliente).etiqueta) ? ' (el IVA se factura aparte y NO entra al FX)' : ''}.
       Al continuar, cada lado se abre en la calculadora de FX para que metas la <b>tasa cliente</b> y la <b>tasa mercado</b>; la calculadora saca el USD (COP ÷ tasa) y la utilidad. Se registra <b>una operación FX por lado</b>.
     </div>
     ${selectorTrader}
@@ -21471,7 +21500,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-25 17:10 UTC · v158';
+const BUILD_ID = '2026-09-25 18:50 UTC · v160';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
