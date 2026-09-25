@@ -2243,9 +2243,16 @@
       <div class="section-label">Portafolio nuevo</div>
       <div class="field-note" style="margin-bottom:10px;">
         Cuando un cliente abre un portafolio que todavía no está en la base.
-        El DECEVAL es el identificador: no cambia y es por el que se cruza el allocation.</div>
+        El DECEVAL es el identificador: no cambia y es por el que se cruza el allocation.
+        <b>Si el portafolio solo va a operar afuera</b>, marca "Solo RVI": ahí no hace
+        falta deceval, porque el nombre va directo a la columna ACCOUNT del Trade
+        Confirmation.</div>
       <div class="field-row">
-        <div class="field"><label>DECEVAL</label>
+        <div class="field" style="align-self:flex-end;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="checkbox" id="mpSoloRvi" onchange="toggleSoloRviMaestro()">
+            <span>Solo RVI <span class="field-note">(sin deceval)</span></span></label></div>
+        <div class="field" id="mpCampoDeceval"><label>DECEVAL</label>
           <input type="text" id="mpDeceval" placeholder="4352995" style="width:130px;"></div>
         <div class="field"><label>Client/Book</label>
           <select id="mpClientBook" style="width:220px;"></select></div>
@@ -6930,6 +6937,8 @@ const AVAL_FIDU_NUEVOS = [
 // desactualizado en los dos sentidos (Sergio, 27-ago).
 // =====================================================================
 let _maestroPortafolios = [];
+// Portafolios que solo operan RVI (sin deceval). Tabla aparte, ver Ayudas.
+let _maestroPortafoliosRVI = [];
 let _maestroEspecies = [];
 
 // Anclaje por DECEVAL: Código Orión, dígito de verificación y Especial
@@ -6987,6 +6996,9 @@ async function cargarMaestros(){
     _maestroPortafolios = await supaFetch('maestro_portafolios', 'order=creado_en.desc&limit=2000') || [];
   }catch(e){ console.warn('maestro_portafolios:', e.message); _maestroPortafolios = []; }
   try{
+    _maestroPortafoliosRVI = await supaFetch('maestro_portafolios_rvi', 'order=creado_en.desc&limit=2000') || [];
+  }catch(e){ console.warn('maestro_portafolios_rvi:', e.message); _maestroPortafoliosRVI = []; }
+  try{
     _maestroEspecies = await supaFetch('maestro_especies', 'order=creado_en.desc&limit=2000') || [];
   }catch(e){ console.warn('maestro_especies:', e.message); _maestroEspecies = []; }
   aplicarMaestroEspecies();
@@ -6994,6 +7006,7 @@ async function cargarMaestros(){
   // volcaban sobre los clientes, así que un portafolio creado desde Ayudas no
   // aparecía en la lista de asignación ni después de recargar (Sergio, 08-sep).
   aplicarMaestroPortafolios();
+  aplicarMaestroPortafoliosRVI();
   renderListasMaestro();
   // Si hay un cliente en pantalla, se repinta para que el portafolio nuevo
   // salga sin tener que cambiar de cliente y volver.
@@ -7109,6 +7122,34 @@ function renderListaFestivos(){
     </div>`;
 }
 
+// Portafolio que SOLO opera afuera: no tiene deceval y no lo necesita. Vive en
+// su propia tabla para no tocar en nada la de RVL, donde el deceval es la
+// llave primaria y es lo que cruza el allocation (Sergio, 25-sep).
+async function guardarPortafolioSoloRVI(clienteRvi, nombre, est){
+  if(!clienteRvi || !nombre){
+    est.innerHTML = '<span style="color:var(--amber,#f59e0b);">Faltan el cliente de RVI o el nombre.</span>';
+    return;
+  }
+  const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const yaEsta = ((clientesRVI[clienteRvi]||{}).portafolios||[]).find(x=>lim(x)===lim(nombre));
+  if(yaEsta){
+    est.innerHTML = `<span style="color:var(--amber,#f59e0b);">"${yaEsta}" ya está en la ficha de RVI.</span>`;
+    return;
+  }
+  est.textContent = 'Guardando…';
+  const fila = { cliente_rvi: clienteRvi, nombre,
+                 creado_por: (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
+                 actualizado_en: new Date().toISOString() };
+  try{
+    await guardarEnLotesSupabase('maestro_portafolios_rvi', [fila]);
+    await cargarMaestros();
+    est.innerHTML = `<span style="color:var(--buy,#22c55e);">Guardado solo para RVI: ${nombre}</span>`;
+    document.getElementById('mpNombre').value = '';
+  }catch(e){
+    est.innerHTML = `<span style="color:var(--sell,#ef4444);">No se pudo guardar: ${e.message}</span>`;
+  }
+}
+
 async function guardarPortafolioMaestro(){
   const est = document.getElementById('mpEstado');
   const deceval = String(document.getElementById('mpDeceval').value||'').replace(/\D/g,'').trim();
@@ -7116,6 +7157,8 @@ async function guardarPortafolioMaestro(){
   const nombre  = String(document.getElementById('mpNombre').value||'').trim();
   const especial= String(document.getElementById('mpEspecial').value||'').trim();
   const iva     = document.getElementById('mpIva').value === '1';
+  const soloRvi = !!(document.getElementById('mpSoloRvi')||{}).checked;
+  if(soloRvi){ await guardarPortafolioSoloRVI(book, nombre, est); return; }
   if(!deceval || !book || !nombre){
     est.innerHTML = '<span style="color:var(--amber,#f59e0b);">Faltan DECEVAL, Client/Book o nombre.</span>';
     return;
@@ -7185,6 +7228,62 @@ async function guardarEspecieMaestro(){
 }
 
 // Los portafolios del maestro entran a la base del cliente que les toque.
+// Agrega un nombre a la ficha de RVI de un cliente, sin duplicar y sin tocar
+// los nombres que ya estan (las listas de RVI estan curadas: el nombre es
+// literalmente lo que sale en la columna ACCOUNT del Trade Confirmation).
+function _sumarPortRVI(claveRvi, nombre){
+  if(!claveRvi || !nombre) return false;
+  // clientesRVI es `const` y se declara mas abajo en el mismo script: si esto
+  // corre antes, `typeof` NO devuelve 'undefined', lanza ReferenceError.
+  let tabla = null;
+  try{ tabla = clientesRVI; }catch(e){ return false; }
+  if(!tabla) return false;
+  const cfg = tabla[claveRvi];
+  if(!cfg) return false;
+  cfg.portafolios = cfg.portafolios || [];
+  const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(cfg.portafolios.some(x=>lim(x) === lim(nombre))) return false;
+  cfg.portafolios.push(String(nombre));
+  return true;
+}
+
+// De la clave de RVL a la de RVI. claveClienteRVI() traduce un nombre de firma,
+// asi que se prueba con la clave y con el nombre del cliente.
+function _claveRVIdeRVL(claveRvl){
+  if(typeof claveClienteRVI !== 'function') return '';
+  const directo = claveClienteRVI(String(claveRvl||'').replace(/_/g,' '));
+  if(directo) return directo;
+  const cfg = (typeof clientesDB !== 'undefined') ? clientesDB[claveRvl] : null;
+  return cfg && cfg.nombre ? claveClienteRVI(cfg.nombre) : '';
+}
+
+// Los portafolios SOLO RVI: no entran a clientesDB, asi que no aparecen en RVL
+// ni por accidente. Si un dia hay que reportarlos en local, se crean de nuevo
+// CON deceval y ahi si sirven en los dos lados.
+function aplicarMaestroPortafoliosRVI(){
+  let n = 0;
+  (_maestroPortafoliosRVI||[]).forEach(p=>{
+    if(_sumarPortRVI(p.cliente_rvi, p.nombre)) n++;
+  });
+  if(n) console.log(`RVI: ${n} portafolio(s) solo-RVI aplicados desde el maestro`);
+  refrescarAccountsRVI();
+}
+
+// Si ya hay un cliente elegido en RVI, el desplegable de accounts se repinta
+// para que el portafolio recien creado salga sin cambiar de cliente y volver.
+function refrescarAccountsRVI(){
+  const selCli = document.getElementById('tc-cliente');
+  const acc = document.getElementById('nuevo-account');
+  if(!selCli || !acc || !selCli.value) return;
+  let tabla = null;
+  try{ tabla = clientesRVI; }catch(e){ return; }
+  const ports = ((tabla||{})[selCli.value]||{}).portafolios || [];
+  if(!ports.length) return;
+  const previo = acc.value;
+  acc.innerHTML = ports.map(p=>`<option value="${p}">${p}</option>`).join('');
+  if(ports.includes(previo)) acc.value = previo;
+}
+
 function aplicarMaestroPortafolios(){
   _maestroPortafolios.forEach(p=>{
     const clave = (typeof grupoDeTrade === 'function') ? grupoDeTrade(p.client_book, '') : p.client_book;
@@ -7202,6 +7301,10 @@ function aplicarMaestroPortafolios(){
       cfg.portafolios.push({ id:'DEC_'+p.deceval, nombre:p.nombre, deceval:p.deceval,
                              nit:p.nit||'', iva:p.iva !== false, especialFid:p.especial_fid||'' });
     }
+    // Un portafolio con deceval sirve en los DOS lados: antes solo bajaba a
+    // RVL y habia que tocar el HTML para que apareciera en RVI. Se agrega, no
+    // se reemplaza la lista (Sergio, 25-sep).
+    _sumarPortRVI(_claveRVIdeRVL(clave), p.nombre);
   });
 }
 
@@ -7209,12 +7312,20 @@ function renderListasMaestro(){
   const lp = document.getElementById('mpLista');
   if(lp){
     lp.innerHTML = !_maestroPortafolios.length
-      ? '<div class="field-note">Todavía no se ha agregado ningún portafolio desde aquí.</div>'
+      ? ((_maestroPortafoliosRVI||[]).length ? ''
+         : '<div class="field-note">Todavía no se ha agregado ningún portafolio desde aquí.</div>')
       : `<div class="field-note" style="margin-bottom:6px;">${_maestroPortafolios.length} portafolio(s) agregados desde la app:</div>` +
         _maestroPortafolios.slice(0,12).map(p=>
           `<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--border,#232938);">
             <span class="mono-id">${p.deceval}</span> · ${p.nombre}
             <span class="field-note">· ${p.client_book}${p.especial_fid?' · esp. '+p.especial_fid:''}</span></div>`).join('');
+    if((_maestroPortafoliosRVI||[]).length){
+      lp.innerHTML += `<div class="field-note" style="margin:10px 0 6px;">${_maestroPortafoliosRVI.length} portafolio(s) solo RVI (sin deceval):</div>` +
+        _maestroPortafoliosRVI.slice(0,12).map(p=>
+          `<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--border,#232938);">
+            <span class="mono-id">RVI</span> · ${p.nombre}
+            <span class="field-note">· ${p.cliente_rvi}</span></div>`).join('');
+    }
   }
   const le = document.getElementById('meLista');
   if(le){
@@ -7231,12 +7342,40 @@ function renderListasMaestro(){
 }
 
 // El desplegable de Client/Book se arma con los clientes que ya existen.
+// En modo "Solo RVI" se arma con los clientes de RVI, que no son los mismos:
+// hay clientes que operan afuera y no estan en clientesDB (Sergio, 25-sep).
 function poblarClientBookMaestro(){
   const sel = document.getElementById('mpClientBook');
-  if(!sel || typeof clientesDB === 'undefined') return;
-  const claves = Object.keys(clientesDB).sort();
+  if(!sel) return;
+  const soloRvi = !!(document.getElementById('mpSoloRvi')||{}).checked;
+  const tabla = soloRvi ? (typeof clientesRVI !== 'undefined' ? clientesRVI : null)
+                        : (typeof clientesDB  !== 'undefined' ? clientesDB  : null);
+  if(!tabla) return;
+  const previo = sel.value;
+  const claves = Object.keys(tabla).sort();
   sel.innerHTML = '<option value="">Selecciona…</option>' +
-    claves.map(k=>`<option value="${k}">${(clientesDB[k].nombre)||k}</option>`).join('');
+    claves.map(k=>`<option value="${k}">${(tabla[k].nombre)||k}</option>`).join('');
+  if(claves.includes(previo)) sel.value = previo;
+}
+
+// El deceval se esconde en modo "Solo RVI" para que no quede a medias: o el
+// portafolio tiene deceval y sirve en los dos lados, o no lo tiene y es de RVI.
+function toggleSoloRviMaestro(){
+  const soloRvi = !!(document.getElementById('mpSoloRvi')||{}).checked;
+  const campo = document.getElementById('mpCampoDeceval');
+  const dec   = document.getElementById('mpDeceval');
+  if(campo) campo.style.display = soloRvi ? 'none' : '';
+  if(soloRvi && dec) dec.value = '';
+  // El IVA y el especial fiduciario son del archivo plano de RVL: en RVI no
+  // aplican, asi que tampoco se piden.
+  ['mpEspecial','mpIva'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el && el.parentElement) el.parentElement.style.display = soloRvi ? 'none' : '';
+  });
+  poblarClientBookMaestro();
+  const est = document.getElementById('mpEstado');
+  if(est) est.innerHTML = soloRvi
+    ? '<span class="field-note">Modo solo RVI: el portafolio NO va a aparecer en RVL.</span>' : '';
 }
 
 function normalizarNombresAvalFidu(){
@@ -8511,6 +8650,9 @@ const _CONFLICTO_POR_TABLA = {
   fidessa_folios: 'id',
   emsx_orders: 'id',
   maestro_portafolios: 'deceval',
+  // Los portafolios que SOLO operan RVI no tienen deceval, asi que su llave es
+  // el cliente de RVI + el nombre (Sergio, 25-sep).
+  maestro_portafolios_rvi: 'cliente_rvi,nombre',
   maestro_especies: 'especie',
   rvi_historico: 'id',
   festivos: 'fecha,pais',
@@ -21329,7 +21471,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-24 20:20 UTC · v154';
+const BUILD_ID = '2026-09-25 17:10 UTC · v158';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
