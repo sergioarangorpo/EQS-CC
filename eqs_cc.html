@@ -2244,6 +2244,64 @@
       <div id="spreadResultado" style="margin-top:12px;"></div>
     </div>
 
+    <!-- ===== FLUJOS DEL DÍA =====
+         Las intenciones que Sergio manda cada mañana: una linea al chat de
+         Bloomberg y una imagen para el correo, calcada del Excel que usaba
+         (Sergio, 25-sep). -->
+    <div class="card" style="margin-top:18px;">
+      <div class="section-label">Flujos del día</div>
+      <div class="field-note" style="margin-bottom:10px;">
+        Las intenciones de hoy. Si dejas <b>cantidad y precio vacíos</b> sale como
+        interés sin tamaño (<i>Int Ext</i> / <i>Int Local</i>). Se guarda por fecha,
+        así que arranca limpio cada mañana y lo ven todos.</div>
+
+      <div class="field-row">
+        <div class="field"><label>Lado</label>
+          <select id="fdLado" style="width:120px;">
+            <option value="Compra">Compra</option>
+            <option value="Venta">Venta</option>
+          </select></div>
+        <div class="field"><label>Especie</label>
+          <input type="text" id="fdEspecie" list="fdNemos" placeholder="CIBEST"
+                 style="width:150px;text-transform:uppercase;"
+                 onchange="avisarNemoFlujo()" oninput="avisarNemoFlujo()">
+          <datalist id="fdNemos"></datalist></div>
+        <div class="field"><label>Cantidad <span class="field-note">(opcional)</span></label>
+          <input type="text" inputmode="decimal" id="fdCantidad" placeholder="80000 u 80K" style="width:130px;"></div>
+        <div class="field"><label>Precio <span class="field-note">(opcional)</span></label>
+          <input type="text" inputmode="decimal" id="fdPrecio" placeholder="90000" style="width:130px;"></div>
+        <div class="field"><label>Tipo de cliente</label>
+          <select id="fdTipo" style="width:150px;">
+            <option value="Local">Local</option>
+            <option value="Extranjero">Extranjero</option>
+          </select></div>
+        <div class="field" style="align-self:flex-end;">
+          <button class="btn purple" onclick="agregarFlujoDia()">+ Agregar</button></div>
+      </div>
+      <div id="fdAvisoNemo" class="field-note" style="min-height:14px;"></div>
+
+      <div id="fdLista" style="margin-top:10px;"></div>
+
+      <div class="divider"></div>
+      <div class="field-note" style="margin-bottom:6px;">Para el chat de Bloomberg</div>
+      <div id="fdTextoBBG" style="font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;
+           background:var(--bg2,#0f1320);border:1px solid var(--border,#232938);border-radius:6px;
+           padding:10px;line-height:1.6;white-space:pre-wrap;word-break:break-word;"></div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+        <button class="btn small purple" onclick="copiarFlujoBBG(this)">📋 Copiar texto Bloomberg</button>
+        <button class="btn small" onclick="copiarFlujoImagen(this)">🖼 Copiar imagen</button>
+        <button class="btn small" onclick="descargarFlujoImagen()">⬇ Descargar PNG</button>
+        <button class="btn small ghost" onclick="limpiarFlujosDia()">Limpiar el día</button>
+      </div>
+      <div id="fdEstado" class="field-note" style="margin-top:8px;"></div>
+
+      <div class="field-note" style="margin:14px 0 6px;">Para el correo</div>
+      <div id="fdImagenWrap" style="overflow:auto;">
+        <div id="fdImagen" style="background:#ffffff;color:#1F3864;width:430px;padding:16px 18px;
+             font-family:Calibri,Segoe UI,Arial,sans-serif;"></div>
+      </div>
+    </div>
+
     <!-- ===== MAESTROS: portafolios y especies =====
          Antes había que pedirle a Claude que los agregara a mano; ahora se
          crean aquí y quedan en Supabase, así los ven todos (Sergio, 27-ago). -->
@@ -6962,6 +7020,205 @@ let _maestroEspecies = [];
 // COR salían en blanco y la complementación masiva no cargaba (Sergio, 03-sep).
 let _maestroDeceval = {};
 
+// =====================================================================
+// FLUJOS DEL DÍA — las intenciones de la mañana
+// ---------------------------------------------------------------------
+// Sergio revisa los flujos y manda dos cosas: una linea al chat de Bloomberg
+// y una imagen al correo. Esto arma las dos desde la misma lista, guardada en
+// Supabase por fecha (Sergio, 25-sep).
+// =====================================================================
+let _flujosDia = [];
+
+function _fdHoyISO(){
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
+}
+// "80K" -> 80000, "80.000" -> 80000, "80,000" -> 80000, vacio -> null.
+function _fdLeerCantidad(t){
+  let x = String(t||'').trim().toUpperCase().replace(/\s/g,'');
+  if(!x) return null;
+  let mult = 1;
+  if(/K$/.test(x)){ mult = 1000; x = x.slice(0,-1); }
+  else if(/M$/.test(x)){ mult = 1000000; x = x.slice(0,-1); }
+  x = x.replace(/[.,](?=\d{3}\b)/g,'').replace(',', '.');
+  const n = Number(x);
+  return isFinite(n) && n > 0 ? Math.round(n * mult) : null;
+}
+function _fdLeerPrecio(t){
+  let x = String(t||'').trim().replace(/\s/g,'');
+  if(!x) return null;
+  x = x.replace(/[.,](?=\d{3}\b)/g,'').replace(',', '.');
+  const n = Number(x);
+  return isFinite(n) && n > 0 ? n : null;
+}
+// 80000 -> "80K"; 1500000 -> "1.5M"; 850 -> "850".
+function _fdCantTxt(n){
+  const v = Number(n)||0;
+  if(v >= 1000000) return (v/1000000).toFixed(v % 1000000 ? 1 : 0).replace(/\.0$/,'') + 'M';
+  if(v >= 1000)    return (v/1000).toFixed(v % 1000 ? 1 : 0).replace(/\.0$/,'') + 'K';
+  return String(v);
+}
+function _fdPrecioTxt(n){ return Number(n||0).toLocaleString('en-US'); }
+// El detalle de la derecha: "80K @ 90,000, Local" o "Int Ext".
+function _fdDetalle(f){
+  const tipo = f.tipo === 'Extranjero' ? 'Ext' : 'Local';
+  if(!f.cantidad) return 'Int ' + tipo;
+  const px = f.precio ? ' @ ' + _fdPrecioTxt(f.precio) : '';
+  return `${_fdCantTxt(f.cantidad)}${px}, ${f.tipo === 'Extranjero' ? 'Ext' : 'Local'}`;
+}
+
+function poblarNemosFlujo(){
+  const dl = document.getElementById('fdNemos');
+  if(!dl || typeof NEMO_TABLE === 'undefined') return;
+  const nemos = [...new Set(NEMO_TABLE.map(n=>n.nuam))].sort();
+  dl.innerHTML = nemos.map(n=>`<option value="${n}"></option>`).join('');
+}
+// Avisa si la especie no existe. No frena: puede haber un nemo nuevo que
+// todavia no esta en la tabla. Pero un "PFBCIBEST" se ve de una.
+function avisarNemoFlujo(){
+  const el = document.getElementById('fdAvisoNemo');
+  const v = String((document.getElementById('fdEspecie')||{}).value || '').trim().toUpperCase();
+  if(!el) return;
+  if(!v || typeof NEMO_TABLE === 'undefined'){ el.innerHTML = ''; return; }
+  const existe = NEMO_TABLE.some(n=>String(n.nuam).toUpperCase() === v);
+  el.innerHTML = existe ? ''
+    : `<span style="color:var(--amber,#f59e0b);">"${v}" no está en la tabla de especies — revisa que no sea un dedazo.</span>`;
+}
+
+async function cargarFlujosDia(){
+  try{
+    _flujosDia = await supaFetch('flujos_dia', `fecha=eq.${_fdHoyISO()}&order=orden.asc`) || [];
+  }catch(e){ console.warn('flujos_dia:', e.message); _flujosDia = []; }
+  renderFlujosDia();
+}
+
+async function agregarFlujoDia(){
+  const especie = String(document.getElementById('fdEspecie').value||'').trim().toUpperCase();
+  if(!especie){ document.getElementById('fdEstado').innerHTML =
+    '<span style="color:var(--amber,#f59e0b);">Falta la especie.</span>'; return; }
+  const fila = {
+    id: _fdHoyISO() + '|' + Date.now() + '|' + Math.random().toString(36).slice(2,7),
+    fecha: _fdHoyISO(),
+    lado: document.getElementById('fdLado').value,
+    especie,
+    cantidad: _fdLeerCantidad(document.getElementById('fdCantidad').value),
+    precio:   _fdLeerPrecio(document.getElementById('fdPrecio').value),
+    tipo: document.getElementById('fdTipo').value,
+    orden: _flujosDia.length + 1,
+    creado_por: (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
+  };
+  _flujosDia.push(fila);
+  renderFlujosDia();
+  ['fdEspecie','fdCantidad','fdPrecio'].forEach(id=>{ document.getElementById(id).value = ''; });
+  document.getElementById('fdAvisoNemo').innerHTML = '';
+  document.getElementById('fdEspecie').focus();
+  try{ await guardarEnLotesSupabase('flujos_dia', [fila]); document.getElementById('fdEstado').innerHTML = ''; }
+  catch(e){ document.getElementById('fdEstado').innerHTML =
+    `<span style="color:var(--sell,#ef4444);">Quedó en pantalla pero no se guardó: ${e.message}</span>`; }
+}
+
+async function quitarFlujoDia(id){
+  _flujosDia = _flujosDia.filter(f=>String(f.id) !== String(id));
+  renderFlujosDia();
+  try{
+    await fetch(`${SUPA_URL}/rest/v1/flujos_dia?id=eq.${encodeURIComponent(id)}`,
+      { method:'DELETE', headers:{ apikey:SUPA_KEY, Authorization:`Bearer ${SUPA_KEY}` } });
+  }catch(e){ console.warn('No se pudo borrar el flujo:', e.message); }
+}
+
+async function limpiarFlujosDia(){
+  if(!_flujosDia.length) return;
+  if(!confirm(`¿Borrar las ${_flujosDia.length} intención(es) de hoy?`)) return;
+  _flujosDia = [];
+  renderFlujosDia();
+  try{
+    await fetch(`${SUPA_URL}/rest/v1/flujos_dia?fecha=eq.${_fdHoyISO()}`,
+      { method:'DELETE', headers:{ apikey:SUPA_KEY, Authorization:`Bearer ${SUPA_KEY}` } });
+  }catch(e){ console.warn('No se pudo limpiar:', e.message); }
+}
+
+function _fdTextoBloomberg(){
+  const lista = lado => [...new Set(_flujosDia.filter(f=>f.lado===lado).map(f=>f.especie))];
+  const c = lista('Compra'), v = lista('Venta');
+  if(!c.length && !v.length) return '';
+  const l = [' {CO} COLOR DE MERCADO {CO}'];
+  if(c.length) l.push('Compradores: ' + c.join(', '));
+  if(v.length) l.push('Vendedores: ' + v.join(', '));
+  return l.join('\n');
+}
+
+function renderFlujosDia(){
+  const lista = document.getElementById('fdLista');
+  const bbg   = document.getElementById('fdTextoBBG');
+  const img   = document.getElementById('fdImagen');
+  if(!lista || !bbg || !img) return;
+
+  lista.innerHTML = !_flujosDia.length
+    ? '<div class="field-note">Todavía no has cargado intenciones de hoy.</div>'
+    : _flujosDia.map(f=>`<div style="display:flex;align-items:center;gap:10px;font-size:12px;
+          padding:4px 0;border-bottom:1px solid var(--border,#232938);">
+        <span style="width:62px;color:${f.lado==='Compra'?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};
+              font-weight:600;">${f.lado}</span>
+        <span style="width:110px;font-weight:600;">${f.especie}</span>
+        <span style="flex:1;opacity:.85;">${_fdDetalle(f)}</span>
+        <button class="btn small ghost" style="padding:1px 7px;"
+                onclick="quitarFlujoDia(${JSON.stringify(String(f.id))})">✕</button>
+      </div>`).join('');
+
+  const txt = _fdTextoBloomberg();
+  bbg.textContent = txt || '—';
+  window._fdTextoBBG = txt;
+
+  // La imagen: calcada del Excel — banner azul COMPRAS, rojo VENTAS.
+  const grupo = (titulo, color, lado) => {
+    const fs = _flujosDia.filter(f=>f.lado===lado);
+    if(!fs.length) return '';
+    const filas = fs.map(f=>`<tr>
+        <td style="padding:5px 8px;text-align:center;font-size:13px;">${f.especie}</td>
+        <td style="padding:5px 8px;text-align:center;font-size:13px;">${_fdDetalle(f)}</td>
+      </tr>`).join('');
+    return `<div style="margin-bottom:18px;">
+      <div style="display:inline-block;background:${color};color:#fff;font-weight:700;
+           font-size:13px;letter-spacing:.5px;padding:3px 16px;">${titulo}</div>
+      <table style="width:100%;border-collapse:collapse;margin-top:6px;
+             border-top:2px solid #1F3864;border-bottom:2px solid #1F3864;">
+        <tbody>${filas}</tbody></table></div>`;
+  };
+  const cuerpo = grupo('COMPRAS', '#1F4E9C', 'Compra') + grupo('VENTAS', '#E00000', 'Venta');
+  img.innerHTML = cuerpo || '<div style="color:#888;font-size:13px;">Sin intenciones cargadas.</div>';
+}
+
+function copiarFlujoBBG(btn){
+  const txt = window._fdTextoBBG || '';
+  if(!txt){ return; }
+  const listo = ()=>{ if(btn){ const p = btn.innerHTML; btn.innerHTML = '✓ Copiado';
+                      setTimeout(()=>{ btn.innerHTML = p; }, 1400); } };
+  try{ navigator.clipboard.writeText(txt).then(listo, ()=>_porvCopiaRespaldo(txt, listo)); }
+  catch(e){ _porvCopiaRespaldo(txt, listo); }
+}
+
+async function _fdCanvas(){
+  if(typeof html2canvas === 'undefined') throw new Error('no cargó html2canvas (revisa la conexión)');
+  return await html2canvas(document.getElementById('fdImagen'),
+    { backgroundColor:'#ffffff', scale:2, logging:false, useCORS:true });
+}
+async function copiarFlujoImagen(btn){
+  if(!_flujosDia.length) return;
+  try{
+    const canvas = await _fdCanvas();
+    const blob = await new Promise(r=>canvas.toBlob(r, 'image/png'));
+    await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+    if(btn){ const p = btn.innerHTML; btn.innerHTML = '✓ Copiada'; setTimeout(()=>{ btn.innerHTML = p; }, 1400); }
+  }catch(e){
+    alert('No se pudo copiar la imagen (' + e.message + ').\n\nUsa "Descargar PNG" y adjúntala.');
+  }
+}
+async function descargarFlujoImagen(){
+  if(!_flujosDia.length) return;
+  try{ _bajarCanvas(await _fdCanvas(), `Flujos_${_fdHoyISO().replace(/-/g,'')}.png`); }
+  catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
+}
+
 async function cargarMaestroDeceval(){
   try{
     const filas = await supaFetch('maestro_deceval', 'order=deceval.asc&limit=5000') || [];
@@ -8686,6 +8943,7 @@ const _CONFLICTO_POR_TABLA = {
   fidessa_folios: 'id',
   emsx_orders: 'id',
   maestro_portafolios: 'deceval',
+  flujos_dia: 'id',
   // Los portafolios que SOLO operan RVI no tienen deceval, asi que su llave es
   // el cliente de RVI + el nombre (Sergio, 25-sep).
   maestro_portafolios_rvi: 'cliente_rvi,nombre',
@@ -21787,7 +22045,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-25 20:20 UTC · v163';
+const BUILD_ID = '2026-09-25 20:55 UTC · v164';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -21802,6 +22060,9 @@ cargarLineasNoReportar().then(cargarReportesGenerados);
 // mismo antes de recargar— no aparecía nunca en la lista de asignación
 // (Sergio, 08-sep).
 if(typeof cargarMaestros === 'function') cargarMaestros();
+// Flujos del día: el desplegable de especies y lo que ya se cargó hoy.
+if(typeof poblarNemosFlujo === 'function') poblarNemosFlujo();
+if(typeof cargarFlujosDia === 'function') cargarFlujosDia();
 if(typeof cargarMaestroGrupos === 'function') cargarMaestroGrupos();
 if(typeof cargarVerificadosRFI === 'function') cargarVerificadosRFI();
 if(typeof cargarBlotterRFIDesdeSupabase === 'function') cargarBlotterRFIDesdeSupabase();
