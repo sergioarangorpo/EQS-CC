@@ -6844,6 +6844,38 @@ const SEDOL_RVI = {"ACWI US EQUITY": "B2QKQH6", "BOTZ US EQUITY": "BD37KB9", "EM
 function tickerLimpioRVI(sym){ return String(sym||'').replace(/\s+(US|UN|LN)?\s*Equity$/i,'').trim().toUpperCase(); }
 // ISIN por ticker US (tabla ISIN de Bases_de_datos); cae a isinDeNemo (Colombia) si no está.
 function isinTickerRVI(sym){ const t = tickerLimpioRVI(sym); return ISIN_RVI[t] || isinDeNemo(t) || ''; }
+
+// GUARDIA DE ISIN (Sergio, 28-sep)
+// ---------------------------------------------------------------------
+// El ISIN del Trade Confirmation sale de lo que trae EMSX y solo cae a la
+// tabla del app si viene vacio. El 24-sep se le reportaron a Porvenir tres
+// ISIN equivocados (ACWI, EZU, AIQ) y el cliente los devolvio: hubo que
+// mandar un amend. Esto compara los dos ANTES de exportar y, si no calzan,
+// avisa mostrando cual es cual. No corrige solo: puede ser un nemo nuevo que
+// todavia no esta en la tabla.
+function isinDiscrepaRVI(sym, isinUsado){
+  const tabla = isinTickerRVI(sym);
+  const usado = String(isinUsado||'').trim().toUpperCase();
+  if(!tabla || !usado) return null;
+  return usado === String(tabla).toUpperCase() ? null : { ticker: tickerLimpioRVI(sym), usado, tabla };
+}
+// Revisa un lote de filas y, si hay diferencias, las pone en pantalla para que
+// Sergio decida. Devuelve true si se puede seguir.
+function revisarIsinesRVI(filas){
+  const malos = [];
+  (filas||[]).forEach(f=>{
+    const sym = f.especie || f.symbol || f.security || '';
+    const d = isinDiscrepaRVI(sym, f.isin);
+    if(d && !malos.some(x=>x.ticker===d.ticker)) malos.push(d);
+  });
+  if(!malos.length) return true;
+  const det = malos.map(d=>`   ${d.ticker}\n      va a salir : ${d.usado}\n      la tabla dice: ${d.tabla}`).join('\n\n');
+  return confirm(
+    'OJO con el ISIN — no coincide con la tabla del app:\n\n' + det +
+    '\n\nEl 24-sep se le reportaron a Porvenir tres ISIN equivocados y hubo que mandar amend.\n\n' +
+    'Aceptar = generar igual (es un nemo nuevo o sabes que el de EMSX es el bueno).\n' +
+    'Cancelar = no generar.');
+}
 // SEDOL por ticker completo ("XLB US Equity") — para PORVENIR.
 function sedolTickerRVI(sym){ return SEDOL_RVI[String(sym||'').trim().toUpperCase()] || ''; }
 // Settlement: US/UN (ETFs) = T+1 ; LN (UCITs) = T+2. Del sufijo del ticker EMSX.
@@ -7137,8 +7169,17 @@ async function limpiarFlujosDia(){
   }catch(e){ console.warn('No se pudo limpiar:', e.message); }
 }
 
+// Siempre alfabetico, compras primero y ventas despues — en la lista, en el
+// texto de Bloomberg y en la imagen (Sergio, 28-sep).
+function _fdOrden(lado){
+  return _flujosDia.filter(f=>f.lado===lado)
+    .slice()
+    .sort((a,b)=>String(a.especie||'').localeCompare(String(b.especie||''), 'es', {sensitivity:'base'}));
+}
+function _fdOrdenados(){ return _fdOrden('Compra').concat(_fdOrden('Venta')); }
+
 function _fdTextoBloomberg(){
-  const lista = lado => [...new Set(_flujosDia.filter(f=>f.lado===lado).map(f=>f.especie))];
+  const lista = lado => [...new Set(_fdOrden(lado).map(f=>f.especie))];
   const c = lista('Compra'), v = lista('Venta');
   if(!c.length && !v.length) return '';
   const l = [' {CO} COLOR DE MERCADO {CO}'];
@@ -7155,7 +7196,7 @@ function renderFlujosDia(){
 
   lista.innerHTML = !_flujosDia.length
     ? '<div class="field-note">Todavía no has cargado intenciones de hoy.</div>'
-    : _flujosDia.map(f=>`<div style="display:flex;align-items:center;gap:10px;font-size:12px;
+    : _fdOrdenados().map(f=>`<div style="display:flex;align-items:center;gap:10px;font-size:12px;
           padding:4px 0;border-bottom:1px solid var(--border,#232938);">
         <span style="width:62px;color:${f.lado==='Compra'?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};
               font-weight:600;">${f.lado}</span>
@@ -7171,16 +7212,18 @@ function renderFlujosDia(){
 
   // La imagen: calcada del Excel — banner azul COMPRAS, rojo VENTAS.
   const grupo = (titulo, color, lado) => {
-    const fs = _flujosDia.filter(f=>f.lado===lado);
+    const fs = _fdOrden(lado);
     if(!fs.length) return '';
     const filas = fs.map(f=>`<tr>
-        <td style="padding:5px 8px;text-align:center;font-size:13px;">${f.especie}</td>
-        <td style="padding:5px 8px;text-align:center;font-size:13px;">${_fdDetalle(f)}</td>
+        <td style="padding:5px 8px;text-align:center;font-size:13px;width:50%;">${f.especie}</td>
+        <td style="padding:5px 8px;text-align:center;font-size:13px;width:50%;">${_fdDetalle(f)}</td>
       </tr>`).join('');
+    // El banner va de lado a lado del cuadro: desde donde empieza la columna de
+    // nemos hasta donde termina el texto del tamaño (Sergio, 28-sep).
     return `<div style="margin-bottom:18px;">
-      <div style="display:inline-block;background:${color};color:#fff;font-weight:700;
-           font-size:13px;letter-spacing:.5px;padding:3px 16px;">${titulo}</div>
-      <table style="width:100%;border-collapse:collapse;margin-top:6px;
+      <div style="display:block;width:100%;box-sizing:border-box;background:${color};color:#fff;
+           font-weight:700;font-size:13px;letter-spacing:.5px;padding:4px 10px;">${titulo}</div>
+      <table style="width:100%;table-layout:fixed;border-collapse:collapse;margin-top:6px;
              border-top:2px solid #1F3864;border-bottom:2px solid #1F3864;">
         <tbody>${filas}</tbody></table></div>`;
   };
@@ -21605,6 +21648,7 @@ function cuentaPorvenirRVI(nombre){
 // encabezados en la fila 5 (fondo negro, letra blanca, negrita, tamaño 11).
 async function generarTradeConfirmationPorvenirRVI(cliente, filas, opciones){
   const opts = opciones || {};
+  if(typeof revisarIsinesRVI === 'function' && !revisarIsinesRVI(filas)) return;
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Credicorp Capital Colombia — Equity Sales';
   const ws = wb.addWorksheet('Trade Confirmation', {
@@ -21758,6 +21802,7 @@ function recalcularDosDecimales(f){
 }
 
 async function generarTradeConfirmationRVI(cliente, filas){
+  if(typeof revisarIsinesRVI === 'function' && !revisarIsinesRVI(filas)) return;
   // Ajuste a 2 decimales antes de escribir nada.
   if(usaDosDecimalesRVI(cliente)) filas = (filas||[]).map(recalcularDosDecimales);
   const C = REPORTE_COLOR;
@@ -22045,7 +22090,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-25 20:55 UTC · v164';
+const BUILD_ID = '2026-09-28 19:20 UTC · v165';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
