@@ -749,6 +749,35 @@
     <button data-mod="Reportes" onclick="switchModule('Reportes')" class="">Reportes</button>
     <button data-mod="Ayudas"   onclick="switchModule('Ayudas')"   class="">Ayudas</button>
     <button data-mod="Informe"  onclick="switchModule('Informe')"  class="">Informe diario de mercado</button>
+    <button data-mod="CierreRVI" onclick="switchModule('CierreRVI')" class="">Cierre RVI</button>
+  </div>
+
+  <!-- ===== CIERRE RVI =====
+       El informe que Sergio manda al cierre con el estado de los mercados de
+       afuera. Los datos los trae bbg_cierre_rvi.py desde el Terminal; aqui
+       solo se pintan y se convierten en imagen para el correo (29-sep). -->
+  <div id="mod-CierreRVI" class="mod-section">
+    <div style="padding:0 24px 24px;">
+      <div class="section-label" style="margin-top:16px;display:flex;align-items:center;
+           justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <span>Cierre de mercados internacionales</span>
+        <span class="field-note" id="rviEstado">—</span>
+      </div>
+      <div class="panel" style="margin-bottom:14px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button class="btn small" onclick="cargarCierreRVI()">↻ Recargar</button>
+          <button class="btn small purple" onclick="copiarCierreRVIImagen(this)">🖼 Copiar imagen</button>
+          <button class="btn small" onclick="descargarCierreRVIImagen()">⬇ Descargar PNG</button>
+          <button class="btn small ghost" onclick="verNombresBBG()">🔍 Ver nombres de Bloomberg</button>
+        </div>
+        <div id="rviAviso" class="field-note" style="margin-top:8px;"></div>
+      </div>
+      <div id="rviNombres" style="display:none;margin-bottom:14px;"></div>
+      <div style="overflow:auto;">
+        <div id="rviImagen" style="background:#ffffff;color:#1F3864;width:1180px;padding:18px 20px;
+             font-family:Calibri,Segoe UI,Arial,sans-serif;"></div>
+      </div>
+    </div>
   </div>
 
   <!-- ===== DASHBOARD ===== -->
@@ -2576,6 +2605,7 @@ function switchModule(mod) {
   // Al entrar al informe se repinta con lo que haya cargado, por si el archivo
   // se subió desde Ayudas.
   if(mod === 'Informe' && typeof renderInformeDiario === 'function') renderInformeDiario();
+  if(mod === 'CierreRVI' && typeof cargarCierreRVI === 'function') cargarCierreRVI();
   // El dashboard se recalcula al entrar: lee de los otros módulos, así que
   // tiene que estar fresco cada vez.
   if(mod === 'Dashboard' && typeof renderDashboard === 'function') renderDashboard();
@@ -7259,6 +7289,214 @@ async function copiarFlujoImagen(btn){
 async function descargarFlujoImagen(){
   if(!_flujosDia.length) return;
   try{ _bajarCanvas(await _fdCanvas(), `Flujos_${_fdHoyISO().replace(/-/g,'')}.png`); }
+  catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
+}
+
+// =====================================================================
+// CIERRE RVI — el informe de mercados internacionales
+// ---------------------------------------------------------------------
+// Los datos los escribe bbg_cierre_rvi.py en la tabla cierre_rvi, pidiendolos
+// al Terminal por //blp/refdata. Aqui solo se pintan: 16 bloques en dos
+// columnas, positivas en verde y negativas en ROJO, y la imagen para el correo
+// (Sergio, 29-sep).
+// =====================================================================
+let _rviUniverso = [];
+let _rviDatos = {};
+let _rviFecha = '';
+
+function _rviHoyISO(){
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
+}
+// Los numeros del informe: precio con los decimales que traiga (hasta 4) y los
+// porcentajes siempre con 2 y su signo.
+function _rviPx(v){
+  if(v === null || v === undefined || v === '') return '—';
+  const n = Number(v);
+  if(!isFinite(n)) return '—';
+  const dec = Math.abs(n) >= 1000 ? 2 : 4;
+  return n.toLocaleString('es-CO',{minimumFractionDigits:2, maximumFractionDigits:dec});
+}
+function _rviPct(v){
+  if(v === null || v === undefined || v === '') return '—';
+  const n = Number(v);
+  if(!isFinite(n)) return '—';
+  return (n>=0?'':'-') + Math.abs(n).toFixed(2).replace('.',',') + '%';
+}
+const _RVI_VERDE = '#127C1F', _RVI_ROJO = '#C00000', _RVI_TINTA = '#1F3864';
+function _rviColor(v){
+  const n = Number(v);
+  if(!isFinite(n)) return _RVI_TINTA;
+  return n >= 0 ? _RVI_VERDE : _RVI_ROJO;
+}
+
+async function cargarCierreRVI(){
+  const est = document.getElementById('rviEstado');
+  if(est) est.textContent = 'cargando…';
+  try{
+    _rviUniverso = await supaFetch('rvi_universo',
+      'activo=eq.true&order=columna.asc,orden_bloque.asc,orden.asc&limit=500') || [];
+  }catch(e){ console.warn('rvi_universo:', e.message); _rviUniverso = []; }
+  // El cierre MAS RECIENTE, no necesariamente el de hoy: si el script todavia
+  // no ha corrido, es mejor ver el de ayer bien rotulado que una pantalla en
+  // blanco sin explicacion.
+  try{
+    const filas = await supaFetch('cierre_rvi', 'order=fecha.desc&limit=2000') || [];
+    _rviDatos = {}; _rviFecha = filas.length ? filas[0].fecha : '';
+    filas.filter(f=>f.fecha === _rviFecha).forEach(f=>{ _rviDatos[f.nemo] = f; });
+  }catch(e){ console.warn('cierre_rvi:', e.message); _rviDatos = {}; _rviFecha = ''; }
+  renderCierreRVI();
+}
+
+function renderCierreRVI(){
+  const cont = document.getElementById('rviImagen');
+  const est  = document.getElementById('rviEstado');
+  const av   = document.getElementById('rviAviso');
+  if(!cont) return;
+
+  if(!_rviUniverso.length){
+    cont.innerHTML = '<div style="color:#888;font-size:13px;">No se pudo cargar el universo. ' +
+                     '¿Corriste crear_rvi_universo.sql?</div>';
+    if(est) est.textContent = '—';
+    return;
+  }
+
+  const conDato = _rviUniverso.filter(u=>_rviDatos[u.nemo]).length;
+  const faltan  = _rviUniverso.filter(u=>!_rviDatos[u.nemo]).map(u=>u.etiqueta);
+  if(est) est.textContent = _rviFecha
+    ? `cierre del ${_rviFecha} · ${conDato} de ${_rviUniverso.length} especies`
+    : 'todavía no hay datos guardados';
+
+  // El aviso es explicito: si falta data, que se vea ANTES de mandar la imagen.
+  if(av){
+    if(!_rviFecha){
+      av.innerHTML = '<span style="color:var(--amber,#f59e0b);">Todavía no hay ningún cierre guardado. ' +
+        'Corre <b>bbg_cierre_rvi.py</b> con el Terminal abierto.</span>';
+    }else if(faltan.length){
+      av.innerHTML = `<span style="color:var(--amber,#f59e0b);">Faltan ${faltan.length} especie(s) ` +
+        `sin dato: ${faltan.slice(0,12).join(', ')}${faltan.length>12?'…':''}. ` +
+        'Salen con guion en el informe.</span>';
+    }else if(_rviFecha !== _rviHoyISO()){
+      av.innerHTML = `<span style="color:var(--amber,#f59e0b);">Ojo: este es el cierre del ` +
+        `<b>${_rviFecha}</b>, no el de hoy.</span>`;
+    }else{
+      av.innerHTML = '<span style="color:var(--buy,#22c55e);">Completo — las ' +
+        _rviUniverso.length + ' especies tienen dato.</span>';
+    }
+  }
+
+  // ---- la imagen ----
+  const porBloque = {};
+  _rviUniverso.forEach(u=>{ (porBloque[u.bloque] = porBloque[u.bloque] || []).push(u); });
+  const bloquesDe = col => {
+    const vistos = [];
+    _rviUniverso.filter(u=>u.columna === col).forEach(u=>{
+      if(!vistos.some(x=>x.bloque === u.bloque)) vistos.push({bloque:u.bloque, orden:u.orden_bloque, tipo:u.tipo});
+    });
+    return vistos.sort((a,b)=>a.orden - b.orden);
+  };
+
+  const tablaBloque = b => {
+    const filas = porBloque[b.bloque] || [];
+    const esIdx = b.tipo === 'INDICE';
+    const enc = esIdx ? ['Índice','Variación','Last','P/E']
+                      : ['Nemo','Variación','Last','MTD','YTD','Industry/Group'];
+    const anchos = esIdx ? ['34%','18%','26%','22%'] : ['13%','12%','15%','12%','12%','36%'];
+    const th = enc.map((h,i)=>`<th style="width:${anchos[i]};text-align:${i===0||i===enc.length-1&&!esIdx?'left':'right'};
+        padding:3px 6px;font-size:11px;font-weight:700;border-bottom:1.5px solid ${_RVI_TINTA};">${h}</th>`).join('');
+    const tds = filas.map(u=>{
+      const d = _rviDatos[u.nemo] || {};
+      const cel = (txt,align,color,bold) =>
+        `<td style="padding:2.5px 6px;font-size:11.5px;text-align:${align};
+            ${color?`color:${color};`:''}${bold?'font-weight:700;':''}">${txt}</td>`;
+      if(esIdx){
+        return `<tr>${cel(u.etiqueta,'left',_RVI_TINTA,true)}` +
+               cel(_rviPct(d.var_dia),'right',_rviColor(d.var_dia),true) +
+               cel(_rviPx(d.last),'right') +
+               cel(d.pe==null?'—':Number(d.pe).toFixed(2).replace('.',','),'right') + '</tr>';
+      }
+      return `<tr>${cel(u.etiqueta,'left',_RVI_TINTA,true)}` +
+             cel(_rviPct(d.var_dia),'right',_rviColor(d.var_dia),true) +
+             cel(_rviPx(d.last),'right') +
+             cel(_rviPct(d.mtd),'right',_rviColor(d.mtd)) +
+             cel(_rviPct(d.ytd),'right',_rviColor(d.ytd)) +
+             cel(u.descripcion||'','left','#44557A') + '</tr>';
+    }).join('');
+    return `<div style="margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:800;letter-spacing:.6px;color:${_RVI_TINTA};
+           border-bottom:2.5px solid ${_RVI_TINTA};padding-bottom:2px;margin-bottom:3px;">${b.bloque}</div>
+      <table style="width:100%;table-layout:fixed;border-collapse:collapse;">
+        <thead><tr>${th}</tr></thead><tbody>${tds}</tbody></table></div>`;
+  };
+
+  const col = c => bloquesDe(c).map(tablaBloque).join('');
+  cont.innerHTML = `<div style="display:flex;gap:26px;align-items:flex-start;">
+      <div style="flex:1;min-width:0;">${col('IZQ')}</div>
+      <div style="flex:1;min-width:0;">${col('DER')}</div>
+    </div>`;
+}
+
+// El nombre que devuelve Bloomberg al lado del rotulo nuestro. Es la forma de
+// verificar con los ojos que MXIPSAGC es Chile y MXNUPESC es Peru, y que los
+// dos China son los que Sergio cree — en vez de confiar en un mapeo escrito de
+// memoria (Sergio, 29-sep).
+function verNombresBBG(){
+  const caja = document.getElementById('rviNombres');
+  if(!caja) return;
+  if(caja.style.display !== 'none'){ caja.style.display = 'none'; return; }
+  caja.style.display = '';
+  const filas = _rviUniverso.map(u=>{
+    const d = _rviDatos[u.nemo] || {};
+    const nb = d.nombre_bbg || '';
+    return `<tr style="border-bottom:1px solid var(--border,#232938);">
+      <td style="padding:3px 8px;font-size:11.5px;">${u.bloque}</td>
+      <td style="padding:3px 8px;font-size:11.5px;font-weight:600;">${u.etiqueta}</td>
+      <td style="padding:3px 8px;font-size:11px;font-family:ui-monospace,monospace;opacity:.8;">${u.nemo}</td>
+      <td style="padding:3px 8px;font-size:11.5px;${nb?'':'color:var(--amber,#f59e0b);'}">${nb || 'sin dato todavía'}</td>
+    </tr>`;
+  }).join('');
+  caja.innerHTML = `<div class="panel">
+    <div class="field-note" style="margin-bottom:8px;">
+      Lo que devuelve Bloomberg para cada ticker. Revisa que cada rótulo tuyo
+      corresponda al nombre de la derecha — sobre todo CHILE, PERÚ y los dos de China.</div>
+    <div style="max-height:420px;overflow:auto;"><table style="width:100%;border-collapse:collapse;">
+      <thead><tr style="text-align:left;">
+        <th style="padding:4px 8px;font-size:11px;">Bloque</th>
+        <th style="padding:4px 8px;font-size:11px;">Rótulo</th>
+        <th style="padding:4px 8px;font-size:11px;">Ticker</th>
+        <th style="padding:4px 8px;font-size:11px;">Nombre en Bloomberg</th>
+      </tr></thead><tbody>${filas}</tbody></table></div></div>`;
+}
+
+async function _rviCanvas(){
+  if(typeof html2canvas === 'undefined') throw new Error('no cargó html2canvas (revisa la conexión)');
+  return await html2canvas(document.getElementById('rviImagen'),
+    { backgroundColor:'#ffffff', scale:2, logging:false, useCORS:true });
+}
+// La imagen NO se deja copiar si falta data: es lo que se le manda a 55
+// clientes y un guion en el medio se ve pésimo.
+function _rviListo(){
+  if(!_rviFecha){ alert('Todavía no hay un cierre guardado para mostrar.'); return false; }
+  const faltan = _rviUniverso.filter(u=>!_rviDatos[u.nemo]);
+  if(faltan.length && !confirm(
+      `Faltan ${faltan.length} especie(s) sin dato y van a salir con guion:\n\n` +
+      faltan.slice(0,15).map(u=>'   '+u.etiqueta).join('\n') +
+      (faltan.length>15 ? `\n   …y ${faltan.length-15} más` : '') +
+      '\n\n¿Generar la imagen de todos modos?')) return false;
+  return true;
+}
+async function copiarCierreRVIImagen(btn){
+  if(!_rviListo()) return;
+  try{
+    const canvas = await _rviCanvas();
+    const blob = await new Promise(r=>canvas.toBlob(r, 'image/png'));
+    await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+    if(btn){ const p = btn.innerHTML; btn.innerHTML = '✓ Copiada'; setTimeout(()=>{ btn.innerHTML = p; }, 1400); }
+  }catch(e){ alert('No se pudo copiar la imagen (' + e.message + ').\n\nUsa "Descargar PNG".'); }
+}
+async function descargarCierreRVIImagen(){
+  if(!_rviListo()) return;
+  try{ _bajarCanvas(await _rviCanvas(), `Cierre_RVI_${(_rviFecha||_rviHoyISO()).replace(/-/g,'')}.png`); }
   catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
 }
 
@@ -22090,7 +22328,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-28 19:20 UTC · v165';
+const BUILD_ID = '2026-09-29 17:05 UTC · v166';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
