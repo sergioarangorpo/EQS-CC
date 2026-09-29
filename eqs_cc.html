@@ -765,9 +765,9 @@
       </div>
       <div class="panel" style="margin-bottom:14px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <button class="btn small" onclick="cargarCierreRVI()">↻ Recargar</button>
-          <button class="btn small purple" onclick="copiarCierreRVIImagen(this)">🖼 Copiar imagen</button>
-          <button class="btn small" onclick="descargarCierreRVIImagen()">⬇ Descargar PNG</button>
+          <button class="btn small" onclick="cargarCierreRVI()">↻ Actualizar</button>
+          <button class="btn small" onclick="copiarCierreRVIImagen(this)">🖼 Copiar imagen</button>
+          <button class="btn small purple" onclick="descargarCierreRVIImagen()">⬇ Descargar PNG</button>
           <button class="btn small ghost" onclick="verNombresBBG()">🔍 Ver nombres de Bloomberg</button>
         </div>
         <div id="rviAviso" class="field-note" style="margin-top:8px;"></div>
@@ -2448,9 +2448,9 @@
       </div>
     </div>
     <div style="padding:0 24px 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <button class="btn small" onclick="renderInformeDiario()">Actualizar informe</button>
-      <button class="btn small purple" onclick="descargarInformeImagen()">🖼 Descargar imágenes</button>
-      <button class="btn small ghost" onclick="copiarInformeImagen()">Copiar (versión correo)</button>
+      <button class="btn small" onclick="renderInformeDiario()">↻ Actualizar</button>
+      <button class="btn small" onclick="copiarInformeImagen()">🖼 Copiar imagen</button>
+      <button class="btn small purple" onclick="descargarInformeImagen()">⬇ Descargar PNG</button>
       <button class="btn small ghost" onclick="copiarTextoBloomberg()">💬 Copiar texto Bloomberg</button>
       <button class="btn small ghost" onclick="verTextoBloomberg()">Ver texto</button>
       <button class="btn small ghost" onclick="guardarCierreDelDia()">Guardar cierre del día</button>
@@ -11646,9 +11646,12 @@ async function descargarInformeImagen(){
     _bajarCanvas(await _compactoACanvas(), `Informe_diario_${slug}.png`);
     await new Promise(r=>setTimeout(r, 400));   // Chrome no dispara dos descargas seguidas
     _bajarCanvas(await _informeACanvas(),  `Informe_diario_${slug}_detalle.png`);
+    // Baja dos, pero al correo solo va la primera: correo_informe.py busca
+    // exactamente ese nombre. La de detalle queda ahi por si se necesita
+    // aparte (Sergio confirmo el 29-sep que al correo va la imagen sola).
     avisoExito('Dos imágenes descargadas',
-      `<b>Informe_diario_${slug}.png</b> — pégala en el cuerpo del correo (se lee en celular).<br>` +
-      `<b>..._detalle.png</b> — adjúntala para quien quiera el detalle.`);
+      `<b>Informe_diario_${slug}.png</b> — es la que va al correo.<br>` +
+      `<b>..._detalle.png</b> — queda en Descargas por si la necesitas aparte; al correo no va.`);
   }catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
 }
 
@@ -19207,7 +19210,27 @@ function _porvCalza(x,y){
 // El Account de EMSX ("PORVENIR FPV DIVER DINAMICO") contra los 39 de
 // PARAMETROS ("Diversificada Dinamica"). TODAS las palabras del account tienen
 // que calzar. Si empatan dos fondos, devuelve null: preferimos no saber.
+// Dos cuentas que el emparejador por palabras NO puede resolver, y no por un
+// descuido: EMSX usa INICIALES ("RF" por Renta Fija) y recortes que no
+// comparten prefijo ("FND" contra FONDOS). Para cubrirlas habria que aflojar
+// _porvCalza, y eso produce emparejamientos ambiguos en las otras 46 cuentas.
+// Sale mas barato nombrarlas a mano. Confirmadas por Sergio el 29-sep.
+const _PORV_ALIAS = {
+  'PORVENIRFPVRFALTOVALOR': 'Renta Fija Alto Valor',
+  'PORVENIRFPVALTERFNDFUT': 'Fondos Futuro',
+};
+const _porvLlave = t => String(t||'').toUpperCase().normalize('NFD')
+  .replace(/[̀-ͯ]/g,'').replace(/[^A-Z0-9]/g,'');
+function _porvAlias(texto){
+  const nombre = _PORV_ALIAS[_porvLlave(texto)];
+  if(!nombre) return null;
+  // Si algun dia renombran el fondo en PARAMETROS, mejor devolver null y pedir
+  // la mano que asignar a un fondo que ya no existe.
+  return PORVENIR_PORTAFOLIOS.find(p => _porvLlave(p.nombre) === _porvLlave(nombre)) || null;
+}
 function _porvPortPorPalabras(texto){
+  const alias = _porvAlias(texto);
+  if(alias) return alias;
   const pa = _porvPalabras(texto);
   if(!pa.length) return null;
   let mejor = null, puntaje = -1, empate = false;
@@ -22370,7 +22393,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-29 17:55 UTC · v169';
+const BUILD_ID = '2026-09-29 19:40 UTC · v170';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
