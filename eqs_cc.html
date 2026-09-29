@@ -2331,6 +2331,61 @@
       </div>
     </div>
 
+    <!-- ===== UNIVERSO DEL INFORME DE RVI =====
+         Hasta hoy cambiar un ticker era un UPDATE a mano en Supabase, o sea
+         algo que Sergio no podía hacer solo. El día que FXC resultó cargado
+         como 'FXC US Equity' (que es el ETF del dólar canadiense) en vez de
+         'FXC LN Equity' quedó claro que esto tenía que vivir acá
+         (Sergio, 29-sep). -->
+    <div class="card" style="margin-top:18px;">
+      <div class="section-label">Universo del informe de RVI</div>
+      <div class="field-note" style="margin-bottom:10px;">
+        Los papeles que <b>bbg_cierre_rvi.py</b> le pide a Bloomberg cada tarde.
+        El <b>ticker</b> es el completo de Bloomberg (<code>IVV US Equity</code>,
+        <code>SPX Index</code>, <code>FXC LN Equity</code>) y el <b>rótulo</b> es lo
+        que se ve en la imagen del correo. Lo que cambies acá lo toma el script la
+        próxima vez que corra — no hay que tocar nada más.</div>
+
+      <div class="field-row">
+        <div class="field"><label>Ticker de Bloomberg</label>
+          <input type="text" id="unNemo" placeholder="FXC LN Equity" style="width:190px;"></div>
+        <div class="field"><label>Bloque</label>
+          <select id="unBloque" style="width:230px;" onchange="toggleBloqueNuevoRVI()"></select></div>
+        <div class="field" id="unCampoBloqueNuevo" style="display:none;"><label>Nombre del bloque</label>
+          <input type="text" id="unBloqueNuevo" placeholder="ASIA EQUITY"
+                 style="width:180px;text-transform:uppercase;"></div>
+        <div class="field" id="unCampoColumna" style="display:none;"><label>Columna</label>
+          <select id="unColumna" style="width:120px;">
+            <option value="IZQ">Izquierda</option>
+            <option value="DER">Derecha</option></select></div>
+        <div class="field"><label>Tipo</label>
+          <select id="unTipo" style="width:140px;">
+            <option value="FONDO">Fondo / ETF</option>
+            <option value="INDICE">Índice</option></select></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Rótulo</label>
+          <input type="text" id="unEtiqueta" placeholder="FXC" style="width:150px;"></div>
+        <div class="field" style="flex:1;"><label>Descripción <span class="field-note">(opcional)</span></label>
+          <input type="text" id="unDescripcion" placeholder="iShares China Large Cap (UCITS)"></div>
+        <div class="field" style="align-self:flex-end;">
+          <button class="btn small purple" onclick="agregarPapelRVI()">Agregar al universo</button></div>
+      </div>
+      <div class="field-note" style="margin-top:6px;">
+        El app no puede preguntarle a Bloomberg si un ticker existe. Si te equivocas,
+        el script te lo dice en el log como <b>TICKER DESCONOCIDO</b> y no guarda
+        nada inventado.</div>
+
+      <div style="display:flex;gap:10px;margin:14px 0 8px;flex-wrap:wrap;align-items:center;">
+        <button class="btn small" onclick="cargarUniversoRVI()">↻ Actualizar</button>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;">
+          <input type="checkbox" id="unVerInactivos" onchange="renderUniversoRVI()">
+          <span>Ver los desactivados</span></label>
+        <span id="unResumen" class="field-note"></span>
+      </div>
+      <div id="unListado" style="max-height:520px;overflow:auto;"></div>
+    </div>
+
     <!-- ===== MAESTROS: portafolios y especies =====
          Antes había que pedirle a Claude que los agregara a mano; ahora se
          crean aquí y quedan en Supabase, así los ven todos (Sergio, 27-ago). -->
@@ -2616,6 +2671,7 @@ function switchModule(mod) {
     if(typeof poblarClientBookMaestro === 'function') poblarClientBookMaestro();
     if(typeof renderListaFestivos === 'function') renderListaFestivos();
     if(typeof renderListasMaestro === 'function') renderListasMaestro();
+    if(typeof cargarUniversoRVI === 'function') cargarUniversoRVI();
   }
   const ml = MARKET_LABELS[mod];
   if(ml) {
@@ -7508,6 +7564,281 @@ function verNombresBBG(){
         <th style="padding:4px 8px;font-size:11px;">Ticker</th>
         <th style="padding:4px 8px;font-size:11px;">Nombre en Bloomberg</th>
       </tr></thead><tbody>${filas}</tbody></table></div></div>`;
+}
+
+// =====================================================================
+// UNIVERSO DEL INFORME DE RVI — editor (Ayudas)
+// ---------------------------------------------------------------------
+// Agregar, corregir, reordenar y quitar papeles sin escribir SQL. Lo que
+// se guarda aca es exactamente lo que bbg_cierre_rvi.py le pide a
+// Bloomberg la proxima vez que corra.
+// =====================================================================
+let _unUniverso = [];
+
+const _unEsc = t => String(t==null?'':t)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+// Para meter el nemo dentro de un onclick: lleva espacios y puede llevar
+// comillas, asi que va escapado aparte.
+const _unAttr = t => _unEsc(t).replace(/'/g,'\\&#39;');
+
+// Sufijos validos de Bloomberg. No es una lista exhaustiva del universo
+// financiero: son los que pueden aparecer en este informe.
+const _UN_SUFIJOS = ['EQUITY','INDEX','CURNCY','COMDTY','CORP','GOVT','MTGE'];
+function _unTickerRaro(nemo){
+  const t = String(nemo||'').trim();
+  if(!t) return 'está vacío';
+  const partes = t.split(/\s+/);
+  if(partes.length < 2)
+    return 'no tiene sufijo de Bloomberg — le falta algo como "US Equity" o "Index"';
+  const suf = partes[partes.length-1].toUpperCase();
+  if(!_UN_SUFIJOS.includes(suf))
+    return `termina en "${partes[partes.length-1]}", que no es un sufijo de Bloomberg`;
+  return null;
+}
+
+async function _unEscribir(metodo, filtro, cuerpo){
+  const url = `${SUPA_URL}/rest/v1/rvi_universo${filtro ? '?' + filtro : ''}`;
+  const opts = {
+    method: metodo,
+    headers: { 'apikey': SUPA_KEY, 'Authorization': `Bearer ${SUPA_KEY}`,
+               'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+  };
+  if(cuerpo) opts.body = JSON.stringify(cuerpo);
+  const res = await fetch(url, opts);
+  if(!res.ok) throw new Error(`HTTP ${res.status} — ${(await res.text()).slice(0,200)}`);
+}
+
+async function cargarUniversoRVI(){
+  const cont = document.getElementById('unListado');
+  if(!cont) return;
+  try{
+    _unUniverso = await supaFetch('rvi_universo',
+      'select=*&order=orden_bloque.asc,orden.asc&limit=1000') || [];
+  }catch(e){
+    cont.innerHTML = `<div class="field-note" style="color:#ef4444;">
+      No se pudo leer rvi_universo: ${_unEsc(e.message)}</div>`;
+    return;
+  }
+  llenarBloquesRVI();
+  renderUniversoRVI();
+}
+
+// Agrupa por bloque respetando el layout del informe: primero la columna
+// izquierda completa, despues la derecha.
+function _unBloques(){
+  const m = new Map();
+  _unUniverso.forEach(u=>{
+    if(!m.has(u.bloque)) m.set(u.bloque,
+      { nombre:u.bloque, columna:u.columna, orden_bloque:u.orden_bloque, papeles:[] });
+    m.get(u.bloque).papeles.push(u);
+  });
+  const arr = [...m.values()];
+  arr.forEach(b=>b.papeles.sort((x,y)=>(x.orden||0)-(y.orden||0)));
+  arr.sort((a,b)=> a.columna === b.columna
+    ? (a.orden_bloque||0) - (b.orden_bloque||0)
+    : (a.columna === 'IZQ' ? -1 : 1));
+  return arr;
+}
+
+function llenarBloquesRVI(){
+  const sel = document.getElementById('unBloque');
+  if(!sel) return;
+  const antes = sel.value;
+  sel.innerHTML = _unBloques().map(b=>
+      `<option value="${_unEsc(b.nombre)}">${_unEsc(b.nombre)} · ${b.columna === 'IZQ' ? 'izq' : 'der'}</option>`
+    ).join('') + '<option value="__NUEVO__">➕ Bloque nuevo…</option>';
+  if(antes && [...sel.options].some(o=>o.value === antes)) sel.value = antes;
+  toggleBloqueNuevoRVI();
+}
+
+function toggleBloqueNuevoRVI(){
+  const nuevo = ((document.getElementById('unBloque')||{}).value) === '__NUEVO__';
+  const a = document.getElementById('unCampoBloqueNuevo');
+  const b = document.getElementById('unCampoColumna');
+  if(a) a.style.display = nuevo ? '' : 'none';
+  if(b) b.style.display = nuevo ? '' : 'none';
+}
+
+function renderUniversoRVI(){
+  const cont = document.getElementById('unListado');
+  if(!cont) return;
+  const verInactivos = !!(document.getElementById('unVerInactivos')||{}).checked;
+  const bloques = _unBloques();
+  const activos = _unUniverso.filter(u=>u.activo !== false).length;
+  const res = document.getElementById('unResumen');
+  if(res) res.textContent =
+    `${activos} activo(s) · ${_unUniverso.length - activos} desactivado(s) · ${bloques.length} bloque(s)`;
+
+  if(!_unUniverso.length){
+    cont.innerHTML = '<div class="field-note">El universo está vacío.</div>';
+    return;
+  }
+
+  const inp = 'background:transparent;border:1px solid transparent;color:inherit;' +
+              'font:inherit;padding:2px 4px;border-radius:4px;width:100%;';
+  let html = '';
+  bloques.forEach(b=>{
+    const papeles = b.papeles.filter(p=> verInactivos || p.activo !== false);
+    if(!papeles.length) return;
+    html += `<div style="margin-bottom:14px;">
+      <div style="font-size:11px;letter-spacing:.06em;opacity:.7;margin-bottom:4px;">
+        ${_unEsc(b.nombre)} · columna ${b.columna === 'IZQ' ? 'izquierda' : 'derecha'}
+        · ${b.papeles.length} papel(es)</div>
+      <table style="width:100%;border-collapse:collapse;">`;
+    papeles.forEach((p, i)=>{
+      const off = p.activo === false;
+      const n = _unAttr(p.nemo);
+      html += `<tr style="border-bottom:1px solid var(--border,#232938);${off ? 'opacity:.45;' : ''}">
+        <td style="padding:2px 2px;white-space:nowrap;width:58px;">
+          <button class="btn small ghost" style="padding:0 6px;" title="Subir"
+            onclick="moverPapelRVI('${n}',-1)"${i === 0 ? ' disabled' : ''}>↑</button>
+          <button class="btn small ghost" style="padding:0 6px;" title="Bajar"
+            onclick="moverPapelRVI('${n}',1)"${i === papeles.length-1 ? ' disabled' : ''}>↓</button></td>
+        <td style="padding:2px 6px;width:120px;font-size:12px;font-weight:600;">
+          <input style="${inp}" value="${_unEsc(p.etiqueta)}"
+            onchange="editarPapelRVI('${n}','etiqueta',this.value)"></td>
+        <td style="padding:2px 6px;width:170px;font-size:11.5px;font-family:ui-monospace,monospace;">
+          <input style="${inp}" value="${_unEsc(p.nemo)}"
+            onchange="editarPapelRVI('${n}','nemo',this.value)"></td>
+        <td style="padding:2px 6px;font-size:11.5px;opacity:.85;">
+          <input style="${inp}" value="${_unEsc(p.descripcion)}" placeholder="—"
+            onchange="editarPapelRVI('${n}','descripcion',this.value)"></td>
+        <td style="padding:2px 6px;width:74px;font-size:11px;opacity:.7;">${_unEsc(p.tipo)}</td>
+        <td style="padding:2px 4px;width:132px;white-space:nowrap;text-align:right;">
+          <button class="btn small ghost" style="padding:1px 7px;"
+            onclick="toggleActivoPapelRVI('${n}')">${off ? 'Activar' : 'Desactivar'}</button>
+          <button class="btn small ghost" style="padding:1px 7px;" title="Borrar definitivamente"
+            onclick="borrarPapelRVI('${n}')">🗑</button></td>
+      </tr>`;
+    });
+    html += '</table></div>';
+  });
+  cont.innerHTML = html;
+}
+
+async function agregarPapelRVI(){
+  const val = id => String((document.getElementById(id)||{}).value || '').trim();
+  const nemo = val('unNemo'), etiqueta = val('unEtiqueta');
+  if(!nemo || !etiqueta){ alert('Faltan el ticker y el rótulo.'); return; }
+  if(_unUniverso.some(u=>u.nemo.toUpperCase() === nemo.toUpperCase())){
+    alert(`"${nemo}" ya está en el universo.`); return;
+  }
+  const raro = _unTickerRaro(nemo);
+  if(raro && !confirm(`Ojo: el ticker ${raro}.\n\n` +
+      'Bloomberg pide el nombre completo, por ejemplo "IVV US Equity" o "SPX Index".\n\n' +
+      '¿Lo agrego así de todos modos?')) return;
+
+  let bloque = val('unBloque'), columna, orden_bloque;
+  if(bloque === '__NUEVO__'){
+    bloque = val('unBloqueNuevo').toUpperCase();
+    if(!bloque){ alert('Ponle nombre al bloque nuevo.'); return; }
+    if(_unUniverso.some(u=>String(u.bloque).toUpperCase() === bloque)){
+      alert(`El bloque "${bloque}" ya existe — escógelo de la lista.`); return;
+    }
+    columna = val('unColumna') || 'IZQ';
+    // El bloque nuevo va de ultimo en su columna.
+    const enCol = _unUniverso.filter(u=>u.columna === columna);
+    orden_bloque = enCol.length ? Math.max(...enCol.map(u=>u.orden_bloque||0)) + 1 : 1;
+  }else{
+    const ref = _unUniverso.find(u=>u.bloque === bloque);
+    if(!ref){ alert('No encontré ese bloque.'); return; }
+    columna = ref.columna; orden_bloque = ref.orden_bloque;
+  }
+
+  const hermanos = _unUniverso.filter(u=>u.bloque === bloque);
+  const fila = {
+    nemo, bloque, columna, orden_bloque,
+    orden: hermanos.length ? Math.max(...hermanos.map(u=>u.orden||0)) + 1 : 1,
+    tipo: val('unTipo') || 'FONDO',
+    etiqueta, descripcion: val('unDescripcion'), activo: true,
+  };
+  try{
+    await _unEscribir('POST', '', [fila]);
+    ['unNemo','unEtiqueta','unDescripcion','unBloqueNuevo'].forEach(id=>{
+      const el = document.getElementById(id); if(el) el.value = '';
+    });
+    await cargarUniversoRVI();
+    const sel = document.getElementById('unBloque');
+    if(sel && [...sel.options].some(o=>o.value === bloque)){ sel.value = bloque; toggleBloqueNuevoRVI(); }
+    if(typeof avisoExito === 'function')
+      avisoExito('Agregado al universo',
+        `<b>${_unEsc(etiqueta)}</b> (${_unEsc(nemo)}) entró al bloque ${_unEsc(bloque)}.<br>` +
+        'Va a aparecer en el informe la próxima vez que corras <b>bbg_cierre_rvi.py</b>.');
+  }catch(e){ alert('No se pudo agregar: ' + e.message); }
+}
+
+async function editarPapelRVI(nemo, campo, valor){
+  const p = _unUniverso.find(u=>u.nemo === nemo);
+  if(!p) return;
+  valor = String(valor||'').trim();
+  if(valor === String(p[campo]||'')) return;
+
+  if(campo === 'nemo'){
+    if(!valor){ alert('El ticker no puede quedar vacío.'); await cargarUniversoRVI(); return; }
+    if(_unUniverso.some(u=>u.nemo !== nemo && u.nemo.toUpperCase() === valor.toUpperCase())){
+      alert(`"${valor}" ya está en el universo.`); await cargarUniversoRVI(); return;
+    }
+    const raro = _unTickerRaro(valor);
+    if(raro && !confirm(`Ojo: el ticker ${raro}.\n\n¿Lo cambio así de todos modos?`)){
+      await cargarUniversoRVI(); return;
+    }
+  }
+  try{
+    await _unEscribir('PATCH', `nemo=eq.${encodeURIComponent(nemo)}`, { [campo]: valor });
+    // Al renombrar el ticker, lo que ya se habia guardado en cierre_rvi queda
+    // bajo el nombre viejo: el informe no lo pinta, pero ahi se queda.
+    if(campo === 'nemo' && confirm(
+        `Listo: ahora es "${valor}".\n\n` +
+        `Lo que ya se habia guardado con "${nemo}" queda en el historico y no se ve ` +
+        'en el informe.\n\n¿Lo borro también?')){
+      try{
+        await fetch(`${SUPA_URL}/rest/v1/cierre_rvi?nemo=eq.${encodeURIComponent(nemo)}`,
+          { method:'DELETE', headers:{ apikey:SUPA_KEY, Authorization:`Bearer ${SUPA_KEY}` } });
+      }catch(e){ console.warn('No se pudo limpiar cierre_rvi:', e.message); }
+    }
+    await cargarUniversoRVI();
+  }catch(e){ alert('No se pudo guardar: ' + e.message); await cargarUniversoRVI(); }
+}
+
+// Intercambia el `orden` con el vecino QUE SE VE. Si estas mirando solo los
+// activos, la flecha mueve sobre esa lista: es lo que uno espera al verla.
+async function moverPapelRVI(nemo, dir){
+  const p = _unUniverso.find(u=>u.nemo === nemo);
+  if(!p) return;
+  const verInactivos = !!(document.getElementById('unVerInactivos')||{}).checked;
+  const lista = _unUniverso
+    .filter(u=>u.bloque === p.bloque && (verInactivos || u.activo !== false))
+    .sort((a,b)=>(a.orden||0)-(b.orden||0));
+  const i = lista.findIndex(u=>u.nemo === nemo);
+  const j = i + dir;
+  if(i < 0 || j < 0 || j >= lista.length) return;
+  const otro = lista[j];
+  try{
+    await _unEscribir('PATCH', `nemo=eq.${encodeURIComponent(p.nemo)}`, { orden: otro.orden });
+    await _unEscribir('PATCH', `nemo=eq.${encodeURIComponent(otro.nemo)}`, { orden: p.orden });
+    await cargarUniversoRVI();
+  }catch(e){ alert('No se pudo reordenar: ' + e.message); }
+}
+
+async function toggleActivoPapelRVI(nemo){
+  const p = _unUniverso.find(u=>u.nemo === nemo);
+  if(!p) return;
+  try{
+    await _unEscribir('PATCH', `nemo=eq.${encodeURIComponent(nemo)}`, { activo: p.activo === false });
+    await cargarUniversoRVI();
+  }catch(e){ alert('No se pudo cambiar: ' + e.message); }
+}
+
+async function borrarPapelRVI(nemo){
+  const p = _unUniverso.find(u=>u.nemo === nemo);
+  if(!p) return;
+  if(!confirm(`Borrar "${p.etiqueta}" (${nemo}) del universo.\n\n` +
+      'Esto no se puede deshacer: para sacarlo del informe y poder devolverlo ' +
+      'después, usa "Desactivar".\n\n¿Seguro?')) return;
+  try{
+    await _unEscribir('DELETE', `nemo=eq.${encodeURIComponent(nemo)}`);
+    await cargarUniversoRVI();
+  }catch(e){ alert('No se pudo borrar: ' + e.message); }
 }
 
 async function _rviCanvas(){
@@ -22393,7 +22724,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-29 19:40 UTC · v170';
+const BUILD_ID = '2026-09-29 20:05 UTC · v171';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
