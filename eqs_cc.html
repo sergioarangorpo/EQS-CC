@@ -11741,9 +11741,13 @@ function verTextoBloomberg(){
 // Se prioriza el PC: quien lo abra en el celular hace zoom.
 // =====================================================================
 function informeCompactoHTML(){
-  const num = v => Number(String(v||'').replace(/,/g,'')) || 0;
-  const colcap    = num((document.getElementById('infColcap')||{}).value);
-  const colcapVar = num((document.getElementById('infColcapVar')||{}).value);
+  // Antes esto tenia su propio parser (`Number(v.replace(/,/g,''))`) que NO le
+  // quitaba el '%'. Con "-0.80%" daba NaN, el `|| 0` lo volvia cero, y la
+  // imagen del correo salia "+0.00%" EN VERDE mientras el informe grande
+  // mostraba el -0.80% correcto — o sea, el error solo se veia en lo que se
+  // manda a los clientes (Sergio, 29-sep). Ahora los dos usan el mismo lector.
+  const colcap    = leerPct((document.getElementById('infColcap')||{}).value);
+  const colcapVar = leerPct((document.getElementById('infColcapVar')||{}).value);
   const usdcop    = usdcopActual();
   const U  = v => usdcop ? '$' + Math.round(v/usdcop).toLocaleString('es-CO') : '';
   const mm = v => '$' + (v/1e6).toLocaleString('es-CO',{maximumFractionDigits: (v/1e6)<10 ? 1 : 0}) + ' MM';
@@ -22724,7 +22728,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-29 20:05 UTC · v171';
+const BUILD_ID = '2026-09-29 20:20 UTC · v172';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
