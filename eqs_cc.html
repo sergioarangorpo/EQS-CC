@@ -748,8 +748,8 @@
     <button data-mod="RFI"     onclick="switchModule('RFI')">RFI</button>
     <button data-mod="Reportes" onclick="switchModule('Reportes')" class="">Reportes</button>
     <button data-mod="Ayudas"   onclick="switchModule('Ayudas')"   class="">Ayudas</button>
-    <button data-mod="Informe"  onclick="switchModule('Informe')"  class="">Informe diario de mercado</button>
-    <button data-mod="CierreRVI" onclick="switchModule('CierreRVI')" class="">Cierre RVI</button>
+    <button data-mod="Informe"  onclick="switchModule('Informe')"  class="">Informe diario RVL</button>
+    <button data-mod="CierreRVI" onclick="switchModule('CierreRVI')" class="">Informe diario RVI</button>
   </div>
 
   <!-- ===== CIERRE RVI =====
@@ -760,7 +760,7 @@
     <div style="padding:0 24px 24px;">
       <div class="section-label" style="margin-top:16px;display:flex;align-items:center;
            justify-content:space-between;gap:12px;flex-wrap:wrap;">
-        <span>Cierre de mercados internacionales</span>
+        <span>Informe diario RVI</span>
         <span class="field-note" id="rviEstado">—</span>
       </div>
       <div class="panel" style="margin-bottom:14px;">
@@ -774,8 +774,8 @@
       </div>
       <div id="rviNombres" style="display:none;margin-bottom:14px;"></div>
       <div style="overflow:auto;">
-        <div id="rviImagen" style="background:#ffffff;color:#1F3864;width:1180px;padding:18px 20px;
-             font-family:Calibri,Segoe UI,Arial,sans-serif;"></div>
+        <div id="rviImagen" style="width:1180px;background:#0d0f14;color:#e5e7eb;padding:26px;
+             font-family:Inter,system-ui,sans-serif;box-sizing:border-box;"></div>
       </div>
     </div>
   </div>
@@ -7323,7 +7323,11 @@ function _rviPct(v){
   if(!isFinite(n)) return '—';
   return (n>=0?'':'-') + Math.abs(n).toFixed(2).replace('.',',') + '%';
 }
-const _RVI_VERDE = '#127C1F', _RVI_ROJO = '#C00000', _RVI_TINTA = '#1F3864';
+// La MISMA paleta del informe de RVL, para que los dos correos se vean de la
+// misma casa. Antes este usaba los colores del Excel viejo y al lado del otro
+// parecian de dos empresas distintas (Sergio, 29-sep).
+const _RVI_VERDE = '#22c55e', _RVI_ROJO = '#ef4444', _RVI_TINTA = '#e5e7eb';
+const _RVI_MORADO = '#818cf8', _RVI_BORDE = '#2a2f3a', _RVI_TARJETA = '#161b26';
 function _rviColor(v){
   const n = Number(v);
   if(!isFinite(n)) return _RVI_TINTA;
@@ -7401,36 +7405,71 @@ function renderCierreRVI(){
     const esIdx = b.tipo === 'INDICE';
     const enc = esIdx ? ['Índice','Variación','Last','P/E']
                       : ['Nemo','Variación','Last','MTD','YTD','Industry/Group'];
-    const anchos = esIdx ? ['34%','18%','26%','22%'] : ['13%','12%','15%','12%','12%','36%'];
-    const th = enc.map((h,i)=>`<th style="width:${anchos[i]};text-align:${i===0||i===enc.length-1&&!esIdx?'left':'right'};
-        padding:3px 6px;font-size:11px;font-weight:700;border-bottom:1.5px solid ${_RVI_TINTA};">${h}</th>`).join('');
-    const tds = filas.map(u=>{
+    const anchos = esIdx ? ['34%','20%','26%','20%'] : ['13%','13%','16%','12%','12%','34%'];
+    const th = enc.map((h,i)=>`<th style="width:${anchos[i]};text-align:${i===0?'left':(i===enc.length-1&&!esIdx?'left':'right')};
+        padding:0 7px 6px;font-size:11px;font-weight:700;letter-spacing:.3px;opacity:.55;
+        text-transform:uppercase;">${h}</th>`).join('');
+    const tds = filas.map((u,k)=>{
       const d = _rviDatos[u.nemo] || {};
       const cel = (txt,align,color,bold) =>
-        `<td style="padding:2.5px 6px;font-size:11.5px;text-align:${align};
+        `<td style="padding:3.5px 7px;font-size:12px;text-align:${align};
             ${color?`color:${color};`:''}${bold?'font-weight:700;':''}">${txt}</td>`;
+      const fondo = k % 2 ? 'background:rgba(255,255,255,.025);' : '';
       if(esIdx){
-        return `<tr>${cel(u.etiqueta,'left',_RVI_TINTA,true)}` +
+        return `<tr style="${fondo}">` + cel(u.etiqueta,'left',_RVI_TINTA,true) +
                cel(_rviPct(d.var_dia),'right',_rviColor(d.var_dia),true) +
                cel(_rviPx(d.last),'right') +
                cel(d.pe==null?'—':Number(d.pe).toFixed(2).replace('.',','),'right') + '</tr>';
       }
-      return `<tr>${cel(u.etiqueta,'left',_RVI_TINTA,true)}` +
+      return `<tr style="${fondo}">` +
+             cel(u.etiqueta,'left',_RVI_TINTA,true) +
              cel(_rviPct(d.var_dia),'right',_rviColor(d.var_dia),true) +
              cel(_rviPx(d.last),'right') +
              cel(_rviPct(d.mtd),'right',_rviColor(d.mtd)) +
              cel(_rviPct(d.ytd),'right',_rviColor(d.ytd)) +
-             cel(u.descripcion||'','left','#44557A') + '</tr>';
+             `<td style="padding:3.5px 7px;font-size:11px;opacity:.55;">${u.descripcion||''}</td></tr>`;
     }).join('');
-    return `<div style="margin-bottom:16px;">
-      <div style="font-size:12px;font-weight:800;letter-spacing:.6px;color:${_RVI_TINTA};
-           border-bottom:2.5px solid ${_RVI_TINTA};padding-bottom:2px;margin-bottom:3px;">${b.bloque}</div>
+    // Mismo molde de tarjeta que los bloques del informe de RVL.
+    return `<div style="border:1px solid ${_RVI_BORDE};border-radius:10px;padding:14px 16px;margin-bottom:16px;">
+      <div style="font-size:15px;font-weight:800;letter-spacing:.4px;margin-bottom:10px;">${b.bloque}
+        <span style="font-size:12px;font-weight:600;opacity:.45;"> · ${filas.length}</span></div>
       <table style="width:100%;table-layout:fixed;border-collapse:collapse;">
         <thead><tr>${th}</tr></thead><tbody>${tds}</tbody></table></div>`;
   };
 
   const col = c => bloquesDe(c).map(tablaBloque).join('');
-  cont.innerHTML = `<div style="display:flex;gap:26px;align-items:flex-start;">
+
+  // Encabezado calcado del informe de RVL: titulo grande, fecha en minuscula
+  // y la cifra de referencia a la derecha. Alla es el COLCAP; aca el S&P 500,
+  // que es el indice que ancla el dia de afuera.
+  const fecha = (_rviFecha
+    ? new Date(_rviFecha + 'T12:00:00')
+    : new Date()).toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const spx = _rviDatos['SPX Index'] || {};
+  const tarjeta = (lab, val, color) => `
+    <div style="flex:1 1 calc(25% - 8px);background:${_RVI_TARJETA};border-radius:9px;padding:11px 13px;">
+      <div style="font-size:12px;opacity:.55;margin-bottom:3px;">${lab}</div>
+      <div style="font-size:19px;font-weight:800;${color?`color:${color};`:''}">${val}</div></div>`;
+  const idx = n => { const d=_rviDatos[n]||{}; return {v:d.var_dia, t:_rviPct(d.var_dia)}; };
+  const tarjetas = [['DOW JONES','INDU Index'],['S&P 500','SPX Index'],
+                    ['NASDAQ','CCMP Index'],['COLOMBIA','COLCAP Index']]
+    .map(([lab,n])=>{ const x=idx(n); return tarjeta(lab, x.t, _rviColor(x.v)); }).join('');
+
+  cont.innerHTML = `
+    <div style="display:flex;align-items:baseline;justify-content:space-between;
+         border-bottom:4px solid ${_RVI_MORADO};padding-bottom:14px;margin-bottom:18px;">
+      <div>
+        <div style="font-size:30px;font-weight:800;letter-spacing:-.4px;">Informe diario RVI</div>
+        <div style="font-size:16px;opacity:.6;text-transform:capitalize;">${fecha}</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:15px;opacity:.6;">S&amp;P 500</div>
+        <div style="font-size:34px;font-weight:800;line-height:1.1;">${_rviPx(spx.last)}</div>
+        <div style="font-size:19px;color:${_rviColor(spx.var_dia)};font-weight:700;">${_rviPct(spx.var_dia)}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;">${tarjetas}</div>
+    <div style="display:flex;gap:22px;align-items:flex-start;">
       <div style="flex:1;min-width:0;">${col('IZQ')}</div>
       <div style="flex:1;min-width:0;">${col('DER')}</div>
     </div>`;
@@ -7471,7 +7510,7 @@ function verNombresBBG(){
 async function _rviCanvas(){
   if(typeof html2canvas === 'undefined') throw new Error('no cargó html2canvas (revisa la conexión)');
   return await html2canvas(document.getElementById('rviImagen'),
-    { backgroundColor:'#ffffff', scale:2, logging:false, useCORS:true });
+    { backgroundColor:'#0d0f14', scale:2, logging:false, useCORS:true });
 }
 // La imagen NO se deja copiar si falta data: es lo que se le manda a 55
 // clientes y un guion en el medio se ve pésimo.
@@ -22328,7 +22367,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-29 17:05 UTC · v166';
+const BUILD_ID = '2026-09-29 17:25 UTC · v167';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
