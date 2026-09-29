@@ -774,7 +774,7 @@
       </div>
       <div id="rviNombres" style="display:none;margin-bottom:14px;"></div>
       <div style="overflow:auto;">
-        <div id="rviImagen" style="width:max-content;background:#0d0f14;color:#e5e7eb;padding:26px;
+        <div id="rviImagen" style="width:1320px;background:#0d0f14;color:#e5e7eb;padding:26px;
              font-family:Inter,system-ui,sans-serif;box-sizing:border-box;"></div>
       </div>
     </div>
@@ -7352,16 +7352,6 @@ async function cargarCierreRVI(){
   renderCierreRVI();
 }
 
-// La columna Industry/Group se dimensiona con la descripcion MAS LARGA que
-// haya en el universo, no con un porcentaje fijo. Asi ninguna se parte y todas
-// las tarjetas quedan del mismo ancho. Se recalcula si cambia el universo.
-function _rviAnchoDesc(){
-  let max = 0;
-  (_rviUniverso||[]).forEach(u=>{ const n = String(u.descripcion||'').length; if(n > max) max = n; });
-  // +2 de respiro; piso de 24 por si el universo llegara vacio o con textos cortos.
-  return Math.max(24, max + 2);
-}
-
 function renderCierreRVI(){
   const cont = document.getElementById('rviImagen');
   const est  = document.getElementById('rviEstado');
@@ -7415,24 +7405,17 @@ function renderCierreRVI(){
     const esIdx = b.tipo === 'INDICE';
     const enc = esIdx ? ['Índice','Variación','Last','P/E']
                       : ['Nemo','Variación','Last','MTD','YTD','Industry/Group'];
-    // Los anchos van en `ch` (el ancho de un caracter de la fuente real) y son
-    // IGUALES en los 16 bloques, para que las columnas queden alineadas entre
-    // tarjetas. La de Industry/Group se dimensiona con la descripcion MAS LARGA
-    // del universo, asi ninguna se parte en dos lineas ni se sale del cuadro
-    // (Sergio, 29-sep).
-    const chDesc = _rviAnchoDesc();
-    const anchos = esIdx
-      ? ['22ch','13ch','15ch',(chDesc+18)+'ch']
-      : ['8ch','9ch','11ch','9ch','9ch',chDesc+'ch'];
-    const cg = '<colgroup>' + anchos.map(a=>`<col style="width:${a};">`).join('') + '</colgroup>';
-    const th = enc.map((h,i)=>`<th style="text-align:${i===0?'left':(i===enc.length-1&&!esIdx?'left':'right')};
-        padding:0 5px 6px;font-size:10.5px;font-weight:700;letter-spacing:.3px;opacity:.55;
-        text-transform:uppercase;white-space:nowrap;">${h}</th>`).join('');
+    // Industry/Group pasa de 34% a 44%: con 34% la descripcion mas larga del
+    // universo (42 caracteres) no cabia y se partia en dos lineas, y las filas
+    // quedaban desalineadas. El resto de columnas cede lo justo (Sergio, 29-sep).
+    const anchos = esIdx ? ['30%','18%','26%','26%'] : ['11%','11%','14%','10%','10%','44%'];
+    const th = enc.map((h,i)=>`<th style="width:${anchos[i]};text-align:${i===0?'left':(i===enc.length-1&&!esIdx?'left':'right')};
+        padding:0 7px 6px;font-size:11px;font-weight:700;letter-spacing:.3px;opacity:.55;
+        text-transform:uppercase;">${h}</th>`).join('');
     const tds = filas.map((u,k)=>{
       const d = _rviDatos[u.nemo] || {};
       const cel = (txt,align,color,bold) =>
-        `<td style="padding:3.5px 5px;text-align:${align};white-space:nowrap;
-            overflow:hidden;text-overflow:ellipsis;
+        `<td style="padding:3.5px 7px;font-size:12px;text-align:${align};
             ${color?`color:${color};`:''}${bold?'font-weight:700;':''}">${txt}</td>`;
       const fondo = k % 2 ? 'background:rgba(255,255,255,.025);' : '';
       if(esIdx){
@@ -7447,14 +7430,14 @@ function renderCierreRVI(){
              cel(_rviPx(d.last),'right') +
              cel(_rviPct(d.mtd),'right',_rviColor(d.mtd)) +
              cel(_rviPct(d.ytd),'right',_rviColor(d.ytd)) +
-             `<td style="padding:3.5px 5px;opacity:.55;white-space:nowrap;">${u.descripcion||''}</td></tr>`;
+             `<td style="padding:3.5px 7px;font-size:11px;opacity:.55;">${u.descripcion||''}</td></tr>`;
     }).join('');
     // Mismo molde de tarjeta que los bloques del informe de RVL.
     return `<div style="border:1px solid ${_RVI_BORDE};border-radius:10px;padding:14px 16px;margin-bottom:16px;">
       <div style="font-size:15px;font-weight:800;letter-spacing:.4px;margin-bottom:10px;">${b.bloque}
         <span style="font-size:12px;font-weight:600;opacity:.45;"> · ${filas.length}</span></div>
-      <table style="table-layout:fixed;border-collapse:collapse;font-size:11px;">
-        ${cg}<thead><tr>${th}</tr></thead><tbody>${tds}</tbody></table></div>`;
+      <table style="width:100%;table-layout:fixed;border-collapse:collapse;">
+        <thead><tr>${th}</tr></thead><tbody>${tds}</tbody></table></div>`;
   };
 
   const col = c => bloquesDe(c).map(tablaBloque).join('');
@@ -7476,7 +7459,7 @@ function renderCierreRVI(){
     .map(([lab,n])=>{ const x=idx(n); return tarjeta(lab, x.t, _rviColor(x.v)); }).join('');
 
   cont.innerHTML = `
-    <div style="display:flex;align-items:baseline;justify-content:space-between;width:100%;
+    <div style="display:flex;align-items:baseline;justify-content:space-between;
          border-bottom:4px solid ${_RVI_MORADO};padding-bottom:14px;margin-bottom:18px;">
       <div>
         <div style="font-size:30px;font-weight:800;letter-spacing:-.4px;">Informe diario RVI</div>
@@ -7488,10 +7471,10 @@ function renderCierreRVI(){
         <div style="font-size:19px;color:${_rviColor(spx.var_dia)};font-weight:700;">${_rviPct(spx.var_dia)}</div>
       </div>
     </div>
-    <div style="display:flex;gap:10px;margin-bottom:20px;width:100%;">${tarjetas}</div>
-    <div style="display:flex;gap:22px;align-items:flex-start;font-size:11px;">
-      <div>${col('IZQ')}</div>
-      <div>${col('DER')}</div>
+    <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;">${tarjetas}</div>
+    <div style="display:flex;gap:22px;align-items:flex-start;">
+      <div style="flex:1;min-width:0;">${col('IZQ')}</div>
+      <div style="flex:1;min-width:0;">${col('DER')}</div>
     </div>`;
 }
 
@@ -22387,7 +22370,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-29 17:40 UTC · v168';
+const BUILD_ID = '2026-09-29 17:55 UTC · v169';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
