@@ -767,7 +767,8 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <button class="btn small" onclick="cargarCierreRVI()">↻ Actualizar</button>
           <button class="btn small" onclick="copiarCierreRVIImagen(this)">🖼 Copiar imagen</button>
-          <button class="btn small purple" onclick="descargarCierreRVIImagen()">⬇ Descargar PNG</button>
+          <button class="btn small purple" onclick="traerCierreBloomberg(this)">⬇ Traer cierre de Bloomberg</button>
+          <button class="btn small purple soloDueno" onclick="correoInformeRVI(this)">📧 Abrir correo en Outlook</button>
           <button class="btn small ghost" onclick="verNombresBBG()">🔍 Ver nombres de Bloomberg</button>
         </div>
         <div id="rviAviso" class="field-note" style="margin-top:8px;"></div>
@@ -2505,7 +2506,7 @@
     <div style="padding:0 24px 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
       <button class="btn small" onclick="renderInformeDiario()">↻ Actualizar</button>
       <button class="btn small" onclick="copiarInformeImagen()">🖼 Copiar imagen</button>
-      <button class="btn small purple" onclick="descargarInformeImagen()">⬇ Descargar PNG</button>
+      <button class="btn small purple soloDueno" onclick="correoInformeRVL(this)">📧 Abrir correo en Outlook</button>
       <button class="btn small ghost" onclick="copiarTextoBloomberg()">💬 Copiar texto Bloomberg</button>
       <button class="btn small ghost" onclick="verTextoBloomberg()">Ver texto</button>
       <button class="btn small ghost" onclick="guardarCierreDelDia()">Guardar cierre del día</button>
@@ -12401,6 +12402,106 @@ function cambiarUsuario(v){
   USUARIO = String(v||'SAR').toUpperCase();
   try{ localStorage.setItem('eqs_usuario', USUARIO); }catch(e){}
   if(typeof renderMaestroGrupos === 'function') renderMaestroGrupos();
+  if(typeof aplicarPermisosPC === 'function') aplicarPermisosPC();
+}
+
+// =====================================================================
+// PEDIDOS AL PC DE SERGIO
+// ---------------------------------------------------------------------
+// El navegador no puede correr un .py en la maquina de nadie, y hace bien.
+// Lo que si puede es dejar un pedido en Supabase; runner_eqs.py, que corre
+// en el PC de Sergio, lo recoge y lo ejecuta. Mismo patron del emsx_bridge
+// pero de ida y vuelta (Sergio, 29-sep).
+// =====================================================================
+const PC_DUENO = 'SAR';
+
+// Los botones marcados .soloDueno abren un borrador en el computador de
+// Sergio: no tiene sentido practico que se lo abra otra persona. Esto los
+// esconde, pero el freno de verdad esta en el runner, que no le cree al app
+// sobre quien es quien.
+function aplicarPermisosPC(){
+  const mio = (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR') === PC_DUENO;
+  document.querySelectorAll('.soloDueno').forEach(b=>{ b.style.display = mio ? '' : 'none'; });
+}
+
+async function _pcEstado(id){
+  const filas = await supaFetch('pedidos_app', `select=estado,mensaje&id=eq.${id}`);
+  return (filas && filas[0]) || null;
+}
+
+// Manda el pedido y se queda esperando a que el PC conteste. El boton es el
+// unico indicador que ve Sergio, asi que va contando lo que pasa.
+async function pedirAlPC(tipo, btn, imagen, segundos){
+  const antes = btn ? btn.innerHTML : '';
+  const soltar = (txt)=>{ if(btn){ btn.disabled = false; btn.innerHTML = txt || antes; } };
+  if(btn){ btn.disabled = true; btn.innerHTML = '⏳ Pidiendo…'; }
+  let id;
+  try{
+    const res = await fetch(`${SUPA_URL}/rest/v1/pedidos_app`, {
+      method:'POST',
+      headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
+                'Content-Type':'application/json', 'Prefer':'return=representation' },
+      body: JSON.stringify([{ tipo,
+        usuario: (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
+        imagen: imagen || null }])
+    });
+    if(!res.ok) throw new Error(`HTTP ${res.status} — ${(await res.text()).slice(0,160)}`);
+    id = (await res.json())[0].id;
+  }catch(e){
+    soltar(); alert('No se pudo dejar el pedido: ' + e.message); return false;
+  }
+
+  if(btn) btn.innerHTML = '⏳ En tu PC…';
+  const limite = (segundos || 60) * 1000, cada = 1500;
+  const hasta = Date.now() + limite;
+  while(Date.now() < hasta){
+    await new Promise(r=>setTimeout(r, cada));
+    let p = null;
+    try{ p = await _pcEstado(id); }catch(e){ continue; }
+    if(!p) continue;
+    if(p.estado === 'HECHO'){
+      soltar('✓ Listo');
+      setTimeout(()=>soltar(), 2500);
+      if(p.mensaje) console.log('PC:', p.mensaje);
+      return p.mensaje || true;
+    }
+    if(p.estado === 'ERROR'){
+      soltar();
+      alert('El PC no pudo: ' + (p.mensaje || 'sin detalle'));
+      return false;
+    }
+  }
+  soltar();
+  // El caso mas probable no es que fallara: es que nadie estaba escuchando.
+  alert('Tu PC no contestó en ' + ((segundos||60)) + ' segundos.\n\n' +
+        '¿Está corriendo runner_eqs.py? Es la ventana que hay que dejar abierta, ' +
+        'igual que el emsx_bridge.');
+  return false;
+}
+
+async function traerCierreBloomberg(btn){
+  const r = await pedirAlPC('CIERRE_RVI', btn, null, 240);
+  if(r){
+    await cargarCierreRVI();
+    if(typeof avisoExito === 'function' && typeof r === 'string')
+      avisoExito('Cierre traído de Bloomberg', _unEsc(r));
+  }
+}
+
+async function correoInformeRVI(btn){
+  if(!_rviListo()) return;
+  try{
+    const canvas = await _rviCanvas();
+    await pedirAlPC('CORREO_RVI', btn, canvas.toDataURL('image/png'), 90);
+  }catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
+}
+
+async function correoInformeRVL(btn){
+  if(!informeCompleto()) return;
+  try{
+    const canvas = await _compactoACanvas();
+    await pedirAlPC('CORREO_RVL', btn, canvas.toDataURL('image/png'), 90);
+  }catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
 }
 function comercialDeCOR(nombreCli){
   const g = (typeof grupoDeOperacion === 'function')
@@ -22728,7 +22829,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-29 20:20 UTC · v172';
+const BUILD_ID = '2026-09-29 20:45 UTC · v173';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -22811,6 +22912,9 @@ setInterval(() => {
 // Clock
 tickClock();
 setInterval(tickClock, 1000);
+
+// Los botones que abren correo en el PC de Sergio se esconden para los demás.
+aplicarPermisosPC();
 
 // Start on FX
 switchModule('Dashboard');   // el dashboard es la pantalla de entrada
