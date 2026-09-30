@@ -2270,11 +2270,16 @@
         Debajo te muestra <b>cómo la entendió</b>, para que veas si leyó bien los puntos y las comas.
         Haz clic en un resultado viejo para seguir con él.</div>
       <div style="display:flex;align-items:stretch;gap:10px;flex-wrap:wrap;">
-        <input type="text" id="calcEntrada" placeholder="235487*58807.95*0.147%"
-               autocomplete="off" spellcheck="false"
-               style="flex:1;min-width:280px;font-family:ui-monospace,monospace;font-size:16px;padding:10px 12px;"
-               onkeydown="if(event.key==='Enter'){event.preventDefault();calcResolver();}
-                          else if(event.key==='Escape'){this.value='';calcPintar(null);}">
+        <!-- Dentro de un .field a propósito: de ahí salen el fondo oscuro, el
+             borde y el foco azul del resto del app. Suelto se quedaba con el
+             blanco por defecto del navegador (Sergio, 30-sep). -->
+        <div class="field" style="flex:1;min-width:280px;">
+          <input type="text" id="calcEntrada" placeholder="235487*58807.95*0.147%"
+                 autocomplete="off" spellcheck="false"
+                 style="font-size:16px;padding:10px 12px;"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();calcResolver();}
+                            else if(event.key==='Escape'){this.value='';calcPintar(null);}">
+        </div>
         <button class="btn small purple" onclick="calcResolver()">Calcular</button>
         <button class="btn small ghost" onclick="calcLimpiar()">Limpiar</button>
       </div>
@@ -2348,9 +2353,13 @@
       </div>
       <div id="fdEstado" class="field-note" style="margin-top:8px;"></div>
 
-      <div class="field-note" style="margin:14px 0 6px;">Para el correo</div>
-      <div id="fdImagenWrap" style="overflow:auto;">
-        <div id="fdImagen" style="background:#ffffff;color:#1F3864;width:430px;padding:16px 18px;
+      <div class="field-note" style="margin:14px 0 6px;">
+        Para el correo <span style="opacity:.7;">— la imagen sale con fondo blanco, como la mandas hoy</span></div>
+      <!-- El panel va oscuro como el resto del app; lo blanco es la imagen que
+           se copia, no su marco (Sergio, 30-sep). -->
+      <div id="fdImagenWrap" style="overflow:auto;background:var(--bg-2,#161b26);
+           border:1px solid var(--border,#232938);border-radius:10px;padding:14px;">
+        <div id="fdImagen" style="background:#ffffff;color:#171B30;width:430px;padding:16px 18px;
              font-family:Calibri,Segoe UI,Arial,sans-serif;"></div>
       </div>
     </div>
@@ -7298,6 +7307,16 @@ function _fdTextoBloomberg(){
   return l.join('\n');
 }
 
+// LOS COLORES DE CREDICORP, muestreados del logo que ya vive en este archivo
+// (LOGO_CREDICORP_B64): el azul de la montaña y el naranja del pico. No son
+// inventados ni sacados de un manual de marca de memoria — salen de los
+// pixeles del logo, que es la unica fuente que tenemos a la mano.
+//
+// El verde y el rojo del informe diario estan pensados para fondo NEGRO: sobre
+// blanco, el verde con letra blanca daba 2,28 de contraste, por debajo del
+// minimo. Estos dos dan 16,0 y 4,6 (Sergio, 30-sep).
+const CC_AZUL = '#171B30', CC_NARANJA = '#D44028';
+
 function renderFlujosDia(){
   const lista = document.getElementById('fdLista');
   const bbg   = document.getElementById('fdTextoBBG');
@@ -7329,16 +7348,28 @@ function renderFlujosDia(){
         <td style="padding:5px 8px;text-align:center;font-size:13px;width:50%;">${_fdDetalle(f)}</td>
       </tr>`).join('');
     // El banner va de lado a lado del cuadro: desde donde empieza la columna de
-    // nemos hasta donde termina el texto del tamaño (Sergio, 28-sep).
+    // nemos hasta donde termina el texto del tamaño (Sergio, 28-sep), y el
+    // título va centrado (Sergio, 30-sep).
     return `<div style="margin-bottom:18px;">
       <div style="display:block;width:100%;box-sizing:border-box;background:${color};color:#fff;
-           font-weight:700;font-size:13px;letter-spacing:.5px;padding:4px 10px;">${titulo}</div>
+           font-weight:700;font-size:13px;letter-spacing:.5px;padding:4px 10px;
+           text-align:center;">${titulo}</div>
       <table style="width:100%;table-layout:fixed;border-collapse:collapse;margin-top:6px;
-             border-top:2px solid #1F3864;border-bottom:2px solid #1F3864;">
+             border-top:2px solid ${CC_AZUL};border-bottom:2px solid ${CC_AZUL};">
         <tbody>${filas}</tbody></table></div>`;
   };
-  const cuerpo = grupo('COMPRAS', '#1F4E9C', 'Compra') + grupo('VENTAS', '#E00000', 'Venta');
-  img.innerHTML = cuerpo || '<div style="color:#888;font-size:13px;">Sin intenciones cargadas.</div>';
+  const cuerpo = grupo('COMPRAS', CC_AZUL, 'Compra') + grupo('VENTAS', CC_NARANJA, 'Venta');
+
+  // El logo va de marca de agua al fondo. Se pone con un <img> aparte y no
+  // como background-image porque asi se le puede bajar la opacidad; a 7% se
+  // ve la marca sin estorbarle a los numeros, que es lo que el cliente lee.
+  img.style.position = 'relative';
+  img.innerHTML =
+    `<img src="data:image/png;base64,${LOGO_CREDICORP_B64}" alt=""
+          style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+                 width:80%;opacity:.07;pointer-events:none;">` +
+    `<div style="position:relative;">${cuerpo ||
+       '<div style="color:#888;font-size:13px;">Sin intenciones cargadas.</div>'}</div>`;
 }
 
 function copiarFlujoBBG(btn){
@@ -23099,7 +23130,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-30 15:40 UTC · v175';
+const BUILD_ID = '2026-09-30 16:30 UTC · v178';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
