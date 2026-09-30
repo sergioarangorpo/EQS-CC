@@ -6473,11 +6473,16 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
     views: [{ showGridLines:false }],
   });
 
-  // Anchos tomados del archivo del cliente.
-  [25.7, 44.3, 11.8, 5.3, 15.1, 18.1, 14.7, 3.4, 11, 12.6, 19.2, 15.4, 13.7, 18]
+  // Anchos tomados del archivo del cliente. La O (ISIN) se agrega AL FINAL
+  // para no correr de sitio ninguna de las catorce que ellos definieron: si
+  // su cargue espera esas columnas en ese orden, sigue funcionando.
+  [25.7, 44.3, 11.8, 5.3, 15.1, 18.1, 14.7, 3.4, 11, 12.6, 19.2, 15.4, 13.7, 18, 14]
     .forEach((w,i)=>{ ws.getColumn(i+1).width = w; });
 
-  const COLS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N'];
+  // La O entra a COLS a propósito: de acá salen la banda de marca de arriba,
+  // la zebra de las filas y la barra de totales. Si quedara fuera, la banda
+  // navy y la de totales se cortarían justo antes del ISIN (Sergio, 30-sep).
+  const COLS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O'];
 
   // ---------- Banda de marca en las filas 1-3 ----------
   for(let rr=1; rr<=3; rr++){
@@ -6514,9 +6519,9 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
 
   // ---------- Encabezados: SIEMPRE en la fila 4 ----------
   const H = ['Entidad Comisionista','Fondo','NIT','Folio','Fecha Operación','Fecha Cumplimiento',
-             'Nemo','C/V','Cantidad','Precio','Giro bruto COP','Comisión','IVA','Neto'];
+             'Nemo','C/V','Cantidad','Precio','Giro bruto COP','Comisión','IVA','Neto','ISIN'];
   const alin = ['left','left','left','center','center','center','left','center',
-                'right','right','right','right','right','right'];
+                'right','right','right','right','right','right','left'];
   H.forEach((h,i)=>{
     const c = ws.getCell(`${COLS[i]}4`);
     c.value = h;
@@ -6585,6 +6590,11 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
       f.especie,
       esVenta ? 'V' : 'C',
       qty, px, bruto, com, iva, neto,
+      // El ISIN sale de NEMO_TABLE, la misma tabla que usa RVI y el reporte
+      // genérico. Si una especie no estuviera ahí, la celda va VACÍA: un ISIN
+      // inventado en un archivo que va al cliente es peor que uno ausente
+      // (los tres de Porvenir el 24-sep).
+      (typeof isinDeNemo === 'function' ? isinDeNemo(f.especie) : '') || '',
     ];
     vals.forEach((v,i)=>{
       const c = ws.getCell(`${COLS[i]}${r}`);
@@ -23277,7 +23287,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-30 19:45 UTC · v181';
+const BUILD_ID = '2026-09-30 20:35 UTC · v182';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
