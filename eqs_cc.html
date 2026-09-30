@@ -7360,16 +7360,20 @@ function renderFlujosDia(){
   };
   const cuerpo = grupo('COMPRAS', CC_AZUL, 'Compra') + grupo('VENTAS', CC_NARANJA, 'Venta');
 
-  // El logo va de marca de agua al fondo. Se pone con un <img> aparte y no
-  // como background-image porque asi se le puede bajar la opacidad; a 7% se
-  // ve la marca sin estorbarle a los numeros, que es lo que el cliente lee.
-  img.style.position = 'relative';
+  // El logo va ARRIBA A LA DERECHA, igual que en el reporte genérico de Excel,
+  // que lo ancla en la columna 7 del header con la nota "arriba-derecha del
+  // header, como en las piezas de marca". Se copia de ahí en vez de escoger
+  // por gusto (Sergio, 30-sep).
+  //
+  // Antes lo probé de marca de agua al fondo y no funciona acá: los dos
+  // banners de color la parten por la mitad y parece un error.
+  img.style.position = 'static';
   img.innerHTML =
-    `<img src="data:image/png;base64,${LOGO_CREDICORP_B64}" alt=""
-          style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-                 width:80%;opacity:.07;pointer-events:none;">` +
-    `<div style="position:relative;">${cuerpo ||
-       '<div style="color:#888;font-size:13px;">Sin intenciones cargadas.</div>'}</div>`;
+    `<div style="text-align:right;margin-bottom:12px;padding-bottom:9px;
+                 border-bottom:2px solid ${CC_AZUL};">
+       <img src="data:image/png;base64,${LOGO_CREDICORP_B64}" alt="Credicorp Capital"
+            style="width:150px;display:inline-block;"></div>` +
+    (cuerpo || '<div style="color:#888;font-size:13px;">Sin intenciones cargadas.</div>');
 }
 
 function copiarFlujoBBG(btn){
@@ -12029,7 +12033,10 @@ function informeCompactoHTML(){
   const stats = Object.values(_mercadoStats).map(d=>{
     const base = cierres[d.esp] || d.primero;
     const bYtd = _CIERRE_YTD[d.esp], bMtd = _CIERRE_MTD[d.esp];
+    // Sin cierre anterior la "variacion del dia" no es la del dia: es cuanto
+    // se movio desde el primer trade de hoy. Se marca para NO mandarla.
     return { ...d, varPct: base ? (d.ultimo/base - 1)*100 : 0, seg: segmentoDe(d.esp),
+             esIntradia: !cierres[d.esp],
              mtd: bMtd ? (d.ultimo/bMtd - 1)*100 : null,
              ytd: bYtd ? (d.ultimo/bYtd - 1)*100 : null };
   });
@@ -12059,7 +12066,10 @@ function informeCompactoHTML(){
     // Con el doble de ancho caben mas sin que el informe crezca: 4 que suben
     // y 4 que bajan (antes 3 y 3), y 7 en volumen (antes 5). Sergio, 30-sep.
     const vol = orden.slice(0, 7);
-    const conMov = gs.filter(d=>d.trades >= 5);
+    // Sin cierre anterior no se puede rankear por variacion: seria ordenar
+    // por un numero que en la tabla ni siquiera se muestra. Quedan fuera de
+    // alzas y bajas, pero siguen contando para el volumen (Sergio, 30-sep).
+    const conMov = gs.filter(d=>d.trades >= 5 && !d.esIntradia);
     const suben = conMov.slice().sort((a,b)=>b.varPct-a.varPct).slice(0,4);
     const bajan = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,4);
     const linea = d=>`<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px;font-size:17px;">
@@ -12075,7 +12085,7 @@ function informeCompactoHTML(){
       </div>
       <div style="font-size:15px;opacity:.65;margin:-8px 0 14px;">${mm(totSeg)} COP${usdcop?' · <span style="color:#f59e0b;">'+U(totSeg)+' USD</span>':''} · ${gs.length} especies · ${(totSeg/total*100).toFixed(1)}% del día</div>
       ${treemapVolumen(orden.slice(0,12)
-          .map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), ANCHO_SEG, 200)}
+          .map(d=>({nombre:d.esp, valor:d.monto, varPct: d.esIntradia ? 0 : d.varPct})), ANCHO_SEG, 200)}
       <div style="margin-top:16px;">
         <div style="margin-bottom:16px;">
           <div style="font-size:15px;font-weight:700;letter-spacing:.4px;opacity:.7;margin-bottom:8px;">MAYORES ALZAS Y BAJAS</div>
@@ -12105,7 +12115,7 @@ function informeCompactoHTML(){
   const filaResumen = d=>`<tr>
     <td style="padding:5px 4px;font-family:monospace;font-size:14px;">${d.esp}</td>
     <td style="padding:5px 4px;text-align:right;font-size:14px;">${fmtRate(d.ultimo)}</td>
-    <td style="padding:5px 4px;text-align:right;font-size:14px;">${pct(d.varPct)}</td>
+    <td style="padding:5px 4px;text-align:right;font-size:14px;">${d.esIntradia ? '—' : pct(d.varPct)}</td>
     <td style="padding:5px 4px;text-align:right;font-size:14px;">${d.mtd!=null?pct(d.mtd):'—'}</td>
     <td style="padding:5px 4px;text-align:right;font-size:14px;">${d.ytd!=null?pct(d.ytd):'—'}</td>
     <td style="padding:5px 4px;text-align:right;font-size:14px;">${fmtRate(d.monto/d.qty)}</td>
@@ -12144,7 +12154,7 @@ function informeCompactoHTML(){
 
     <div style="font-size:16px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:10px;">
       MAPA DEL MERCADO — tamaño por volumen, color por variación</div>
-    ${treemapVolumen(porVol.slice(0,20).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 1268, 340)}
+    ${treemapVolumen(porVol.slice(0,20).map(d=>({nombre:d.esp, valor:d.monto, varPct: d.esIntradia ? 0 : d.varPct})), 1268, 340)}
 
     <div style="display:flex;gap:20px;align-items:stretch;margin-top:20px;">
       ${bloqueSeg('MERCADO CONTINUO', d=>d.seg==='CONTINUO')}
@@ -12167,21 +12177,15 @@ function informeCompactoHTML(){
     <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:24px 0 10px;">
       <span style="font-size:16px;font-weight:700;letter-spacing:.4px;opacity:.75;">RESUMEN DEL CONTINUO</span>
       ${(()=>{
-        // Contra qué fecha se mide el MTD. Si no es el último día hábil del
-        // mes pasado, el número está medido contra un día intermedio y hay que
-        // cargar ese cierre (Sergio, 04-sep).
+        // Contra qué fecha se mide el MTD. ESTA ES LA IMAGEN QUE VA A 55
+        // CLIENTES, así que aquí solo va el DATO: contra qué fecha está
+        // medido. El aviso de qué hay que hacer —"carga ese cierre"— es para
+        // Sergio y vive en el informe de pantalla, no acá. Hasta hoy esa
+        // instrucción se le estaba yendo a los clientes (Sergio, 30-sep).
         const b = (typeof _baseMTD !== 'undefined') ? _baseMTD : null;
-        if(!b || !b.fecha){
-          return `<span style="font-size:13px;color:var(--amber,#f59e0b);">
-            ⚠ MTD contra la tabla fija: falta cargar el cierre del mes pasado.</span>`;
-        }
+        if(!b || !b.fecha) return '';
         const [y,m,d] = String(b.fecha).split('-');
-        const txt = `${d}/${m}/${y}`;
-        return b.esUltimoHabil
-          ? `<span style="font-size:13px;opacity:.6;">MTD medido contra el cierre del ${txt}</span>`
-          : `<span style="font-size:13px;color:var(--amber,#f59e0b);">
-              ⚠ MTD medido contra el ${txt}, que no es el último día hábil del mes.
-              Carga ese cierre para que el dato quede exacto.</span>`;
+        return `<span style="font-size:13px;opacity:.6;">MTD medido contra el cierre del ${d}/${m}/${y}</span>`;
       })()}
     </div>
     <div style="display:flex;gap:20px;align-items:flex-start;">
@@ -12419,6 +12423,44 @@ function renderInformeDiario(){
   cont.innerHTML = `
     ${!esCierre ? `<div style="background:rgba(245,158,11,.12);border:1px solid var(--amber,#f59e0b);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12px;">
       ⚠ El archivo cargado llega hasta las ${horaMax}, así que <b>todavía no hay subasta de cierre</b>. Vuelve a cargarlo después del cierre.</div>` : ''}
+
+    ${(()=>{
+      // AVISOS PARA SERGIO. Van FUERA del lienzo a propósito: el lienzo es lo
+      // que se fotografía, y estos son avisos de trabajo, no información para
+      // el cliente. Hasta hoy pasaba justo al revés — el "carga ese cierre"
+      // viajaba en la imagen del correo y las especies sin cierre anterior no
+      // se avisaban en ninguna parte (Sergio, 30-sep).
+      const avisos = [];
+
+      const sinCierre = stats.filter(d => d.esIntradia)
+                             .sort((a,b)=>b.monto-a.monto).map(d=>d.esp);
+      if(sinCierre.length){
+        avisos.push(`<b>${sinCierre.length} especie(s) sin cierre anterior:</b> ` +
+          sinCierre.slice(0,12).join(', ') +
+          (sinCierre.length > 12 ? ` y ${sinCierre.length-12} más` : '') +
+          '.<br>Su variación está medida contra el primer precio de hoy, así que ' +
+          '<b>en la imagen del correo salen con guion</b> y quedan fuera de mayores alzas y bajas. ' +
+          'Carga el cierre anterior y vuelve a generar si las quieres con dato.');
+      }
+
+      const b = (typeof _baseMTD !== 'undefined') ? _baseMTD : null;
+      if(!b || !b.fecha){
+        avisos.push('<b>MTD contra la tabla fija:</b> falta cargar el cierre del mes pasado.');
+      }else if(!b.esUltimoHabil){
+        const [y,m,d] = String(b.fecha).split('-');
+        avisos.push(`<b>MTD medido contra el ${d}/${m}/${y}</b>, que no es el último día hábil ` +
+                    'del mes. Carga ese cierre para que el dato quede exacto.');
+      }
+
+      if(!avisos.length) return '';
+      return `<div style="margin-bottom:12px;border:1px solid var(--amber,#f59e0b);
+                   border-radius:10px;padding:12px 14px;background:rgba(245,158,11,.07);">
+          <div style="font-size:11px;font-weight:700;letter-spacing:.5px;
+                      color:var(--amber,#f59e0b);margin-bottom:6px;">
+            REVISA ANTES DE MANDAR</div>
+          ${avisos.map(a=>`<div style="font-size:12.5px;line-height:1.55;margin-bottom:5px;">⚠ ${a}</div>`).join('')}
+        </div>`;
+    })()}
 
     <div id="informeLienzo" style="background:#0d0f14;border:1px solid var(--border,#2a2f3a);border-radius:10px;padding:22px;">
       <div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:2px solid var(--accent,#818cf8);padding-bottom:10px;margin-bottom:16px;">
@@ -23130,7 +23172,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-30 16:30 UTC · v178';
+const BUILD_ID = '2026-09-30 17:00 UTC · v179';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
