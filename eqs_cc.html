@@ -13068,17 +13068,22 @@ function _precioNuestroRVI(h){
   const px = Number(h.price) || 0;
   const guardado = Number(h.precioNuestro) || 0;
   if(guardado && Math.abs(guardado - px) > 1e-9) return guardado;
-  // Por el id de la línea de EMSX, si sigue disponible.
-  const ln = (typeof emsxData !== 'undefined' ? emsxData : [])
-    .find(r=>String(r.id) === String(h.emsxId || h.emsx_id));
-  let avg = ln ? Number(ln.avgPr) || 0 : 0;
-  // Si no, por especie, lado y cantidad: la línea de la que salió.
-  if(!avg){
-    const cand = (typeof emsxData !== 'undefined' ? emsxData : []).find(r=>
-      tickerLimpioRVI(r.especie) === String(h.symbol||'') &&
-      String(r.lado||'').toUpperCase() === String(h.side||'').toUpperCase());
-    avg = cand ? Number(cand.avgPr) || 0 : 0;
-  }
+  // OJO: hay que buscar NUESTRA línea, no la del cliente. Antes esto miraba
+  // `h.emsxId` —que es la línea DEL CLIENTE— y después hacía un find por
+  // especie y lado SIN filtrar de quién era la línea, así que volvía a caer en
+  // la del cliente y devolvía su mismo precio. El margen quedaba en cero y la
+  // planilla del BO mostraba el precio de CCSI igual al del cliente
+  // (Sergio, 30-sep).
+  const lineas = (typeof emsxData !== 'undefined' ? emsxData : []);
+  const nuestras = lineas.filter(r =>
+    esNuestraLineaRVI(r) &&
+    tickerLimpioRVI(r.especie) === String(h.symbol||'') &&
+    String(r.lado||'').toUpperCase() === String(h.side||'').toUpperCase() &&
+    Number(r.avgPr));
+  // Primero la que calza en cantidad exacta; si hay una sola candidata, esa.
+  const exacta = nuestras.filter(r => Number(r.qty) === (Number(h.qty)||0));
+  const elegida = exacta.length === 1 ? exacta[0] : (nuestras.length === 1 ? nuestras[0] : null);
+  const avg = elegida ? Number(elegida.avgPr) : 0;
   return (avg && Math.abs(avg - px) > 1e-9) ? avg : (guardado || px);
 }
 
@@ -21162,6 +21167,64 @@ function precioNuestroVinculo(clienteLineaId){
   return qtyTot > 0 ? { precio: valorTot/qtyTot, qty: qtyTot } : null;
 }
 
+// =====================================================================
+// NUESTRO PRECIO DE EJECUCIÓN — UN SOLO RESOLVEDOR
+// ---------------------------------------------------------------------
+// Antes esto se calculaba DOS VECES dentro de generarTC, por caminos
+// distintos: uno miraba el vínculo (bien) y el otro leía el avgPr de
+// `lineaActiva` —que es la línea DEL CLIENTE— y devolvía su mismo precio.
+// El primero alimentaba la comisión en pantalla y el segundo el histórico,
+// o sea la planilla del BO y el dashboard. Resultado: el reporte del
+// cliente salía perfecto y nuestra pata iba con margen cero.
+//
+// El 30-sep se perdieron así USD 4.189,75 de margen en el trade de
+// Colfondos (ACWI, IEMG, MCHI y QUAL). Se vio solo porque Sergio notó que
+// el precio de CCSI era idéntico al del cliente.
+//
+// Regla: una línea es NUESTRA si su Originating Firm es CREDICORP. NO basta
+// con que tenga broker — la línea del cliente también viene con broker CCSI.
+// =====================================================================
+const esNuestraLineaRVI = l => /CREDICORP/i.test(String((l||{}).firm || ''));
+
+function resolverPrecioNuestroRVI(clienteLinea){
+  const vacio = { precio:null, fuente:null, detalle:'', auto:false, candidatas:[] };
+  if(!clienteLinea) return vacio;
+
+  // 1) El vínculo que armó Sergio. Manda sobre todo lo demás.
+  const v = precioNuestroVinculo(clienteLinea.id);
+  if(v && v.precio){
+    return { precio:v.precio, fuente:'vínculo', auto:false, candidatas:[],
+             detalle:`${(v.qty||0).toLocaleString('es-CO')} acciones vinculadas a mano` };
+  }
+
+  // 2) Una línea NUESTRA marcada en el blotter.
+  const marcadas = (typeof getFiltradas === 'function' ? getFiltradas() : [])
+    .filter(r => (typeof _rviMarcadas !== 'undefined' && _rviMarcadas.has(r.id)) &&
+                 esNuestraLineaRVI(r) && r.id !== clienteLinea.id && Number(r.avgPr));
+  if(marcadas.length === 1){
+    return { precio:Number(marcadas[0].avgPr), fuente:'línea marcada', auto:false,
+             candidatas:[], detalle:`${marcadas[0].especie} ${marcadas[0].hora||''}` };
+  }
+
+  // 3) UNA sola línea nuestra que calce en especie, lado y CANTIDAD EXACTA.
+  //    La cantidad exacta es lo que la hace inequívoca: el 30-sep había otra
+  //    línea de ACWI en la calle (500 acciones, broker JRFE) y la cantidad la
+  //    descarta sola. Si hay dos que calzan, no se adivina: se pide el vínculo.
+  const cands = (typeof emsxData !== 'undefined' ? emsxData : []).filter(l =>
+    l.id !== clienteLinea.id && esNuestraLineaRVI(l) && Number(l.avgPr) &&
+    nemoCanonico(l.especie,'emsx') === nemoCanonico(clienteLinea.especie,'emsx') &&
+    String(l.lado||'').toUpperCase() === String(clienteLinea.lado||'').toUpperCase());
+  const exactas = cands.filter(l => Number(l.qty) === Number(clienteLinea.qty));
+  if(exactas.length === 1){
+    return { precio:Number(exactas[0].avgPr), fuente:'única coincidencia exacta', auto:true,
+             candidatas:cands,
+             detalle:`${exactas[0].especie} ${exactas[0].lado} ` +
+                     `${Number(exactas[0].qty).toLocaleString('es-CO')} @ ${Number(exactas[0].avgPr)}` +
+                     (exactas[0].hora ? ' · ' + exactas[0].hora : '') };
+  }
+  return { ...vacio, candidatas:cands };
+}
+
 // Abre el modal para elegir cuáles líneas de afuera (CCSI) se vinculan a la
 // línea de cliente activa. Valida que la suma sea EXACTA a la del cliente.
 function abrirVinculoRVI(){
@@ -22289,6 +22352,28 @@ function generarTC(){
     }
   }
 
+  // FRENO DURO: con margen, sin nuestro precio no se genera.
+  // Antes registraba margen cero en silencio y el error solo aparecía horas
+  // después, mirando la planilla del BO. Y el reporte del cliente salía bien,
+  // así que nada lo delataba (Sergio, 30-sep).
+  if(_modoRVI.margen === 'con'){
+    const _lnCli = emsxData.find(r=>r.id===lineaActiva);
+    const _res = resolverPrecioNuestroRVI(_lnCli);
+    if(!_res.precio){
+      const hay = (_res.candidatas||[]).length;
+      alert('Falta NUESTRO precio de ejecución.\n\n' +
+        'La operación está marcada CON MARGEN, así que el margen sale de la ' +
+        'diferencia entre el precio del cliente y el nuestro. Sin eso, la planilla ' +
+        'del BO y el dashboard saldrían con margen cero.\n\n' +
+        (hay
+          ? `Hay ${hay} línea(s) de la calle con esa especie y lado, pero ninguna calza ` +
+            'en cantidad exacta.\n\nUsa el botón Vincular para decir cuál es.'
+          : 'No encontré ninguna línea de EMSX con Originating Firm CREDICORP para esa ' +
+            'especie y lado.\n\nSi de verdad no operaste afuera, cambia el tipo a SIN MARGEN.'));
+      return;
+    }
+  }
+
   const clienteKey = document.getElementById('tc-cliente').value;
   const tipo       = document.getElementById('tc-tipo').value;
   const lado       = document.getElementById('tc-side').value;
@@ -22299,7 +22384,11 @@ function generarTC(){
   const settleDate = document.getElementById('tc-settle-date').value;
   const qty        = getQtyTotal();
   const db         = clientesRVI[clienteKey];
-  const vincPrecio = (precioNuestroVinculo(lineaActiva)||{}).precio;
+  // UN SOLO resolvedor para nuestro precio: el mismo número va a la comisión
+  // que se ve en pantalla y al histórico que alimenta la planilla del BO y el
+  // dashboard. Antes eran dos cálculos distintos que podían no coincidir.
+  const _nuestro   = resolverPrecioNuestroRVI(emsxData.find(r=>r.id===lineaActiva));
+  const vincPrecio = _nuestro.precio;
   const c          = calcularComisiones(clienteKey, tipo, qty, price, {
     comCCSI: parseNum(document.getElementById('tc-com-ccsi').value),
     // El broker decide si hay comisión: CCSI/BTGH/TFSC cobran, los market
@@ -22323,12 +22412,9 @@ function generarTC(){
   //    precio del cliente se escribe a mano y el de ejecución es el de la
   //    línea. Sin este caso el margen salía en cero y "lo que ganamos" en el
   //    dashboard solo mostraba la comisión (Sergio, 08-sep).
-  const _nuestraMarcada = getFiltradas().filter(r=>_rviMarcadas.has(r.id) && /CREDICORP/i.test(String(r.firm||'')))[0];
-  const precioNuestroBO = _nuestraMarcada
-    ? Number(_nuestraMarcada.avgPr)
-    : (_modoRVI.margen === 'con'
-        ? (Number((emsxData.find(r=>r.id===lineaActiva)||{}).avgPr) || price)
-        : price);
+  // El MISMO número que ya se usó para la comisión. Nada de recalcularlo por
+  // otro camino: esa duplicidad fue justamente el bug del 30-sep.
+  const precioNuestroBO = (_modoRVI.margen === 'con' && _nuestro.precio) ? _nuestro.precio : price;
 distribuciones.forEach(d=>{
     const grossAcc  = d.qty * price;
     // El MÍNIMO DE USD 20 también aplica al cliente, no solo a lo que nos cobra
@@ -22390,6 +22476,16 @@ distribuciones.forEach(d=>{
   // recargar la página se perdía lo generado (le pasó a Porvenir el 31-ago).
   // Además es la materia prima de la planilla del BO.
   guardarHistoricoRVI().catch(e=>console.warn('No se pudo guardar el histórico:', e.message));
+
+  // Si nuestro precio se resolvió SOLO, se dice cuál línea se usó. El app no
+  // adivina a espaldas de nadie: si tomó la decisión, la muestra.
+  if(_modoRVI.margen === 'con' && _nuestro.precio && typeof avisoExito === 'function'){
+    const margen = Math.abs(_nuestro.precio - price) * qty;
+    avisoExito(_nuestro.auto ? 'Nuestro precio se resolvió solo' : 'Margen registrado',
+      `Precio del cliente <b>${price}</b> · el nuestro <b>${_nuestro.precio}</b><br>` +
+      `Margen: <b>USD ${margen.toLocaleString('es-CO',{maximumFractionDigits:2})}</b><br>` +
+      `<span style="opacity:.75;">Fuente: ${_nuestro.fuente}${_nuestro.detalle ? ' — ' + _nuestro.detalle : ''}</span>`);
+  }
 
   // El modo se resetea: cada operación se decide por separado y arrastrar el
   // de la anterior es justo lo que lleva a arquear mal (Sergio, 31-ago).
@@ -23181,7 +23277,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-30 17:35 UTC · v180';
+const BUILD_ID = '2026-09-30 19:45 UTC · v181';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
