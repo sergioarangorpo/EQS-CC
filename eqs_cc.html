@@ -5715,7 +5715,12 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
     t.value = titulo; t.font = { name:'Calibri', size:9.5, bold:true, color:{argb:C.navy} };
     t.alignment = { horizontal:'left', vertical:'middle' };
     ws.getRow(r).height = 16; r++;
-    [['B','SIDE','left'],['C','SYMBOL','left'],['D','QUANTITY','right'],['E','PRICE','right']].forEach(([col,txt,al])=>{
+    // La columna ISIN va DE ÚLTIMA (F) a propósito: así ninguna de las que ya
+    // existían cambia de sitio y las macros que alguien tenga leyendo este
+    // archivo siguen funcionando. El ISIN sale de NEMO_TABLE, la misma tabla
+    // que usa RVI — las 106 especies locales lo tienen (Sergio, 30-sep).
+    [['B','SIDE','left'],['C','SYMBOL','left'],['D','QUANTITY','right'],['E','PRICE','right'],
+     ['F','ISIN','left']].forEach(([col,txt,al])=>{
       const c = ws.getCell(`${col}${r}`);
       c.value = txt; c.font = { name:'Calibri', size:8.5, bold:true, color:{argb:C.textMuted} };
       c.alignment = { horizontal: al, vertical:'middle' };
@@ -5726,7 +5731,11 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
       ws.getCell(`C${r}`).value = f.nombre;
       const cCant = ws.getCell(`D${r}`); cCant.value = f.cantidad; cCant.numFmt = '#,##0';
       const cPx = ws.getCell(`E${r}`); cPx.value = f.precioProm; cPx.numFmt = '"$"#,##0.00';
-      [['B','left'],['C','left'],['D','right'],['E','right']].forEach(([col,al])=>{
+      // Si una especie no estuviera en la tabla, se deja VACÍA. Un ISIN
+      // inventado en un archivo que va al cliente es peor que uno ausente:
+      // ya nos pasó con los de Porvenir el 24-sep.
+      ws.getCell(`F${r}`).value = (typeof isinDeNemo === 'function' ? isinDeNemo(f.nombre) : '') || '';
+      [['B','left'],['C','left'],['D','right'],['E','right'],['F','left']].forEach(([col,al])=>{
         const cc = ws.getCell(`${col}${r}`);
         cc.font = { name:'Calibri', size:9.5, bold: col==='B', color:{argb: col==='B' ? (f.lado==='Venta'?C.orange:C.navy) : C.textDark} };
         cc.alignment = { horizontal: al, vertical:'middle' };
@@ -23172,7 +23181,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-30 17:00 UTC · v179';
+const BUILD_ID = '2026-09-30 17:35 UTC · v180';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
