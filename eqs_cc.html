@@ -12793,7 +12793,10 @@ async function _pcEstado(id){
 
 // Manda el pedido y se queda esperando a que el PC conteste. El boton es el
 // unico indicador que ve Sergio, asi que va contando lo que pasa.
-async function pedirAlPC(tipo, btn, imagen, segundos){
+// `datos` es opcional: un objeto que viaja en la columna jsonb del mismo
+// nombre. Lo usa la planilla del BO, que manda un .xlsx en base64 y no una
+// imagen. Los pedidos viejos siguen llamando con cuatro argumentos.
+async function pedirAlPC(tipo, btn, imagen, segundos, datos){
   const antes = btn ? btn.innerHTML : '';
   const soltar = (txt)=>{ if(btn){ btn.disabled = false; btn.innerHTML = txt || antes; } };
   if(btn){ btn.disabled = true; btn.innerHTML = '⏳ Pidiendo…'; }
@@ -12805,7 +12808,8 @@ async function pedirAlPC(tipo, btn, imagen, segundos){
                 'Content-Type':'application/json', 'Prefer':'return=representation' },
       body: JSON.stringify([{ tipo,
         usuario: (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
-        imagen: imagen || null }])
+        imagen: imagen || null,
+        datos: datos || null }])
     });
     if(!res.ok) throw new Error(`HTTP ${res.status} — ${(await res.text()).slice(0,160)}`);
     id = (await res.json())[0].id;
@@ -13312,6 +13316,288 @@ async function descargarPlanillaBO(clientes){
 
 // FX al Back Office: una fila por operación del día, con lo que se le confirma
 // al cliente y lo que nos queda a la mesa (Sergio, 03-sep).
+// =====================================================================
+// PLANILLA DEL BO — FX
+// ---------------------------------------------------------------------
+// El MISMO dato que Comisiones BO, en otro formato. Comisiones lleva el
+// detalle de lo que se cobró y el reparto entre las dos mesas; la planilla
+// es el control de lo que se hizo: diez columnas, una línea por operación.
+// El formato lo dio el BO (Sergio, 30-sep).
+//
+// Entran TODAS las operaciones de FX del día MENOS Andes Investment Group.
+// =====================================================================
+let _contrapartesFX = {};
+
+// OJO: esta tabla NO se indexa con _dashClave. Esa función sirve para agrupar
+// clientes en macrogrupos, y hace justo lo que aquí no se puede hacer:
+// _dashClave('ANDES INVESTMENT GROUP INC') devuelve 'LARRAIN VIAL PP'. Con esa
+// clave dos contrapartes distintas caerían en la misma casilla y el BO recibiría
+// el NIT de otra persona. Un NIT es de una entidad jurídica, no de un grupo, así
+// que la clave es el nombre limpio y nada más.
+function _fxClaveNit(nombre){
+  return String(nombre||'').toUpperCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g,'')   // sin tildes
+    .replace(/[^A-Z0-9 ]/g,' ')                        // sin puntos ni comas
+    .replace(/\s+/g,' ').trim();
+}
+
+async function cargarContrapartesFX(){
+  try{
+    const filas = await supaFetch('contrapartes_fx', 'select=*&activo=eq.true&limit=500') || [];
+    _contrapartesFX = {};
+    filas.forEach(f=>{
+      const k = _fxClaveNit(f.cliente);
+      if(!k) return;
+      // Si dos filas colapsan en la misma clave, se avisa y no se pisa la
+      // primera: preferimos un NIT faltante a uno cambiado.
+      if(_contrapartesFX[k] && _contrapartesFX[k].nit !== f.nit)
+        console.warn(`contrapartes_fx: "${f.cliente}" choca con "${_contrapartesFX[k].cliente}"`);
+      else _contrapartesFX[k] = f;
+    });
+    console.log(`FX: ${Object.keys(_contrapartesFX).length} contraparte(s) con NIT cargadas`);
+  }catch(e){ console.warn('contrapartes_fx:', e.message); }
+}
+
+// El NIT de la contraparte. Si no está en la tabla devuelve VACÍO: un NIT
+// inventado en un archivo que va al BO es peor que uno ausente.
+//
+// Los nombres de la tabla son los del BO ("ANDES INVESTMENT GROUP INC") y los
+// del app son los de la mesa ("ANDES INVESTMENT GROUP"). Cuando no calzan
+// exacto se acepta que uno sea el principio del otro, con dos frenos:
+//   . el corte tiene que caer en un espacio, para que "MERRILL LYNCH" encuentre
+//     a "MERRILL LYNCH INTERNATIONAL" pero "B" no enganche a "BNP PARIBAS";
+//   . tiene que haber UNA sola coincidencia. Entre "JP MORGAN SECURITIES LLC" y
+//     "...PLC" no se adivina, que es el mismo criterio del margen de RVI.
+const _FX_NIT_MINIMO = 5;   // caracteres, para que no calce por una sigla
+
+function nitContraparteFX(cliente){
+  const k = _fxClaveNit(cliente);
+  if(!k) return '';
+  const exacto = _contrapartesFX[k];
+  if(exacto) return String(exacto.nit || '');
+  if(k.length < _FX_NIT_MINIMO) return '';
+  const prefijo = (largo, corto) =>
+    corto.length >= _FX_NIT_MINIMO &&
+    largo.indexOf(corto) === 0 &&
+    largo.charAt(corto.length) === ' ';
+  const cerca = Object.keys(_contrapartesFX)
+    .filter(c => prefijo(c, k) || prefijo(k, c));
+  return cerca.length === 1 ? String(_contrapartesFX[cerca[0]].nit || '') : '';
+}
+
+// Andes no entra. Se excluye ACÁ y no borrándolo del maestro: el día que
+// cambie la regla, el NIT sigue estando.
+const _FX_FUERA_DE_PLANILLA = /ANDES/i;
+
+// Días hábiles entre dos fechas, para la columna T+.
+function _fxDiasHabiles(desde, hasta){
+  if(!(desde instanceof Date) || !(hasta instanceof Date)) return '';
+  let n = 0;
+  const d = new Date(desde.getFullYear(), desde.getMonth(), desde.getDate());
+  const fin = new Date(hasta.getFullYear(), hasta.getMonth(), hasta.getDate());
+  while(d < fin && n < 30){
+    d.setDate(d.getDate() + 1);
+    const dow = d.getDay();
+    const esFestivo = (typeof esFestivoCO === 'function') ? esFestivoCO(d) : false;
+    if(dow !== 0 && dow !== 6 && !esFestivo) n++;
+  }
+  return 'T+' + n;
+}
+
+function _fxFecha(v){
+  if(v instanceof Date) return new Date(v.getFullYear(), v.getMonth(), v.getDate());
+  if(!v) return null;
+  const d = new Date(String(v).slice(0,10) + 'T12:00:00');
+  return isNaN(d) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function filasPlanillaFX(){
+  const ops = (typeof operaciones !== 'undefined' ? operaciones : []);
+  const filas = [];
+  ops.forEach(o=>{
+    if(o.fecha && String(o.fecha).slice(0,10) !== _hoyISO()) return;
+    const nombreCli = String(o.cliente || o.grupo || '');
+    if(_FX_FUERA_DE_PLANILLA.test(nombreCli)) return;
+    const monto = Number(o.amount || o.monto) || 0;
+    if(!monto) return;
+
+    let r = {};
+    try{ r = calcularDesdeValores(o.modelo, o.side, monto, o.params) || {}; }catch(e){ r = {}; }
+    // La tasa de la columna es la DEL CLIENTE, la que quedó en su
+    // confirmación. La nuestra vive en Comisiones BO (Sergio, 30-sep).
+    const tasa = Number(r.tasaFinalCliente) || Number((o.params||{}).rateUnica) || 0;
+    const td = _fxFecha(o.tradeDate || o.fecha);
+    const vd = _fxFecha(o.settleDate);
+    const completo = (getClienteDB(_dashClave(nombreCli)) || {}).nombre || nombreCli;
+
+    filas.push({
+      lado: String(o.side||'').toUpperCase() === 'BUY' ? 'BUY' : 'SELL',
+      td, tmas: _fxDiasHabiles(td, vd), vd,
+      cliente: completo,
+      nit: nitContraparteFX(completo) || nitContraparteFX(nombreCli),
+      usd: monto,
+      tasa,
+      cop: redondear(monto * tasa, 2),
+      // El P&L ya lo calcula el módulo de FX. Se redondea a dos decimales:
+      // el archivo del BO traía cosas como 299999,9999997271 (Sergio, 30-sep).
+      pyg: redondear(Number(r.utilidadTotal) || 0, 2),
+    });
+  });
+  return filas.sort((a,b)=> String(a.cliente).localeCompare(String(b.cliente)));
+}
+
+function _fxLibroPlanilla(filas){
+  const C = REPORTE_COLOR;
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'EQS CC · Credicorp Capital';
+  const ws = wb.addWorksheet('Hoja1', {
+    pageSetup:{ orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 },
+    views:[{ showGridLines:false }],
+  });
+  // Anchos del archivo que mandó el BO.
+  [13.9, 12.1, 7.6, 11.5, 39.6, 15, 17.9, 11.5, 19.6, 15.6]
+    .forEach((w,i)=>{ ws.getColumn(i+1).width = w; });
+  const COLS = ['A','B','C','D','E','F','G','H','I','J'];
+
+  // Banda de marca, igual que en las otras proformas.
+  for(let rr=1; rr<=3; rr++){
+    COLS.forEach(col=> ws.getCell(`${col}${rr}`).fill =
+      {type:'pattern', pattern:'solid', fgColor:{argb:C.navy}});
+  }
+  ws.getRow(1).height = 10; ws.getRow(2).height = 40; ws.getRow(3).height = 10;
+  try{
+    const imgId = wb.addImage({ base64: LOGO_CREDICORP_BLANCO_B64, extension:'png' });
+    ws.addImage(imgId, { tl:{col:0, row:1}, ext:{width:210, height:48} });
+  }catch(e){ /* sin logo la banda igual se ve bien */ }
+  const tit = ws.getCell('E2');
+  tit.value = 'PLANILLA FX · BACK OFFICE';
+  tit.font = { name:'Calibri', size:13, bold:true, color:{argb:C.white} };
+  tit.alignment = { horizontal:'left', vertical:'middle' };
+
+  const H = ['SELL/BUY (COP)','TD','T+','VD','CLIENT NAME','TAX ID',
+             'USD AMOUNT','FX RATE','COP NET AMOUNT','P&L'];
+  const alin = ['center','center','center','center','left','left',
+                'right','right','right','right'];
+  H.forEach((h,i)=>{
+    const c = ws.getCell(`${COLS[i]}4`);
+    c.value = h;
+    c.font = { name:'Calibri', size:10, bold:true, color:{argb:C.white} };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
+    c.alignment = { horizontal:alin[i], vertical:'middle' };
+  });
+  ws.getRow(4).height = 20;
+
+  let r = 5;
+  filas.forEach(f=>{
+    [f.lado, f.td, f.tmas, f.vd, f.cliente, f.nit, f.usd, f.tasa, f.cop, f.pyg]
+      .forEach((v,i)=>{
+        const c = ws.getCell(`${COLS[i]}${r}`);
+        c.value = v;
+        c.font = { name:'Calibri', size:10, color:{argb:C.textDark} };
+        c.alignment = { horizontal:alin[i], vertical:'middle' };
+        c.border = { bottom:{style:'hair', color:{argb:C.cardBorder}} };
+      });
+    ['B','D'].forEach(col=>{ ws.getCell(`${col}${r}`).numFmt = 'dd/mm/yyyy'; });
+    ws.getCell(`G${r}`).numFmt = '#,##0.00';
+    ws.getCell(`H${r}`).numFmt = '#,##0.0000';
+    ['I','J'].forEach(col=>{ ws.getCell(`${col}${r}`).numFmt = '"$"#,##0.00'; });
+    // El lado en color, que es lo que se busca al revisar de un vistazo.
+    ws.getCell(`A${r}`).font = { name:'Calibri', size:10, bold:true,
+      color:{argb: f.lado === 'SELL' ? C.orange : C.navy} };
+    // Si faltara el NIT, la celda se marca: que no pase desapercibida.
+    if(!f.nit){
+      ws.getCell(`F${r}`).value = '— falta NIT —';
+      ws.getCell(`F${r}`).font = { name:'Calibri', size:9.5, italic:true, color:{argb:C.orange} };
+    }
+    if((r-5)%2===1){
+      COLS.forEach(col=>{
+        const c = ws.getCell(`${col}${r}`);
+        if(!c.fill || c.fill.pattern !== 'solid')
+          c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.grayLight}};
+      });
+    }
+    ws.getRow(r).height = 16;
+    r++;
+  });
+
+  // Totales.
+  const suma = k => filas.reduce((a,f)=>a + (Number(f[k])||0), 0);
+  ws.getCell(`A${r}`).value = 'TOTAL';
+  ws.getCell(`E${r}`).value = filas.length + ' ops';
+  ws.getCell(`G${r}`).value = redondear(suma('usd'), 2);
+  ws.getCell(`I${r}`).value = redondear(suma('cop'), 2);
+  ws.getCell(`J${r}`).value = redondear(suma('pyg'), 2);
+  COLS.forEach((col,i)=>{
+    const c = ws.getCell(`${col}${r}`);
+    c.font = { name:'Calibri', size:10.5, bold:true, color:{argb:C.white} };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navyLight} };
+    c.alignment = { horizontal:alin[i], vertical:'middle' };
+    c.border = { top:{style:'medium', color:{argb:C.orange}} };
+  });
+  ws.getCell(`G${r}`).numFmt = '#,##0.00';
+  ['I','J'].forEach(col=>{ ws.getCell(`${col}${r}`).numFmt = '"$"#,##0.00'; });
+  ws.getRow(r).height = 19;
+
+  ws.views = [{ showGridLines:false, state:'frozen', ySplit:4 }];
+  return wb;
+}
+
+function _fxNombrePlanilla(){
+  const d = new Date();
+  const s = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  return `Planilla_FX_BO_${s}.xlsx`;
+}
+
+// Freno: sin NIT no se manda. La columna TAX ID es lo que el BO usa para
+// identificar la contraparte, y una fila sin él le llega inservible.
+function _fxPlanillaLista(filas){
+  if(!filas.length){ alert('No hay operaciones de FX de hoy para la planilla.'); return false; }
+  const sinNit = filas.filter(f=>!f.nit).map(f=>f.cliente);
+  if(sinNit.length && !confirm(
+      `Faltan ${sinNit.length} NIT:\n\n   ` + [...new Set(sinNit)].join('\n   ') +
+      '\n\nEsas filas salen marcadas como "falta NIT". Agrégalos a contrapartes_fx ' +
+      'y vuelve a generar.\n\n¿Generar de todos modos?')) return false;
+  return true;
+}
+
+async function descargarPlanillaFX(){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  const filas = filasPlanillaFX();
+  if(!_fxPlanillaLista(filas)) return;
+  const wb = _fxLibroPlanilla(filas);
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf],
+    {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  const a = document.createElement('a');
+  a.href = url; a.download = _fxNombrePlanilla(); a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+}
+
+// Abre el correo al BO con la planilla adjunta. Va por el runner, igual que
+// los informes: el navegador no puede hablarle a Outlook.
+const FX_BO_PARA = 'ColombiaequitygroupDL@credicorpcapital.com';
+
+async function correoPlanillaFX(btn){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  const filas = filasPlanillaFX();
+  if(!_fxPlanillaLista(filas)) return;
+  try{
+    const wb = _fxLibroPlanilla(filas);
+    const buf = await wb.xlsx.writeBuffer();
+    // A base64 sin pasar por FileReader, que en archivos grandes se atora.
+    let bin = '';
+    const bytes = new Uint8Array(buf);
+    for(let i=0; i<bytes.length; i+=8192)
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i+8192));
+    await pedirAlPC('CORREO_FX_BO', btn, null, 90, {
+      para: FX_BO_PARA,
+      nombre_archivo: _fxNombrePlanilla(),
+      archivo_b64: btoa(bin),
+      ops: filas.length,
+    });
+  }catch(e){ alert('No se pudo armar la planilla: ' + e.message); }
+}
+
 async function descargarFX(clientes){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
   const C = REPORTE_COLOR;
@@ -14797,10 +15083,16 @@ function renderDashPendientes(){
   });
 
   // --- Reportado pero sin llevar al COR / al BO ---
+  // Clientes que NO pasan por el COR. MLI es extranjero omnibus: sus
+  // operaciones no se cargan, así que aparecer en "sin cargar al COR" era una
+  // alerta falsa que nunca se iba a poder cerrar (Sergio, 30-sep).
+  const _NO_VAN_AL_COR = [/^MLI$/i, /MERRILL\s*LYNCH/i];
+  const _vaAlCOR = c => !_NO_VAN_AL_COR.some(rx => rx.test(String(c||'').trim()));
+
   const sinLlevar = mkt => {
     const puesto = mkt === 'RVI' ? 'BO' : mkt;
     return [...new Set((_reportesGenerados||[]).filter(r=>r.modulo===mkt).map(r=>r.cliente))]
-      .filter(c=>vecesCargadoCOR(puesto, c) === 0);
+      .filter(c=>_vaAlCOR(c) && vecesCargadoCOR(puesto, c) === 0);
   };
   const corRVL = sinLlevar('RVL'), boRVI = sinLlevar('RVI'), boFX = sinLlevar('FX');
 
@@ -14976,8 +15268,20 @@ function renderModuloReportes(){
     filas.forEach(r=>{ (porCliente[r.cliente] = porCliente[r.cliente] || []).push(r); });
     const clientes = Object.keys(porCliente).sort();
 
+    // La planilla del BO de FX es UNA sola para toda la mesa, no una por
+    // cliente: va arriba del cuadro y no dentro de las fichas.
+    const barraFX = mod !== 'FX' ? '' : `
+      <span style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+        <button class="btn small purple" onclick="descargarPlanillaFX()"
+          title="Planilla de control del Back Office: todas las operaciones de FX del día, una línea cada una">📋 Planilla BO</button>
+        <button class="btn small soloDueno" onclick="correoPlanillaFX(this)"
+          title="Abre el borrador en Outlook con la planilla adjunta">📧 Abrir correo en Outlook</button>
+      </span>`;
+
     cont.innerHTML = `
-      <div class="section-label" style="margin-top:20px;">${mod} — ${titulo}</div>
+      <div class="section-label" style="margin-top:20px;display:flex;align-items:center;gap:10px;">
+        <span>${mod} — ${titulo}</span>${barraFX}
+      </div>
       ${clientes.length === 0
         ? `<div class="empty-state" style="padding:20px 0;">Sin reportes de ${mod} hoy.</div>`
         : clientes.map(cli=>{
@@ -15006,9 +15310,14 @@ function renderModuloReportes(){
                     if(mod === 'RVI') return `<button class="btn small purple" style="min-width:132px;"
                       title="Descargar la planilla del Back Office con las dos patas"
                       onclick="descargarPlanillaBO(['${c}'])">📥 Planilla BO</button>`;
+                    // Se llamaba "Envío al BO". Con la planilla nueva en el
+                    // mismo cuadro había dos cosas con el mismo nombre, así
+                    // que este archivo se llama por lo que trae: el detalle
+                    // de comisiones y el reparto entre las dos mesas
+                    // (Sergio, 30-sep).
                     if(mod === 'FX')  return `<button class="btn small purple" style="min-width:132px;"
-                      title="Descargar lo que se le envía al Back Office"
-                      onclick="descargarFX(['${c}'])">📥 Envío al BO</button>`;
+                      title="Soporte de comisiones de este cliente: tasa al cliente, tasa de la mesa y reparto de la utilidad"
+                      onclick="descargarFX(['${c}'])">📥 Comisiones BO</button>`;
                     return '';
                   })()}
                 </span>
@@ -15038,6 +15347,9 @@ function renderModuloReportes(){
           }).join('')}
     `;
   });
+  // El cuadro de FX se repinta con botones nuevos cada vez: sin esto, el de
+  // "Abrir correo" reaparece para quien no es el dueño del PC.
+  if(typeof aplicarPermisosPC === 'function') aplicarPermisosPC();
 }
 
 async function cargarReportesGenerados(){
@@ -23287,7 +23599,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-30 20:35 UTC · v182';
+const BUILD_ID = '2026-09-30 22:40 UTC · v184';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -23315,6 +23627,7 @@ setTimeout(()=>{
   if(p && u && !p.value && u.value) p.value = u.value;
 }, 2000);
 if(typeof cargarMaestroDeceval === 'function') cargarMaestroDeceval();
+if(typeof cargarContrapartesFX === 'function') cargarContrapartesFX();
 if(typeof cargarFestivos === 'function') cargarFestivos().then(()=>{
   if(typeof renderListaFestivos === 'function') renderListaFestivos();
 });
