@@ -2259,6 +2259,29 @@
     </div>
     <div id="ejecResultado" style="padding:0 24px 24px;"></div>
 
+    <!-- ===== Calculadora del día =====
+         Para no tener que abrir un Excel por una multiplicación
+         (Sergio, 29-sep). -->
+    <div class="section-label">Calculadora del día</div>
+    <div style="padding:0 24px 24px;">
+      <div class="field-note" style="margin-bottom:8px;">
+        Escribe la cuenta y dale <b>Enter</b>. Entiende <code>+ − × ÷ ( )</code>, potencias con
+        <code>^</code> y porcentajes con <code>%</code>: <code>235487*58807.95*0.147%</code>.
+        Debajo te muestra <b>cómo la entendió</b>, para que veas si leyó bien los puntos y las comas.
+        Haz clic en un resultado viejo para seguir con él.</div>
+      <div style="display:flex;align-items:stretch;gap:10px;flex-wrap:wrap;">
+        <input type="text" id="calcEntrada" placeholder="235487*58807.95*0.147%"
+               autocomplete="off" spellcheck="false"
+               style="flex:1;min-width:280px;font-family:ui-monospace,monospace;font-size:16px;padding:10px 12px;"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();calcResolver();}
+                          else if(event.key==='Escape'){this.value='';calcPintar(null);}">
+        <button class="btn small purple" onclick="calcResolver()">Calcular</button>
+        <button class="btn small ghost" onclick="calcLimpiar()">Limpiar</button>
+      </div>
+      <div id="calcSalida" style="margin-top:12px;"></div>
+      <div id="calcHistorial" style="margin-top:12px;"></div>
+    </div>
+
     <!-- ===== Spread entre especies ===== -->
     <div class="section-label">Spread entre especies</div>
     <div style="padding:0 24px 24px;">
@@ -11230,6 +11253,215 @@ function agregarTicket(){
 }
 function borrarTicket(i){ _tickets.splice(i,1); renderEjecucion(); }
 function limpiarEjecucion(){ _tickets = []; document.getElementById('ejecObjetivo').value=''; renderEjecucion(); }
+
+// =====================================================================
+// CALCULADORA DEL DÍA (Ayudas)
+// ---------------------------------------------------------------------
+// Para no abrir un Excel por una multiplicación (Sergio, 29-sep).
+//
+// Lleva su propio evaluador y NO usa eval(). Dos razones: una herramienta
+// de mesa tiene que ser predecible, y en un renglón donde uno pega lo que
+// sea no conviene que se ejecute lo que sea.
+//
+// Y muestra CÓMO ENTENDIÓ la cuenta antes del resultado, porque "1,234"
+// puede ser mil doscientos treinta y cuatro o uno coma dos tres cuatro, y
+// un número mal leído en una cuenta de comisiones no se nota solo.
+// =====================================================================
+let _calcHist = [];
+
+// Un número suelto, con la misma lógica de puntos y comas que ya usa el
+// resto del app para leer lo que Sergio pega de otros lados.
+function _calcNum(t){
+  let x = String(t);
+  const comas = (x.match(/,/g)||[]).length, puntos = (x.match(/\./g)||[]).length;
+  const uC = x.lastIndexOf(','), uP = x.lastIndexOf('.');
+  if(comas > 1 && puntos === 0)           x = x.replace(/,/g,'');              // 1,234,567
+  else if(puntos > 1 && comas === 0)      x = x.replace(/\./g,'');             // 1.234.567
+  // Una sola coma y ningun punto es el caso ambiguo: "1,234" puede ser mil
+  // doscientos treinta y cuatro o uno coma dos tres cuatro. Se toma como
+  // miles SOLO si tiene forma de grupo de miles de verdad — y un grupo de
+  // miles nunca empieza en cero. Sin ese [1-9], "0,147" (una comision) se
+  // leia como 147, o sea cien mil veces mas. Ese si duele.
+  else if(comas === 1 && puntos === 0)    x = /^[1-9]\d{0,2},\d{3}$/.test(x)
+                                                ? x.replace(',','')            // 1,234 = mil
+                                                : x.replace(',','.');          // 0,147 = decimal
+  else if(uC > uP)                        x = x.replace(/\./g,'').replace(',','.'); // 1.234,56
+  else                                    x = x.replace(/,/g,'');              // 1,234.56
+  const n = Number(x);
+  if(!isFinite(n)) throw new Error(`no entiendo el número "${t}"`);
+  return n;
+}
+
+function _calcTokens(txt){
+  // Los espacios NO se borran de una: se saltan dentro del bucle. Borrarlos
+  // antes convertia "2 3" (un dedazo) en 23 sin decir nada.
+  const src = String(txt||'').replace(/×/g,'*').replace(/÷/g,'/')
+                             .replace(/[−–—]/g,'-').trim();
+  if(!src) throw new Error('escribe una cuenta');
+  const tk = []; let i = 0;
+  while(i < src.length){
+    const c = src[i];
+    if(/\s/.test(c)){ i++; continue; }
+    if(/[\d.,]/.test(c)){
+      let j = i; while(j < src.length && /[\d.,]/.test(src[j])) j++;
+      const crudo = src.slice(i, j);
+      tk.push({ t:'n', v:_calcNum(crudo), txt:crudo });
+      i = j;
+    } else if('+-*/^()%'.indexOf(c) >= 0){ tk.push({ t:c }); i++; }
+    else throw new Error(`no sé qué hacer con "${c}"`);
+  }
+  return tk;
+}
+
+// Descenso recursivo. La precedencia queda en la forma de las funciones:
+// expr < term < factor(^) < unario < sufijo(%) < primario.
+function _calcParse(tk){
+  let p = 0;
+  const ver   = () => tk[p] ? tk[p].t : null;
+  const comer = t => (ver() === t) ? (p++, true) : false;
+
+  function expr(){
+    let v = term();
+    for(;;){
+      if(comer('+'))      v += term();
+      else if(comer('-')) v -= term();
+      else return v;
+    }
+  }
+  function term(){
+    let v = factor();
+    for(;;){
+      if(comer('*')) v *= factor();
+      else if(comer('/')){
+        const d = factor();
+        if(d === 0) throw new Error('estás dividiendo por cero');
+        v /= d;
+      }
+      else return v;
+    }
+  }
+  function factor(){
+    const v = unario();
+    return comer('^') ? Math.pow(v, factor()) : v;   // de derecha a izquierda
+  }
+  function unario(){
+    if(comer('-')) return -unario();
+    if(comer('+')) return  unario();
+    return sufijo();
+  }
+  function sufijo(){
+    let v = primario();
+    while(comer('%')) v /= 100;
+    return v;
+  }
+  function primario(){
+    const t = tk[p];
+    if(!t) throw new Error('la cuenta queda incompleta');
+    if(t.t === 'n'){ p++; return t.v; }
+    if(comer('(')){
+      const v = expr();
+      if(!comer(')')) throw new Error('falta cerrar un paréntesis');
+      return v;
+    }
+    throw new Error(`no esperaba "${t.t}" ahí`);
+  }
+  const r = expr();
+  if(p < tk.length){
+    const s = tk[p].t === 'n' ? tk[p].txt : tk[p].t;
+    throw new Error(`sobra algo al final ("${s}")`);
+  }
+  if(!isFinite(r)) throw new Error('el resultado se salió de rango');
+  return r;
+}
+
+function _calcFmt(n){
+  if(!isFinite(n)) return '—';
+  return n.toLocaleString('es-CO', { maximumFractionDigits:6 });
+}
+
+// La cuenta reescrita con los números ya interpretados. Es el control de
+// que leyó bien: si uno queria 0,147 y aca dice 147, se ve de una.
+function _calcEco(tk){
+  const sig = { '*':' × ', '/':' ÷ ', '+':' + ', '-':' − ', '^':'^', '(':'(', ')':')', '%':'%' };
+  return tk.map(t => t.t === 'n' ? _calcFmt(t.v) : sig[t.t]).join('');
+}
+
+function calcResolver(){
+  const caja = document.getElementById('calcEntrada');
+  if(!caja) return;
+  const txt = caja.value;
+  try{
+    const tk  = _calcTokens(txt);
+    const val = _calcParse(tk);
+    _calcHist.unshift({ eco:_calcEco(tk), val });
+    _calcHist = _calcHist.slice(0, 8);
+    calcPintar({ eco:_calcEco(tk), val });
+  }catch(e){
+    calcPintar({ error: e.message });
+  }
+  caja.focus(); caja.select();
+}
+
+function calcPintar(r){
+  const sal = document.getElementById('calcSalida');
+  const his = document.getElementById('calcHistorial');
+  if(sal){
+    if(!r) sal.innerHTML = '';
+    else if(r.error){
+      sal.innerHTML = `<div class="panel" style="border-color:#ef4444;">
+        <div style="color:#ef4444;font-size:13px;">No pude con esa cuenta: ${r.error}.</div></div>`;
+    }else{
+      sal.innerHTML = `<div class="panel">
+        <div class="field-note" style="font-family:ui-monospace,monospace;margin-bottom:4px;">${r.eco} =</div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div style="font-size:30px;font-weight:800;font-family:ui-monospace,monospace;">${_calcFmt(r.val)}</div>
+          <button class="btn small ghost" onclick="calcCopiar(${r.val},this)">Copiar</button>
+        </div></div>`;
+    }
+  }
+  if(his){
+    his.innerHTML = _calcHist.length < 2 ? '' :
+      `<div class="field-note" style="margin-bottom:5px;">Anteriores — clic para seguir con ese número</div>` +
+      _calcHist.slice(1).map(h=>`
+        <div onclick="calcUsar(${h.val})" title="Usar ${_calcFmt(h.val)}"
+             style="display:flex;justify-content:space-between;gap:14px;cursor:pointer;
+                    padding:4px 8px;border-bottom:1px solid var(--border,#232938);
+                    font-family:ui-monospace,monospace;font-size:12.5px;">
+          <span style="opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${h.eco}</span>
+          <span style="font-weight:700;white-space:nowrap;">${_calcFmt(h.val)}</span>
+        </div>`).join('');
+  }
+}
+
+// Mete el número en el renglón. Si ya hay algo escrito lo agrega al final,
+// para poder encadenar sin volver a teclear el resultado.
+function calcUsar(v){
+  const caja = document.getElementById('calcEntrada');
+  if(!caja) return;
+  const hay = caja.value.trim();
+  caja.value = hay ? `${hay}${/[+\-*/^(]$/.test(hay) ? '' : '*'}${v}` : String(v);
+  caja.focus();
+}
+
+function calcCopiar(v, btn){
+  const txt = String(v);
+  const listo = ()=>{ if(btn){ const a = btn.innerHTML; btn.innerHTML = '✓'; setTimeout(()=>{ btn.innerHTML = a; }, 1200); } };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(listo).catch(()=>{});
+  }else{
+    const t = document.createElement('textarea');
+    t.value = txt; document.body.appendChild(t); t.select();
+    try{ document.execCommand('copy'); listo(); }catch(e){}
+    t.remove();
+  }
+}
+
+function calcLimpiar(){
+  const caja = document.getElementById('calcEntrada');
+  if(caja){ caja.value = ''; caja.focus(); }
+  _calcHist = [];
+  calcPintar(null);
+}
 
 function renderEjecucion(){
   const cont = document.getElementById('ejecResultado');
@@ -22867,7 +23099,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-30 15:05 UTC · v174';
+const BUILD_ID = '2026-09-30 15:40 UTC · v175';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
