@@ -619,6 +619,17 @@
   .btn.small{padding:5px 10px;font-size:11px;}
   .btn.teal{background:var(--teal);border-color:var(--teal);color:#fff;}
   .btn.teal:hover{background:#26aab0;}
+  /* La fila de abajo del cuadro de FX lleva TRES botones donde RVL y RVI
+     llevan uno. En pantalla ancha caben de sobra; en una angosta el texto se
+     partía en dos líneas y el botón de FX quedaba 14px más arriba que el de
+     los otros dos cuadros. Se aprieta la letra antes que romper la simetría:
+     los tres cuadros miden lo mismo y el botón va a la misma altura en los
+     tres, que es la regla de este cajón (Sergio, 07-sep y 30-sep).
+     El min-height es por lo mismo: al achicar la letra el botón se encogía
+     3px y se despegaba de la línea de los otros dos. */
+  .filaFxBO .btn{white-space:nowrap;min-height:32px;}
+  @media (max-width:1240px){ .filaFxBO .btn{font-size:11px;padding-left:9px;padding-right:9px;} }
+  @media (max-width:1100px){ .filaFxBO .btn{font-size:10px;padding-left:7px;padding-right:7px;} }
 
   /* GRID */
   .grid{display:grid;grid-template-columns:1fr 420px;gap:0;}
@@ -2582,8 +2593,27 @@
         </div>
         <div id="fichasFX" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;min-height:24px;"></div>
         <div class="field-note" id="selFX" style="font-size:11px;margin-bottom:8px;min-height:15px;flex:1;">—</div>
-        <button class="btn purple" id="btnFxMultiple" onclick="descargarFXSeleccionados()" disabled
-                style="width:100%;">📥 Enviar al BO</button>
+        <!-- UNA sola fila abajo, como en RVL y RVI. La versión anterior metía
+             una segunda fila con línea divisoria solo aquí, y eso rompía la
+             simetría de los tres cuadros: el botón de FX quedaba a otra altura
+             (Sergio, 30-sep).
+             "Enviar al BO" pasó a "Enviar comisiones FX": ahora salen DOS
+             archivos hacia el Back Office y el nombre tiene que decir cuál. -->
+        <div class="filaFxBO" style="display:flex;gap:6px;align-items:stretch;">
+          <button class="btn purple" id="btnFxMultiple" onclick="descargarFXSeleccionados()" disabled
+                  title="Soporte de comisiones de los clientes marcados: tasa al cliente, tasa de la mesa y reparto de la utilidad"
+                  style="flex:1 1 60%;min-width:0;">📥 Enviar comisiones FX</button>
+          <!-- La planilla NO depende de los clientes marcados arriba: entran
+               TODAS las operaciones de FX del día menos Andes. Por eso nunca
+               va deshabilitada. Se llama "Planilla FX" y no "Planilla BO"
+               porque ese nombre ya lo tiene el botón de RVI, justo al lado. -->
+          <button class="btn purple" onclick="descargarPlanillaFX()"
+                  title="Planilla de control del Back Office: todas las operaciones de FX de hoy, una línea cada una"
+                  style="flex:1 1 40%;min-width:0;">📋 Planilla FX</button>
+          <button class="btn purple soloDueno" onclick="correoPlanillaFX(this)"
+                  title="Abre el borrador en Outlook con la planilla de FX adjunta"
+                  style="flex:0 0 auto;padding-left:11px;padding-right:11px;">📧</button>
+        </div>
       </div>
 
       <div style="flex:1;min-width:300px;padding:12px 14px;background:var(--bg-2,#161b26);
@@ -15268,20 +15298,11 @@ function renderModuloReportes(){
     filas.forEach(r=>{ (porCliente[r.cliente] = porCliente[r.cliente] || []).push(r); });
     const clientes = Object.keys(porCliente).sort();
 
-    // La planilla del BO de FX es UNA sola para toda la mesa, no una por
-    // cliente: va arriba del cuadro y no dentro de las fichas.
-    const barraFX = mod !== 'FX' ? '' : `
-      <span style="display:flex;align-items:center;gap:8px;margin-left:auto;">
-        <button class="btn small purple" onclick="descargarPlanillaFX()"
-          title="Planilla de control del Back Office: todas las operaciones de FX del día, una línea cada una">📋 Planilla BO</button>
-        <button class="btn small soloDueno" onclick="correoPlanillaFX(this)"
-          title="Abre el borrador en Outlook con la planilla adjunta">📧 Abrir correo en Outlook</button>
-      </span>`;
-
+    // La planilla del BO de FX vive en el CUADRO de FX de arriba, con los
+    // otros botones del módulo. Aquí abajo estaba duplicada y Sergio la buscó
+    // donde tenía que estar, que es el cuadro (30-sep).
     cont.innerHTML = `
-      <div class="section-label" style="margin-top:20px;display:flex;align-items:center;gap:10px;">
-        <span>${mod} — ${titulo}</span>${barraFX}
-      </div>
+      <div class="section-label" style="margin-top:20px;">${mod} — ${titulo}</div>
       ${clientes.length === 0
         ? `<div class="empty-state" style="padding:20px 0;">Sin reportes de ${mod} hoy.</div>`
         : clientes.map(cli=>{
@@ -15347,9 +15368,6 @@ function renderModuloReportes(){
           }).join('')}
     `;
   });
-  // El cuadro de FX se repinta con botones nuevos cada vez: sin esto, el de
-  // "Abrir correo" reaparece para quien no es el dueño del PC.
-  if(typeof aplicarPermisosPC === 'function') aplicarPermisosPC();
 }
 
 async function cargarReportesGenerados(){
@@ -23599,7 +23617,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-30 22:40 UTC · v184';
+const BUILD_ID = '2026-09-30 22:55 UTC · v185';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
