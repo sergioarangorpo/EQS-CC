@@ -2648,8 +2648,19 @@
         </div>
         <div id="fichasRVI" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;min-height:24px;"></div>
         <div class="field-note" id="selRVI" style="font-size:11px;margin-bottom:8px;min-height:15px;flex:1;">—</div>
-        <button class="btn purple" id="btnBoMultiple" onclick="descargarBOSeleccionados()" disabled
-                style="width:100%;">📥 Planilla BO</button>
+        <!-- Misma fila única que en RVL y FX, para que los tres cuadros midan
+             lo mismo y el botón quede a la misma altura en los tres. -->
+        <div class="filaFxBO" style="display:flex;gap:6px;align-items:stretch;">
+          <button class="btn purple" id="btnBoMultiple" onclick="descargarBOSeleccionados()" disabled
+                  title="Planilla del Back Office con los clientes marcados, más lo verificado de RFI"
+                  style="flex:1 1 auto;min-width:0;">📥 Planilla BO</button>
+          <!-- El correo NO mira lo marcado: manda TODOS los clientes de RVI de
+               hoy más RFI. Marcar de menos y darle enviar le dejaría al BO una
+               planilla incompleta sin que nada lo delate (Sergio, 01-oct). -->
+          <button class="btn purple soloDueno" onclick="correoPlanillaBO(this)"
+                  title="Abre el borrador en Outlook con la planilla de RVI/RFI de todo el día adjunta"
+                  style="flex:0 0 auto;padding-left:11px;padding-right:11px;">📧</button>
+        </div>
       </div>
 
     </div>
@@ -12816,6 +12827,17 @@ function aplicarPermisosPC(){
   document.querySelectorAll('.soloDueno').forEach(b=>{ b.style.display = mio ? '' : 'none'; });
 }
 
+// Un .xlsx a base64 para que viaje en el pedido. De a pedazos y no de un solo
+// `String.fromCharCode(...bytes)`, que con un archivo grande revienta la pila
+// de argumentos. FileReader haría lo mismo pero asíncrono y sin ventaja.
+async function _aBase64(buf){
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for(let i=0; i<bytes.length; i+=8192)
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i+8192));
+  return btoa(bin);
+}
+
 async function _pcEstado(id){
   const filas = await supaFetch('pedidos_app', `select=estado,mensaje&id=eq.${id}`);
   return (filas && filas[0]) || null;
@@ -13287,11 +13309,12 @@ function filasBODeCliente(cliente){
   return filas;
 }
 
-async function descargarPlanillaBO(clientes){
-  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+// Las filas de la planilla, separadas de la descarga, para que el botón de
+// correo mande EXACTAMENTE el mismo archivo y no una reconstrucción parecida.
+function filasPlanillaBO(clientes){
   let filas = [];
   const resumen = [];
-  clientes.forEach(cli=>{
+  (clientes||[]).forEach(cli=>{
     const f = filasBODeCliente(cli);
     if(f.length){ filas = filas.concat(f); resumen.push({cliente:cli, n:f.length}); }
   });
@@ -13302,10 +13325,26 @@ async function descargarPlanillaBO(clientes){
     filas = filas.concat(fRFI);
     resumen.push({ cliente:'RFI', n:fRFI.length });
   }
-  if(!filas.length){
-    alert('No se encontraron operaciones de esos clientes en el histórico de hoy.');
-    return;
-  }
+  return { filas, resumen };
+}
+
+// TODOS los clientes de RVI reportados hoy, sin mirar lo que esté marcado en
+// las fichas. El correo usa esto y no la selección: marcar tres de cinco y
+// darle enviar le mandaría al BO una planilla incompleta sin que nada lo
+// delate, que es la clase de error que solo se ve de nuestro lado
+// (Sergio, 01-oct).
+function clientesRVIdeHoy(){
+  const vig = (typeof ultimaVersionPorLinea === 'function')
+    ? ultimaVersionPorLinea(_reportesGenerados) : (_reportesGenerados || []);
+  return [...new Set(vig.filter(r=>r.modulo === 'RVI').map(r=>r.cliente))].sort();
+}
+
+function _nombrePlanillaBO(){
+  const d = new Date();
+  return `PLANILLA_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.xlsx`;
+}
+
+async function _libroPlanillaBO(filas){
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Hoja1');
   BO_COLUMNAS.forEach((h,i)=>{
@@ -13325,12 +13364,21 @@ async function descargarPlanillaBO(clientes){
     for(let c=1;c<=14;c++) ws.getCell(r,c).font = { name:'Calibri', size:10 };
   });
   autofitColumnas(ws, {min:9, max:32});
-  const d = new Date();
-  const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  return wb;
+}
+
+async function descargarPlanillaBO(clientes){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  const { filas, resumen } = filasPlanillaBO(clientes);
+  if(!filas.length){
+    alert('No se encontraron operaciones de esos clientes en el histórico de hoy.');
+    return;
+  }
+  const wb = await _libroPlanillaBO(filas);
   const buf = await wb.xlsx.writeBuffer();
   const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
   const a = document.createElement('a');
-  a.href = url; a.download = `PLANILLA_${slug}.xlsx`;
+  a.href = url; a.download = _nombrePlanillaBO();
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 
@@ -13342,6 +13390,28 @@ async function descargarPlanillaBO(clientes){
     await cargarRegistroCOR();
     renderModuloReportes();
   }catch(e){ console.warn('No se pudo registrar la planilla:', e.message); }
+}
+
+// Abre el borrador al BO con la planilla de RVI/RFI adjunta.
+// OJO: esto NO registra en cargas_cor. El badge de versión significa "generaste
+// el archivo", y ese significado lo tiene desde el 07-sep; mandarlo por correo
+// no lo cambia. Si prefieres que el correo también cuente como carga, es una
+// línea — pero entonces bajar y mandar el mismo archivo lo dejaría en v2.
+async function correoPlanillaBO(btn){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  const clientes = clientesRVIdeHoy();
+  const { filas } = filasPlanillaBO(clientes);
+  if(!filas.length){ alert('No hay operaciones de RVI ni de RFI de hoy para la planilla.'); return; }
+  try{
+    const wb = await _libroPlanillaBO(filas);
+    await pedirAlPC('CORREO_PLANILLA', btn, null, 90, {
+      tipo: 'rvi',
+      nombre_archivo: _nombrePlanillaBO(),
+      archivo_b64: await _aBase64(await wb.xlsx.writeBuffer()),
+      lineas: filas.length,
+      clientes: clientes.length,
+    });
+  }catch(e){ alert('No se pudo armar la planilla: ' + e.message); }
 }
 
 // FX al Back Office: una fila por operación del día, con lo que se le confirma
@@ -13605,25 +13675,21 @@ async function descargarPlanillaFX(){
 
 // Abre el correo al BO con la planilla adjunta. Va por el runner, igual que
 // los informes: el navegador no puede hablarle a Outlook.
-const FX_BO_PARA = 'ColombiaequitygroupDL@credicorpcapital.com';
-
+//
+// Los destinatarios y el asunto NO viven aquí: viven en correo_planilla.py, en
+// el PC. Así cambiar un correo no obliga a volver a subir el HTML, y el app no
+// puede mandarle al runner una dirección que nadie revisó.
 async function correoPlanillaFX(btn){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
   const filas = filasPlanillaFX();
   if(!_fxPlanillaLista(filas)) return;
   try{
     const wb = _fxLibroPlanilla(filas);
-    const buf = await wb.xlsx.writeBuffer();
-    // A base64 sin pasar por FileReader, que en archivos grandes se atora.
-    let bin = '';
-    const bytes = new Uint8Array(buf);
-    for(let i=0; i<bytes.length; i+=8192)
-      bin += String.fromCharCode.apply(null, bytes.subarray(i, i+8192));
-    await pedirAlPC('CORREO_FX_BO', btn, null, 90, {
-      para: FX_BO_PARA,
+    await pedirAlPC('CORREO_PLANILLA', btn, null, 90, {
+      tipo: 'fx',
       nombre_archivo: _fxNombrePlanilla(),
-      archivo_b64: btoa(bin),
-      ops: filas.length,
+      archivo_b64: await _aBase64(await wb.xlsx.writeBuffer()),
+      lineas: filas.length,
     });
   }catch(e){ alert('No se pudo armar la planilla: ' + e.message); }
 }
@@ -23617,7 +23683,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-09-30 22:55 UTC · v185';
+const BUILD_ID = '2026-10-01 13:55 UTC · v186';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
