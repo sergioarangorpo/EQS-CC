@@ -6609,7 +6609,14 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
 
     const vals = [
       'CREDICORP CAPITAL S.A',
-      cfgMacro.fondo || f.portNombre || f.notes || '',
+      // El fondo sale del RESOLVEDOR, no de los campos sueltos del folio.
+      // El folio de la BVC no trae Account: el que lo tiene es la ORDEN padre
+      // de Fidessa, y fondoDeFolioFFMM sabe ir a buscarlo ahí. Antes esto leía
+      // f.portNombre/f.notes y, como el folio no los trae, 10 de 11 líneas de
+      // FIDUCIARIA salieron con el nombre del book (CREDICORPFFMM) en vez del
+      // portafolio: FI SMURFIT, FI MERANI, FG SANYO y los demás se perdieron
+      // (Sergio, 01-oct).
+      cfgMacro.fondo || _fondoFolioFFMM(f),
       nitFondo,
       Number(f.folio) || f.folio || '',   // número, para poder ordenar y sumar
       // Fecha sin hora: si arrastra la hora, Excel la muestra con horas.
@@ -6713,6 +6720,28 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
 // cuál pertenece cada línea. Se reportan por SEPARADO por regulación local
 // (Sergio, 24-ago).
 // =====================================================================
+// El fondo de UNA línea de CREDICORPFFMM, para la confirmación y para el Excel.
+// Es la misma cadena de fondoDeFolioFFMM —asignación → manual → Account del
+// folio → Account de la ORDEN padre— con dos frenos encima:
+//
+//   · nunca devuelve el CLIENT/BOOK. "CREDICORPFFMM" es el libro bajo el que
+//     conviven los cuatro macrogrupos, no un portafolio de nadie. Que saliera
+//     en la columna Fondo era el síntoma de haber perdido la traza.
+//   · si no resuelve, devuelve '' y quien llama decide. Un portafolio en
+//     blanco se ve; uno equivocado no.
+function _fondoFolioFFMM(f){
+  const malos = new Set(['CREDICORPFFMM', 'CREDICORP CAPITAL AM', 'CC AM', '']);
+  const limpio = v => String(v || '').replace(/ /g, ' ').trim();
+  const sirve  = v => v && !malos.has(limpio(v).toUpperCase());
+
+  const porResolvedor = (typeof fondoDeFolioFFMM === 'function') ? fondoDeFolioFFMM(f) : '';
+  if(sirve(porResolvedor)) return limpio(porResolvedor);
+
+  // Último recurso: el Account de la orden padre tal cual está en Fidessa.
+  const t = (_fidessaTradesRaw || {})[String(f.parentOrderId)] || {};
+  return sirve(t.notes) ? limpio(t.notes) : '';
+}
+
 const CCFFMM_MACROGRUPOS = {
   ACC_COLOMBIA: { nombre:'ACCIONES COLOMBIA', archivo:'CC_AM',        fondo:'CREDICORP CAPITAL ACCIONES COLOMBIA' },
   ACC_GLOBALES: { nombre:'ACCIONES GLOBALES', archivo:'ACC_GLOBALES', fondo:'CREDICORP CAPITAL ACCIONES GLOBALES' },
@@ -18331,7 +18360,10 @@ async function _generarUnMacroFFMM(macro, lote, cliente, fechaReg){
     filas: (()=>{
       const g = {};
       lote.forEach(f=>{
-        const fondo = cfgMacro.fondo || f.notes || '';
+        // MISMO resolvedor que el Excel. Si fueran dos caminos, la pantalla
+        // podría mostrar un portafolio y el archivo otro, y el que vale es el
+        // que no se ve.
+        const fondo = cfgMacro.fondo || _fondoFolioFFMM(f);
         const k = f.especie + '|' + f.lado + '|' + fondo;
         const a = g[k] || (g[k] = {especie:f.especie, lado:f.lado, fondo, qty:0, bruto:0, n:0});
         a.qty += f.cantidad; a.bruto += f.cantidad*f.precio; a.n++;
@@ -23683,7 +23715,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-01 13:55 UTC · v186';
+const BUILD_ID = '2026-10-01 19:55 UTC · v187';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
