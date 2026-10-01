@@ -4418,20 +4418,7 @@ async function generarReporteExcel(){
       (!op.fecha || String(op.fecha).slice(0,10) === _hoyISO()));
     if(opsCli.length){
       const version = proximaVersion(fondoNombre, 'FX');
-      const lineas = opsCli.map(op=>{
-        let r = {};
-        try { r = calcularDesdeValores(op.modelo, op.side, op.amount, op.params) || {}; }
-        catch(e){ r = {}; }
-        return {
-          parentOrderId: 'FX-' + op.id,       // la unidad en FX es la operación
-          especie: 'USDCOP',
-          lado: String(op.side||'').toUpperCase() === 'BUY' ? 'Compra' : 'Venta',
-          cantidad: Number(op.amount) || 0,
-          precio: Number(r.tasaFinalCliente) ||
-                  Number((op.params||{}).rateUnica) || Number((op.params||{}).rate) || 0,
-          comision: Number(r.comEqs) || 0,
-        };
-      });
+      const lineas = opsCli.map(_lineaReporteFX);
       await registrarReporte('FX', fondoNombre, lineas, version);
       if(typeof renderModuloReportes === 'function') renderModuloReportes();
     }
@@ -14997,10 +14984,27 @@ function _fechaReal(v){
   return isNaN(d) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
+// Lo reportado hoy, indexado por módulo y por el MISMO identificador con el
+// que se registró. Es el ancla: la planilla compara contra esto en vez de
+// confiar en que dos caminos distintos den el mismo número.
+function _ancladoHoy(modulo){
+  const m = {};
+  (typeof ultimaVersionPorLinea === 'function'
+    ? ultimaVersionPorLinea(_reportesGenerados||[]) : (_reportesGenerados||[]))
+    .filter(r=>r.modulo === modulo)
+    .forEach(r=>{ m[String(r.parent_order_id)] = r; });
+  return m;
+}
+
 function filasPlanillaCOP(){
   const filas = [], faltan = [];
   const trm = _trmPlanilla();
   const hoy = _hoyISO();
+  const ancRVI = _ancladoHoy('RVI'), ancFX = _ancladoHoy('FX');
+  // Diferencia que se tolera antes de frenar. Un peso es redondeo; más que eso
+  // es que dos caminos están calculando cosas distintas, y eso hay que mirarlo
+  // antes de que salga en una planilla (Sergio, 01-oct).
+  const _TOLERANCIA = 1;
 
   const agregar = (o) => {
     const g = grupoDeOperacion(o.cliente, o.account, o.deceval);
@@ -15016,8 +15020,23 @@ function filasPlanillaCOP(){
     }
     const bruto = o.bruto != null ? o.bruto : o.cantidad * o.precio;
     const com = Number(o.comision) || 0;
-    const iva = o.mercado === 'ACCIONES' && o.iva !== false ? com * 0.19 : 0;
-    const giro = o.lado === 'Venta' ? bruto - com - iva : bruto + com + iva;
+    // EL IVA SE LEE, NO SE CALCULA. Antes esta línea era
+    //     o.mercado === 'ACCIONES' && o.iva !== false ? com * 0.19 : 0
+    // o sea el 19% a todo lo que fuera acciones. Los fondos de pensiones no
+    // pagan IVA: al cliente le fue cero y la planilla le ponía 19%. El 30-sep
+    // fueron siete filas de Porvenir y Protección, $6.490.230 de más, y solo se
+    // veía de nuestro lado porque el archivo del cliente siempre salió bien.
+    //
+    // `ivaReportado` es el que viajó en el archivo. Cuando viene, manda. Cuando
+    // la línea NO se reporta (los brokers de tarifa cierta) no hay nada contra
+    // qué anclar y ahí sí se calcula con nuestra data, que es lo acordado.
+    let iva;
+    if(o.ivaReportado != null)      iva = Number(o.ivaReportado);
+    else if(o.anclada)              { faltan.push(`${g.grupo} ${o.nemo} — reportada SIN IVA registrado (regenera el reporte)`); return; }
+    else                            iva = o.mercado === 'ACCIONES' && o.iva !== false ? com * 0.19 : 0;
+    // El giro también sale del archivo cuando existe.
+    const giro = o.netoReportado != null ? Number(o.netoReportado)
+               : (o.lado === 'Venta' ? bruto - com - iva : bruto + com + iva);
     filas.push({
       fondo: o.fondo || '', grupo: g.grupo, tipo: o.lado, nemo: o.nemo,
       cantidad: o.cantidad, precio: o.precio, bruto,
@@ -15039,6 +15058,8 @@ function filasPlanillaCOP(){
         deceval:_decevalDePortafolio(r.cliente, r.portafolios),
         nemo:r.especie, lado:r.lado, cantidad:q, precio:px, bruto:q*px,
         comision:Number(r.comision), mercado:'ACCIONES',
+        // Anclada: estos tres números son los del archivo del cliente.
+        anclada:true, ivaReportado:r.iva, netoReportado:r.neto,
         liquidacion:parseFechaLocal(hoy), cumplimiento:sumarDiasHabiles(parseFechaLocal(hoy),2,'CO') });
     });
 
@@ -15084,6 +15105,20 @@ function filasPlanillaCOP(){
     if(!trm){ faltan.push(`${h.cliente} ${h.symbol} — falta la TRM para pasar la comisión a pesos`); return; }
     const pxNos = Number(h.precioNuestro) || px;
     const margen = String(h.side||'').toUpperCase()==='SELL' ? (pxNos-px)*q : (px-pxNos)*q;
+    // ARQUEO contra lo reportado. La comisión del cliente (`cost`) es lo único
+    // de esta línea que viajó en su archivo; el margen y el CCSI son nuestros y
+    // se construyen con nuestra data, que es lo acordado. Pero si el `cost` de
+    // acá no es el que se le facturó, algo se movió después de reportar y la
+    // planilla no puede salir — es el mismo descuadre que el 30-sep se llevó
+    // USD 4.189,75 sin que nada lo delatara.
+    const _k = String(h.symbol||'').toUpperCase() + '|' +
+               String(h.side||'') + (h.account ? '#' + h.account : '');
+    const _rep = ancRVI[_k];
+    if(_rep && Math.abs((Number(_rep.comision)||0) - (Number(h.cost)||0)) > 0.01){
+      faltan.push(`${h.cliente} ${h.symbol} — la comisión no cuadra con lo reportado ` +
+                  `(reporte USD ${(Number(_rep.comision)||0).toFixed(2)} · planilla USD ${(Number(h.cost)||0).toFixed(2)})`);
+      return;
+    }
     const utilUSD = (Number(h.cost)||0) + margen - (Number(h.ccsi)||0);
     agregar({ cliente:h.cliente, account:h.account, fondo:h.account,
       nemo:h.symbol, lado:String(h.side||'').toUpperCase()==='SELL'?'Venta':'Compra',
@@ -15101,11 +15136,17 @@ function filasPlanillaCOP(){
     if(!monto) return;
     let r = {};
     try { r = calcularDesdeValores(o.modelo, o.side, monto, o.params) || {}; }catch(e){ r = {}; }
-    const tasa = Number(r.tasaFinalCliente) || Number((o.params||{}).rateUnica) || 0;
+    // Si la operación ya se reportó, el precio y la comisión salen del ANCLA,
+    // no de volver a correr la calculadora. Es el mismo número por definición,
+    // y así sigue siéndolo el día que la calculadora cambie.
+    const _rep = ancFX['FX-' + o.id];
+    const tasa = _rep ? Number(_rep.precio)
+                      : (Number(r.tasaFinalCliente) || Number((o.params||{}).rateUnica) || 0);
+    const comFX = _rep ? Number(_rep.comision) : (Number(r.comEqs)||0);
     agregar({ cliente:o.cliente, account:'', fondo:o.cliente,
       nemo:'USDCOP', lado:String(o.side||'').toUpperCase()==='BUY'?'Compra':'Venta',
       cantidad:monto, precio:tasa, bruto:monto*tasa,
-      comision:Number(r.comEqs)||0, mercado:'FX', iva:false,
+      comision:comFX, mercado:'FX', iva:false, ivaReportado:0,
       liquidacion:parseFechaLocal(hoy),
       cumplimiento:(cumplimientoFX(hoy, o.side, o.cliente)||{}).fecha });
   });
@@ -15660,7 +15701,19 @@ async function registrarLoteRVI(cliente, filas){
       especie: esp, lado,
       cantidad: Number(f.qty != null ? f.qty : f.cantidad) || 0,
       precio: Number(f.price != null ? f.price : f.precio) || 0,
+      // En USD, que es la moneda de la confirmación. La planilla COP la pasa a
+      // pesos con la TRM: es la misma plata en otro formato.
       comision: Number(f.cost != null ? f.cost : f.comision) || 0,
+      // RVI no lleva IVA. Se guarda el cero EXPLÍCITO y no null: null significa
+      // "no se sabe" y haría frenar la planilla sin motivo.
+      iva: 0,
+      neto: (()=>{
+        const q = Number(f.qty != null ? f.qty : f.cantidad) || 0;
+        const px = Number(f.price != null ? f.price : f.precio) || 0;
+        const c = Number(f.cost != null ? f.cost : f.comision) || 0;
+        return String(f.side || f.lado || '').toUpperCase().startsWith('S')
+          ? q*px - c : q*px + c;
+      })(),
       portafolios: f.account || '',
     };
   });
@@ -15669,6 +15722,29 @@ async function registrarLoteRVI(cliente, filas){
   renderEmsx();
   if(typeof renderModuloReportes === 'function') renderModuloReportes();
   return nuevas;
+}
+
+// Una operación de FX convertida en línea del ancla. UN SOLO sitio, porque hay
+// dos caminos que registran FX y antes cada uno guardaba algo distinto.
+function _lineaReporteFX(op){
+  let r = {};
+  try { r = calcularDesdeValores(op.modelo, op.side, op.amount, op.params) || {}; }
+  catch(e){ r = {}; }
+  const monto = Number(op.amount) || 0;
+  const tasa = Number(r.tasaFinalCliente) ||
+               Number((op.params||{}).rateUnica) || Number((op.params||{}).rate) || 0;
+  return {
+    parentOrderId: 'FX-' + op.id,       // la unidad en FX es la operación
+    especie: 'USDCOP',
+    lado: String(op.side||'').toUpperCase() === 'BUY' ? 'Compra' : 'Venta',
+    cantidad: monto,
+    precio: tasa,
+    // La comisión del EQS. El reparto 80/20 con la mesa de divisas vive en
+    // Comisiones BO; acá va lo que le corresponde a este escritorio.
+    comision: Number(r.comEqs) || 0,
+    iva: 0,                 // las divisas no llevan IVA
+    neto: monto * tasa,     // en FX el neto es el bruto: la comisión va aparte
+  };
 }
 
 async function registrarReporte(modulo, cliente, lineas, version){
@@ -15698,6 +15774,13 @@ async function registrarReporte(modulo, cliente, lineas, version){
     cantidad: Number(l.cantidad) || 0,
     precio: Number(l.precio) || 0,
     comision: Number(l.comision) || 0,
+    // EL ANCLA. La planilla COP lee estos dos en vez de recalcularlos: el IVA
+    // que se le cobró al cliente es el que va al COR, así el maestro diga otra
+    // cosa. Van null cuando quien registra no los sabe — y entonces la planilla
+    // FRENA y lo dice, en vez de rellenar con el 19% de siempre, que es lo que
+    // le cobró de más a Porvenir y Protección el 30-sep (Sergio, 01-oct).
+    iva:  l.iva  == null ? null : Number(l.iva),
+    neto: l.neto == null ? null : Number(l.neto),
     // Reparto por portafolio, para que el módulo Reportes muestre lo que de
     // verdad se envió y no solo la línea (Sergio, 31-ago).
     portafolios: l.portafolios || null,
@@ -19295,14 +19378,11 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
       Object.values(_opsAndes).map(o=>({...o, precio: o.cantidad>0 ? o.bruto/o.cantidad : 0})), version);
     let nuevasFX = 0;
     if(rep.fxOps && rep.fxOps.length){
-      const lineasFX = rep.fxOps.map(o=>({
-        parentOrderId: 'FX-' + o.id,          // la unidad en FX es la operación
-        especie: 'USDCOP', lado: o.side === 'BUY' ? 'Compra' : 'Venta',
-        cantidad: Number(o.amount) || 0,
-        precio: (()=>{ try { return calcularDesdeValores(o.modelo, o.side, o.amount, o.params).tasaFinalCliente || 0; }
-                       catch(e){ return (o.params && (o.params.rateUnica || o.params.rate)) || 0; } })(),
-        comision: 0,
-      }));
+      // Este registro guardaba `comision: 0`. Como hay DOS caminos que
+      // registran FX, el ancla de una operación quedaba en cero o con la
+      // comisión según por cuál hubiera pasado, y un ancla en cero no ancla
+      // nada. Ahora los dos guardan lo mismo (Sergio, 01-oct).
+      const lineasFX = rep.fxOps.map(o=>_lineaReporteFX(o));
       nuevasFX = await registrarReporte('FX', getClienteDB(cliente).nombre, lineasFX, version);
     }
     const qty = (ctx.loteDet||[]).reduce((a,f)=>a+(Number(f.cantidad)||0),0);
@@ -19872,12 +19952,24 @@ async function registrarLoteRVL(cliente, loteOps, version){
     const base = esp + '|' + (o.lado||'') + (port ? '#' + port : '');
     _usadas[base] = (_usadas[base] || 0) + 1;
     const clave = _usadas[base] > 1 ? base + '·' + _usadas[base] : base;
+    // El IVA y el neto se toman TAL CUAL de la operación, que es de donde sale
+    // el archivo del cliente. No se recalculan aquí: el 19% no aplica parejo
+    // —los fondos de pensiones no lo pagan— y esa decisión ya se tomó cuando se
+    // armó el reporte. Si la operación no los trae, van null y la planilla
+    // frena en vez de inventarlos (Sergio, 01-oct).
+    const bruto = (Number(o.cantidad)||0) * (Number(o.precio)||0);
+    const com = Number(o.comMonto) || 0;
+    const iva = o.ivaMonto != null ? Number(o.ivaMonto) : null;
     return {
       parentOrderId: clave,
       especie: esp, lado: o.lado || '',
       cantidad: Number(o.cantidad) || 0,
       precio: Number(o.precio) || 0,
-      comision: Number(o.comMonto) || 0,
+      comision: com,
+      iva,
+      neto: o.montoNeto != null ? Number(o.montoNeto)
+          : (iva == null ? null
+             : (o.lado === 'Compra' ? bruto + com + iva : bruto - com - iva)),
       portafolios: port,
     };
   }).filter(l=>l.cantidad > 0);
@@ -23715,7 +23807,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-01 19:55 UTC · v187';
+const BUILD_ID = '2026-10-01 20:20 UTC · v188';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
