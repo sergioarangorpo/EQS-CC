@@ -1806,6 +1806,24 @@
 
   <div id="arqueoRVI" style="margin:0 24px 16px;display:none;"></div>
 
+  <!-- El candado. Lo de abajo no se puede tocar hasta elegir margen y costo. -->
+  <div id="candadoModoRVI" style="margin:0 24px 16px;">
+    <div style="background:rgba(245,158,11,.12);border:1px solid var(--amber,#f59e0b);
+                border-left:4px solid var(--amber,#f59e0b);border-radius:8px;padding:14px 18px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:20px;">🔒</span>
+        <span style="font-size:15px;font-weight:700;color:var(--amber,#f59e0b);">
+          Elige primero cómo se operó</span>
+      </div>
+      <div style="font-size:12.5px;margin-top:6px;line-height:1.6;">
+        El blotter y el panel quedan bloqueados hasta marcar
+        <b>Con margen</b> o <b>Sin margen</b> y <b>Con costo</b> o <b>Sin costo (all-in)</b>
+        en los botones de arriba.<br>
+        De esos dos salen el margen, la comisión y la línea del BO.
+      </div>
+    </div>
+  </div>
+
   <div class="rvi-body">
 
             <!-- BLOTTER EMSX -->
@@ -17033,6 +17051,70 @@ function _cantCanasta(t){
   return _numCanasta(t);
 }
 
+// =====================================================================
+// ALLOCATION EN MATRIZ — portafolios en filas, especies en columnas
+// ---------------------------------------------------------------------
+// Porvenir lo manda así, que es como se ve en su Excel:
+//
+//          <tab> Compra                    <tab> Venta
+//          <tab> EWZ                       <tab> AAXJ  <tab> BBJP
+//   BASICA <tab> 14.040           BASICA   <tab> 4.450 <tab> -
+//   DINAMICO <tab> 4.340          DINAMICO <tab> 1.380 <tab> -
+//
+// Un mismo pegado puede traer VARIOS bloques, cada uno con su lado. El lector
+// de siempre toma una fila como una asignación y no sabe leer columnas.
+//
+// Lo que NO hace esta función: adivinar. Si una celda no es un número limpio o
+// un guion, la fila se descarta y el arqueo de cantidades lo delata después.
+// =====================================================================
+function _allocMatrizRVI(texto){
+  const filas = String(texto||'').split(/\r?\n/)
+    .map(l=>l.replace(/\s+$/,''))
+    .map(l=>l.split(/\t|\s{2,};?|;/).map(x=>x.trim()));
+  const out = [];
+  let lado = '', tickers = null;
+
+  const esLado = c => c.length && c.every(x=>!x || /^(COMPRA|BUY|VENTA|SELL)$/i.test(x)) &&
+                      c.some(x=>/^(COMPRA|BUY|VENTA|SELL)$/i.test(x));
+  const esTickers = c => {
+    const t = c.filter(Boolean);
+    return t.length > 0 && t.every(x=>/^[A-Z][A-Z0-9]{0,5}( (US|LN|UN|CN|GY|FP))?( EQUITY)?$/i.test(x));
+  };
+
+  filas.forEach(celdas=>{
+    const llenas = celdas.filter(Boolean);
+    if(!llenas.length) return;                       // línea en blanco: separa bloques
+    if(esLado(llenas)){
+      const w = llenas.find(x=>/^(COMPRA|BUY|VENTA|SELL)$/i.test(x));
+      lado = /VENTA|SELL/i.test(w) ? 'Sell' : 'Buy';
+      tickers = null;
+      return;
+    }
+    if(!tickers && esTickers(llenas)){
+      // Los tickers quedan con su POSICIÓN de columna, para poder casar cada
+      // cantidad con el suyo aunque haya celdas vacías en el medio.
+      tickers = celdas.map((x,i)=>({ col:i, tk:_tickerCanasta(x) }))
+                      .filter(x=>x.tk);
+      return;
+    }
+    if(!tickers || !lado) return;                    // todavía no hay encabezado
+    const port = String(celdas[0]||'').trim();
+    if(!port) return;
+    tickers.forEach(({col, tk}, idx)=>{
+      // La cantidad va en la misma columna del ticker; si el bloque no trae la
+      // columna del portafolio alineada, se cae al orden de aparición.
+      let celda = celdas[col];
+      if(celda == null || celda === '') celda = celdas.filter((x,i)=>i>0)[idx];
+      const txt = String(celda||'').trim();
+      if(!txt || txt === '-' || txt === '—') return;  // sin posición en ese papel
+      const units = _cantCanasta(txt);
+      if(!isFinite(units) || units <= 0) return;
+      out.push({ port, ticker:tk, units, isin:'', lado });
+    });
+  });
+  return out;
+}
+
 function interpretarCanastaRVI(){
   const cont = document.getElementById('canastaRVIResultado');
   const cli = document.getElementById('tc-cliente').value;
@@ -17081,6 +17163,11 @@ function interpretarCanastaRVI(){
       if(units && tk) alloc.push({ port, ticker: tk, units, isin:'', lado:_lado });
     });
   }
+  // Matriz (portafolios en filas, especies en columnas). Va ANTES del lector
+  // fila a fila porque una matriz también pasa por tabla, pero mal leída.
+  if(!alloc.length){
+    _allocMatrizRVI(document.getElementById('canastaAlloc').value).forEach(a=>alloc.push(a));
+  }
   if(!alloc.length) _filasCanasta(document.getElementById('canastaAlloc').value).forEach(c=>{
     const nums = c.map(_numCanasta).map((n,i)=>({n,i})).filter(x=>isFinite(x.n));
     const units = nums.length ? _cantCanasta(c[nums[nums.length-1].i]) : NaN;
@@ -17099,6 +17186,37 @@ function interpretarCanastaRVI(){
     if(!tk) return;
     alloc.push({ port: String(port).trim(), ticker: tk, units, isin: isin || '' });
   });
+
+  // ---- El UPDATE de Bloomberg trae ticker y PRECIO, sin cantidad ni lado ----
+  // "AAXJ US 117.92" y ya. La cantidad y el lado los tiene el allocation, así
+  // que se toman de allá en vez de pedirle a Sergio que los escriba dos veces
+  // (Sergio, 02-oct). Solo para los tickers que el allocation sí conoce: si no
+  // está en ninguno de los dos cuadros, sigue sin existir.
+  if(alloc.length){
+    const sumaAlloc = {}, ladoAlloc = {};
+    alloc.forEach(a=>{
+      sumaAlloc[a.ticker] = (sumaAlloc[a.ticker]||0) + a.units;
+      if(a.lado) ladoAlloc[a.ticker] = a.lado;
+    });
+    // El UPDATE llega con UN solo espacio entre campos ("AAXJ US 117.92"), así
+    // que `_filasCanasta` —que parte por tabs o dos espacios— lo devolvía como
+    // una sola celda y lo descartaba. Acá se parte por espacios simples.
+    String(document.getElementById('canastaEjec').value||'').split(/\r?\n/)
+      .map(l=>l.trim()).filter(Boolean)
+      .forEach(linea=>{
+        const campos = linea.split(/\s+/);
+        if(campos.length < 2) return;
+        const precio = _numCanasta(campos[campos.length-1]);
+        if(!isFinite(precio) || precio <= 0) return;
+        // Un solo número en toda la línea: si hay dos, es el formato de
+        // siempre (cantidad y precio) y ya lo leyó el camino de arriba.
+        if(campos.filter(x=>isFinite(_numCanasta(x))).length !== 1) return;
+        const tk = _tickerCanasta(campos[0]);
+        if(!tk || sumaAlloc[tk] == null || ejec[tk]) return;
+        ejec[tk] = { ticker:tk, qty:sumaAlloc[tk], precio,
+                     lado: ladoAlloc[tk] || 'Buy', qtyDelAlloc:true };
+      });
+  }
 
   if(!Object.keys(ejec).length || !alloc.length){
     cont.innerHTML = `<div style="color:var(--amber,#f59e0b);font-size:12.5px;">
@@ -21743,7 +21861,9 @@ function precioNuestroVinculo(clienteLineaId){
 // =====================================================================
 const esNuestraLineaRVI = l => /CREDICORP/i.test(String((l||{}).firm || ''));
 
-function resolverPrecioNuestroRVI(clienteLinea){
+// `precioEscrito` es lo que haya en el campo Price del panel. Solo lo usa el
+// caso 5 (ejecución directa); los demás no lo miran.
+function resolverPrecioNuestroRVI(clienteLinea, precioEscrito){
   const vacio = { precio:null, fuente:null, detalle:'', auto:false, candidatas:[] };
   if(!clienteLinea) return vacio;
 
@@ -21805,6 +21925,30 @@ function resolverPrecioNuestroRVI(clienteLinea){
                        `${Number(porSuma[0].qty).toLocaleString('es-CO')} @ ${Number(porSuma[0].avgPr)}` +
                        (porSuma[0].hora ? ' · ' + porSuma[0].hora : '') };
     }
+  }
+
+  // 5) EJECUCIÓN DIRECTA. Es el caso de PORVENIR: se ejecuta contra el mercado
+  //    a nombre del cliente, hay UNA sola línea, y el precio que se le da se
+  //    ESCRIBE A MANO en el panel. Esa línea hace de las dos cosas: su AVGPR es
+  //    nuestra ejecución y lo escrito es el precio del cliente.
+  //
+  //    Hacen falta DOS condiciones, y la segunda es la que lo separa del bug
+  //    del 30-sep:
+  //      · que no haya NINGUNA línea nuestra en la calle, y
+  //      · que el precio escrito sea DISTINTO del de la línea.
+  //
+  //    Sin la segunda esto devolvería el precio del propio cliente como si
+  //    fuera el nuestro, que es exactamente lo que costó USD 4.189,75. Si nadie
+  //    escribió un precio diferente, no hay nada que sepamos: devuelve null
+  //    (Sergio, 02-oct).
+  const pxEsc = Number(precioEscrito);
+  if(!cands.length && Number(clienteLinea.avgPr) &&
+     isFinite(pxEsc) && pxEsc > 0 && Math.abs(pxEsc - Number(clienteLinea.avgPr)) > 1e-9){
+    return { precio:Number(clienteLinea.avgPr), fuente:'la propia línea (ejecución directa)',
+             auto:true, candidatas:[], propiaLinea:true,
+             detalle:`No hay línea nuestra aparte: la de ${clienteLinea.firm || '—'} ` +
+                     `@ ${Number(clienteLinea.avgPr)} es la ejecución, y el ${pxEsc} ` +
+                     `escrito es lo que se le da al cliente.` };
   }
   return { ...vacio, candidatas:cands };
 }
@@ -22071,6 +22215,27 @@ function setModoRVI(grupo, valor){
   // se borraban todas menos la primera (Sergio, 24-sep).
   renderEmsx();
   renderArqueoRVI();
+  aplicarCandadoModoRVI();
+}
+
+// Mientras no estén elegidos margen Y costo, lo de abajo queda bloqueado. No es
+// decoración: de esos dos salen el margen, la comisión y la línea del BO, y
+// elegirlos DESPUÉS de haber llenado el panel es justo cómo se arquea mal.
+// Antes solo había un letrero y se podía seguir de largo (Sergio, 02-oct).
+function aplicarCandadoModoRVI(){
+  const listo = !!(_modoRVI.margen && _modoRVI.costo);
+  const cuerpo = document.querySelector('.rvi-body');
+  if(cuerpo){
+    cuerpo.style.opacity       = listo ? '' : '.35';
+    cuerpo.style.pointerEvents = listo ? '' : 'none';
+    cuerpo.style.filter        = listo ? '' : 'grayscale(.6)';
+  }
+  // Los botones del modo viven FUERA de .rvi-body, así que siguen clicables.
+  document.querySelectorAll('.modo-rvi').forEach(b=>{
+    b.classList.toggle('pendiente', !_modoRVI[b.dataset.modo]);
+  });
+  const av = document.getElementById('candadoModoRVI');
+  if(av) av.style.display = listo ? 'none' : '';
 }
 
 function toggleMarcaRVI(id){
@@ -22920,7 +23085,7 @@ function calcularRVI(){
     // de guardar, decía otra cosa (Sergio, 02-oct).
     precioNuestro: (_modoRVI.margen === 'sin')
       ? null
-      : resolverPrecioNuestroRVI(emsxData.find(r=>r.id===lineaActiva)).precio,
+      : resolverPrecioNuestroRVI(emsxData.find(r=>r.id===lineaActiva), price).precio,
     lado,
   });
   if(!c) return;
@@ -23028,6 +23193,9 @@ function asociarAllocEMSX(){
     _modoRVI = { ...modo };
     const a = document.getElementById('tc-com-ccsi');        if(a) a.value = comBroker;
     const b = document.getElementById('tc-com-ccsi-total');  if(b) b.value = comTotal;
+    // El candado también se repone: si no, a la segunda línea el panel queda
+    // bloqueado a media tanda.
+    if(typeof aplicarCandadoModoRVI === 'function') aplicarCandadoModoRVI();
   };
 
   let hechas = 0;
@@ -23099,7 +23267,8 @@ function generarTC(){
   // así que nada lo delataba (Sergio, 30-sep).
   if(_modoRVI.margen === 'con'){
     const _lnCli = emsxData.find(r=>r.id===lineaActiva);
-    const _res = resolverPrecioNuestroRVI(_lnCli);
+    const _pxEsc = parseNum((document.getElementById('tc-price')||{}).value);
+    const _res = resolverPrecioNuestroRVI(_lnCli, _pxEsc);
     if(!_res.precio){
       const hay = (_res.candidatas||[]).length;
       alert('Falta NUESTRO precio de ejecución.\n\n' +
@@ -23109,8 +23278,15 @@ function generarTC(){
         (hay
           ? `Hay ${hay} línea(s) de la calle con esa especie y lado, pero ninguna calza ` +
             'en cantidad exacta.\n\nUsa el botón Vincular para decir cuál es.'
-          : 'No encontré ninguna línea de EMSX con Originating Firm CREDICORP para esa ' +
-            'especie y lado.\n\nSi de verdad no operaste afuera, cambia el tipo a SIN MARGEN.'));
+          // Sin líneas nuestras hay DOS salidas, y la primera es la de Porvenir:
+          // ejecución directa, donde la propia línea es nuestro precio y el del
+          // cliente se escribe (Sergio, 02-oct).
+          : 'No hay ninguna línea de EMSX con Originating Firm CREDICORP para esa ' +
+            'especie y lado. Dos opciones:\n\n' +
+            '   • Si ejecutaste DIRECTO a nombre del cliente —como Porvenir—, esa ' +
+            'misma línea es nuestra ejecución: escribe arriba, en Price, el precio ' +
+            `que le vas a dar al cliente. La línea quedó a ${(_lnCli||{}).avgPr}.\n` +
+            '   • Si de verdad no hubo margen, cambia el tipo a SIN MARGEN.'));
       return;
     }
   }
@@ -23254,6 +23430,8 @@ function generarTC(){
   // de la anterior es justo lo que lleva a arquear mal (Sergio, 31-ago).
   _modoRVI = { margen:'', costo:'', espejo:'' };
   document.querySelectorAll('.modo-rvi').forEach(b=>b.classList.remove('active'));
+  // Y el candado vuelve a bajar: la siguiente operación también se decide antes.
+  if(typeof aplicarCandadoModoRVI === 'function') aplicarCandadoModoRVI();
   const _cc = document.getElementById('tc-com-ccsi');
   if(_cc) _cc.value = '';
 
@@ -24040,7 +24218,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-02 16:35 UTC · v190';
+const BUILD_ID = '2026-10-02 18:05 UTC · v192';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -24069,6 +24247,7 @@ setTimeout(()=>{
 }, 2000);
 if(typeof cargarMaestroDeceval === 'function') cargarMaestroDeceval();
 if(typeof cargarContrapartesFX === 'function') cargarContrapartesFX();
+if(typeof aplicarCandadoModoRVI === 'function') aplicarCandadoModoRVI();
 if(typeof cargarFestivos === 'function') cargarFestivos().then(()=>{
   if(typeof renderListaFestivos === 'function') renderListaFestivos();
 });
