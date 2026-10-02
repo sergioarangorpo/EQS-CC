@@ -17067,6 +17067,8 @@ function _cantCanasta(t){
 // Lo que NO hace esta función: adivinar. Si una celda no es un número limpio o
 // un guion, la fila se descarta y el arqueo de cantidades lo delata después.
 // =====================================================================
+// Devuelve { asignaciones, avisos }. Los avisos son filas que NO se pudieron
+// leer sin adivinar: se informan y no entran, nunca se completan a ojo.
 function _allocMatrizRVI(texto){
   const filas = String(texto||'').split(/\r?\n/)
     .map(l=>l.replace(/\s+$/,''))
@@ -17087,7 +17089,7 @@ function _allocMatrizRVI(texto){
       if(t.length > 1 && t.every(x=>/^[A-Z][A-Z0-9]{0,5}$/i.test(x))) return t;
       return c;
     });
-  const out = [];
+  const out = [], avisos = [];
   let lado = '', tickers = null;
 
   const esLado = c => c.length && c.every(x=>!x || /^(COMPRA|BUY|VENTA|SELL)$/i.test(x)) &&
@@ -17113,9 +17115,26 @@ function _allocMatrizRVI(texto){
                       .filter(x=>x.tk);
       return;
     }
-    if(!tickers || !lado) return;                    // todavía no hay encabezado
+    // El lado YA NO es obligatorio. Porvenir manda el cuadro con una sola fila
+    // de tickers y sin Compra/Venta: el lado sale del UPDATE y lo confirma
+    // EMSX. Exigirlo acá dejaba el cuadro sin leer (Sergio, 02-oct).
+    if(!tickers) return;                             // todavía no hay encabezado
     const port = String(celdas[0]||'').trim();
     if(!port) return;
+
+    // FRENO: tantas cantidades como especies. Si una fila trae menos, no se
+    // sabe a cuál le falta —y si se cuenta por orden, la cantidad se le
+    // adjudica a la especie equivocada—. Se informa y la fila NO entra.
+    // El 02-oct el propio cuadro llegó con EXTREMO en dos números para tres
+    // especies: así el app lo caza antes que nadie (Sergio, 02-oct).
+    const valores = celdas.slice(1).filter(x=>String(x||'').trim() !== '');
+    if(valores.length && valores.length < tickers.length){
+      avisos.push(`"${port}": hay ${tickers.length} especie(s) (${tickers.map(t=>t.tk).join(', ')}) ` +
+                  `y solo ${valores.length} cantidad(es). No sé a cuál le falta — ` +
+                  `pon un guion donde no haya posición y vuelve a pegar.`);
+      return;
+    }
+
     tickers.forEach(({col, tk}, idx)=>{
       // Con tabs, la fila de tickers empieza con una celda vacía (la columna
       // del nombre del fondo), así que el ticker y su cantidad comparten
@@ -17131,11 +17150,16 @@ function _allocMatrizRVI(texto){
       out.push({ port, ticker:tk, units, isin:'', lado });
     });
   });
-  return out;
+  return { asignaciones: out, avisos };
 }
 
 function interpretarCanastaRVI(){
   const cont = document.getElementById('canastaRVIResultado');
+  // SE BORRA LA ANTERIOR DE ENTRADA. Cuando la interpretación fallaba, esta
+  // función salía sin tocar `_canastaRVI`, así que quedaba viva la del intento
+  // pasado — y "Aplicar" habría guardado ESA, no la que está en pantalla. Con
+  // dos pegados seguidos del mismo cliente nadie lo nota (Sergio, 02-oct).
+  _canastaRVI = null;
   const cli = document.getElementById('tc-cliente').value;
   const cfg = clientesRVI[cli] || {};
 
@@ -17184,8 +17208,11 @@ function interpretarCanastaRVI(){
   }
   // Matriz (portafolios en filas, especies en columnas). Va ANTES del lector
   // fila a fila porque una matriz también pasa por tabla, pero mal leída.
+  const avisosMatriz = [];
   if(!alloc.length){
-    _allocMatrizRVI(document.getElementById('canastaAlloc').value).forEach(a=>alloc.push(a));
+    const mz = _allocMatrizRVI(document.getElementById('canastaAlloc').value);
+    mz.asignaciones.forEach(a=>alloc.push(a));
+    mz.avisos.forEach(a=>avisosMatriz.push(a));
   }
   if(!alloc.length) _filasCanasta(document.getElementById('canastaAlloc').value).forEach(c=>{
     const nums = c.map(_numCanasta).map((n,i)=>({n,i})).filter(x=>isFinite(x.n));
@@ -17206,43 +17233,44 @@ function interpretarCanastaRVI(){
     alloc.push({ port: String(port).trim(), ticker: tk, units, isin: isin || '' });
   });
 
-  // ---- El UPDATE de Bloomberg trae ticker y PRECIO, sin cantidad ni lado ----
-  // "AAXJ US 117.92" y ya. La cantidad y el lado los tiene el allocation, así
-  // que se toman de allá en vez de pedirle a Sergio que los escriba dos veces
-  // (Sergio, 02-oct). Solo para los tickers que el allocation sí conoce: si no
-  // está en ninguno de los dos cuadros, sigue sin existir.
-  if(alloc.length){
-    const sumaAlloc = {}, ladoAlloc = {};
-    alloc.forEach(a=>{
-      sumaAlloc[a.ticker] = (sumaAlloc[a.ticker]||0) + a.units;
-      if(a.lado) ladoAlloc[a.ticker] = a.lado;
-    });
-    // El UPDATE llega con UN solo espacio entre campos ("AAXJ US 117.92"), así
-    // que `_filasCanasta` —que parte por tabs o dos espacios— lo devolvía como
-    // una sola celda y lo descartaba. Acá se parte por espacios simples.
+  // ---- UPDATE con UN SOLO ESPACIO entre campos ----
+  // "S AAXJ US 7.260 117.92". `_filasCanasta` parte por tabs o dos espacios, así
+  // que una línea así le llega entera en una celda y la descarta.
+  //
+  // LA CANTIDAD ES OBLIGATORIA. Hubo una versión que la sacaba del allocation
+  // cuando el UPDATE no la traía, y eso rompía el arqueo: si la cantidad
+  // ejecutada ES la suma del allocation, la comparación entre los dos cuadros
+  // no puede fallar nunca y deja de servir. Dos fuentes que se verifican una a
+  // la otra solo sirven mientras sean dos (Sergio, 02-oct).
+  {
+    const yaLeidos = new Set(Object.keys(ejec));
     String(document.getElementById('canastaEjec').value||'').split(/\r?\n/)
       .map(l=>l.trim()).filter(Boolean)
       .forEach(linea=>{
         let campos = linea.split(/\s+/);
-        if(campos.length < 2) return;
-        // Un S o una B al principio dicen el lado: "S AAXJ US 117.92". Es la
-        // forma que propuso Sergio y se acepta, pero como verificación: el
-        // lado final lo decide la línea de EMSX más abajo (Sergio, 02-oct).
+        if(campos.length < 3) return;
+        // Un S o una B al principio dicen el lado. El lado final lo decide la
+        // línea de EMSX más abajo; esto es verificación.
         let ladoTexto = '';
         if(/^(S|SELL|V|VENTA)$/i.test(campos[0]))      { ladoTexto = 'Sell'; campos = campos.slice(1); }
         else if(/^(B|BUY|C|COMPRA)$/i.test(campos[0])) { ladoTexto = 'Buy';  campos = campos.slice(1); }
-        if(campos.length < 2) return;
-        const precio = _numCanasta(campos[campos.length-1]);
-        if(!isFinite(precio) || precio <= 0) return;
-        // Un solo número en toda la línea: si hay dos, es el formato de
-        // siempre (cantidad y precio) y ya lo leyó el camino de arriba.
-        if(campos.filter(x=>isFinite(_numCanasta(x))).length !== 1) return;
         const tk = _tickerCanasta(campos[0]);
-        if(!tk || sumaAlloc[tk] == null || ejec[tk]) return;
-        ejec[tk] = { ticker:tk, qty:sumaAlloc[tk], precio,
-                     lado: ladoTexto || ladoAlloc[tk] || 'Buy', qtyDelAlloc:true };
+        if(!tk || yaLeidos.has(tk) || ejec[tk]) return;
+        // Los dos últimos números de la línea: cantidad y precio, en ese orden.
+        const nums = campos.map((x,i)=>({v:_numCanasta(x), i})).filter(x=>isFinite(x.v));
+        if(nums.length < 2) return;
+        const precio = nums[nums.length-1].v;
+        const qty = _cantCanasta(campos[nums[nums.length-2].i]);
+        if(!(qty > 0) || !(precio > 0)) return;
+        ejec[tk] = { ticker:tk, qty, precio, lado: ladoTexto || 'Buy' };
       });
   }
+
+  // Aquí vivía un atajo: cuando el UPDATE no traía cantidad, se tomaba la suma
+  // del allocation. Se quitó. La cantidad ejecutada y la repartida tienen que
+  // ser DOS datos distintos, porque el arqueo de más abajo los compara: con el
+  // atajo, esa comparación no podía fallar nunca y un allocation incompleto
+  // pasaba derecho (Sergio, 02-oct).
 
   // ---- EL LADO LO DECIDE LA LÍNEA DE EMSX ----
   // El UPDATE es un chat: se puede equivocar o se puede pegar el de ayer. La
@@ -17283,7 +17311,7 @@ function interpretarCanastaRVI(){
     const nAl = String(document.getElementById('canastaAlloc').value||'').split(/\r?\n/).filter(l=>l.trim()).length;
     const falla = [];
     if(!Object.keys(ejec).length)
-      falla.push(`<b>La ejecución (UPDATE)</b>: ${nEj ? `leí ${nEj} línea(s) pero no saqué ninguna especie con precio` : 'el cuadro está VACÍO'}.`);
+      falla.push(`<b>La ejecución (UPDATE)</b>: ${nEj ? `leí ${nEj} línea(s) pero no saqué ninguna especie con <b>cantidad Y precio</b>` : 'el cuadro está VACÍO'}.`);
     if(!alloc.length)
       falla.push(`<b>El allocation</b>: ${nAl ? `leí ${nAl} línea(s) pero no saqué ninguna asignación` : 'el cuadro está VACÍO'}.`);
     const bien = [];
@@ -17292,8 +17320,11 @@ function interpretarCanastaRVI(){
     cont.innerHTML = `<div style="color:var(--amber,#f59e0b);font-size:12.5px;line-height:1.55;">
       ${falla.join('<br>')}
       ${bien.length ? `<div style="opacity:.8;margin-top:6px;">En cambio ${bien.join(' y ')}.</div>` : ''}
-      <div style="opacity:.8;margin-top:6px;">La ejecución necesita ticker y precio por línea.
-      El allocation, o una fila por asignación, o la matriz con el lado arriba.</div>
+      <div style="opacity:.8;margin-top:6px;">
+        La ejecución necesita <b>ticker, cantidad y precio</b> por línea —
+        <code style="opacity:.85;">S AAXJ US 7260 117.92</code>.
+        La cantidad es obligatoria a propósito: es lo que se arquea contra el allocation.<br>
+        El allocation, o una fila por asignación, o la matriz de especies en columnas.</div>
     </div>`;
     return;
   }
@@ -17303,7 +17334,7 @@ function interpretarCanastaRVI(){
   alloc.forEach(a=>{ porTicker[a.ticker] = (porTicker[a.ticker]||0) + a.units; });
   // Los avisos del lado van PRIMERO: son los que pueden mandar una compra como
   // venta, que es más grave que un descuadre de cantidades.
-  const avisos = [...avisosLado];
+  const avisos = [...avisosMatriz, ...avisosLado];
   Object.keys(ejec).forEach(tk=>{
     const e = ejec[tk].qty, a = porTicker[tk] || 0;
     if(Math.abs(e - a) > 0.001){
@@ -24327,7 +24358,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-02 18:55 UTC · v195';
+const BUILD_ID = '2026-10-02 19:25 UTC · v197';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
