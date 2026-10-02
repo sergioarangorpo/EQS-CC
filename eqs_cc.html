@@ -2045,6 +2045,16 @@
         <div class="result-row total"><span class="label">Utilidad bruta</span><span class="value" id="rc-utilidad">—</span></div>
       </div>
 
+      <!-- Cuando el reparto ya viene hecho desde EMSX —una cuenta por línea—
+           no hay nada que distribuir a mano. Este botón lo dice de forma
+           explícita y guarda las líneas marcadas de una (Sergio, 02-oct).
+           El preasignado automático sigue siendo conservador: solo se preasigna
+           si el Account es un portafolio conocido. Esto es Sergio afirmando
+           que ese Account ES el portafolio. -->
+      <button class="btn" style="width:100%;margin-bottom:8px;" id="btn-asociar-emsx"
+              onclick="asociarAllocEMSX()"
+              title="Usa el Account de cada línea marcada como su portafolio y las guarda todas">
+        🔗 Asociar alloc de EMSX</button>
       <button class="btn primary" style="width:100%;" id="btn-generar" onclick="generarTC()" disabled>💾 Guardar operación</button>
       <!-- Canastas grandes: en vez de repetir el proceso especie por especie,
            se pegan la ejecución y el allocation del cliente (Sergio, 17-sep). -->
@@ -22902,8 +22912,15 @@ function calcularRVI(){
     // aunque el arqueo de arriba sí lo calculara — pasa siempre que se marca
     // una sola línea y el precio del cliente se escribe a mano
     // (Sergio, 01-sep).
-    precioNuestro: (precioNuestroVinculo(lineaActiva)||{}).precio
-                   ?? (emsxData.find(r=>r.id===lineaActiva)||{}).avgPr,
+    // EL MISMO RESOLVEDOR QUE USA EL GUARDADO. Antes esto leía el `avgPr` de la
+    // propia línea del cliente, así que el margen de pantalla comparaba la
+    // línea contra sí misma: el 02-oct mostraba $7,05 en los 7.000 de AVAL
+    // cuando contra nuestra ejecución real eran $49,00. El Excel salía bien
+    // —ese ya usa el resolvedor— pero la pantalla, que es lo que se mira antes
+    // de guardar, decía otra cosa (Sergio, 02-oct).
+    precioNuestro: (_modoRVI.margen === 'sin')
+      ? null
+      : resolverPrecioNuestroRVI(emsxData.find(r=>r.id===lineaActiva)).precio,
     lado,
   });
   if(!c) return;
@@ -22958,6 +22975,89 @@ function calcularRVI(){
 // =====================================================================
 // GENERAR TRADE CONFIRMATION
 // =====================================================================
+// =====================================================================
+// ASOCIAR EL ALLOC QUE YA VIENE DE EMSX
+// ---------------------------------------------------------------------
+// Cuando el cliente reparte en EMSX, cada línea trae SU cuenta y el reparto ya
+// está hecho: no hay nada que distribuir a mano. El preasignado automático de
+// `seleccionarLinea` solo lo toma cuando el Account es un portafolio conocido
+// del cliente —y hace bien, porque a veces el Account trae el nombre del
+// cliente y no el del fondo—. Pero entonces una cuenta nueva como
+// "FO 274 O QUINTE" deja la distribución vacía y no se puede guardar.
+//
+// Este botón es Sergio diciendo "ese Account ES el portafolio". Toma las
+// líneas MARCADAS del cliente, le pone a cada una su cuenta como reparto
+// completo, y las guarda una por una con la comisión y el resto del panel.
+// =====================================================================
+function asociarAllocEMSX(){
+  const activa = emsxData.find(r=>r.id===lineaActiva);
+  // Las marcadas que son del CLIENTE. Las nuestras se marcan para resolver el
+  // margen, no para guardarlas como operación.
+  let lineas = (typeof _rviMarcadas !== 'undefined' ? [..._rviMarcadas] : [])
+    .map(id=>emsxData.find(r=>r.id===id))
+    .filter(l=>l && !esNuestraLineaRVI(l) && Number(l.qty) > 0);
+  if(!lineas.length && activa && !esNuestraLineaRVI(activa)) lineas = [activa];
+  if(!lineas.length){
+    alert('Marca primero las líneas del cliente en el blotter.\n\n' +
+          'La línea nuestra también se marca, pero esa no se guarda: sirve para ' +
+          'resolver el margen.');
+    return;
+  }
+
+  const sinCuenta = lineas.filter(l=>!String(l.account||'').trim());
+  if(sinCuenta.length){
+    alert(`${sinCuenta.length} línea(s) marcada(s) no traen Account en EMSX.\n\n` +
+          'Sin cuenta no hay reparto que asociar. Quítalas de la selección o ' +
+          'reparte esas a mano.');
+    return;
+  }
+
+  const resumen = lineas.map(l=>`   · ${String(l.account).padEnd(22)} ${Number(l.qty).toLocaleString('es-CO')}`).join('\n');
+  const total = lineas.reduce((s,l)=>s + Number(l.qty), 0);
+  if(!confirm(`Se van a guardar ${lineas.length} operación(es), cada una con su cuenta de EMSX:\n\n` +
+              resumen + `\n\n   TOTAL ${total.toLocaleString('es-CO')}\n\n¿Seguimos?`)) return;
+
+  // `generarTC` resetea el modo y la comisión del broker después de cada
+  // guardado, a propósito: cada operación se decide por separado. Pero esto es
+  // UNA operación partida en varias cuentas, con un solo modo y una sola
+  // comisión de broker, así que se guardan y se reponen antes de cada línea.
+  const modo = { ..._modoRVI };
+  const comBroker = (document.getElementById('tc-com-ccsi')||{}).value;
+  const comTotal  = (document.getElementById('tc-com-ccsi-total')||{}).value;
+  const reponer = () => {
+    _modoRVI = { ...modo };
+    const a = document.getElementById('tc-com-ccsi');        if(a) a.value = comBroker;
+    const b = document.getElementById('tc-com-ccsi-total');  if(b) b.value = comTotal;
+  };
+
+  let hechas = 0;
+  const antes = historial.length;
+  for(const l of lineas){
+    // Se posa en la línea igual que si Sergio le hubiera dado clic: así el
+    // precio, el tipo, el lado y las fechas salen de la línea y no de lo que
+    // hubiera quedado en pantalla de la anterior.
+    seleccionarLinea(l.id);
+    reponer();
+    distribuciones = [{ account:String(l.account).trim(), qty:Number(l.qty) }];
+    renderDistribuciones();
+    calcularRVI();
+    const n = historial.length;
+    generarTC();
+    if(historial.length === n){
+      // generarTC ya explicó por qué frenó. No se sigue: dejar unas guardadas
+      // y otras no, en silencio, es peor que no guardar ninguna.
+      if(hechas) alert(`Se guardaron ${hechas} de ${lineas.length}. Revisa la que falló y vuelve a darle.`);
+      return;
+    }
+    hechas++;
+  }
+  const nuevas = historial.length - antes;
+  if(typeof avisoExito === 'function')
+    avisoExito(`${hechas} operación(es) guardadas`,
+      `${nuevas} línea(s) en el histórico · ${total.toLocaleString('es-CO')} acciones`);
+  else alert(`Listo: ${hechas} operación(es) guardadas.`);
+}
+
 function generarTC(){
   // FRENO DURO: sin tipo de operación no se guarda. De él dependen el margen,
   // la comisión y la línea del BO (Sergio, 31-ago).
@@ -23036,6 +23136,12 @@ function generarTC(){
     // makers (RFQE) van con cero.
     broker: (emsxData.find(r=>r.id===lineaActiva)||{}).broker || '',
     precioNuestro: vincPrecio,
+    // LAS MISMAS DOS QUE EL PANEL. Sin esto el guardado volvía a la tarifa del
+    // maestro y al precio crudo: la pantalla decía 0,07% y 5,94 y el histórico
+    // guardaba 0,05% y 5,9410 (Sergio, 02-oct).
+    comPctCliente: _comPctManualRVI(),
+    dosDecimales: usaDosDecimalesRVI(clienteKey) ||
+                  usaDosDecimalesRVI((clientesRVI[clienteKey]||{}).nombre),
     lado,
   });
   const secFee     = calcularSecFee(lado, c.gross, tipo,
@@ -23056,17 +23162,30 @@ function generarTC(){
   // El MISMO número que ya se usó para la comisión. Nada de recalcularlo por
   // otro camino: esa duplicidad fue justamente el bug del 30-sep.
   const precioNuestroBO = (_modoRVI.margen === 'con' && _nuestro.precio) ? _nuestro.precio : price;
-distribuciones.forEach(d=>{
-    const grossAcc  = d.qty * price;
+  // El precio que de verdad se le cobra. En los clientes de dos decimales es el
+  // redondeado a nuestro favor, el mismo con el que se calculó todo arriba.
+  // Antes esta parte usaba el precio crudo: la pantalla decía 5,94 y el
+  // histórico guardaba 5,9410 (Sergio, 02-oct).
+  const _pxUsado  = (c.precioUsado != null) ? c.precioUsado : price;
+  const _pctPact  = c.pctPactado;
+  const _dosDec   = usaDosDecimalesRVI(clienteKey) || usaDosDecimalesRVI(db.nombre);
+
+  distribuciones.forEach(d=>{
+    const grossAcc  = d.qty * _pxUsado;
     // El MÍNIMO DE USD 20 también aplica al cliente, no solo a lo que nos cobra
     // el broker: la línea de abajo sí lo aplicaba y esta no, así que el archivo
     // salía con 10,96 en vez de 20 (Sergio, 01-sep). Exentas las tres AFP.
-    const _costCalc = tipo==='UCIT' ? grossAcc*db.comUCIT : d.qty*db.comETF;
-    const costAcc   = costoClienteRVI(db.nombre || clienteKey, _costCalc);
+    // La comisión PACTADA manda, igual que en el panel. Sin esto la pantalla
+    // mostraba el 0,07% y el histórico guardaba el 0,05% del maestro.
+    const _costCalc = _pctPact != null ? grossAcc * _pctPact
+                    : (tipo==='UCIT' ? grossAcc*db.comUCIT : d.qty*db.comETF);
+    let costAcc     = costoClienteRVI(db.nombre || clienteKey, _costCalc);
+    if(_dosDec) costAcc = _comNuestroFavor(costAcc);
     // El SEC fee solo aplica a instrumentos US y solo en ventas: un UCITS no lo
     // paga (Sergio, 02-sep).
     const secFeeAcc = secFeeRVI(tipo, lado, grossAcc, isin);
-    const netAcc    = lado==='Sell' ? grossAcc-costAcc-secFeeAcc : grossAcc+costAcc;
+    const netAcc    = _dosDec ? _netoNuestroFavor(grossAcc, costAcc, secFeeAcc, lado)
+                    : (lado==='Sell' ? grossAcc-costAcc-secFeeAcc : grossAcc+costAcc);
     // La comisión del BROKER depende de QUIÉN es el broker: los market makers
     // de RFQE (BTGU, TFSR, VIRT, JRFE...) no cobran. Se calculaba siempre con
     // las tarifas de CCSI, así que una RFQE con BTGU salía con valor en el
@@ -23089,7 +23208,10 @@ distribuciones.forEach(d=>{
       // registra el módulo Reportes, igual que el Parent Order ID en RVL.
       emsxId: lineaActiva,
       hora, cliente:db.nombre, account:d.account, side:lado, symbol, isin,
-      qty:d.qty, price, gross:grossAcc, cost:costAcc, secFee:secFeeAcc, net:netAcc,
+      qty:d.qty, price:_pxUsado, gross:grossAcc, cost:costAcc, secFee:secFeeAcc, net:netAcc,
+      // La tarifa pactada queda guardada: es la única forma de saber meses
+      // después por qué esta operación no siguió el maestro.
+      comPctPactada: _pctPact,
       ccsi:ccsiAcc, tradeDate, settleDate, tipo,
       // Datos de NUESTRA pata, para la planilla del BO. `lineaActiva` es el id;
       // la línea en sí se busca aquí porque `linea` se declara más abajo.
@@ -23918,7 +24040,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-02 16:05 UTC · v189';
+const BUILD_ID = '2026-10-02 16:35 UTC · v190';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
