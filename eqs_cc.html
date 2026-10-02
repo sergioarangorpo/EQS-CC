@@ -1903,6 +1903,23 @@
             <input type="text" id="tc-secfee" readonly>
           </div>
         </div>
+        <!-- Comisión del día para ESTA operación. Por más maestro que haya,
+             siempre aparece el trade particular: el 02-oct AVAL salió a 0,07%
+             en un UCIT y eso no estaba en ninguna tabla (Sergio, 02-oct).
+             Vacío = manda la tarifa del maestro, como siempre. -->
+        <div class="field-row">
+          <div class="field" style="flex:1;">
+            <label>Comisión % <span class="field-note">(vacío = la de la tabla)</span></label>
+            <input type="text" inputmode="decimal" id="tc-compct" placeholder="0,07"
+                   oninput="calcularRVI();renderAvisoComRVI()"
+                   onblur="calcularRVI();renderAvisoComRVI()">
+          </div>
+          <div class="field" style="flex:1;">
+            <label>En USD</label>
+            <input type="text" id="tc-commonto" readonly>
+          </div>
+        </div>
+        <div id="avisoComRVI" style="margin:-4px 0 8px;"></div>
         <!-- PORVENIR pide el nombre del trader que dio la orden: va en la
              columna NOTES de su proforma. Solo aparece para ese cliente
              (Sergio, 08-sep). -->
@@ -21752,6 +21769,33 @@ function resolverPrecioNuestroRVI(clienteLinea){
                      `${Number(exactas[0].qty).toLocaleString('es-CO')} @ ${Number(exactas[0].avgPr)}` +
                      (exactas[0].hora ? ' · ' + exactas[0].hora : '') };
   }
+
+  // 4) VARIAS LÍNEAS DEL CLIENTE CONTRA UNA NUESTRA. El 02-oct AVAL salió en
+  //    tres cuentas —433.400 + 193.500 + 7.000— contra una sola ejecución de
+  //    633.900. Ninguna calzaba sola, solo la SUMA, así que el paso 3 fallaba y
+  //    la operación no se podía generar.
+  //
+  //    Se exige lo mismo de siempre: que el total calce EXACTO y que haya UNA
+  //    sola línea nuestra que lo haga. El precio es el mismo para las tres —es
+  //    una sola ejecución— así que el margen queda repartido a prorrata de la
+  //    cantidad sin tener que hacer nada más.
+  const hermanas = (typeof emsxData !== 'undefined' ? emsxData : []).filter(l =>
+    !esNuestraLineaRVI(l) &&
+    String(l.firm||'') === String(clienteLinea.firm||'') &&
+    nemoCanonico(l.especie,'emsx') === nemoCanonico(clienteLinea.especie,'emsx') &&
+    String(l.lado||'').toUpperCase() === String(clienteLinea.lado||'').toUpperCase());
+  if(hermanas.length > 1){
+    const suma = hermanas.reduce((s,l)=>s + (Number(l.qty)||0), 0);
+    const porSuma = cands.filter(l => Number(l.qty) === suma);
+    if(porSuma.length === 1){
+      return { precio:Number(porSuma[0].avgPr), fuente:'suma de las líneas del cliente',
+               auto:true, candidatas:cands,
+               detalle:`${hermanas.length} líneas de ${clienteLinea.firm} suman ` +
+                       `${suma.toLocaleString('es-CO')} = nuestra ejecución de ` +
+                       `${Number(porSuma[0].qty).toLocaleString('es-CO')} @ ${Number(porSuma[0].avgPr)}` +
+                       (porSuma[0].hora ? ' · ' + porSuma[0].hora : '') };
+    }
+  }
   return { ...vacio, candidatas:cands };
 }
 
@@ -22683,11 +22727,51 @@ function renderDistribuciones(){
 // =====================================================================
 // CÁLCULO DE COMISIONES
 // =====================================================================
+// Redondeo a dos decimales A NUESTRO FAVOR. La comisión siempre al techo —es
+// lo que cobramos— y el neto del cliente hacia donde nos conviene según el
+// lado. El precio ya lo hacía `precioDosDecimales` (Sergio, 02-oct).
+function _comNuestroFavor(v){ return Math.ceil((Number(v)||0) * 100) / 100; }
+function _netoNuestroFavor(gross, com, secFee, lado){
+  const bruto = Number(gross)||0, c = Number(com)||0, s = Number(secFee)||0;
+  return String(lado||'').toUpperCase() === 'SELL'
+    ? Math.floor((bruto - c - s) * 100) / 100    // vende: se le paga el piso
+    : Math.ceil((bruto + c + s) * 100) / 100;    // compra: se le cobra el techo
+}
+
+// Lo que haya en el campo "Comisión %", como fracción. 0,07 -> 0,0007.
+function _comPctManualRVI(){
+  const el = document.getElementById('tc-compct');
+  if(!el) return null;
+  const v = parseNum(el.value);
+  return (v && isFinite(v) && v > 0) ? v / 100 : null;
+}
+
+// El aviso. Una tarifa que no sale del maestro tiene que verse: es la clase de
+// cosa que se revisa al cierre y nadie se acuerda de por qué quedó así.
+function renderAvisoComRVI(){
+  const cont = document.getElementById('avisoComRVI');
+  if(!cont) return;
+  const pct = _comPctManualRVI();
+  if(pct == null){ cont.innerHTML = ''; return; }
+  cont.innerHTML =
+    `<div style="background:rgba(245,158,11,.10);border-left:3px solid var(--amber,#f59e0b);
+                 border-radius:6px;padding:7px 11px;font-size:11.5px;color:var(--amber,#f59e0b);">
+       Esta operación va con <b>${(pct*100).toLocaleString('es-CO',{maximumFractionDigits:4})}%</b>
+       pactado, no con la tarifa del maestro.
+     </div>`;
+}
+
 function calcularComisiones(clienteKey, tipo, qty, price, opts){
   const db = clientesRVI[clienteKey];
   if(!db) return null;
-  const gross = qty * price;
   opts = opts || {};
+  // Para los clientes de dos decimales el precio se baja ACÁ, al entrar, y no
+  // al generar el Excel. Así el bruto, la comisión, el neto y el MARGEN salen
+  // todos del mismo número. Antes el margen se medía contra el precio crudo
+  // (5,941006) y al cliente se le pagaba 5,94: esos $633,90 de diferencia no
+  // aparecían por ningún lado (Sergio, 02-oct).
+  if(opts.dosDecimales) price = precioDosDecimales(price, opts.lado);
+  const gross = qty * price;
 
   // MÍNIMO DE COMISIÓN AL CLIENTE: USD 20 para casi todos. Las tres AFP
   // (PROTECCIÓN, COLFONDOS y PORVENIR) están exceptuadas por contrato y pagan
@@ -22696,6 +22780,13 @@ function calcularComisiones(clienteKey, tipo, qty, price, opts){
   // de IAU a 0,003 dan 9,45, pero el archivo cobra 20.
   const SIN_MINIMO = ['PROTECCION','COLFONDOS','PORVENIR'];
   const minCliente = SIN_MINIMO.includes(clienteKey) ? 0 : (db.minUSD != null ? db.minUSD : 20);
+
+  // COMISIÓN PACTADA PARA ESTA OPERACIÓN. Por más maestro que haya, siempre
+  // aparece el trade particular. Cuando viene, manda sobre la tarifa de la
+  // tabla y se aplica como % del bruto sea cual sea el tipo — es como se pacta
+  // (Sergio, 02-oct). El mínimo del contrato se sigue respetando.
+  const pctPactado = (opts.comPctCliente != null && isFinite(opts.comPctCliente) &&
+                      opts.comPctCliente > 0) ? Number(opts.comPctCliente) : null;
 
   let costCliente, costCCSI, tarifaCCSIusada;
   // Comisión del BROKER: si viene una editada (¢/acción o %, según tipo), se
@@ -22728,9 +22819,16 @@ function calcularComisiones(clienteKey, tipo, qty, price, opts){
       ? (opts.precioNuestro - price) * qty
       : (price - opts.precioNuestro) * qty;
   }
+  // El pacto manda sobre lo que haya decidido la tabla, para cualquier tipo.
+  if(pctPactado != null) costCliente = Math.max(gross * pctPactado, minCliente);
+  // Y en los clientes de dos decimales se sube al techo: la comisión es lo que
+  // cobramos, así que el medio centavo se queda acá.
+  if(opts.dosDecimales) costCliente = _comNuestroFavor(costCliente);
+
   // Utilidad bruta = margen de precio + comisión cliente − comisión CCSI.
   const utilidad = margen + costCliente - costCCSI;
-  return {gross, costCliente, costCCSI, tarifaCCSIusada, margen, utilidad};
+  return {gross, costCliente, costCCSI, tarifaCCSIusada, margen, utilidad,
+          precioUsado: price, pctPactado};
 }
 
 // El SEC fee es un cargo de la SEC: SOLO aplica a instrumentos US y solo en
@@ -22788,6 +22886,12 @@ function calcularRVI(){
       : '';
   }
   const c = calcularComisiones(clienteKey, tipo, qty, price, {
+    // La comisión pactada para esta operación, si se escribió. Se guarda como
+    // fracción: 0,07 en el campo son 0,0007.
+    comPctCliente: _comPctManualRVI(),
+    // AVAL y compañía trabajan a dos decimales en todo.
+    dosDecimales: usaDosDecimalesRVI(clienteKey) ||
+                  usaDosDecimalesRVI((clientesRVI[clienteKey]||{}).nombre),
     comCCSI: _comTotalUSD != null ? (_comTotalUSD / qty)
                                   : parseNum(document.getElementById('tc-com-ccsi').value),
     // El broker decide si hay comisión: CCSI/BTGH/TFSC cobran, los market
@@ -22806,7 +22910,14 @@ function calcularRVI(){
   // El tipo y el ISIN deciden si hay SEC fee: los UCITS no lo pagan.
   const secFee = calcularSecFee(lado, c.gross, tipo,
     document.getElementById('tc-isin') ? document.getElementById('tc-isin').value : '');
-  const netCliente = lado==='Sell' ? c.gross - c.costCliente - secFee : c.gross + c.costCliente;
+  const _dosDec = usaDosDecimalesRVI(clienteKey) ||
+                  usaDosDecimalesRVI((clientesRVI[clienteKey]||{}).nombre);
+  const netCliente = _dosDec
+    ? _netoNuestroFavor(c.gross, c.costCliente, secFee, lado)
+    : (lado==='Sell' ? c.gross - c.costCliente - secFee : c.gross + c.costCliente);
+  // El monto en USD al lado del campo de %, para no tener que calcularlo aparte.
+  const _elMonto = document.getElementById('tc-commonto');
+  if(_elMonto) _elMonto.value = fmtMoneyRVI(c.costCliente, 2);
 
   document.getElementById('rc-gross').textContent = fmtMoneyRVI(c.gross,0);
   document.getElementById('rc-cost').textContent = fmtMoneyRVI(c.costCliente,2);
@@ -23807,7 +23918,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-01 20:20 UTC · v188';
+const BUILD_ID = '2026-10-02 16:05 UTC · v189';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
