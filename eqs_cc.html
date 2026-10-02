@@ -17070,7 +17070,23 @@ function _cantCanasta(t){
 function _allocMatrizRVI(texto){
   const filas = String(texto||'').split(/\r?\n/)
     .map(l=>l.replace(/\s+$/,''))
-    .map(l=>l.split(/\t|\s{2,};?|;/).map(x=>x.trim()));
+    .map(l=>{
+      const c = l.split(/\t|\s{2,};?|;/).map(x=>x.trim());
+      // Si los tabs se perdieron al copiar y pegar, la fila llega entera en
+      // una celda: "VOL. DIVERSIFICADA BASICA 4,450 -". Se despegan por detrás
+      // los números y guiones, que son las columnas, y lo que queda adelante es
+      // el nombre del fondo. Solo se intenta cuando la fila NO tenía
+      // separadores, para no tocar los pegados que vienen bien (Sergio, 02-oct).
+      if(c.length > 1 || !c[0]) return c;
+      const m = c[0].match(/^(.*?)((?:\s+(?:[-—]|[\d][\d.,]*))+)$/);
+      if(m && m[1].trim()) return [m[1].trim(), ...m[2].trim().split(/\s+/)];
+      // La fila de encabezado con VARIOS tickers ("AAXJ BBJP") tampoco trae
+      // separadores si se perdieron los tabs. Se parte solo si TODOS los
+      // pedazos parecen ticker: "VOL. DIVERSIFICADA BASICA" no pasa la prueba.
+      const t = c[0].split(/\s+/);
+      if(t.length > 1 && t.every(x=>/^[A-Z][A-Z0-9]{0,5}$/i.test(x))) return t;
+      return c;
+    });
   const out = [];
   let lado = '', tickers = null;
 
@@ -17101,9 +17117,12 @@ function _allocMatrizRVI(texto){
     const port = String(celdas[0]||'').trim();
     if(!port) return;
     tickers.forEach(({col, tk}, idx)=>{
-      // La cantidad va en la misma columna del ticker; si el bloque no trae la
-      // columna del portafolio alineada, se cae al orden de aparición.
-      let celda = celdas[col];
+      // Con tabs, la fila de tickers empieza con una celda vacía (la columna
+      // del nombre del fondo), así que el ticker y su cantidad comparten
+      // columna. Sin tabs esa celda vacía se pierde y el primer ticker queda en
+      // la columna 0, encima del nombre del fondo: ahí hay que contar por
+      // ORDEN desde la segunda celda (Sergio, 02-oct).
+      let celda = (tickers[0].col >= 1) ? celdas[col] : celdas[idx + 1];
       if(celda == null || celda === '') celda = celdas.filter((x,i)=>i>0)[idx];
       const txt = String(celda||'').trim();
       if(!txt || txt === '-' || txt === '—') return;  // sin posición en ese papel
@@ -17257,8 +17276,25 @@ function interpretarCanastaRVI(){
   });
 
   if(!Object.keys(ejec).length || !alloc.length){
-    cont.innerHTML = `<div style="color:var(--amber,#f59e0b);font-size:12.5px;">
-      No se pudo leer alguno de los dos cuadros. Revisa que traigan ticker y cantidad.</div>`;
+    // El mensaje viejo decía "alguno de los dos" y había que adivinar cuál.
+    // Con el mercado abierto eso no sirve: ahora dice CUÁL falló, cuántas
+    // líneas vio y qué entendió del otro (Sergio, 02-oct).
+    const nEj = String(document.getElementById('canastaEjec').value||'').split(/\r?\n/).filter(l=>l.trim()).length;
+    const nAl = String(document.getElementById('canastaAlloc').value||'').split(/\r?\n/).filter(l=>l.trim()).length;
+    const falla = [];
+    if(!Object.keys(ejec).length)
+      falla.push(`<b>La ejecución (UPDATE)</b>: ${nEj ? `leí ${nEj} línea(s) pero no saqué ninguna especie con precio` : 'el cuadro está VACÍO'}.`);
+    if(!alloc.length)
+      falla.push(`<b>El allocation</b>: ${nAl ? `leí ${nAl} línea(s) pero no saqué ninguna asignación` : 'el cuadro está VACÍO'}.`);
+    const bien = [];
+    if(Object.keys(ejec).length) bien.push(`la ejecución sí salió: ${Object.keys(ejec).join(', ')}`);
+    if(alloc.length) bien.push(`el allocation sí salió: ${alloc.length} asignación(es)`);
+    cont.innerHTML = `<div style="color:var(--amber,#f59e0b);font-size:12.5px;line-height:1.55;">
+      ${falla.join('<br>')}
+      ${bien.length ? `<div style="opacity:.8;margin-top:6px;">En cambio ${bien.join(' y ')}.</div>` : ''}
+      <div style="opacity:.8;margin-top:6px;">La ejecución necesita ticker y precio por línea.
+      El allocation, o una fila por asignación, o la matriz con el lado arriba.</div>
+    </div>`;
     return;
   }
 
@@ -24291,7 +24327,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-02 18:45 UTC · v194';
+const BUILD_ID = '2026-10-02 18:55 UTC · v195';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
