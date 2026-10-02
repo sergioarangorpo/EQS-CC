@@ -17204,7 +17204,14 @@ function interpretarCanastaRVI(){
     String(document.getElementById('canastaEjec').value||'').split(/\r?\n/)
       .map(l=>l.trim()).filter(Boolean)
       .forEach(linea=>{
-        const campos = linea.split(/\s+/);
+        let campos = linea.split(/\s+/);
+        if(campos.length < 2) return;
+        // Un S o una B al principio dicen el lado: "S AAXJ US 117.92". Es la
+        // forma que propuso Sergio y se acepta, pero como verificación: el
+        // lado final lo decide la línea de EMSX más abajo (Sergio, 02-oct).
+        let ladoTexto = '';
+        if(/^(S|SELL|V|VENTA)$/i.test(campos[0]))      { ladoTexto = 'Sell'; campos = campos.slice(1); }
+        else if(/^(B|BUY|C|COMPRA)$/i.test(campos[0])) { ladoTexto = 'Buy';  campos = campos.slice(1); }
         if(campos.length < 2) return;
         const precio = _numCanasta(campos[campos.length-1]);
         if(!isFinite(precio) || precio <= 0) return;
@@ -17214,9 +17221,40 @@ function interpretarCanastaRVI(){
         const tk = _tickerCanasta(campos[0]);
         if(!tk || sumaAlloc[tk] == null || ejec[tk]) return;
         ejec[tk] = { ticker:tk, qty:sumaAlloc[tk], precio,
-                     lado: ladoAlloc[tk] || 'Buy', qtyDelAlloc:true };
+                     lado: ladoTexto || ladoAlloc[tk] || 'Buy', qtyDelAlloc:true };
       });
   }
+
+  // ---- EL LADO LO DECIDE LA LÍNEA DE EMSX ----
+  // El UPDATE es un chat: se puede equivocar o se puede pegar el de ayer. La
+  // línea es lo que de verdad se ejecutó, así que manda. Lo que venga en el
+  // texto queda como verificación: si difiere, se avisa y no se corrige en
+  // silencio (Sergio, 02-oct).
+  //
+  // Solo decide cuando la especie tiene UN solo lado en el blotter. Si el mismo
+  // papel se compró y se vendió el mismo día, no hay nada que deducir y se
+  // respeta lo que diga el texto, avisando.
+  const avisosLado = [];
+  Object.keys(ejec).forEach(tk=>{
+    const lineas = (typeof emsxData !== 'undefined' ? emsxData : [])
+      .filter(r => tickerLimpioRVI(r.especie) === tk && String(r.lado||''));
+    const lados = [...new Set(lineas.map(r=>String(r.lado).toUpperCase().startsWith('S') ? 'Sell' : 'Buy'))];
+    if(lados.length === 1){
+      if(ejec[tk].lado && ejec[tk].lado !== lados[0]){
+        avisosLado.push(`${tk}: el texto dice ${ejec[tk].lado === 'Sell' ? 'venta' : 'compra'} ` +
+                        `y la línea de EMSX dice ${lados[0] === 'Sell' ? 'VENTA' : 'COMPRA'}. ` +
+                        `Se usa la de EMSX.`);
+      }
+      ejec[tk].lado = lados[0];
+      ejec[tk].ladoDeEmsx = true;
+    } else if(lados.length > 1){
+      avisosLado.push(`${tk}: hay líneas de compra Y de venta en EMSX. ` +
+                      `Se usa el ${ejec[tk].lado === 'Sell' ? 'venta' : 'compra'} del texto — revísalo.`);
+    } else {
+      avisosLado.push(`${tk}: no hay línea en EMSX para verificar el lado. ` +
+                      `Se usa el ${ejec[tk].lado === 'Sell' ? 'venta' : 'compra'} del texto.`);
+    }
+  });
 
   if(!Object.keys(ejec).length || !alloc.length){
     cont.innerHTML = `<div style="color:var(--amber,#f59e0b);font-size:12.5px;">
@@ -17227,7 +17265,9 @@ function interpretarCanastaRVI(){
   // ---- Validación: las cantidades tienen que cuadrar ----
   const porTicker = {};
   alloc.forEach(a=>{ porTicker[a.ticker] = (porTicker[a.ticker]||0) + a.units; });
-  const avisos = [];
+  // Los avisos del lado van PRIMERO: son los que pueden mandar una compra como
+  // venta, que es más grave que un descuadre de cantidades.
+  const avisos = [...avisosLado];
   Object.keys(ejec).forEach(tk=>{
     const e = ejec[tk].qty, a = porTicker[tk] || 0;
     if(Math.abs(e - a) > 0.001){
@@ -24251,7 +24291,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-02 18:20 UTC · v193';
+const BUILD_ID = '2026-10-02 18:45 UTC · v194';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
