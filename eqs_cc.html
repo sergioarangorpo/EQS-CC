@@ -17248,8 +17248,22 @@ function interpretarCanastaRVI(){
   const pal = t => String(t||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
     .replace(/([A-Z])(\d)/g,'$1 $2').replace(/(\d)([A-Z])/g,'$1 $2')
     .split(/[^A-Z0-9+]+/).filter(w=>w && !RUIDO_PORT.has(w));
-  const calzaPal = (x,y) => x === y || (x.length >= 3 && y.startsWith(x)) ||
-                                       (y.length >= 3 && x.startsWith(y));
+  // BASICA contra BASICO. El cliente escribe "VOL. DIVERSIFICADA BASICA" y la
+  // ficha dice "PORVENIR FPV DIVERSI BASICO": DIVERSIFICADA calza con DIVERSI
+  // por prefijo, pero BASICA y BASICO no calzan por ningún lado y como se
+  // exigen TODAS las palabras, el fondo quedaba sin encontrar (Sergio, 02-oct).
+  //
+  // Se acepta el cambio de género SOLO si el tronco es idéntico y tiene al
+  // menos cuatro letras: así BASIC=BASIC y DINAMIC=DINAMIC calzan, pero ALT de
+  // "ALTO" y "ALTA" no alcanza y no junta fondos distintos por accidente.
+  const _tronco = w => /[AEIOU]$/.test(w) ? w.slice(0,-1) : w;
+  const calzaPal = (x,y) => {
+    if(x === y) return true;
+    if(x.length >= 3 && y.startsWith(x)) return true;
+    if(y.length >= 3 && x.startsWith(y)) return true;
+    const tx = _tronco(x);
+    return tx.length >= 4 && tx === _tronco(y);
+  };
   // Fondos cuyo nombre comercial no comparte palabras con el de la cuenta.
   // Se agregan aquí a medida que aparecen, SOLO con la equivalencia confirmada
   // (Sergio, 24-sep).
@@ -17278,7 +17292,26 @@ function interpretarCanastaRVI(){
   };
   alloc.forEach(a=>{ const p = buscaPort(a.port); if(p) a.port = p; });
   const sinPort = [...new Set(alloc.map(a=>a.port))].filter(pz=>!buscaPort(pz));
-  sinPort.forEach(pz=> avisos.push(`El portafolio "${pz}" no está en la ficha de ${cfg.nombre||cli}`));
+  // Cuando no se encuentra, se dice CUÁL se le parece. Buscar a mano entre 40
+  // fondos para descubrir que la diferencia era una letra no es trabajo de
+  // nadie (Sergio, 02-oct). Es una sugerencia para mirar, no un emparejamiento:
+  // el aviso sigue siendo un aviso y la canasta no se arma sola con él.
+  const _cerca = (texto) => {
+    const pa = pal(texto);
+    if(!pa.length) return '';
+    let mejor = '', ok = 0;
+    ports.forEach(x=>{
+      const pb = pal(x);
+      const n = pa.filter(wd=>pb.some(y=>calzaPal(wd,y))).length;
+      if(n > ok){ ok = n; mejor = x; }
+    });
+    return ok ? mejor : '';
+  };
+  sinPort.forEach(pz=>{
+    const sug = _cerca(pz);
+    avisos.push(`El portafolio "${pz}" no está en la ficha de ${cfg.nombre||cli}` +
+                (sug ? ` — ¿será "${sug}"?` : ''));
+  });
 
   _canastaRVI = { ejec, alloc, avisos, cliente: cli };
 
@@ -24218,7 +24251,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-02 18:05 UTC · v192';
+const BUILD_ID = '2026-10-02 18:20 UTC · v193';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
