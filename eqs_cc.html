@@ -942,7 +942,13 @@
           <select id="reporteCliente"></select>
         </div>
         <button class="btn small reporte-btn" onclick="generarReporteExcel()">📄 Generar reporte</button>
+        <!-- A Andes se le confirma por chat de Bloomberg después de procesar
+             sus correos. Es texto plano y repetitivo, y se manda el acumulado
+             del día entero cada vez (Sergio, 05-oct). -->
+        <button class="btn small purple" id="btnUpdateAndes" onclick="copiarUpdateAndes(this)"
+                title="Copia el UPDATE de Andes para pegarlo en el chat de Bloomberg">💬 UPDATE Andes</button>
       </div>
+      <div id="updateAndesPreview" style="margin:6px 0 0;"></div>
 
       <div class="neto-panel" id="netoPanel">
         <div class="neto-item">
@@ -3021,6 +3027,117 @@ function sumarDiasHabiles(fecha, dias, pais){
 // Devuelve { fecha, iso, alerta } — `alerta` explica por qué se movió, para
 // poder avisar en pantalla.
 // ---------------------------------------------------------------------
+// =====================================================================
+// UPDATE DE ANDES — la confirmación por chat de Bloomberg
+// ---------------------------------------------------------------------
+// Después de procesar sus correos se le manda una confirmación corta por
+// chat. El acumulado del DÍA ENTERO cada vez: no se borra nada ni se lleva
+// cuenta de qué ya se mandó, se repite el mensaje completo.
+//
+//   UPDATE FX ANDES INV GROUP
+//   S USD 5MM @ 3,226.64 T2 (07/10/26)
+//   S USD 250K @ 3,225.05 T2 (07/10/26)
+//
+// La tasa es la FINAL DEL CLIENTE y la fecha la que quedó guardada en la
+// operación — la misma que se le confirmó. Nada se recalcula acá.
+// =====================================================================
+const ANDES_UPDATE_TITULO = 'UPDATE FX ANDES INV GROUP';
+
+// 5.000.000 -> "5MM"; 250.000 -> "250K"; 1.234.567 -> "1,234,567".
+// El MM y el K solo salen cuando la cuenta es exacta: un "1.23MM" se puede
+// leer mal, y en una confirmación a un cliente eso no se arriesga.
+function _montoAndes(n){
+  const v = Number(n) || 0;
+  if(v >= 1e6 && v % 1e6 === 0) return (v / 1e6) + 'MM';
+  // La K solo por DEBAJO del millón: 1.500.000 como "1500K" se lee raro en un
+  // chat, y el número completo nunca se lee mal.
+  if(v >= 1e3 && v < 1e6 && v % 1e3 === 0) return (v / 1e3) + 'K';
+  return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+// El plazo de la operación, contado entre SUS DOS FECHAS. No se asume T2.
+// El 05-oct entró un swap de caja —vende T+0, compra T+1— con cumplimientos
+// distintos en la misma canasta: con la etiqueta fija, esas dos líneas habrían
+// salido diciendo T2 con la fecha correcta al lado, que es peor que un error
+// evidente porque el cliente lee la etiqueta (Sergio, 05-oct).
+function _plazoAndes(o){
+  const td = _fxFecha(o.tradeDate || o.fecha || _hoyISO());
+  const sd = _fxFecha(o.settleDate);
+  if(!td || !sd) return '';
+  const t = _fxDiasHabiles(td, sd);          // "T+0", "T+1", "T+2"...
+  return t ? t.replace('+', '') : '';        // Andes lo escribe sin el signo
+}
+
+function _fechaAndes(v){
+  const d = (v && typeof v.getFullYear === 'function')
+    ? v : parseFechaLocal(String(v || '').slice(0,10));
+  if(!d || isNaN(d)) return '';
+  const p = x => String(x).padStart(2,'0');
+  return `${p(d.getDate())}/${p(d.getMonth()+1)}/${String(d.getFullYear()).slice(-2)}`;
+}
+
+// Las operaciones de Andes de HOY, en el orden en que se hicieron.
+function _opsAndesHoy(){
+  return (typeof operaciones !== 'undefined' ? operaciones : [])
+    .filter(o => /ANDES/i.test(String(o.cliente || o.grupo || '')) &&
+                 (!o.fecha || String(o.fecha).slice(0,10) === _hoyISO()) &&
+                 (Number(o.amount || o.monto) || 0) > 0)
+    .sort((a,b) => String(a.hora||'').localeCompare(String(b.hora||'')));
+}
+
+function textoUpdateAndes(){
+  const ops = _opsAndesHoy();
+  const lineas = [], faltan = [];
+  ops.forEach(o=>{
+    const monto = Number(o.amount || o.monto) || 0;
+    let r = {};
+    try { r = calcularDesdeValores(o.modelo, o.side, monto, o.params) || {}; }catch(e){ r = {}; }
+    const tasa = Number(r.tasaFinalCliente) || Number((o.params||{}).rateUnica) || 0;
+    const fecha = _fechaAndes(o.settleDate);
+    const plazo = _plazoAndes(o);
+    // Sin tasa, sin fecha o sin plazo no se arma la línea: una confirmación
+    // incompleta al cliente es peor que no mandarla.
+    if(!tasa || !fecha || !plazo){
+      faltan.push(`${_montoAndes(monto)} ${o.hora||''} — ` +
+        (!tasa ? 'sin tasa final' : !fecha ? 'sin fecha de cumplimiento' : 'sin fecha de operación'));
+      return;
+    }
+    const lado = String(o.side||'').toUpperCase() === 'BUY' ? 'B' : 'S';
+    lineas.push(`${lado} USD ${_montoAndes(monto)} @ ` +
+                `${tasa.toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2})} ` +
+                `${plazo} (${fecha})`);
+  });
+  return { texto: lineas.length ? [ANDES_UPDATE_TITULO, ...lineas].join('\n') : '',
+           lineas: lineas.length, faltan, ops: ops.length };
+}
+
+async function copiarUpdateAndes(btn){
+  const cont = document.getElementById('updateAndesPreview');
+  const { texto, lineas, faltan, ops } = textoUpdateAndes();
+  const aviso = (color, html) => { if(cont) cont.innerHTML =
+    `<div style="background:rgba(${color},.10);border-left:3px solid rgba(${color},1);
+      border-radius:6px;padding:9px 12px;font-size:12px;line-height:1.55;">${html}</div>`; };
+
+  if(!ops){ aviso('245,158,11', 'No hay operaciones de <b>Andes</b> hoy.'); return; }
+  if(!texto){
+    aviso('245,158,11', `<b>No se armó el UPDATE.</b> Las ${ops} operación(es) de Andes ` +
+      `tienen algo sin resolver:<br>` + faltan.map(f=>'· ' + f).join('<br>'));
+    return;
+  }
+  try{ await navigator.clipboard.writeText(texto); }
+  catch(e){ /* sin permiso de portapapeles: igual se muestra para copiar a mano */ }
+
+  aviso('129,140,248',
+    `<b>Copiado — ${lineas} operación(es) del día.</b> Pégalo en el chat de Bloomberg.` +
+    (faltan.length ? `<div style="color:var(--amber,#f59e0b);margin-top:5px;">` +
+       `OJO: ${faltan.length} quedaron por fuera:<br>` + faltan.map(f=>'· ' + f).join('<br>') + `</div>` : '') +
+    `<pre style="margin:7px 0 0;padding:8px 10px;background:var(--bg-2,#161b26);
+       border-radius:5px;font-family:var(--mono);font-size:12px;white-space:pre;
+       overflow-x:auto;">${texto.replace(/</g,'&lt;')}</pre>`);
+  if(btn){ const antes = btn.innerHTML; btn.innerHTML = '✓ Copiado';
+           setTimeout(()=>{ btn.innerHTML = antes; }, 2000); }
+}
+
 function cumplimientoFX(fechaBase, lado, cliente){
   // La base se normaliza SIEMPRE a medianoche local, venga como Date o como
   // texto: `instanceof Date` no es fiable si el Date viene de otro contexto.
@@ -15041,6 +15158,26 @@ function _ancladoHoy(modulo){
   return m;
 }
 
+// La fecha que la operación de FX ya tiene guardada. Es la que se le confirmó
+// al cliente, así que es la que va a la planilla. Solo si la operación no la
+// trae se cae al cálculo, y entonces lo dice: una fecha calculada y una
+// confirmada pueden no coincidir, y eso hay que verlo (Sergio, 05-oct).
+function _fechaOpFX(o, campo, respaldo, faltan, queEs){
+  const v = o[campo];
+  if(v){
+    const d = (v && typeof v.getFullYear === 'function') ? v : parseFechaLocal(String(v).slice(0,10));
+    if(d && !isNaN(d)) return d;
+  }
+  const quien = o.cliente || o.grupo || 'FX';
+  if(campo === 'settleDate'){
+    const c = cumplimientoFX(respaldo || _hoyISO(), o.side, o.cliente) || {};
+    faltan.push(`${quien} USDCOP — la operación no trae fecha de ${queEs}; se calculó. Revísala.`);
+    return c.fecha;
+  }
+  faltan.push(`${quien} USDCOP — la operación no trae fecha de ${queEs}; se usó la de hoy. Revísala.`);
+  return parseFechaLocal(respaldo || _hoyISO());
+}
+
 function filasPlanillaCOP(){
   const filas = [], faltan = [];
   const trm = _trmPlanilla();
@@ -15192,8 +15329,18 @@ function filasPlanillaCOP(){
       nemo:'USDCOP', lado:String(o.side||'').toUpperCase()==='BUY'?'Compra':'Venta',
       cantidad:monto, precio:tasa, bruto:monto*tasa,
       comision:comFX, mercado:'FX', iva:false, ivaReportado:0,
-      liquidacion:parseFechaLocal(hoy),
-      cumplimiento:(cumplimientoFX(hoy, o.side, o.cliente)||{}).fecha });
+      // LAS FECHAS SE LEEN DE LA OPERACIÓN. Antes se recalculaban las dos acá:
+      // la liquidación con `hoy` a secas —que le pisaba la fecha a los NEXT_DAY
+      // y los WMCO— y el cumplimiento con `cumplimientoFX`, que tiene a ANDES
+      // en T+3 mientras el módulo de FX guarda T+2. Resultado: al cliente le
+      // iba el 7 y la planilla decía el 8 (Sergio, 05-oct).
+      //
+      // Es el mismo patrón del IVA: dos caminos para el mismo número, y el que
+      // falla es el que no se ve. La operación ya trae las dos fechas; se leen.
+      // `cumplimientoFX` queda como respaldo para una operación vieja que no
+      // las tenga, y en ese caso se avisa.
+      liquidacion: _fechaOpFX(o, 'tradeDate', hoy, faltan, 'liquidación'),
+      cumplimiento: _fechaOpFX(o, 'settleDate', null, faltan, 'cumplimiento') });
   });
 
   return { filas, faltan: [...new Set(faltan)] };
@@ -24358,7 +24505,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-02 19:25 UTC · v197';
+const BUILD_ID = '2026-10-05 14:55 UTC · v199';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
