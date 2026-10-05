@@ -3124,18 +3124,36 @@ async function copiarUpdateAndes(btn){
       `tienen algo sin resolver:<br>` + faltan.map(f=>'· ' + f).join('<br>'));
     return;
   }
-  try{ await navigator.clipboard.writeText(texto); }
-  catch(e){ /* sin permiso de portapapeles: igual se muestra para copiar a mano */ }
+  // El portapapeles con el respaldo de siempre. Antes esto se tragaba el error
+  // en silencio: si el navegador no daba permiso, el texto se veía pero no se
+  // copiaba, y había que seleccionarlo a mano (Sergio, 05-oct).
+  const marcar = ()=>{ if(btn){ const p = btn.innerHTML; btn.innerHTML = '✓ Copiado';
+                       setTimeout(()=>{ btn.innerHTML = p; }, 1600); } };
+  try{
+    navigator.clipboard.writeText(texto).then(marcar, ()=>_porvCopiaRespaldo(texto, marcar));
+  }catch(e){ _porvCopiaRespaldo(texto, marcar); }
 
   aviso('129,140,248',
-    `<b>Copiado — ${lineas} operación(es) del día.</b> Pégalo en el chat de Bloomberg.` +
+    `<div style="display:flex;align-items:flex-start;gap:10px;">
+       <div style="flex:1;min-width:0;">
+         <b>Copiado — ${lineas} operación(es) del día.</b> Pégalo en el chat de Bloomberg.` +
     (faltan.length ? `<div style="color:var(--amber,#f59e0b);margin-top:5px;">` +
        `OJO: ${faltan.length} quedaron por fuera:<br>` + faltan.map(f=>'· ' + f).join('<br>') + `</div>` : '') +
-    `<pre style="margin:7px 0 0;padding:8px 10px;background:var(--bg-2,#161b26);
-       border-radius:5px;font-family:var(--mono);font-size:12px;white-space:pre;
-       overflow-x:auto;">${texto.replace(/</g,'&lt;')}</pre>`);
-  if(btn){ const antes = btn.innerHTML; btn.innerHTML = '✓ Copiado';
-           setTimeout(()=>{ btn.innerHTML = antes; }, 2000); }
+    `    <pre style="margin:7px 0 0;padding:8px 10px;background:var(--bg-2,#161b26);
+           border-radius:5px;font-family:var(--mono);font-size:12px;white-space:pre;
+           overflow:auto;max-height:180px;">${texto.replace(/</g,'&lt;')}</pre>
+       </div>
+       <!-- Se cierra: el texto ya está en el portapapeles, dejarlo abierto solo
+            tapa el histórico de abajo (Sergio, 05-oct). -->
+       <button class="btn small ghost" onclick="cerrarUpdateAndes()"
+               title="Cerrar — el texto ya quedó copiado"
+               style="flex:0 0 auto;padding:3px 9px;">✕</button>
+     </div>`);
+}
+
+function cerrarUpdateAndes(){
+  const c = document.getElementById('updateAndesPreview');
+  if(c) c.innerHTML = '';
 }
 
 function cumplimientoFX(fechaBase, lado, cliente){
@@ -24505,7 +24523,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-05 14:55 UTC · v199';
+const BUILD_ID = '2026-10-05 15:05 UTC · v200';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
