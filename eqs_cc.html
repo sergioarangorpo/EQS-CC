@@ -12188,7 +12188,10 @@ function textoBloomberg(){
   const total   = stats.reduce((a,d)=>a+d.monto, 0);
   const subasta = detectarSubastaCierre();
   const cont    = stats.filter(d=>d.seg !== 'MGC');
-  const porVol  = cont.slice().sort((a,b)=>b.monto-a.monto);
+  // "Most active names" y "led by" son del DÍA COMPLETO, igual que el mapa:
+  // si el mapa muestra a NUCO como la más grande y el texto dice que lideró
+  // ECOPETROL, el mismo informe se contradice (Sergio, 05-oct).
+  const porVol  = stats.slice().sort((a,b)=>b.monto-a.monto);
   const conMov  = cont.filter(d=>d.trades >= 5);
   const suben   = conMov.slice().sort((a,b)=>b.varPct-a.varPct).slice(0,3);
   const bajan   = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,3);
@@ -12301,6 +12304,13 @@ function informeCompactoHTML(){
   const volMGC  = stats.filter(d=>d.seg==='MGC').reduce((a,d)=>a+d.monto,0);
   const volETF  = stats.filter(d=>d.seg==='ETF').reduce((a,d)=>a+d.monto,0);
   const volCont = total - volMGC - volETF;
+  // EL MAPA DEL MERCADO ES DEL DÍA COMPLETO: continuo, MGC y ETFs. Usaba
+  // `porVol`, que deja el MGC por fuera, y por eso el 05-oct no salía NUCO —
+  // la más grande del día con $82.979 MM, el 28,6% del total y casi el doble
+  // de ECOPETROL. El mapa daba a entender que la jornada la mandó ECOPETROL y
+  // no era cierto. `porVolTodo` ya estaba calculado y sin usar (Sergio, 05-oct).
+  // Los bloques de abajo SÍ van separados por segmento: ahí el filtro es lo
+  // correcto y se queda.
   const porVolTodo = stats.slice().sort((a,b)=>b.monto-a.monto);
   const contin  = stats.filter(d=>d.seg!=='MGC');
   const porVol  = contin.slice().sort((a,b)=>b.monto-a.monto);
@@ -12410,7 +12420,7 @@ function informeCompactoHTML(){
 
     <div style="font-size:16px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:10px;">
       MAPA DEL MERCADO — tamaño por volumen, color por variación</div>
-    ${treemapVolumen(porVol.slice(0,20).map(d=>({nombre:d.esp, valor:d.monto, varPct: d.esIntradia ? 0 : d.varPct})), 1268, 340)}
+    ${treemapVolumen(porVolTodo.slice(0,20).map(d=>({nombre:d.esp, valor:d.monto, varPct: d.esIntradia ? 0 : d.varPct})), 1268, 340)}
 
     <div style="display:flex;gap:20px;align-items:stretch;margin-top:20px;">
       ${bloqueSeg('MERCADO CONTINUO', d=>d.seg==='CONTINUO')}
@@ -12742,7 +12752,7 @@ function renderInformeDiario(){
       </div>
 
       <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:14px 0 8px;">MAPA DEL MERCADO — tamaño por volumen, color por variación</div>
-      ${treemapVolumen(porVol.filter(d=>d.seg!=='MGC').slice(0,22).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 960, 260)}
+      ${treemapVolumen(porVol.slice(0,22).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 960, 260)}
 
       ${bloqueSegmento('MERCADO CONTINUO', d=>d.seg==='CONTINUO', 0)}
       ${bloqueSegmento('MERCADO GLOBAL COLOMBIANO (MGC)', d=>d.seg==='MGC', 10)}
@@ -24523,7 +24533,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-05 15:05 UTC · v200';
+const BUILD_ID = '2026-10-05 20:50 UTC · v201';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
