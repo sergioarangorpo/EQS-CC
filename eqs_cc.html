@@ -9079,6 +9079,12 @@ async function cargarArchivoFidessa(input, tipo){
           // ORD_NUM que va en el archivo credicorp (PROTE ORDENES): el numero
           // con el que ELLOS identifican la orden en su propio sistema.
           notes: row.getCell(headers['Notes']) ? String(row.getCell(headers['Notes']).value || '') : '',
+          // Trailer = el trader que MANDO la orden (HSBCTEJAS, GSCOLIN,
+          // MLIBEATRIZ: broker + nombre). Llega sobre todo en extranjeros una
+          // vez la orden se marca, asi que a media jornada esta casi vacia y
+          // se va llenando al cierre. Sirve para agrupar al reportar
+          // (Sergio, 13-oct).
+          trailer: headers['Trailer'] ? String(row.getCell(headers['Trailer']).value || '').trim() : '',
         };
         n++;
       });
@@ -9166,21 +9172,30 @@ function renderFidessaTradesPanel(){
       </span>
     </div>
     <div class="blotter-wrap" style="overflow-x:auto;">
-      <table style="width:100%;min-width:1050px;table-layout:fixed;"><thead><tr>
+      <!-- Anchos medidos contra el contenido real, no a ojo: el dato más largo
+           de Client/Book es "BANCO BTG PACTUAL CAYMAN BRANCH" (31 caracteres),
+           que es lo que tenía esa columna en 27%. Como la celda envuelve
+           (white-space:normal), se aprieta a 19% y solo esa cae en dos líneas;
+           las demás —ninguna pasa de 15— quedan en una. Parent Order ID son 16
+           caracteres mono y baja de 16% a 13%. Lo que se libera paga la
+           columna de Trailer (Sergio, 13-oct). -->
+      <table style="width:100%;min-width:1120px;table-layout:fixed;"><thead><tr>
         <th style="width:32px;text-align:center;"><input type="checkbox" id="chkTodosTrades" ${filas.length>0 && filas.every(f=>_tradesConsolidar.has(f.folioOrden))?'checked':''} onclick="toggleTodosTrades(this.checked)" title="Seleccionar todas las órdenes"></th>
-        ${thOrdenable('fidessaTrades','folioOrden','Parent Order ID',null,'16%')}
-        ${thOrdenable('fidessaTrades','notes','Account',null,'12%')}
-        ${thOrdenable('fidessaTrades','grupo','Client/Book',null,'27%')}
-        ${thOrdenable('fidessaTrades','lado','Lado',null,'8%')}
-        ${thOrdenable('fidessaTrades','security','Security',null,'12%')}
-        ${thOrdenable('fidessaTrades','qtyDone','Qty Done','num','11%')}
-        ${thOrdenable('fidessaTrades','avgPx','Avg Px','num','11%')}
-        ${thOrdenable('fidessaTrades','_estadoReporte','Reportado',null,'13%')}
+        ${thOrdenable('fidessaTrades','folioOrden','Parent Order ID',null,'13%')}
+        ${thOrdenable('fidessaTrades','notes','Account',null,'11%')}
+        ${thOrdenable('fidessaTrades','trailer','Trailer',null,'10%')}
+        ${thOrdenable('fidessaTrades','grupo','Client/Book',null,'19%')}
+        ${thOrdenable('fidessaTrades','lado','Lado',null,'7%')}
+        ${thOrdenable('fidessaTrades','security','Security',null,'11%')}
+        ${thOrdenable('fidessaTrades','qtyDone','Qty Done','num','10%')}
+        ${thOrdenable('fidessaTrades','avgPx','Avg Px','num','9%')}
+        ${thOrdenable('fidessaTrades','_estadoReporte','Reportado',null,'10%')}
       </tr></thead>
       <tbody>${filas.map(f=>`<tr class="${_tradesConsolidar.has(f.folioOrden)?'row-sel':''}">
         <td style="text-align:center;"><input type="checkbox" ${_tradesConsolidar.has(f.folioOrden)?'checked':''} onclick="toggleTradeConsolidar('${(f.folioOrden||'').replace(/'/g,"\\'")}')"></td>
         <td class="mono-id">${f.folioOrden}</td>
         <td class="mono-id" style="font-size:11px;" title="Notes de Fidessa. Es el mismo dato que el Account de EMSX cuando la orden llega de allá.">${f.notes || '—'}</td>
+        <td class="mono-id" style="font-size:11px;${f.trailer?'':'color:var(--text-2);'}" title="Trailer de Fidessa: el trader que mandó la orden (broker + nombre). Se llena al marcar la orden, sobre todo en extranjeros, así que a media jornada muchas van vacías.">${f.trailer || '—'}</td>
         <td style="cursor:pointer;text-decoration:underline dotted;white-space:normal;line-height:1.3;" onclick="filtrarPorClienteRVL('${(f.grupo||'').replace(/'/g,"\\'")}')" title="Filtrar por este cliente">${f.grupo||'—'}</td>
         <td>${f.lado}</td>
         <td class="mono-id">${nemoCanonico(f.security, 'fidessa')}</td>
@@ -9990,9 +10005,28 @@ async function guardarFidessaTradesSupabase(mapa){
     folio_orden: String(folioOrden), grupo: t.grupo, lado: t.lado,
     security: t.security, qty_done: t.qtyDone, avg_px: t.avgPx,
     notes: String(t.notes || ''),
+    // El `trailer` se guarda por la misma razón que el `notes`: se llena al
+    // cierre de la jornada y sin esto el refresco de la página lo borraba
+    // justo cuando ya tenía datos (Sergio, 13-oct). Requiere la columna
+    // `trailer` en fidessa_trades — ver agregar_trailer_fidessa.sql.
+    trailer: String(t.trailer || ''),
   }));
   if(filas.length===0) return;
-  await guardarEnLotesSupabase('fidessa_trades', filas);
+  try{
+    await guardarEnLotesSupabase('fidessa_trades', filas);
+  }catch(e){
+    // Si todavía no se corrió el SQL, la columna no existe y PostgREST rechaza
+    // el lote ENTERO. Antes que perder el guardado de los trades —que es lo
+    // importante— se reintenta sin el campo nuevo y se avisa por consola.
+    if(/trailer/i.test(String(e && e.message))){
+      console.warn('fidessa_trades no tiene la columna `trailer`: se guarda sin ella. ' +
+                   'Corre agregar_trailer_fidessa.sql para conservarla al recargar.');
+      await guardarEnLotesSupabase('fidessa_trades',
+        filas.map(f => { const { trailer, ...resto } = f; return resto; }));
+    }else{
+      throw e;
+    }
+  }
 }
 
 async function guardarFidessaFoliosSupabase(filas){
@@ -10033,7 +10067,7 @@ async function cargarFidessaDesdeSupabase(){
     const trades = await supaFetchTodo('fidessa_trades', `actualizado_en=gte.${inicioHoy}`);
     if(trades.length > 0){
       const mapa = {};
-      trades.forEach(t => { mapa[t.folio_orden] = { grupo: t.grupo, lado: t.lado, security: t.security, qtyDone: Number(t.qty_done)||0, avgPx: Number(t.avg_px)||0, notes: t.notes||'' }; });
+      trades.forEach(t => { mapa[t.folio_orden] = { grupo: t.grupo, lado: t.lado, security: t.security, qtyDone: Number(t.qty_done)||0, avgPx: Number(t.avg_px)||0, notes: t.notes||'', trailer: t.trailer||'' }; });
       _fidessaTradesRaw = mapa;
       renderFidessaTradesPanel();
     }
@@ -24688,7 +24722,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-13 18:55 UTC · v202';
+const BUILD_ID = '2026-10-13 19:35 UTC · v203';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
