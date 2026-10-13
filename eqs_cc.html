@@ -2318,6 +2318,24 @@
       </div>
     </div>
 
+    <!-- La carpeta compartida del equipo: la biblioteca de Teams que
+         sincroniza OneDrive. Esta prueba se corre UNA vez al configurar cada
+         PC, antes de que el app empiece a mandar archivos alla. Si algo esta
+         mal, se sabe en un minuto (Sergio, 13-oct). -->
+    <div class="section-label" style="margin-top:16px;">Carpeta compartida</div>
+    <div style="padding:0 24px 20px;">
+      <div class="field-note" style="margin-bottom:8px;">
+        Escribe un archivo de prueba en la carpeta del equipo y te dice dónde quedó.
+        Córrela una vez en cada PC que vaya a correr el runner, después de configurar
+        <b style="font-family:var(--mono);">CARPETA_EQS</b> en el <b style="font-family:var(--mono);">.env</b>.
+      </div>
+      <button class="btn small" id="btnProbarCarpeta" onclick="probarCarpetaEquipo(this)">Probar carpeta del equipo</button>
+      <pre id="probarCarpetaResultado" style="display:none;margin-top:10px;white-space:pre-wrap;
+           font-family:var(--mono);font-size:11.5px;line-height:1.5;background:var(--bg-2);
+           color:var(--text-1);border:1px solid var(--border-strong);border-radius:6px;
+           padding:11px 13px;max-height:320px;overflow:auto;"></pre>
+    </div>
+
     <div class="section-label">Canasta MLI</div>
     <div style="padding:0 24px 8px;">
       <div class="field-note" style="margin-bottom:6px;">Pega el correo completo de Lucas (con Entity / Stocks / FX y la tabla). Las líneas en 0.00 se descartan solas.</div>
@@ -13168,6 +13186,22 @@ async function pedirAlPC(tipo, btn, imagen, segundos, datos){
         '¿Está corriendo runner_eqs.py? Es la ventana que hay que dejar abierta, ' +
         'igual que el emsx_bridge.');
   return false;
+}
+
+// Prueba de la carpeta compartida del equipo. El runner escribe un archivo en
+// la biblioteca de Teams y devuelve la ruta REAL donde aterrizo, que es lo
+// unico que confirma de verdad que quedo bien configurada: la ruta puede
+// existir y aun asi no dejar escribir (Sergio, 13-oct).
+async function probarCarpetaEquipo(btn){
+  const caja = document.getElementById('probarCarpetaResultado');
+  caja.style.display = 'none';
+  const r = await pedirAlPC('PROBAR_CARPETA', btn, null, 45);
+  if(r === false) return;                  // pedirAlPC ya explico que paso
+  const texto = typeof r === 'string' ? _unEsc(r) : String(r || '');
+  const fallo = /FALTA|no existe|No encuentro|Falta CARPETA_EQS/.test(texto);
+  caja.textContent = texto || 'El PC contestó, pero sin detalle.';
+  caja.style.borderColor = fallo ? 'var(--amber,#f59e0b)' : 'var(--buy,#22c55e)';
+  caja.style.display = '';
 }
 
 async function traerCierreBloomberg(btn){
@@ -24722,7 +24756,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-13 19:35 UTC · v203';
+const BUILD_ID = '2026-10-13 20:40 UTC · v204';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
