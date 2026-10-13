@@ -619,6 +619,22 @@
   .btn.small{padding:5px 10px;font-size:11px;}
   .btn.teal{background:var(--teal);border-color:var(--teal);color:#fff;}
   .btn.teal:hover{background:#26aab0;}
+  /* Los campos de las tablas de Ayudas (maestro de grupos, maestro de especies)
+     no viven dentro de un .field, así que caían al blanco por defecto del
+     navegador y la fila se veía de otro mundo. Mismo tratamiento que los demás
+     campos del app (Sergio, 13-oct). */
+  .tablaMaestro input, .tablaMaestro select{
+    background:var(--bg-3); color:var(--text-0);
+    border:1px solid var(--border-strong); border-radius:5px;
+    font-family:var(--mono); font-size:12px; padding:5px 7px;
+  }
+  .tablaMaestro input:focus, .tablaMaestro select:focus{
+    outline:none; border-color:var(--accent,#818cf8);
+  }
+  .tablaMaestro input:disabled, .tablaMaestro select:disabled{
+    background:var(--bg-2); color:var(--text-2); cursor:not-allowed;
+  }
+  .tablaMaestro option{ background:var(--bg-3); color:var(--text-0); }
   /* La fila de abajo del cuadro de FX lleva TRES botones donde RVL y RVI
      llevan uno. En pantalla ancha caben de sobra; en una angosta el texto se
      partía en dos líneas y el botón de FX quedaba 14px más arriba que el de
@@ -1562,6 +1578,23 @@
     <div class="edit-actions" style="margin-top:16px;">
       <button class="btn ghost" onclick="document.getElementById('modalDescuadre').style.display='none';">Cancelar generación</button>
       <button class="btn primary" id="btnContinuarDescuadre" style="background:#c0392b;border-color:#c0392b;">Continuar de todos modos</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirmación de la marca bloque/pantalla para clientes de tarifa variable.
+     Fidessa no trae la marca y el default es la tarifa barata, así que un
+     bloque sin marcar se cobra de menos sin que nada chille: cliente y COR
+     quedan iguales porque los dos leen el mismo número equivocado. No bloquea,
+     solo pone el monto al frente antes de generar (Sergio, 13-oct). -->
+<div class="edit-overlay" id="modalMarca" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(760px,94vw);margin-top:6vh;max-height:86vh;overflow:auto;">
+    <h3 style="font-size:15px;">Comisión por reportar — <span id="marcaCliente"></span></h3>
+    <div class="field-note" style="margin-bottom:12px;">Revisa la marca antes de generar. Si algún folio quedó en Pantalla y era Bloque, cancela y márcalo en la tabla de folios: el archivo del cliente y el COR salen con lo que diga esta pantalla.</div>
+    <div id="marcaBody"></div>
+    <div class="edit-actions" style="margin-top:16px;">
+      <button class="btn ghost" onclick="document.getElementById('modalMarca').style.display='none';">Cancelar y revisar marcas</button>
+      <button class="btn primary" id="btnContinuarMarca">Confirmar y generar</button>
     </div>
   </div>
 </div>
@@ -14812,7 +14845,7 @@ function renderMaestroEspecies(){
                      // tabla se vuelve lenta y el buscador es lo que se usa.
   const vista = lista.slice(0, MAX);
   cont.innerHTML = `
-    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+    <table class="tablaMaestro" style="width:100%;border-collapse:collapse;font-size:12px;">
       <tr style="opacity:.6;font-size:10px;letter-spacing:.3px;position:sticky;top:0;
                  background:var(--bg-1,#0f1116);">
         <th style="text-align:left;padding:5px 8px;">NEMO</th>
@@ -14943,7 +14976,7 @@ function renderMaestroGrupos(){
   }
   const dis = editable ? '' : ' disabled';
   cont.innerHTML = `
-    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+    <table class="tablaMaestro" style="width:100%;border-collapse:collapse;font-size:12px;">
       <tr style="opacity:.6;font-size:10px;letter-spacing:.3px;position:sticky;top:0;
                  background:var(--bg-1,#0f1116);">
         <th style="text-align:left;padding:5px 8px;">GRUPO</th>
@@ -15422,7 +15455,10 @@ async function descargarPlanillaCOP(){
       .forEach((v,i)=>{ ws.getCell(r, i+2).value = v; });
     ws.getCell(r,6).numFmt = '#,##0';
     ['G','H','I','K','L'].forEach(c=>{ ws.getCell(`${c}${r}`).numFmt = '#,##0.00'; });
-    ws.getCell(r,10).numFmt = '0.00000000';
+    // Comisión %: se guarda como fracción (0,00055) y se MUESTRA como 0,055%.
+    // Antes el formato era '0.00000000' y en pantalla salía 0,00055000, que
+    // hay que traducir mentalmente cada vez (Sergio, 13-oct).
+    ws.getCell(r,10).numFmt = '0.000%';
     ['O','P'].forEach(c=>{ ws.getCell(`${c}${r}`).numFmt = 'dd/mm/yyyy'; });
     r++;
   });
@@ -18425,21 +18461,15 @@ function portafolioDeFolio(f){
   return f.portafolio || f.account || '';
 }
 
-function calcularComisionEfectiva(cliente, folios){
-  // Mezcla ponderada de comisión según folios bloque/pantalla seleccionados,
-  // usando las tarifas del selector de "Comisión del día" (no la tarifa fija
-  // por cliente — esa quedó solo como referencia/respaldo si el selector no
-  // se ha tocado).
-  const totalQty = folios.reduce((s,f)=>s+f.cantidad,0);
-  if(totalQty===0) return 0;
-  const tarifaBloque = leerComisionSeleccionada('Cruce');
-  const tarifaPantalla = leerComisionSeleccionada('Pantalla');
-  const sumaComision = folios.reduce((s,f)=>{
-    const tarifa = f.marca==='bloque' ? tarifaBloque : tarifaPantalla;
-    return s + f.cantidad*tarifa;
-  }, 0);
-  return sumaComision/totalQty; // tarifa efectiva ponderada
-}
+// Acá vivía `calcularComisionEfectiva`, que leía SOLO los dos selectores de
+// "Comisión del día": sin el override por especie (ECOPETROL y PFCIBEST al
+// 0,08% incluso en bloque), sin la tarifa de la ficha y sin el `comBloquePct`
+// que se guarda al marcar el folio. Se calculaba en generarReporte y su
+// resultado no se leía en ningún lado — código muerto de una versión anterior.
+// Se borró en vez de dejarla ahí pareciendo la función correcta: el día que
+// alguien la volviera a enchufar, esos overrides se perdían en silencio. La
+// única función que calcula la comisión de un folio es `comisionFolioPct`
+// (Sergio, 13-oct).
 
 function recalcularTodo(){
   const cliente = document.getElementById('filtroCliente').value;
@@ -18613,6 +18643,120 @@ function _porvCopiaRespaldo(txt, listo){
 // ----------------------------------------------------------------------
 // Generación de reportes
 // ----------------------------------------------------------------------
+
+// La marca bloque/pantalla es el ÚNICO dato de la cadena sin segunda fuente:
+// Fidessa no la trae (entra todo como 'pantalla' por defecto) y la pone la mesa
+// a mano. Y el default es la tarifa BARATA: un bloque sin marcar sale al 0,08%
+// en vez del 0,15%, se le manda así al cliente, se guarda en reportes_generados
+// y la planilla lo copia — el arqueo cliente vs COR da perfecto porque los dos
+// lados leen el mismo número equivocado. El 13-oct, con los 10 folios de
+// PROTECCIÓN en pantalla, la diferencia eran $1.370.029 en un día: 40% de la
+// comisión del cliente. Esto no detecta el error (el app no puede saber la
+// verdad), solo obliga a que alguien MIRE el número antes de que salga
+// (Sergio, 13-oct).
+function _resumenMarcaRVL(cliente, folios){
+  // Solo donde la marca mueve el número: clientes de tarifa variable por
+  // bloque. En los de tarifa única bloque y pantalla dan lo mismo y el
+  // resumen sería ruido puro.
+  const norm = t => String(t||'').toUpperCase().trim();
+  const g = (typeof GRUPO_COMISIONES_DB !== 'undefined' ? GRUPO_COMISIONES_DB : [])
+    .find(x => normalizarGrupo(x.grupo) === normalizarGrupo(cliente) ||
+               norm(x.book) === norm(cliente) || norm(x.grupo) === norm(cliente));
+  if(!g || !g.variable || !g.bloque) return null;
+
+  const porEsp = {};
+  let comoEsta = 0, todoBloque = 0, todoPantalla = 0, nBloque = 0, nPantalla = 0;
+  (folios||[]).forEach(f=>{
+    const bruto = (Number(f.cantidad)||0) * (Number(f.precio)||0);
+    if(!bruto) return;
+    if(f.marca === 'bloque') nBloque++; else nPantalla++;
+    // comisionFolioPct es LA MISMA función que usa el reporte. No se recalcula
+    // por otro lado: si un día cambia el override por especie, este resumen
+    // cambia con él.
+    comoEsta     += bruto * (comisionFolioPct(cliente, f) / 100);
+    todoBloque   += bruto * (comisionFolioPct(cliente, Object.assign({}, f, {marca:'bloque'}))   / 100);
+    todoPantalla += bruto * (comisionFolioPct(cliente, Object.assign({}, f, {marca:'pantalla'})) / 100);
+    const k = f.especie || '—';
+    const e = porEsp[k] || (porEsp[k] = {esp:k, bruto:0, bloque:0, pantalla:0, nB:0, nP:0});
+    e.bruto    += bruto;
+    e.bloque   += bruto * (comisionFolioPct(cliente, Object.assign({}, f, {marca:'bloque'}))   / 100);
+    e.pantalla += bruto * (comisionFolioPct(cliente, Object.assign({}, f, {marca:'pantalla'})) / 100);
+    if(f.marca === 'bloque') e.nB++; else e.nP++;
+  });
+  if(nBloque + nPantalla === 0) return null;
+  return { cliente, nBloque, nPantalla, comoEsta, todoBloque, todoPantalla,
+           especies: Object.values(porEsp).sort((a,b)=>b.bruto-a.bruto) };
+}
+
+// Resumen de lo que está por salir, con el número al que se renuncia si la
+// marca está mal. No bloquea: confirma.
+function mostrarResumenMarca(res, onContinuar){
+  const $ = n => '$' + Number(n||0).toLocaleString('es-CO',{maximumFractionDigits:0});
+  const difB = res.todoBloque   - res.comoEsta;   // lo que falta si eran bloque
+  const difP = res.comoEsta - res.todoPantalla;   // lo cobrado de más si eran pantalla
+  const total = res.nBloque + res.nPantalla;
+
+  // Los colores salen de las variables del tema, no de literales claros: este
+  // modal vive sobre el fondo oscuro del app y la franja del resumen —que es
+  // justo el número que se quiere que alguien mire— quedaba gris sobre gris,
+  // ilegible (visto en Chromium, 13-oct).
+  let cab = `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;
+      background:var(--bg-2);border:1px solid var(--border-strong);border-radius:8px;
+      padding:11px 14px;margin-bottom:12px;font-size:12.5px;color:var(--text-1);">
+    <div><b style="color:var(--text-0);">${total}</b> folio${total!==1?'s':''}</div>
+    <div><b style="color:var(--text-0);">${res.nBloque}</b> bloque ·
+         <b style="color:var(--text-0);">${res.nPantalla}</b> pantalla</div>
+    <div style="margin-left:auto;">Comisión a reportar:
+      <b style="font-size:15px;color:var(--text-0);">${$(res.comoEsta)}</b></div></div>`;
+
+  // El aviso solo aparece cuando de verdad hay plata en juego: si todas las
+  // especies cobran igual en bloque y pantalla, no hay nada que advertir.
+  if(difB > 0.5){
+    cab += `<div style="background:rgba(245,158,11,.10);border-left:3px solid var(--amber,#f59e0b);
+        border-radius:6px;padding:10px 13px;margin-bottom:12px;font-size:12.5px;color:var(--text-1);">
+      Si ${res.nPantalla === total ? 'estos folios fueran bloque' : 'los de pantalla fueran bloque'},
+      la comisión sería <b>${$(res.todoBloque)}</b> — <b>${$(difB)} más</b>.
+      Fidessa no distingue bloque de pantalla: la marca la pone la mesa.</div>`;
+  }else if(difP > 0.5){
+    cab += `<div style="background:rgba(34,197,94,.10);border-left:3px solid var(--buy,#22c55e);
+        border-radius:6px;padding:10px 13px;margin-bottom:12px;font-size:12.5px;color:var(--text-1);">
+      Todo marcado al tope. En pantalla serían ${$(res.todoPantalla)} — ${$(difP)} menos.</div>`;
+  }else{
+    cab += `<div class="field-note" style="margin-bottom:12px;font-size:12.5px;">
+      En estas especies bloque y pantalla cobran igual: la marca no mueve la comisión.</div>`;
+  }
+
+  let html = cab + `<table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+    <thead><tr style="text-align:left;color:var(--text-2);border-bottom:1px solid var(--border-strong);">
+    <th style="padding:6px 8px;">Especie</th><th style="text-align:center;">Marca</th>
+    <th style="text-align:right;">Bruto</th>
+    <th style="text-align:right;">Pantalla</th><th style="text-align:right;">Bloque</th>
+    <th style="text-align:right;">Dif.</th></tr></thead><tbody>`;
+  res.especies.forEach(e=>{
+    const dif = e.bloque - e.pantalla;
+    const marca = e.nB && e.nP ? `${e.nB}B / ${e.nP}P` : (e.nB ? 'Bloque' : 'Pantalla');
+    // La columna que MANDA (la de la marca puesta) va en blanco fuerte; la otra
+    // apagada, para que se lea de un golpe cuál es el numero que sale.
+    html += `<tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:6px 8px;font-weight:600;color:var(--text-0);">${e.esp}</td>
+      <td style="text-align:center;font-weight:600;color:${e.nB?'var(--accent,#818cf8)':'var(--text-2)'};">${marca}</td>
+      <td style="text-align:right;color:var(--text-1);">${$(e.bruto)}</td>
+      <td style="text-align:right;color:${e.nB?'var(--text-2)':'var(--text-0)'};${e.nB?'':'font-weight:700;'}">${$(e.pantalla)}</td>
+      <td style="text-align:right;color:${e.nB?'var(--text-0)':'var(--text-2)'};${e.nB?'font-weight:700;':''}">${$(e.bloque)}</td>
+      <td style="text-align:right;color:${dif>0.5?'var(--amber,#f59e0b)':'var(--text-2)'};${dif>0.5?'font-weight:700;':''}">${dif>0.5?$(dif):'—'}</td></tr>`;
+  });
+  html += `</tbody></table>`;
+
+  document.getElementById('marcaBody').innerHTML = html;
+  document.getElementById('marcaCliente').textContent = res.cliente;
+  const btn = document.getElementById('btnContinuarMarca');
+  btn.onclick = () => {
+    document.getElementById('modalMarca').style.display = 'none';
+    onContinuar && onContinuar();
+  };
+  document.getElementById('modalMarca').style.display = 'flex';
+}
+
 // Muestra la alerta de descuadre con el detalle por especie+lado. onContinuar
 // se llama si Sergio decide seguir (trade raro fuera de Fidessa).
 function mostrarAlertaDescuadre(val, onContinuar){
@@ -19047,9 +19191,20 @@ async function generarReporte(){
   }
   window._andesForzarContinuar = false;
 
+  // Confirmación de la marca bloque/pantalla. Solo para los de tarifa variable
+  // por bloque (`_resumenMarcaRVL` devuelve null para los demás, y entonces
+  // esto no estorba). Se pasa una sola vez por intento, como el descuadre.
+  if(!window._marcaConfirmada){
+    const resMarca = _resumenMarcaRVL(cliente, seleccionados);
+    if(resMarca){
+      mostrarResumenMarca(resMarca, ()=>{ window._marcaConfirmada = true; generarReporte(); });
+      return;
+    }
+  }
+  window._marcaConfirmada = false;
+
   const totalQty = seleccionados.reduce((s,f)=>s+f.cantidad,0);
   const ppp = seleccionados.reduce((s,f)=>s+f.cantidad*f.precio,0)/totalQty;
-  const comisionEfectiva = calcularComisionEfectiva(cliente, seleccionados);
   const ports = getClienteDB(cliente).portafolios;
   const fechaReg = document.getElementById('fechaRegistro').value;
   const fechaCum = document.getElementById('fechaCumplimiento').value;
@@ -24533,7 +24688,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-05 20:50 UTC · v201';
+const BUILD_ID = '2026-10-13 18:55 UTC · v202';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
