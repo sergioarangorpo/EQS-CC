@@ -1604,6 +1604,15 @@
 <!-- Se usan las clases que EXISTEN en el CSS (edit-overlay / edit-modal): con
      modal-backdrop, que no existe, el modal se abría sin estilos y no se veía
      (Sergio, 24-sep). -->
+<!-- ===================================================================
+     ALLOCATION DEL CUSTODIO (Protección y similares)
+     -------------------------------------------------------------------
+     Protección manda UN cuadro con todo: portafolio, lado, ISIN, ticker,
+     cantidad, precio, comisión, neto y las dos fechas. No hay que pegar dos
+     cuadros como en la canasta — el de ellos ya trae las dos patas.
+     Se interpreta, se CONTRASTA contra lo nuestro línea por línea, y solo
+     después se guarda (Sergio, 14-oct).
+=================================================================== -->
 <div id="modalCanastaRVI" class="edit-overlay" style="align-items:flex-start;">
   <div class="edit-modal" style="width:min(1100px,96vw);margin-top:5vh;">
     <h3 style="font-size:15px;display:flex;justify-content:space-between;align-items:center;">
@@ -1635,6 +1644,36 @@
         <button class="btn small purple" onclick="interpretarCanastaRVI()">Interpretar y validar</button>
       </div>
       <div id="canastaRVIResultado" style="margin-top:12px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Allocation COMPLETO del cliente: un solo cuadro con todo (Protección) -->
+<div id="modalAllocCustodio" class="edit-overlay" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(1180px,96vw);margin-top:4vh;max-height:90vh;overflow:auto;">
+    <h3 style="font-size:15px;display:flex;justify-content:space-between;align-items:center;">
+      <span>Allocation completo del cliente — un solo cuadro</span>
+      <button class="btn small ghost" onclick="cerrarAllocCustodio()">Cerrar</button>
+    </h3>
+    <div class="field-note" style="margin-bottom:10px;">
+      Selecciona el cuadro entero <b>con los encabezados</b>, copia y pega aquí. Tal cual:
+      no hace falta quitar los títulos partidos en dos líneas, ni las cantidades
+      negativas de las ventas, ni los espacios de los tickers.
+      Las columnas se reconocen <b>por su nombre</b>, no por su posición.
+      <br>Se valida contra tus líneas de EMSX antes de guardar nada.
+    </div>
+    <textarea id="allocCustodioTexto" rows="10" placeholder="Status	Trader	Cpty	Portfolio	Transx	ISIN	Ticker	Quantity	Price&#10;(8dps)	Commission	Net&#10;Money	Trade&#10;Date	Settle&#10;Date ...&#10;Executed	ASGA	CREDICOR_CO_CDB	VOL-EQINT	BUY	IE00B44Z5B48	ACWD LN 	9,028.00 	326.60560000 	36.11 	-2,948,631.47	14-oct-2026	16-oct-2026	USD	-21623	SB44Z5B45"
+      style="width:100%;font-family:var(--mono,monospace);font-size:11.5px;
+             background:var(--bg-2,#0f1116);color:var(--text-1,#e5e7eb);
+             border:1px solid var(--border,#2a2f3a);border-radius:6px;padding:8px;"></textarea>
+    <div style="margin-top:10px;">
+      <button class="btn small purple" onclick="interpretarAllocCustodio()">Interpretar y validar</button>
+    </div>
+    <div id="allocCustodioResultado" style="margin-top:12px;"></div>
+    <div class="edit-actions" style="margin-top:14px;">
+      <button class="btn ghost" onclick="cerrarAllocCustodio()">Cerrar</button>
+      <button class="btn primary" id="btnGuardarAllocCustodio" style="display:none;"
+              onclick="aplicarAllocCustodio()">Guardar en el histórico</button>
     </div>
   </div>
 </div>
@@ -2118,7 +2157,12 @@
       <button class="btn purple" style="width:100%;margin-top:8px;font-weight:700;"
               onclick="abrirCanastaRVI()">
         📋 Pegar canasta (ejecución + allocation)</button>
-      <div class="footer-note">Guarda la operación en el <b>histórico de hoy</b>. Luego filtra por cliente en el histórico, marca las que vas a enviar y usa <b>Exportar Trade Confirmation</b> arriba. (PORVENIR usa proforma extendida.)</div>
+      <!-- Un solo cuadro con TODO, como lo manda Protección: portafolio,
+           lado, ISIN, ticker, cantidad, precio, comisión y neto por línea.
+           No hay que pegar dos cuadros ni repartir nada a mano (14-oct). -->
+      <button class="btn purple" style="width:100%;margin-top:6px;font-weight:700;"
+              onclick="abrirAllocCustodio()">
+        📥 Pegar allocation completo del cliente (un solo cuadro)</button>
         </div>
       </div>
 
@@ -17691,6 +17735,385 @@ let _allocInterpretadoRVI = null;
 // =====================================================================
 let _canastaRVI = null;
 
+// =====================================================================
+// ALLOCATION COMPLETO DEL CLIENTE — un solo cuadro con todo
+// ---------------------------------------------------------------------
+// Protección manda, para cada operación, un cuadro donde cada fila ya trae
+// portafolio, lado, ISIN, ticker, cantidad, precio, comisión y neto. No hay
+// que repartir nada: el reparto viene hecho. Lo único que hacemos es
+// replicarlo y arquearlo contra nuestras líneas de EMSX.
+//
+// Las columnas se leen POR SU NOMBRE, no por su posición: si el custodio
+// agrega o mueve una columna, esto sigue funcionando. Un parser por posición
+// se rompe el día que cambien el reporte y nadie se da cuenta hasta que el
+// arqueo no cuadra.
+//
+// Tres cosas del formato real que hay que tragar sin pedirle nada al usuario:
+//   · Los encabezados vienen PARTIDOS en varias líneas físicas, porque las
+//     celdas traen saltos ("Price\n(8dps)", "Net\nMoney", "Trade\nDate").
+//   · Las cantidades de las VENTAS vienen en negativo (-1.761,00).
+//   · Los tickers traen espacios al final ("ACWD LN ", "LCTU ").
+// (Sergio, 14-oct)
+// =====================================================================
+let _allocCustodio = null;
+
+// Un número de un cuadro ajeno. Aguanta "9,028.00", "-2,948,631.47",
+// "326.60560000", "(1.234,56)" y el formato europeo, decidiendo cuál es el
+// separador decimal por cuál aparece de último.
+function _numAlloc(v){
+  let t = String(v == null ? '' : v).trim().replace(/\s+/g,'').replace(/[$€]/g,'');
+  if(!t) return null;
+  const neg = /^\(.*\)$/.test(t) || t.indexOf('-') === 0;
+  t = t.replace(/[()+\-]/g,'');
+  const coma = t.lastIndexOf(','), punto = t.lastIndexOf('.');
+  if(coma >= 0 && punto >= 0){
+    t = coma > punto ? t.replace(/\./g,'').replace(',','.') : t.replace(/,/g,'');
+  }else if(coma >= 0){
+    // Solo comas: son miles si todos los grupos de después tienen 3 dígitos.
+    const trozos = t.split(',');
+    t = trozos.slice(1).every(p => p.length === 3) ? t.replace(/,/g,'') : t.replace(',','.');
+  }
+  const n = parseFloat(t);
+  if(!isFinite(n)) return null;
+  return neg ? -n : n;
+}
+
+const _MESES_ALLOC = { ene:0,jan:0, feb:1, mar:2, abr:3,apr:3, may:4, jun:5,
+  jul:6, ago:7,aug:7, sep:8,sept:8, oct:9, nov:10, dic:11,dec:11 };
+
+// "14-oct-2026" -> "2026-10-14". También acepta ISO y dd/mm/aaaa.
+function _fechaAlloc(v){
+  const t = String(v||'').trim();
+  if(!t) return null;
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = t.match(/^(\d{1,2})[-\/\s]([A-Za-zÁÉÍÓÚáéíóú]{3,10})[-\/\s](\d{2,4})$/);
+  if(m){
+    const mes = _MESES_ALLOC[m[2].toLowerCase().slice(0,4)] ?? _MESES_ALLOC[m[2].toLowerCase().slice(0,3)];
+    if(mes === undefined) return null;
+    let a = Number(m[3]); if(a < 100) a += 2000;
+    return `${a}-${String(mes+1).padStart(2,'0')}-${String(Number(m[1])).padStart(2,'0')}`;
+  }
+  m = t.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})$/);
+  if(m){
+    let a = Number(m[3]); if(a < 100) a += 2000;
+    return `${a}-${String(Number(m[2])).padStart(2,'0')}-${String(Number(m[1])).padStart(2,'0')}`;
+  }
+  return null;
+}
+
+// Qué columna es cuál. Se busca por palabra, en inglés y español.
+const _COLS_ALLOC = [
+  ['portafolio', /portfolio|portafolio|account|cuenta|fondo/],
+  ['lado',       /transx|^side$|lado|buy.?sell|compra.?venta|operacion|operación/],
+  ['isin',       /isin/],
+  ['ticker',     /ticker|security|symbol|nemo|especie/],
+  ['qty',        /quantity|^qty$|units|cantidad|nominal/],
+  ['precio',     /price|precio/],
+  ['comision',   /commission|comisi/],
+  ['neto',       /net.*(money|amount)|^net$|neto/],
+  ['fechaOp',    /trade.*date|fecha.*oper/],
+  ['fechaCum',   /settle.*date|fecha.*(cumpl|liquid)/],
+  ['estado',     /^status$|estado/],
+  ['moneda',     /settle.*ccy|currency|moneda|divisa/],
+];
+
+// Devuelve { filas, avisos, mapa } o lanza con un motivo entendible.
+function parsearAllocCustodio(texto){
+  const crudas = String(texto||'').split(/\r?\n/).filter(l => l.trim() !== '');
+  if(!crudas.length) throw new Error('No pegaste nada.');
+
+  // La primera línea que trae un ISIN es la primera fila de DATOS. Todo lo de
+  // arriba es encabezado, por partido que venga. Buscarlo por el ISIN y no por
+  // la palabra "Status" hace que no dependa de cómo titule cada custodio.
+  const esISIN = l => /\b[A-Z]{2}[A-Z0-9]{9}\d\b/.test(l);
+  const iDatos = crudas.findIndex(esISIN);
+  if(iDatos < 0) throw new Error('No encontré ninguna fila con ISIN. ¿Pegaste el cuadro completo?');
+  if(iDatos === 0) throw new Error('Faltan los encabezados: copia el cuadro INCLUYENDO la fila de títulos.');
+
+  // Los encabezados partidos se vuelven a unir con ESPACIO, no con tabulador:
+  // el salto está DENTRO de una celda ("Price" + "(8dps)"), no entre celdas.
+  const cabecera = crudas.slice(0, iDatos).join(' ').split('\t').map(h => h.trim());
+  const norm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  const mapa = {};
+  _COLS_ALLOC.forEach(([clave, re])=>{
+    const i = cabecera.findIndex(h => re.test(norm(h)));
+    if(i >= 0) mapa[clave] = i;
+  });
+
+  const faltan = ['portafolio','ticker','qty','precio'].filter(k => mapa[k] === undefined);
+  if(faltan.length) throw new Error(
+    'No reconocí estas columnas: ' + faltan.join(', ') +
+    '.\nEncabezados que leí: ' + cabecera.filter(Boolean).join(' | '));
+
+  const avisos = [], filas = [];
+  crudas.slice(iDatos).forEach((ln, i)=>{
+    const c = ln.split('\t');
+    const dame = k => (mapa[k] === undefined ? '' : String(c[mapa[k]] ?? '').trim());
+
+    // Solo lo ejecutado. Una fila cancelada o pendiente no se reporta.
+    const estado = dame('estado');
+    if(estado && !/^(executed|filled|settled|confirmed|ejecutad)/i.test(estado)){
+      avisos.push(`Fila ${i+1} con estado "${estado}": se omite.`);
+      return;
+    }
+
+    const qCrudo = _numAlloc(dame('qty'));
+    const precio = _numAlloc(dame('precio'));
+    if(qCrudo === null || precio === null || !qCrudo || !precio){
+      avisos.push(`Fila ${i+1}: sin cantidad o sin precio, se omite.`);
+      return;
+    }
+    // El lado sale de la columna; si no viene, del signo de la cantidad, que en
+    // estos cuadros es negativa en las ventas.
+    const ladoTxt = dame('lado').toUpperCase();
+    const lado = /^(S|V)/.test(ladoTxt) ? 'Sell'
+               : (/^(B|C)/.test(ladoTxt) ? 'Buy' : (qCrudo < 0 ? 'Sell' : 'Buy'));
+    if(ladoTxt && /^(S|V)/.test(ladoTxt) !== (qCrudo < 0) && qCrudo !== 0){
+      avisos.push(`Fila ${i+1} (${dame('ticker').trim()}): dice ${ladoTxt} pero la cantidad ` +
+                  `viene ${qCrudo < 0 ? 'negativa' : 'positiva'}. Se usó ${lado}.`);
+    }
+
+    filas.push({
+      portafolio: dame('portafolio'),
+      // `_tickerCanasta` y no `tickerLimpioRVI`: el cuadro trae "ACWD LN " con
+      // el código de bolsa suelto, y tickerLimpioRVI solo quita el sufijo
+      // completo " LN Equity" — dejaba "ACWD LN" y la línea no empataba con la
+      // de EMSX. Es además el mismo que usa la canasta, así que las dos
+      // entradas resuelven el ticker igual.
+      ticker: _tickerCanasta(dame('ticker')),
+      tickerCrudo: dame('ticker').trim(),
+      isin: dame('isin').toUpperCase(),
+      lado,
+      qty: Math.abs(qCrudo),
+      precio,
+      comision: (()=>{ const v = _numAlloc(dame('comision')); return v === null ? null : Math.abs(v); })(),
+      neto: (()=>{ const v = _numAlloc(dame('neto')); return v === null ? null : Math.abs(v); })(),
+      fechaOp: _fechaAlloc(dame('fechaOp')),
+      fechaCum: _fechaAlloc(dame('fechaCum')),
+      moneda: dame('moneda').toUpperCase(),
+    });
+  });
+
+  if(!filas.length) throw new Error('No pude leer ninguna fila con datos.');
+  return { filas, avisos, cabecera };
+}
+
+// Arma las líneas definitivas: cruza lo pegado contra nuestras líneas de EMSX,
+// calcula lo que el app cobraría y lo compara con lo que el cliente declaró.
+//
+// La comisión que MANDA es la del cuadro. El arqueo definitivo es lo que el
+// cliente recibe contra lo que queda en COR, así que si el cliente dice 36,11
+// se reporta 36,11 — y si nuestra cuenta da otra cosa, se avisa en vez de
+// pisarla en silencio. Ese aviso es el que habría destapado lo de los UCITS de
+// Protección el primer día (Sergio, 14-oct).
+function armarAllocCustodio(cliente, filas){
+  const cfg = clientesRVI[cliente] || {};
+  const avisos = [], lineas = [];
+  const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+
+  // Cantidades por ticker+lado, para arquear contra EMSX.
+  const porEspecie = {};
+  filas.forEach(f=>{
+    const k = f.ticker + '|' + f.lado;
+    (porEspecie[k] = porEspecie[k] || { ticker:f.ticker, lado:f.lado, qty:0, filas:[] });
+    porEspecie[k].qty += f.qty;
+    porEspecie[k].filas.push(f);
+  });
+
+  const cruces = Object.values(porEspecie).map(g=>{
+    const ln = (typeof emsxData !== 'undefined' ? emsxData : []).find(r=>
+      tickerLimpioRVI(r.especie) === g.ticker &&
+      String(r.lado||'').toUpperCase() === g.lado.toUpperCase());
+    const qEmsx = ln ? (Number(ln.qty) || Number(ln.filled) || 0) : null;
+    if(!ln){
+      avisos.push(`${g.ticker} ${g.lado}: no encontré línea de EMSX. ` +
+                  'Se usa el precio del cliente, o sea margen cero.');
+    }else if(qEmsx && Math.abs(qEmsx - g.qty) > 0.5){
+      avisos.push(`${g.ticker} ${g.lado}: el allocation suma ${g.qty.toLocaleString()} ` +
+                  `y la línea de EMSX tiene ${qEmsx.toLocaleString()}. ` +
+                  `Diferencia de ${Math.abs(qEmsx-g.qty).toLocaleString()}.`);
+    }
+    return { ...g, ln, qEmsx };
+  });
+
+  cruces.forEach(g=>{
+    g.filas.forEach(f=>{
+      const gross = f.qty * f.precio;
+      const tipo  = /^(IE|LU|GB)/i.test(f.isin) ? 'UCIT'
+                  : (g.ln && g.ln.tipo ? g.ln.tipo : 'ETF');
+
+      // Lo que el app cobraría por su cuenta, solo para comparar.
+      const calc = (typeof tarifaClienteRVI === 'function')
+        ? costoClienteRVI(cfg.nombre || cliente, tarifaClienteRVI(cfg, tipo, f.qty, gross))
+        : null;
+      const cost = (f.comision != null) ? f.comision : (calc || 0);
+      if(f.comision != null && calc != null && Math.abs(calc - f.comision) > 0.01){
+        avisos.push(`${f.ticker} ${f.portafolio}: el cliente dice comisión ` +
+          `${f.comision.toFixed(2)} y el app calcula ${calc.toFixed(2)}. ` +
+          'Se reporta la del cliente — revisa la tarifa de su ficha.');
+      }
+
+      const secFee = secFeeRVI(tipo, f.lado, gross, f.isin);
+      const net = f.lado === 'Sell' ? gross - cost - secFee : gross + cost;
+      if(f.neto != null && Math.abs(Math.abs(f.neto) - net) > 0.05){
+        avisos.push(`${f.ticker} ${f.portafolio}: el neto del cliente es ` +
+          `${f.neto.toFixed(2)} y nos da ${net.toFixed(2)}.`);
+      }
+
+      // El portafolio con el nombre de la ficha, si calza.
+      const port = (cfg.portafolios||[]).find(x=>{
+        const k = lim(f.portafolio), nn = lim(x);
+        return nn === k || nn.includes(k) || k.includes(nn);
+      }) || f.portafolio;
+      if(port === f.portafolio && (cfg.portafolios||[]).length &&
+         !(cfg.portafolios||[]).some(x=>lim(x) === lim(f.portafolio))){
+        avisos.push(`Portafolio "${f.portafolio}" no está en la ficha de ${cliente}. ` +
+                    'Se guarda tal cual.');
+      }
+
+      lineas.push({
+        id: Date.now() + Math.random(),
+        emsxId: g.ln ? g.ln.id : null,
+        cliente: cfg.nombre || cliente,
+        account: port,
+        side: f.lado,
+        symbol: f.ticker,
+        isin: f.isin,
+        tipo,
+        qty: f.qty,
+        price: f.precio,
+        gross,
+        cost, secFee, net,
+        // Igual que `aplicarCanastaRVI`: el costo del broker no se arma por
+        // esta vía. Si algún día la canasta lo calcula, esto tiene que
+        // cambiar AL TIEMPO, para que una misma operación no dé distinto
+        // según por dónde se haya metido.
+        ccsi: 0,
+        tradeDate: f.fechaOp ? parseFechaLocal(f.fechaOp) : new Date(),
+        // La fecha de cumplimiento viene EN EL CUADRO: se usa esa y no la
+        // calculada. Es la del cliente, que es contra la que se arquea.
+        settleDate: f.fechaCum ? parseFechaLocal(f.fechaCum)
+                  : settlementRVI(g.ln ? g.ln.especie : (f.ticker + ' US Equity'), f.fechaOp),
+        broker: g.ln ? (g.ln.broker || '') : '',
+        precioNuestro: g.ln ? (Number(g.ln.avgPr) || f.precio) : f.precio,
+        espejo: false, comBrokerUnit: 0,
+        trader: (document.getElementById('tc-trader-rvi')||{}).value || '',
+        _calcApp: calc, _comDeclarada: f.comision, _netoDeclarado: f.neto,
+      });
+    });
+  });
+
+  return { lineas, avisos, cruces };
+}
+
+function abrirAllocCustodio(){
+  const cli = document.getElementById('tc-cliente').value;
+  if(!cli){ alert('Selecciona primero el cliente RVI.'); return; }
+  document.getElementById('allocCustodioResultado').innerHTML = '';
+  document.getElementById('btnGuardarAllocCustodio').style.display = 'none';
+  _allocCustodio = null;
+  document.getElementById('modalAllocCustodio').style.display = 'flex';
+}
+
+function cerrarAllocCustodio(){
+  document.getElementById('modalAllocCustodio').style.display = 'none';
+}
+
+function interpretarAllocCustodio(){
+  const cont = document.getElementById('allocCustodioResultado');
+  const btn  = document.getElementById('btnGuardarAllocCustodio');
+  // Se limpia ANTES de intentar: si esto falla, no puede quedar viva la
+  // interpretación del intento anterior y guardarse por error.
+  _allocCustodio = null;
+  btn.style.display = 'none';
+  const cli = document.getElementById('tc-cliente').value;
+
+  let datos;
+  try{
+    datos = parsearAllocCustodio(document.getElementById('allocCustodioTexto').value);
+  }catch(e){
+    cont.innerHTML = `<div style="padding:10px;border:1px solid var(--sell,#ef4444);
+      border-radius:6px;color:var(--sell,#ef4444);white-space:pre-wrap;">${e.message}</div>`;
+    return;
+  }
+
+  const { lineas, avisos, cruces } = armarAllocCustodio(cli, datos.filas);
+  const todos = datos.avisos.concat(avisos);
+  _allocCustodio = { cliente: cli, lineas, avisos: todos };
+
+  const money = n => (typeof fmtMoneyRVI === 'function' ? fmtMoneyRVI(n,2)
+                     : '$' + Number(n||0).toFixed(2));
+  const fila = l => `<tr>
+      <td style="padding:3px 8px;">${l.account}</td>
+      <td style="padding:3px 8px;">${l.symbol}</td>
+      <td style="padding:3px 8px;">${l.tipo}</td>
+      <td style="padding:3px 8px;color:${l.side==='Sell'?'var(--sell,#ef4444)':'var(--buy,#22c55e)'};">${l.side}</td>
+      <td style="padding:3px 8px;text-align:right;">${l.qty.toLocaleString()}</td>
+      <td style="padding:3px 8px;text-align:right;">${l.price}</td>
+      <td style="padding:3px 8px;text-align:right;">${money(l.gross)}</td>
+      <td style="padding:3px 8px;text-align:right;">${money(l.cost)}</td>
+      <td style="padding:3px 8px;text-align:right;">${l.secFee ? money(l.secFee) : '—'}</td>
+      <td style="padding:3px 8px;text-align:right;font-weight:700;">${money(l.net)}</td>
+    </tr>`;
+
+  const arqueo = cruces.map(g=>{
+    const bien = g.qEmsx != null && Math.abs(g.qEmsx - g.qty) <= 0.5;
+    const color = bien ? 'var(--buy,#22c55e)' : 'var(--amber,#f59e0b)';
+    return `<span style="color:${color};margin-right:14px;">${bien?'✓':'!'} ${g.ticker} ${g.lado}: ` +
+           `allocation ${g.qty.toLocaleString()}` +
+           (g.qEmsx != null ? ` · EMSX ${g.qEmsx.toLocaleString()}` : ' · sin línea de EMSX') +
+           `</span>`;
+  }).join('');
+
+  cont.innerHTML = `
+    <div style="margin-bottom:8px;font-size:12px;">${arqueo}</div>
+    <div style="overflow:auto;border:1px solid var(--border,#2a2f3a);border-radius:6px;">
+    <table style="width:100%;font-size:11.5px;border-collapse:collapse;">
+      <thead><tr style="background:var(--bg-2,#0f1116);text-align:left;">
+        <th style="padding:5px 8px;">PORTAFOLIO</th><th style="padding:5px 8px;">TICKER</th>
+        <th style="padding:5px 8px;">TIPO</th><th style="padding:5px 8px;">LADO</th>
+        <th style="padding:5px 8px;text-align:right;">QTY</th>
+        <th style="padding:5px 8px;text-align:right;">PRECIO</th>
+        <th style="padding:5px 8px;text-align:right;">GROSS</th>
+        <th style="padding:5px 8px;text-align:right;">COMISIÓN</th>
+        <th style="padding:5px 8px;text-align:right;">SEC FEE</th>
+        <th style="padding:5px 8px;text-align:right;">NETO</th>
+      </tr></thead>
+      <tbody>${lineas.map(fila).join('')}</tbody>
+    </table></div>
+    ${todos.length ? `<div style="margin-top:10px;padding:8px 10px;border-radius:6px;
+        border:1px solid var(--amber,#f59e0b);color:var(--amber,#f59e0b);font-size:12px;">
+        <b>Avisos (${todos.length}):</b><br>${todos.map(a=>'· '+a).join('<br>')}</div>`
+      : `<div style="margin-top:10px;color:var(--buy,#22c55e);font-size:12px;">
+         ✓ Todo cuadra: cantidades contra EMSX, comisiones y netos contra el cuadro del cliente.</div>`}
+    <div style="margin-top:8px;font-size:12px;opacity:.8;">
+      ${lineas.length} línea(s) · comisión total ${money(lineas.reduce((s,l)=>s+l.cost,0))}
+    </div>`;
+
+  btn.style.display = '';
+  btn.textContent = `Guardar ${lineas.length} línea(s) en el histórico`;
+}
+
+async function aplicarAllocCustodio(){
+  if(!_allocCustodio || !_allocCustodio.lineas.length){
+    alert('Primero interpreta el cuadro.'); return;
+  }
+  const { lineas, avisos } = _allocCustodio;
+  if(avisos.length && !confirm('El allocation tiene avisos:\n\n' + avisos.join('\n') +
+      '\n\n¿Lo guardas de todos modos?')) return;
+
+  // Los campos de diagnóstico no van al histórico.
+  lineas.forEach(l=>{ delete l._calcApp; delete l._comDeclarada; delete l._netoDeclarado;
+                      historial.push(l); });
+  try{ await guardarHistoricoRVI(); }catch(e){ console.warn('guardar histórico:', e.message); }
+  renderHistorial();
+  if(typeof renderDashboard === 'function') renderDashboard();
+  cerrarAllocCustodio();
+  alert(`${lineas.length} línea(s) guardadas en el histórico de hoy.\n\n` +
+        'Revísalas abajo y genera el Trade Confirmation desde el histórico.');
+}
+
 // Guarda la canasta en el histórico: una operación por línea del allocation.
 // Nuestro precio sale de la línea de EMSX de esa especie; el del cliente, del
 // cuadro de ejecución (Sergio, 17-sep).
@@ -25332,7 +25755,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-14 23:05 UTC · v212';
+const BUILD_ID = '2026-10-14 23:20 UTC · v213';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
