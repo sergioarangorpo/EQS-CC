@@ -5894,7 +5894,41 @@ async function generarExcelAndes(eqLotes, fxOps){
 // BANCOLOMBIA: el reparto a portafolios lo da el cliente, comisión bloque 0.2%.
 // filasEquity = [{lado, especie, portNombre, cantidad, precio, comPct}] ya
 // repartidas por portafolio. nombreCliente + fileSlug se pasan aparte.
-async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
+// `ingles` lo pide la ficha del cliente (`reporteIngles: true`). NO es un
+// formato aparte: la proforma de RVL ya estaba casi toda en ingles (CLIENT,
+// DATE, SIDE, SYMBOL, Trade Date, Gross, Commission, Net). Lo unico en
+// espanol eran siete rotulos. Un segundo generador para traducir siete
+// palabras habria dejado dos codigos que mantener y dos sitios donde el
+// numero se puede ir por caminos distintos — justo lo que no queremos
+// (Sergio, 14-oct).
+async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase, ingles){
+  const T = ingles ? {
+    hoja:'Trades', resumen:'EQUITY SUMMARY', detalle:'TRADE DETAIL',
+    portafolio:'Account', iva:'Tax 19%', folio:'Trade ID',
+    compra:'Buy', venta:'Sell',
+  } : {
+    hoja:'Operaciones', resumen:'RESUMEN EQUITY', detalle:'DETALLE FOLIO A FOLIO',
+    portafolio:'Portafolio', iva:'IVA', folio:'Folio',
+    compra:'Compra', venta:'Venta',
+  };
+  const _lado = v => /^(venta|sell)$/i.test(String(v||'')) ? T.venta
+               : (/^(compra|buy)$/i.test(String(v||'')) ? T.compra : v);
+
+  // El IVA del archivo DEL CLIENTE. Estaba al 19% fijo en los tres sitios, sin
+  // mirar el portafolio: PAPS ECOPETROL —pasivo pensional, sin IVA— lo habria
+  // llevado igual en lo que recibe el cliente, que es el documento que manda.
+  // Se apoya en `ivaDeLineaRVL`, el mismo que usan la vista previa y el
+  // guardado: un portafolio que NO esta en el mapa por deceval se comporta
+  // exactamente como antes (19%), asi que esto no mueve a nadie mas
+  // (Sergio, 14-oct).
+  const _ivaFila = (f, comision) => {
+    const cfgCli = (typeof getClienteDB === 'function') ? (getClienteDB(nombreCliente) || {}) : {};
+    const port = (cfgCli.portafolios || []).find(p =>
+      String(p.nombre) === String(f.portafolio) || String(p.id) === String(f.portafolio)) || null;
+    return (typeof ivaDeLineaRVL === 'function')
+      ? ivaDeLineaRVL(true, port, comision)
+      : (Number(comision) || 0) * 0.19;
+  };
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
   if(!filasEquity || filasEquity.length===0){ alert('No hay operaciones para generar el reporte.'); return; }
 
@@ -5905,7 +5939,7 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
   const wb = new ExcelJS.Workbook();
   wb.creator = 'EQS CC — Credicorp Capital';
   wb.created = hoyDate;
-  const ws = wb.addWorksheet('Operaciones', {
+  const ws = wb.addWorksheet(T.hoja, {
     pageSetup: { orientation: 'landscape', fitToPage: true },
     views: [{ showGridLines: false }],
   });
@@ -5986,7 +6020,7 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
     });
     ws.getRow(r).height = 14; r++;
     filas.forEach(f=>{
-      ws.getCell(`B${r}`).value = f.lado;
+      ws.getCell(`B${r}`).value = _lado(f.lado);
       ws.getCell(`C${r}`).value = f.nombre;
       const cCant = ws.getCell(`D${r}`); cCant.value = f.cantidad; cCant.numFmt = '#,##0';
       const cPx = ws.getCell(`E${r}`); cPx.value = f.precioProm; cPx.numFmt = '"$"#,##0.00';
@@ -6020,7 +6054,7 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
     const px = Number(f.precio) || 0;
     const gross = f.cantidad * px;
     const com = gross * (Number(f.comPct)||0);
-    const iva = com * 0.19;
+    const iva = _ivaFila(f, com);
     const neto = f.lado === 'Compra' ? gross + com + iva : gross - com - iva;
     agrup[k].cant += f.cantidad;
     agrup[k].montoPx += f.cantidad * px;
@@ -6033,7 +6067,7 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
   // decimales: el cliente quiere poder entrar a la celda y ver toda la
   // precisión (Sergio, 07-sep). El formato de la columna se encarga de la
   // vista; el valor no se toca.
-  cuadroResumen('RESUMEN EQUITY', Object.values(agrup).map(g=>({
+  cuadroResumen(T.resumen, Object.values(agrup).map(g=>({
     lado:g.lado, nombre:g.nombre, cantidad:g.cant,
     // El promedio se guarda COMPLETO; la vista lo muestra con 2 decimales.
     precioProm: g.cant ? g.montoPx / g.cant : 0,
@@ -6045,7 +6079,7 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
 
   // Tabla: una fila por portafolio asignado. Portafolio en vez de Symbol-solo:
   // se muestra PORTAFOLIO + SYMBOL + ISIN.
-  headerFila(['Trade Date','Settle Date','Side','Portafolio','Symbol','Quantity','Price','Gross','Commission','Com %','IVA','Net'],
+  headerFila(['Trade Date','Settle Date','Side',T.portafolio,'Symbol','Quantity','Price','Gross','Commission','Com %',T.iva,'Net'],
              ['center','center','left','left','left','right','right','right','right','right','right','right']);
   const eqIni = r;
   const fechaSlug = fileBase.fechaSlug;
@@ -6058,7 +6092,7 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
     const comision = redondear(gross * f.comPct, 3);
     // IVA = 19% de la comisión (todos estos clientes lo llevan). El neto suma
     // (Compra) o resta (Venta) gross + comisión + IVA.
-    const iva = redondear(comision * 0.19, 2);
+    const iva = redondear(_ivaFila(f, comision), 2);
     const neto = redondear(f.lado === 'Compra' ? gross + comision + iva : gross - comision - iva, 2);
     ws.getCell(`B${r}`).value = fileBase.tdTxt;
     ws.getCell(`C${r}`).value = fileBase.sdTxt;
@@ -6103,14 +6137,14 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
     String(a.especie).localeCompare(String(b.especie), 'es', {sensitivity:'base'}) ||
     (Number(a.folio) - Number(b.folio)));
   if(_foliosDet.length){
-    tituloSeccion('DETALLE FOLIO A FOLIO');
+    tituloSeccion(T.detalle);
     // 12 columnas (B..M), las mismas del consolidado pero con FOLIO al inicio.
     // Trade/Settle Date no se repiten: son las mismas de arriba y ocupaban el
     // espacio que necesita el folio.
     // Symbol ANTES de Portafolio: así la columna Portafolio del detalle queda
     // justo debajo de la del consolidado y el autofit las ajusta parejo
     // (Sergio, 25-ago).
-    headerFila(['Folio','Side','Symbol','Portafolio','Quantity','Price','Gross','Commission','Com %','IVA','Net'],
+    headerFila([T.folio,'Side','Symbol',T.portafolio,'Quantity','Price','Gross','Commission','Com %',T.iva,'Net'],
                ['left','left','left','left','right','right','right','right','right','right','right']);
     const dIni = r;
     _foliosDet.forEach(f=>{
@@ -6125,7 +6159,7 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase){
       const precio = Number(f.precio) || 0;
       const gross = redondear(f.cantidad * precio, 2);
       const comision = redondear(gross * f.comPct, 3);
-      const iva = redondear(comision * 0.19, 2);
+      const iva = redondear(_ivaFila(f, comision), 2);
       const neto = redondear(f.lado === 'Compra' ? gross + comision + iva : gross - comision - iva, 2);
       ws.getCell(`B${r}`).value = f.folio;
       ws.getCell(`C${r}`).value = f.lado === 'Compra' ? 'Buy' : 'Sell';
@@ -6526,6 +6560,11 @@ const clientesDB = {
         nit:'901818832-1', iva:true },
     ],
     fileNombre: 'FALCOM',
+    // El Trade Confirmation va en INGLES. No es un formato aparte: la proforma
+    // de RVL ya estaba casi toda en ingles y solo siete rotulos estaban en
+    // espanol, asi que el mismo generador los traduce con esta bandera
+    // (Sergio, 14-oct).
+    reporteIngles: true,
     // Igual en bloque y en pantalla: tarifa unica, no depende de la marca.
     comisionBloque: 0.001, comisionPantalla: 0.001,
   },
@@ -19368,10 +19407,13 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
     });
   });
 
+  // `reporteIngles` lo pide la ficha del cliente. Los del book CSI (FALCOM,
+  // MONEDA, ASHMORE, TORDESILHAS, IMPERA) reciben el archivo en ingles
+  // (Sergio, 14-oct).
   await generarExcelGenericoEquity(cfg.nombre, filasEquity, {
     name: nombreArchivo + (sufijoVersion(version) ? ' ' + sufijoVersion(version) : ''), fechaSlug, tdTxt, sdTxt,
     foliosDetalle,
-  });
+  }, !!cfg.reporteIngles);
 
   // Se REGISTRA lo enviado, no se borra nada. Los folios y las órdenes siguen
   // disponibles: volver a generar el consolidado del día (con las líneas de
@@ -25082,7 +25124,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-14 20:10 UTC · v208';
+const BUILD_ID = '2026-10-14 21:15 UTC · v209';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
