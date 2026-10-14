@@ -6224,15 +6224,70 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase, 
 
 
   const buffer = await wb.xlsx.writeBuffer();
+  const nombreArch = `${fileBase.name} ${fechaSlug}.xlsx`;
+
+  // A la carpeta del dia, con la papeleta de bolsa si el cliente la lleva.
+  // `entregarReporteCliente` baja el archivo al navegador si la carpeta no
+  // contesta, asi que el cliente nunca se queda sin reporte.
+  if(typeof entregarReporteCliente === 'function'){
+    return await entregarReporteCliente(nombreArch, buffer, {
+      fecha: fileBase.fechaISO || null,
+      papeleta: fileBase.papeletas || null,
+    });
+  }
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${fileBase.name} ${fechaSlug}.xlsx`;
+  a.download = nombreArch;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  return { ok:true, carpeta:false, mensaje:'' };
+}
+
+// ---------------------------------------------------------------------------
+// Los datos de la papeleta de bolsa, sacados de la linea de Fidessa tal como
+// los arma hoy la macro. Aqui NO se recalcula nada que ya este calculado: la
+// comision y el IVA son los mismos que van en el .xlsx del cliente, porque el
+// arqueo definitivo es cliente vs COR y dos caminos para un mismo numero es
+// justo lo que nos ha costado plata (Sergio, 14-oct).
+function papeletasDeReporte(cfg, filas, fechaOper, fechaCumpl){
+  if(!cfg || !cfg.papeletaBolsa || !filas || !filas.length) return null;
+  const port = (cfg.portafolios || [])[0] || {};
+  return filas.map(f=>{
+    const cantidad = Number(f.cantidad) || 0;
+    const precio   = Number(f.precio) || 0;
+    const valor    = cantidad * precio;
+    // `comision` ya viene calculada en la fila del reporte; si no, se usa el
+    // mismo comPct (FRACCION, no porcentaje) con que se arma el .xlsx.
+    const comision = (f.comision !== undefined && f.comision !== null)
+      ? Number(f.comision) || 0
+      : valor * (Number(f.comPct) || 0);
+    const iva = (typeof ivaDeLineaRVL === 'function')
+      ? ivaDeLineaRVL(true, port, comision)
+      : comision * 0.19;
+    const esVenta = /^(venta|sell)$/i.test(String(f.lado || ''));
+    // En una venta el cliente recibe menos; en una compra paga mas.
+    const neto = esVenta ? valor - comision : valor + comision;
+    return {
+      lado: esVenta ? 'VENTA' : 'COMPRA',
+      fechaOperacion: fechaOper || null,
+      fechaCumplimiento: fechaCumpl || null,
+      especie: f.especie || '',
+      cliente: cfg.nombreCompleto || cfg.nombre || '',
+      nit: port.nit || cfg.nit || '',
+      usuario: cfg.usuarioBolsa || 'X02',
+      cantidad, precio, valor,
+      comisionPct: (Number(f.comPct) || 0) * 100,
+      comision,
+      ivaPct: 19, iva,
+      valorNeto: neto,
+      valorNetoIvaIncluido: esVenta ? neto - iva : neto + iva,
+      deposito: 'DECEVAL',
+    };
+  });
 }
 
 function initDatesFX(){
@@ -6565,6 +6620,11 @@ const clientesDB = {
     // espanol, asi que el mismo generador los traduce con esta bandera
     // (Sergio, 14-oct).
     reporteIngles: true,
+    // FALCOM es el unico que ademas lleva papeleta de bolsa: el PDF que hoy
+    // se saca a mano con la macro. Se genera junto al .xlsx, en la misma
+    // carpeta del dia, con el mismo boton (Sergio, 14-oct).
+    papeletaBolsa: true,
+    usuarioBolsa: 'X02',
     // Igual en bloque y en pantalla: tarifa unica, no depende de la marca.
     comisionBloque: 0.001, comisionPantalla: 0.001,
   },
@@ -13480,6 +13540,78 @@ async function _pcEstado(id){
   return (filas && filas[0]) || null;
 }
 
+// ---------------------------------------------------------------------------
+// Entrega del reporte al cliente: el .xlsx y la papeleta a la carpeta del dia.
+//
+// Un solo boton tiene que dejar los DOS archivos en
+// Reportes Clientes\<ano>\<AAAAMMDD>\, y el navegador no puede escribir ahi.
+// Asi que el app arma el .xlsx, lo manda en base64 junto con los datos de la
+// papeleta, y el runner escribe los dos. La papeleta se arma en el PC porque
+// ahi ya hay con que (reportlab) y porque de todos modos el runner tiene que
+// estar de por medio para que el archivo aterrice en la carpeta: meter una
+// libreria de PDF en el navegador solo lo dejaria en Descargas (Sergio, 14-oct).
+//
+// Version silenciosa de `pedirAlPC`: no saca alert, devuelve que paso. La
+// decision de que hacer cuando falla es de quien llama, no de este helper.
+async function _pedidoSilencioso(tipo, datos, segundos){
+  let id;
+  try{
+    const res = await fetch(`${SUPA_URL}/rest/v1/pedidos_app`, {
+      method:'POST',
+      headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
+                'Content-Type':'application/json', 'Prefer':'return=representation' },
+      body: JSON.stringify([{ tipo,
+        usuario: (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
+        imagen: null, datos: datos || null }])
+    });
+    if(!res.ok) throw new Error(`HTTP ${res.status} — ${(await res.text()).slice(0,160)}`);
+    id = (await res.json())[0].id;
+  }catch(e){ return { ok:false, mensaje:'No se pudo dejar el pedido: ' + e.message }; }
+
+  const hasta = Date.now() + (segundos || 90) * 1000;
+  while(Date.now() < hasta){
+    await new Promise(r=>setTimeout(r, 1500));
+    let p = null;
+    try{ p = await _pcEstado(id); }catch(e){ continue; }
+    if(!p) continue;
+    if(p.estado === 'HECHO')  return { ok:true,  mensaje: p.mensaje || '' };
+    if(p.estado === 'ERROR')  return { ok:false, mensaje: p.mensaje || 'sin detalle' };
+  }
+  return { ok:false, mensaje:'Tu PC no contestó. ¿Está corriendo runner_eqs.py?' };
+}
+
+function _bajarAlNavegador(nombre, buffer){
+  const blob = new Blob([buffer], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = nombre;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// Devuelve { ok, mensaje, carpeta } . Si la carpeta no responde, el archivo
+// BAJA AL NAVEGADOR como toda la vida: el reporte del cliente no se pierde
+// nunca por un problema de carpeta o de runner apagado. REGLA DE ORO.
+async function entregarReporteCliente(nombre, buffer, opc){
+  opc = opc || {};
+  let b64 = null;
+  try{ b64 = await _aBase64(buffer); }catch(e){ b64 = null; }
+  if(b64){
+    const r = await _pedidoSilencioso('REPORTE_CLIENTE', {
+      destino: 'clientes',
+      nombre,
+      fecha: opc.fecha || null,
+      archivo: b64,
+      papeleta: opc.papeleta || null,
+    }, 90);
+    if(r.ok) return { ok:true, carpeta:true, mensaje:r.mensaje };
+    _bajarAlNavegador(nombre, buffer);
+    return { ok:true, carpeta:false, mensaje:r.mensaje };
+  }
+  _bajarAlNavegador(nombre, buffer);
+  return { ok:true, carpeta:false, mensaje:'No se pudo preparar el archivo para la carpeta.' };
+}
+
 // Manda el pedido y se queda esperando a que el PC conteste. El boton es el
 // unico indicador que ve Sergio, asi que va contando lo que pasa.
 // `datos` es opcional: un objeto que viaja en la columna jsonb del mismo
@@ -19413,6 +19545,11 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
   await generarExcelGenericoEquity(cfg.nombre, filasEquity, {
     name: nombreArchivo + (sufijoVersion(version) ? ' ' + sufijoVersion(version) : ''), fechaSlug, tdTxt, sdTxt,
     foliosDetalle,
+    // La fecha del reporte manda sobre "hoy": si se regenera el reporte de
+    // ayer, los archivos tienen que caer en la carpeta de AYER.
+    fechaISO: fechaReg || null,
+    papeletas: (typeof papeletasDeReporte === 'function')
+      ? papeletasDeReporte(cfg, filasEquity, fechaReg, fechaCum) : null,
   }, !!cfg.reporteIngles);
 
   // Se REGISTRA lo enviado, no se borra nada. Los folios y las órdenes siguen
@@ -25124,7 +25261,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-14 21:15 UTC · v209';
+const BUILD_ID = '2026-10-14 22:40 UTC · v210';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
