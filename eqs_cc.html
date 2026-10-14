@@ -6592,6 +6592,105 @@ function inicialesTrader(valor){
   return partes.length ? partes.map(x=>x[0]).join('').slice(0,4) : '';
 }
 
+// A QUIEN LE APLICA IVA EN RVL, POR DECEVAL.
+//
+// El deceval es el ancla: es lo unico del portafolio que no se renombra.
+// Esta tabla la lleno Sergio el 14-oct, portafolio por portafolio, sobre los
+// 87 donde los dos caminos del app estaban en desacuerdo.
+//
+// La regla que sale de sus respuestas: los fondos de PENSIONES (obligatorias
+// y voluntarias) NO pagan IVA; las CESANTIAS si. Por eso Porvenir Cesantias LP
+// lleva y sus otros 38 fondos no, igual que CES-LP en PROTECCION_SUBCUENTAS.
+// No se codifica la REGLA sino la LISTA: un fondo nuevo mal clasificado por
+// leer su nombre cuesta plata, y una lista no se equivoca (Sergio, 14-oct).
+const IVA_RVL_POR_DECEVAL = new Map([
+  // --- NO llevan IVA (39) ---
+  [1448, false],        // PORVENIR · Moderado
+  [1552, false],        // PORVENIR · SmurfitKappa
+  [622789, false],      // PORVENIR · Acciones Colombia
+  [846773, false],      // PORVENIR · Acciones Ecopetrol
+  [1197736, false],     // PORVENIR · Estrategias Inmobiliarias Tramo II
+  [1232310, false],     // PORVENIR · Diversificada Dinámica
+  [1232323, false],     // PORVENIR · Diversificado Básico
+  [1434426, false],     // PORVENIR · En sus Manos Estudio 2022
+  [1454662, false],     // PORVENIR · Diversificada Extrema
+  [1544232, false],     // PORVENIR · Conservador
+  [1544233, false],     // PORVENIR · Mayor Riesgo
+  [1544235, false],     // PORVENIR · Retiro Programado
+  [1787908, false],     // PORVENIR · Acciones Grupo Nutresa
+  [1788072, false],     // PORVENIR · Acciones Isa
+  [1806864, false],     // PORVENIR · PASIVOS PENSIONALES FONPET 2012 - PO
+  [1828444, false],     // PORVENIR · Acciones Cemargos
+  [1868729, false],     // PORVENIR · Acciones Bancolombia
+  [1912295, false],     // PORVENIR · Premium Riesgo Bajo
+  [1932088, false],     // PORVENIR · Renta Variable Davivienda
+  [1932089, false],     // PORVENIR · Renta Variable Grupo Argos
+  [1932090, false],     // PORVENIR · Renta Variable Grupo Sura
+  [1947147, false],     // PORVENIR · Arquimed
+  [1998088, false],     // PORVENIR · Renta Fija Alto Valor
+  [2000990, false],     // PORVENIR · Acciones Celsia
+  [2006836, false],     // PORVENIR · Alt Especial Progresivo
+  [2014266, false],     // PORVENIR · Estrategias Inmobiliarias Tramo I
+  [2090031, false],     // PORVENIR · Acciones GEB
+  [2100819, false],     // PORVENIR · Táctico Porvenir
+  [2103091, false],     // PORVENIR · Acciones CLH
+  [2121594, false],     // PORVENIR · ARAS
+  [2146478, false],     // PORVENIR · Fondos Futuro
+  [2146537, false],     // PORVENIR · FIJOMES
+  [2182835, false],     // PORVENIR · Advisor
+  [2239493, false],     // PORVENIR · Renovar
+  [2276983, false],     // PORVENIR · Generación Sostenible
+  [2404266, false],     // PORVENIR · Acciones Corficolombiana
+  [2404267, false],     // PORVENIR · Acciones Grupo Aval
+  [2446664, false],     // AVAL FIDUCIARIA · AVAL FIDUCIARIA PAPS ECOPETROL
+  [3904871, false],     // ALLIANZ SEGUROS DE VID · FONDO VOLUNTARIO DE PENSIONES ALLIAN
+
+  // --- SI llevan IVA (43) ---
+  [130, true],          // SURAMERICANA · SURA SEGUROS -  GENERALES
+  [194, true],          // SURAMERICANA · FONDO DE EMPLEADOS DE SURAMERICANA (
+  [217, true],          // SURAMERICANA · SURA SEGUROS -  SEGUROS DE VIDA
+  [253, true],          // SURAMERICANA · SURA SEGUROS -  RIESGOS LABORALES
+  [292, true],          // SEGUROS BOLIVAR · SEGUROS COMERCIALES BOLIVAR
+  [293, true],          // SEGUROS BOLIVAR · COMPAÑÍA DE SEGUROS BOLIVAR
+  [914, true],          // SURAMERICANA · FONDO MUTUO DE INVERSIÓN DE LOS EMPL
+  [1431, true],         // PORVENIR · Cesantías LP
+  [1444, true],         // COLFONDOS · COLFONDOS FONDO DE CESANTÍAS LARGO P
+  [2464, true],         // FIDUDAVIVIENDA · FIC SEGURIDAD BOLIVAR
+  [19867, true],        // PAN AMERICAN · PAN AMERICAN LIFE SEGUROS DE COLOMBI
+  [57469, true],        // FIDUDAVIVIENDA · FIDUDAVIVIENDA - FONDO MUTUO DE INVE
+  [594733, true],       // PLURAL · PNC INTERNATIONAL EQUITY FUND - PLUR
+  [692980, true],       // BTG PACTUAL AM · BTG PACTUAL ACCIONES COLOMBIA
+  [1224614, true],      // BTG PACTUAL AM · OP-LATIN AMERICA FUND
+  [1419973, true],      // CITI_NY · CITI OF NEW YORK GROUP TRUST
+  [1539258, true],      // SANTNYCV · SANTANDER AM
+  [1600308, true],      // GOLDMAN · GOLDMAN SACHS GLOBAL STRATEGIC 
+  [1601220, true],      // NORGES BANK · NORGES BANK
+  [1606513, true],      // ITAU_NY · ITAU GLOBAL INVESTMENT
+  [1773074, true],      // BTG PACTUAL AM · BTG PACTUAL SICAV
+  [1773906, true],      // FIDUDAVIVIENDA · DAFUTURO DIVERSIFICADO MODERADO
+  [1773909, true],      // FIDUDAVIVIENDA · DAFUTURO ACCIONES COLOMBIA
+  [1797255, true],      // XP_NY · XP SECURITIES LLC
+  [1808838, true],      // HSBC_NY · HSCB BANK PLC
+  [1809580, true],      // COWEN · THE COCA COLA COMPANY MASTER
+  [1813991, true],      // BRADESCO · BRADESCO GLOBAL FUNDS
+  [1833544, true],      // LARRAIN VIAL PP · ANDES INVESTMENT GROUP INC
+  [1847390, true],      // BISG · BG SICAV
+  [1924999, true],      // FIDUDAVIVIENDA · DAFUTURO PCP
+  [2004865, true],      // FIDUDAVIVIENDA · DAFUTURO DIVERSIFICADO DINAMICO
+  [2019886, true],      // MLI · MERRILL LYNCH INTERNATIONAL
+  [2091182, true],      // FIDUDAVIVIENDA · DAFUTURO DIVERSIFICADO CONSERVADOR
+  [2237631, true],      // FIDUDAVIVIENDA · DAFUTURO BALANCEADO
+  [2328312, true],      // FIDUDAVIVIENDA · DAFUTURO PAIS 2 AÑOS
+  [2693841, true],      // ASULADO · ASULADO SEGUROS DE VIDA S.A.
+  [2733082, true],      // FIDUDAVIVIENDA · FIDUDAVIVIENDA - DAFUTURO LARGO PLAZ
+  [2998314, true],      // FIDUDAVIVIENDA · FIDUDAVIVIENDA - DAFUTURO GAMONI PAT
+  [3031545, true],      // FIDUDAVIVIENDA · DAFUTURO SEMIJA PATRIMONIO
+  [3345225, true],      // FIDUDAVIVIENDA · FIDUDAVIVIENDA - PA TANGO FST
+  [3356005, true],      // FIDUDAVIVIENDA · FIDUDAVIVIENDA - DAFUTURO AP 104 PAT
+  [3661484, true],      // FIDUDAVIVIENDA · FIDUDAVIVIENDA - DAFUTURO AP 109 PAT
+  [4017008, true],      // FIDUDAVIVIENDA · FIDUDAVIVIENDA PA PRIMIUS
+]);
+
 // Portafolios que NO llevan IVA en RVL, por deceval, pase lo que pase con el
 // default de su cliente. Son pasivos pensionales: el IVA no aplica aunque el
 // resto del grupo si lo pague. Se listan por deceval y no por nombre porque el
@@ -7255,8 +7354,17 @@ function fondoFiduciariaCCFFMM(account){
 // excepcion, que es lo unico que se pidio: PAPS ECOPETROL no lleva IVA
 // (Sergio, 14-oct). Queda anotado en pendientes para resolverlo bien.
 function ivaDeLineaRVL(baseLlevaIva, portafolio, comision){
-  if(portafolio && SIN_IVA_RVL.has(Number(portafolio.deceval))) return 0;
-  return baseLlevaIva ? (Number(comision) || 0) * 0.19 : 0;
+  const com = Number(comision) || 0;
+  // El DECEVAL manda: es el ancla del portafolio y la tabla la lleno la mesa.
+  const dec = portafolio ? Number(portafolio.deceval) : NaN;
+  if(Number.isFinite(dec) && IVA_RVL_POR_DECEVAL.has(dec)){
+    return IVA_RVL_POR_DECEVAL.get(dec) ? com * 0.19 : 0;
+  }
+  if(portafolio && SIN_IVA_RVL.has(dec)) return 0;
+  // Sin deceval en la tabla, se deja el comportamiento de siempre. Los cuatro
+  // portafolios sin deceval (CREDICORPFFMM y HORZ) ya traen su `iva` escrito
+  // a mano y coinciden con lo que marco Sergio, asi que no hacen falta aqui.
+  return baseLlevaIva ? com * 0.19 : 0;
 }
 
 function comisionFolioPct(cliente, f){
@@ -17079,8 +17187,14 @@ function renderValidadorAlloc(){
     // asi una excepcion por portafolio (PAPS ECOPETROL) vale en los dos lados.
     // La base se calcula EXACTAMENTE como antes (formatoReporte); lo unico
     // nuevo es la excepcion por portafolio.
+    // La base: el `iva` del portafolio cuando lo trae escrito a mano, y el
+    // formato del cliente cuando no. Asi la vista previa y el guardado dicen
+    // lo mismo tambien en los cuatro sin deceval (Sergio, 14-oct).
     const _portObj = (ports || []).find(x => x.id === portId) || null;
-    const iva = ivaDeLineaRVL(cfg.formatoReporte === 'generico_equity', _portObj, d.com);
+    const _base = _portObj && _portObj.iva !== undefined
+                ? !!_portObj.iva
+                : (cfg.formatoReporte === 'generico_equity');
+    const iva = ivaDeLineaRVL(_base, _portObj, d.com);
     const neto = d.lado==='Venta' ? (d.bruto - d.com - iva) : (d.bruto + d.com + iva);
     return {portId, nombre:nomPort(portId), lado:d.lado, especie:d.especie, cant:d.cant, precio, bruto:d.bruto, com:d.com, comPct, iva, neto};
   }).sort((a,b)=> b.cant - a.cant);
@@ -24968,7 +25082,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-14 19:40 UTC · v207';
+const BUILD_ID = '2026-10-14 20:10 UTC · v208';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
