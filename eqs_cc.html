@@ -17725,7 +17725,9 @@ async function aplicarCanastaRVI(){
     const gross = qty * px;
     // Comisión del cliente: UCITS como % del gross, ETF/ADR por acción.
     // Siempre con el mínimo de USD 20.
-    const base = tipo === 'UCIT' ? gross * (cfg.comUCIT||0) : qty * (cfg.comETF||0);
+    // PROTECCIÓN cobra por acción también en UCITS: `ucitPorAccionRVI`.
+    const base = (tipo === 'UCIT' && !ucitPorAccionRVI(cfg))
+      ? gross * (cfg.comUCIT||0) : qty * (cfg.comETF||0);
     // El mínimo de USD 20 respeta la lista de exentos (Protección, Colfondos,
     // Porvenir). Antes se aplicaba a todos sin mirar (Sergio, 18-sep).
     const cost = costoClienteRVI(cfg.nombre || cliente, base);
@@ -22689,9 +22691,16 @@ const clientesRVI = {
     // El TAX ID del Trade Confirmation es SIEMPRE el de Credicorp, no el del
     // cliente (Sergio, 18-sep).
     taxId:'860.068.182-5',
-    // UCITS al 0,04% del gross; ETF y ADR a 0,004 por acción. SIN mínimo de
-    // USD 20: está en RVI_SIN_MINIMO, exenta por volumen (Sergio, 18-sep).
+    // USD 0,004 POR ACCIÓN EN TODO RVI, UCITS incluidos (Sergio, 14-oct).
+    // Su allocation del 14-oct lo muestra: las dos líneas de ACWD
+    // (IE00B44Z5B48, UCITS irlandés) vienen con 36,11 y 24,05 = 9.028 y 6.012
+    // por 0,004. Por el 0,04% del gross habrían sido 1.179,44 y 785,42.
+    // `comUCIT` se deja escrito pero NO se usa mientras esté la marca; se
+    // conserva por si la tarifa vuelve a pactarse como porcentaje.
+    // SIN mínimo de USD 20: está en RVI_SIN_MINIMO, exenta por volumen
+    // (Sergio, 18-sep).
     comETF:0.004, comUCIT:0.04/100, comADR:0.004,
+    ucitPorAccion:true,
     // En NOMBRE CORTO, que es como llegan en el Account de EMSX. Se quitaron los
     // nombres largos —OBLIGATORIO MODERADO, MAYOR RIESGO, CONSERVADOR—, que eran
     // los mismos fondos, y VOLUNTARIO, que es el agrupador y no opera: debajo
@@ -23467,6 +23476,36 @@ function volcarLineaEnFormularioRVI(){
 // al tocar esta lista (Sergio, 24-ago).
 // El mínimo de USD 20 aplica a los tres que cobran.
 const RVI_BROKERS_CON_COSTO = ['CCSI','TFSC','BTGH'];
+// ¿Este cliente cobra los UCITS POR ACCIÓN en vez de como % del gross?
+//
+// La regla general de RVI es que un UCITS (ISIN irlandés o luxemburgués) se
+// cobra como porcentaje del gross, y eso NO cambia. Lo que cambia es que hay
+// clientes con el que la tarifa pactada es por acción para todo. PROTECCIÓN es
+// uno: paga USD 0,004 por acción en TODO RVI, UCITS incluidos.
+//
+// Lo confirmó su propio allocation del 14-oct. Las dos líneas de ACWD
+// (IE00B44Z5B48, UCITS irlandés) traen comisión 36,11 y 24,05 — que es
+// 9.028 × 0,004 y 6.012 × 0,004, no el 0,04% del gross. Por el porcentaje
+// habrían sido 1.179,44 y 785,42: USD 1.904,70 de más en una sola operación.
+//
+// Es una MARCA EN LA FICHA, no una regla nueva: un cliente sin la marca se
+// comporta exactamente como hoy. El blast radius es solo quien la tenga
+// (Sergio, 14-oct).
+function ucitPorAccionRVI(db){
+  return !!(db && db.ucitPorAccion);
+}
+
+// La tarifa del cliente para una línea, ya resuelta la regla de arriba.
+// NO toca lo que CCSI nos cobra a NOSOTROS: ese es otro acuerdo y sigue
+// siendo porcentaje en los UCITS, pague el cliente como pague.
+function tarifaClienteRVI(db, tipo, qty, gross){
+  if(!db) return 0;
+  const t = String(tipo||'').toUpperCase();
+  if(t === 'UCIT' && !ucitPorAccionRVI(db)) return gross * (db.comUCIT||0);
+  if(t === 'ADR' && db.comADR != null)      return qty * db.comADR;
+  return qty * (db.comETF||0);
+}
+
 function comisionContraparteRVI(broker, tipo, qty, gross, isin){
   const b = String(broker||'').toUpperCase().trim();
   if(!RVI_BROKERS_CON_COSTO.some(x=>b.includes(x))) return 0;   // market maker
@@ -23685,7 +23724,10 @@ function renderArqueoRVI(){
     // siquiera se pudo calcular (Sergio, 24-sep).
     if(!db) return null;
     const t = String(refCli.tipo||'').toUpperCase();
-    if(t === 'UCIT' || /^(IE|LU)/i.test(String(isin||''))) return redondear(grossCli * db.comUCIT, 2);
+    // El ISIN manda sobre el tipo: un IE/LU es UCITS aunque arriba diga ETF.
+    // Salvo que el cliente cobre por acción en todo, como PROTECCIÓN.
+    if((t === 'UCIT' || /^(IE|LU)/i.test(String(isin||''))) && !ucitPorAccionRVI(db))
+      return redondear(grossCli * db.comUCIT, 2);
     return redondear((qCli||qEjec) * (t === 'ADR' ? db.comADR : db.comETF), 2);
   })();
   const _sinCliente = comCliCalc === null;
@@ -24043,7 +24085,11 @@ function calcularComisiones(clienteKey, tipo, qty, price, opts){
     tarifaCCSIusada = brokerCobra ? (comCcsiEdit!=null ? comCcsiEdit : CCSI.comADR) : 0;
     costCCSI    = brokerCobra ? Math.max(qty * tarifaCCSIusada, minBroker) : 0;
   } else { // UCIT
-    costCliente = Math.max(gross * db.comUCIT, minCliente);
+    // Solo la del CLIENTE mira la marca. Lo que CCSI nos cobra a nosotros
+    // sigue siendo % del gross en UCITS: es otro acuerdo, no se toca.
+    costCliente = ucitPorAccionRVI(db)
+      ? Math.max(qty * db.comETF, minCliente)
+      : Math.max(gross * db.comUCIT, minCliente);
     tarifaCCSIusada = brokerCobra ? (comCcsiEdit!=null ? comCcsiEdit : CCSI.comUCIT) : 0;
     costCCSI    = brokerCobra ? Math.max(gross * tarifaCCSIusada, minBroker) : 0;
   }
@@ -24189,7 +24235,10 @@ function calcularRVI(){
   document.getElementById('tc-secfee').value = secFee>0 ? fmtRateRVI(secFee,4) : '0.0000';
 
   const db = clientesRVI[clienteKey];
-  const tarifaLabel = tipo==='UCIT' ? (db.comUCIT*100).toFixed(2)+'%' : '$'+db.comETF+'/acc';
+  // El rótulo tiene que decir lo que de verdad se le cobra: con la marca,
+  // un UCITS muestra "$0.004/acc" y no "0.04%".
+  const tarifaLabel = (tipo==='UCIT' && !ucitPorAccionRVI(db))
+    ? (db.comUCIT*100).toFixed(2)+'%' : '$'+db.comETF+'/acc';
   const ccsiLabel   = tipo==='UCIT' ? (c.tarifaCCSIusada*100).toFixed(2)+'%' : '$'+c.tarifaCCSIusada+'/acc';
   document.getElementById('rc-tarifa-cliente').textContent = tarifaLabel;
   document.getElementById('rc-tarifa-ccsi').textContent   = ccsiLabel;
@@ -24416,7 +24465,8 @@ function generarTC(){
     // La comisión PACTADA manda, igual que en el panel. Sin esto la pantalla
     // mostraba el 0,07% y el histórico guardaba el 0,05% del maestro.
     const _costCalc = _pctPact != null ? grossAcc * _pctPact
-                    : (tipo==='UCIT' ? grossAcc*db.comUCIT : d.qty*db.comETF);
+                    : ((tipo==='UCIT' && !ucitPorAccionRVI(db))
+                        ? grossAcc*db.comUCIT : d.qty*db.comETF);
     let costAcc     = costoClienteRVI(db.nombre || clienteKey, _costCalc);
     if(_dosDec) costAcc = _comNuestroFavor(costAcc);
     // El SEC fee solo aplica a instrumentos US y solo en ventas: un UCITS no lo
@@ -25211,7 +25261,9 @@ function guardarEdicionRVI(){
   if(costOverride&&parseNum(costOverride)>0){
     h.cost=parseNum(costOverride);
   } else {
-    h.cost=nuevoTipo==='UCIT'?h.gross*(db?.comUCIT||0.004):h.qty*(db?.comETF||0.004);
+    // La de abajo (h.ccsi) es lo que CCSI nos cobra: esa NO mira la marca.
+    h.cost=(nuevoTipo==='UCIT' && !ucitPorAccionRVI(db))
+      ? h.gross*(db?.comUCIT||0.004) : h.qty*(db?.comETF||0.004);
   }
   h.net=h.side==='Sell'?h.gross-h.cost-h.secFee:h.gross+h.cost;
   h.ccsi=Math.max(nuevoTipo==='UCIT'?h.gross*CCSI.comUCIT:h.qty*CCSI.comETF,CCSI.minUSD);
@@ -25280,7 +25332,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-14 22:25 UTC · v211';
+const BUILD_ID = '2026-10-14 23:05 UTC · v212';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
