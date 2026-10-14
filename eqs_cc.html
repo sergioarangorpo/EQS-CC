@@ -6503,6 +6503,32 @@ const clientesDB = {
     // Siempre 0,09%, en bloque y en pantalla.
     comisionBloque: 0.0009, comisionPantalla: 0.0009,
   },
+  // FALCOM — book CSI, el primero de los cinco que comparten ese Client/Book
+  // en entrar al app. Portafolio UNICO, asi que no hay nada que repartir.
+  //
+  // La comision es 0,100% + IVA 19%. OJO con esto: la tabla de grupos tenia
+  // 0,12% marcado como all-in, que era 0,10% x 1,19 redondeado — y la planilla
+  // le volvia a sumar el 19%. El 13-oct eso fueron $480.998 de mas en UNA
+  // linea. El ancla es la papeleta de bolsa: comision 2.021.000, IVA 383.990,
+  // neto 2.018.595.010 sobre un bruto de 2.021.000.000 (Sergio, 14-oct).
+  //
+  // Lleva ademas una papeleta de bolsa en PDF aparte del Trade Confirmation.
+  // Eso todavia NO lo genera el app.
+  'FALCOM': {
+    nombre: 'FALCOM',
+    nombreCompleto: 'FONDO DE INVERSION FALCOM TACTICAL LATAM EQUITIES',
+    nit: '901818832-1',
+    formatoReporte: 'generico_equity',
+    reparteManual: false,
+    portafolios: [
+      { id:'FALCOM_TACTICAL', nombre:'FONDO DE INVERSION FALCOM TACTICAL LATAM EQUITIES',
+        deceval:'3172524', idOrion:'901818832', digito:'1',
+        nit:'901818832-1', iva:true },
+    ],
+    fileNombre: 'FALCOM',
+    // Igual en bloque y en pantalla: tarifa unica, no depende de la marca.
+    comisionBloque: 0.001, comisionPantalla: 0.001,
+  },
   'FIDUCIARIA SURA': {
     nombre: 'FIDUCIARIA SURA',
     formatoReporte: 'generico_equity', reparteManual: true,
@@ -7214,6 +7240,23 @@ function fondoFiduciariaCCFFMM(account){
     if(puntaje > mejorPuntaje){ mejorPuntaje = puntaje; mejor = nombre; }
   });
   return mejor;
+}
+
+// La EXCEPCION de IVA por portafolio, en un solo lugar.
+//
+// Hay DOS caminos que deciden el IVA de RVL y hoy NO coinciden: el guardado
+// mira `port.iva` y la vista previa mira `formatoReporte`. Al intentar
+// unificarlos aparecieron 88 portafolios donde los dos llevan tiempo en
+// desacuerdo —PORVENIR entre ellos, que es justo el del error de los
+// $6.490.230 del 30-sep—. Unificar no es un arreglo tecnico: es decidir por
+// decenas de clientes cual de los dos tenia razon, y eso lo decide la mesa.
+//
+// Asi que esto NO unifica. Solo le agrega a los DOS caminos la misma
+// excepcion, que es lo unico que se pidio: PAPS ECOPETROL no lleva IVA
+// (Sergio, 14-oct). Queda anotado en pendientes para resolverlo bien.
+function ivaDeLineaRVL(baseLlevaIva, portafolio, comision){
+  if(portafolio && SIN_IVA_RVL.has(Number(portafolio.deceval))) return 0;
+  return baseLlevaIva ? (Number(comision) || 0) * 0.19 : 0;
 }
 
 function comisionFolioPct(cliente, f){
@@ -8958,6 +9001,8 @@ function getClienteDB(key){
                    // Una excepcion por PORTAFOLIO manda sobre el default del
                    // cliente: AVAL FIDUCIARIA le suma IVA a todo menos a PAPS
                    // ECOPETROL, que es un pasivo pensional (Sergio, 14-oct).
+                   // `iva` se hereda del default; NO es una excepcion
+                   // declarada, asi que no lleva `ivaExplicito`.
                    iva: SIN_IVA_RVL.has(Number(d.deceval))
                         ? false
                         : (cfg.iva !== undefined ? !!cfg.iva : true) }));
@@ -17030,9 +17075,12 @@ function renderValidadorAlloc(){
     const portId = d.portId;
     const precio = d.cant>0 ? d.bruto/d.cant : 0;
     const comPct = d.bruto>0 ? d.com/d.bruto : 0;
-    // Los clientes de reporte genérico equity (ALLIANZ, METLIFE, etc.) llevan
-    // IVA = 19% de la comisión; COLFONDOS (equity local) no lleva IVA.
-    const iva = cfg.formatoReporte === 'generico_equity' ? d.com * 0.19 : 0;
+    // El IVA sale de `ivaDeLineaRVL`, la misma funcion que usa el guardado:
+    // asi una excepcion por portafolio (PAPS ECOPETROL) vale en los dos lados.
+    // La base se calcula EXACTAMENTE como antes (formatoReporte); lo unico
+    // nuevo es la excepcion por portafolio.
+    const _portObj = (ports || []).find(x => x.id === portId) || null;
+    const iva = ivaDeLineaRVL(cfg.formatoReporte === 'generico_equity', _portObj, d.com);
     const neto = d.lado==='Venta' ? (d.bruto - d.com - iva) : (d.bruto + d.com + iva);
     return {portId, nombre:nomPort(portId), lado:d.lado, especie:d.especie, cant:d.cant, precio, bruto:d.bruto, com:d.com, comPct, iva, neto};
   }).sort((a,b)=> b.cant - a.cant);
@@ -19591,7 +19639,7 @@ async function generarReporte(){
       if(!port) return;
       const montoBruto = a.cantidad * pppOrden;
       const comisionMonto = montoBruto * comOrden;
-      const ivaMonto = port.iva ? comisionMonto*0.19 : 0;
+      const ivaMonto = ivaDeLineaRVL(!!(port && port.iva), port, comisionMonto);
       const montoNeto = ladoOrden==='Compra' ? montoBruto + comisionMonto + ivaMonto
                                              : montoBruto - comisionMonto - ivaMonto;
       const fila = {
@@ -24920,7 +24968,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-14 19:00 UTC · v206';
+const BUILD_ID = '2026-10-14 19:40 UTC · v207';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
