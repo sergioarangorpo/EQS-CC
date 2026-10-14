@@ -2123,7 +2123,9 @@
       </div>
 
             <!-- HISTÓRICO -->
-      <div style="margin-top:4px;">
+      <!-- id para que el candado de margen/costo NO lo tape: lo de aquí abajo
+           ya está distribuido y guardado, no depende del modo (Sergio, 14-oct). -->
+      <div id="bloqueHistRVI" style="margin-top:4px;">
         <div class="section-label">
           Histórico generado hoy
           <span class="hint" id="histHint"></span>
@@ -23269,9 +23271,26 @@ function aplicarCandadoModoRVI(){
   const listo = !!(_modoRVI.margen && _modoRVI.costo);
   const cuerpo = document.querySelector('.rvi-body');
   if(cuerpo){
-    cuerpo.style.opacity       = listo ? '' : '.35';
-    cuerpo.style.pointerEvents = listo ? '' : 'none';
-    cuerpo.style.filter        = listo ? '' : 'grayscale(.6)';
+    // El candado tapa SOLO lo de la operación nueva: las líneas de EMSX, el
+    // trío de alloc y el formulario. El "Histórico generado hoy" vive dentro
+    // del mismo contenedor pero NO se bloquea — esas líneas ya están
+    // distribuidas y guardadas, y no dependen de margen/costo: elegir un modo
+    // para poder marcar algo que ya se distribuyó no tiene sentido, y encima
+    // obligaba a tocar los botones del modo de la operación siguiente.
+    // Protección, 2 líneas en 4 portafolios: no se dejaban marcar
+    // (Sergio, 14-oct).
+    Array.from(cuerpo.children).forEach(hijo=>{
+      if(hijo.id === 'bloqueHistRVI') return;
+      hijo.style.opacity       = listo ? '' : '.35';
+      hijo.style.pointerEvents = listo ? '' : 'none';
+      hijo.style.filter        = listo ? '' : 'grayscale(.6)';
+    });
+    // La versión anterior pintaba el contenedor entero. Si quedó algo puesto
+    // ahí, se limpia: con filter/opacity en el padre, un hijo no se puede
+    // "des-apagar" solo.
+    cuerpo.style.opacity = '';
+    cuerpo.style.pointerEvents = '';
+    cuerpo.style.filter = '';
   }
   // Los botones del modo viven FUERA de .rvi-body, así que siguen clicables.
   document.querySelectorAll('.modo-rvi').forEach(b=>{
@@ -25261,7 +25280,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-14 22:40 UTC · v210';
+const BUILD_ID = '2026-10-14 22:25 UTC · v211';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
