@@ -12374,7 +12374,11 @@ async function exportarCanastaEMSX(){
     ws.getCell(r,4).value = '';           // Limit: se define al operar
     ws.getCell(r,5).value = '';           // TIF: idem
     ws.getCell(r,6).value = 'MLI';
-    ws.getCell(r,3).numFmt = '#,##0';
+    // SIN formato de miles. El valor de la celda siempre fue el número 1900,
+    // pero con numFmt '#,##0' se muestra "1.900" y así es como lo lee quien
+    // carga el archivo en EMSX — a Juan Antonio no le entraba. En General sale
+    // 1900 crudo, que es lo que espera (Sergio, 15-oct).
+    ws.getCell(r,3).numFmt = 'General';
     r++;
   });
   if(r === 2){ alert('La canasta no tiene líneas con cantidad.'); return; }
@@ -26288,7 +26292,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-15 16:55 UTC · v216';
+const BUILD_ID = '2026-10-15 17:05 UTC · v217';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
