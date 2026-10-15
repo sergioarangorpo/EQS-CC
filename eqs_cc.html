@@ -792,6 +792,7 @@
     <button data-mod="Ayudas"   onclick="switchModule('Ayudas')"   class="">Ayudas</button>
     <button data-mod="Informe"  onclick="switchModule('Informe')"  class="">Informe diario RVL</button>
     <button data-mod="CierreRVI" onclick="switchModule('CierreRVI')" class="">Informe diario RVI</button>
+    <button data-mod="Research" onclick="switchModule('Research')" class="">Research RVL</button>
   </div>
 
   <!-- ===== CIERRE RVI =====
@@ -820,6 +821,47 @@
         <div id="rviImagen" style="width:1320px;background:#0d0f14;color:#e5e7eb;padding:26px;
              font-family:Inter,system-ui,sans-serif;box-sizing:border-box;"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- ===== RESEARCH RVL =====
+       Qué tienen los AFPs en la bolsa local, mes a mes.
+
+       La fuente es el "Portafolio de inversión detallado" que publica la
+       Superfinanciera cada mes. El navegador NO puede bajarlo (es un .xlsx
+       en un portal del gobierno y el navegador bloquea esa descarga por
+       seguridad), así que el archivo se guarda en la carpeta del equipo y
+       lo lee `cargar_super.py` desde el PC, igual que el cierre de
+       Bloomberg. Aquí solo se pinta lo que ya quedó en Supabase.
+
+       Los cuatro AFPs de la Super son los mismos cuatro clientes de RVL,
+       así que esto dice, de cada papel, quién lo tiene y cuánto se movió.
+       (Sergio, 15-oct) -->
+  <div id="mod-Research" class="mod-section">
+    <div style="padding:0 24px 24px;">
+      <div class="section-label" style="margin-top:16px;display:flex;align-items:center;
+           justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <span>Research RVL · posición de los AFPs</span>
+        <span class="field-note" id="rshEstado">—</span>
+      </div>
+
+      <div class="panel" style="margin-bottom:14px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <label class="field-note" for="rshCorte">Corte</label>
+          <select id="rshCorte" onchange="rshCargar()" style="min-width:150px;"></select>
+          <label class="field-note" for="rshContra">contra</label>
+          <select id="rshContra" onchange="rshCargar()" style="min-width:150px;"></select>
+          <button class="btn small" onclick="rshCargar()">↻ Actualizar</button>
+          <button class="btn small purple" onclick="rshCargarSuper(this)">⬇ Leer archivos de la Super</button>
+          <span style="flex:1;"></span>
+          <button class="btn small ghost" onclick="rshVista('resumen')" id="rshB1">Resumen</button>
+          <button class="btn small ghost" onclick="rshVista('especie')" id="rshB2">Por especie</button>
+          <button class="btn small ghost" onclick="rshVista('fondo')"   id="rshB3">Por fondo</button>
+        </div>
+        <div id="rshAviso" class="field-note" style="margin-top:8px;"></div>
+      </div>
+
+      <div id="rshCuerpo"></div>
     </div>
   </div>
 
@@ -2970,6 +3012,7 @@ const MARKET_LABELS = {
   Reportes: { label:'',              color:'var(--text-1)' },
   Ayudas:   { label:'',              color:'var(--text-1)' },
   Informe:  { label:'BVC abierto',   color:'var(--buy)' },
+  Research: { label:'',              color:'var(--text-1)' },
 };
 
 function switchModule(mod) {
@@ -2983,6 +3026,7 @@ function switchModule(mod) {
   // se subió desde Ayudas.
   if(mod === 'Informe' && typeof renderInformeDiario === 'function') renderInformeDiario();
   if(mod === 'CierreRVI' && typeof cargarCierreRVI === 'function') cargarCierreRVI();
+  if(mod === 'Research' && typeof rshCargar === 'function') rshCargar();
   // El dashboard se recalcula al entrar: lee de los otros módulos, así que
   // tiene que estar fresco cada vez.
   if(mod === 'Dashboard' && typeof renderDashboard === 'function') renderDashboard();
@@ -26579,7 +26623,286 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-15 20:55 UTC · v222';
+// ===================================================================
+// RESEARCH RVL — posición de los AFPs en la bolsa local
+// -------------------------------------------------------------------
+// Lee `afp_portafolio` y `afp_emision`, que llena `cargar_super.py` con
+// los archivos mensuales de la Superfinanciera.
+//
+// Lo que se mira no es la foto, es la VARIACIÓN: quién compró y quién
+// vendió cada papel entre un corte y el anterior. La foto sola ya la
+// tiene cualquiera.
+//
+// Dos cosas que este módulo NO hace, a propósito:
+//
+//  1. No calcula participación sobre el monto de emisión del archivo.
+//     Ese dato lo reporta cada AFP por su cuenta y no coinciden entre
+//     ellos: CEMARGOS viene con cinco valores distintos. `cargar_super`
+//     deja marcado cuáles tienen un solo valor (`emision_confiable`) y
+//     solo para esos se muestra el porcentaje. Para los demás va un
+//     guion. Un número que no se sostiene frente al cliente es peor que
+//     no tener el número.
+//
+//  2. No inventa el mes que falta. Si solo hay un corte cargado, las
+//     columnas de variación dicen que no hay con qué comparar, en vez
+//     de mostrar ceros que parecen "no se movió".
+//
+// (Sergio, 15-oct)
+// ===================================================================
+let _rshDatos = { corte:null, contra:null, filas:[], prev:[], emision:{}, cortes:[] };
+let _rshVista = 'resumen';
+
+const RSH_AFPS = ['PORVENIR','PROTECCION','COLFONDOS','SKANDIA'];
+// El orden de los fondos es el del riesgo, no alfabético: así se lee de
+// corrido como lo piensa la mesa.
+const RSH_FONDOS = ['MODERADO','MAYOR RIESGO','CONSERVADOR','RETIRO PROGRAMADO',
+                    'CESANTIAS','ALTERNATIVO'];
+
+function _rshMM(v){
+  // Miles de millones, que es como se habla de estas cifras en la mesa.
+  const n = Number(v)||0;
+  return n.toLocaleString('en-US',{minimumFractionDigits:1, maximumFractionDigits:1});
+}
+function _rshFecha(f){
+  if(!f) return '—';
+  const [a,m,d] = String(f).split('-');
+  const MES = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  return `${MES[Number(m)]||m}-${a}`;
+}
+// Celda de variación: verde si compraron, roja si vendieron, guion si no
+// hay contra qué comparar. El guion y el cero son cosas distintas.
+function _rshDelta(hoy, antes, hayPrev){
+  if(!hayPrev) return '<td class="num" style="opacity:.35;">·</td>';
+  const d = (Number(hoy)||0) - (Number(antes)||0);
+  if(Math.abs(d) < 1) return '<td class="num" style="opacity:.35;">—</td>';
+  const col = d > 0 ? 'var(--buy,#22c55e)' : 'var(--sell,#ef4444)';
+  const sg = d > 0 ? '+' : '';
+  return `<td class="num" style="color:${col};">${sg}${_rshMM(d/1e9)}</td>`;
+}
+
+async function rshCargar(){
+  const est = document.getElementById('rshEstado');
+  const avi = document.getElementById('rshAviso');
+  if(est) est.textContent = 'cargando…';
+  try{
+    // Los cortes disponibles. Se piden una sola vez por entrada al módulo.
+    if(!_rshDatos.cortes.length){
+      const f = await supaFetchTodo('afp_portafolio', 'select=fecha_corte&order=fecha_corte.desc');
+      _rshDatos.cortes = [...new Set(f.map(x=>x.fecha_corte))].sort().reverse();
+      const s1 = document.getElementById('rshCorte');
+      const s2 = document.getElementById('rshContra');
+      if(s1 && s2){
+        s1.innerHTML = _rshDatos.cortes.map(c=>`<option value="${c}">${_rshFecha(c)}</option>`).join('');
+        s2.innerHTML = `<option value="">(sin comparar)</option>` +
+          _rshDatos.cortes.map(c=>`<option value="${c}">${_rshFecha(c)}</option>`).join('');
+        // Por defecto: el más reciente contra el inmediatamente anterior.
+        if(_rshDatos.cortes[1]) s2.value = _rshDatos.cortes[1];
+      }
+    }
+    if(!_rshDatos.cortes.length){
+      if(est) est.textContent = 'sin datos';
+      document.getElementById('rshCuerpo').innerHTML =
+        `<div class="panel"><div style="padding:8px 0;">
+           <b>Todavía no hay nada cargado.</b><br>
+           <span class="field-note">Deja los archivos de la Super en la carpeta del proyecto
+           y aprieta <b>Leer archivos de la Super</b>. Son los del "Portafolio de inversión
+           detallado" de los fondos de pensiones obligatorias, uno por mes.</span>
+         </div></div>`;
+      return;
+    }
+    const corte  = document.getElementById('rshCorte').value || _rshDatos.cortes[0];
+    const contra = document.getElementById('rshContra').value || '';
+    const [filas, prev, emis] = await Promise.all([
+      supaFetchTodo('afp_portafolio', `select=*&fecha_corte=eq.${corte}`),
+      contra ? supaFetchTodo('afp_portafolio', `select=*&fecha_corte=eq.${contra}`)
+             : Promise.resolve([]),
+      supaFetchTodo('afp_emision', `select=*&fecha_corte=eq.${corte}`),
+    ]);
+    _rshDatos.corte = corte;
+    _rshDatos.contra = contra;
+    _rshDatos.filas = filas;
+    _rshDatos.prev = prev;
+    _rshDatos.emision = {};
+    emis.forEach(e=>{ _rshDatos.emision[e.nemo] = e; });
+    const tot = filas.reduce((s,f)=>s+(Number(f.valor_mercado)||0),0);
+    if(est) est.textContent = `${_rshFecha(corte)} · ${filas.length} posiciones · ${_rshMM(tot/1e9)} mm`;
+    if(avi) avi.textContent = contra
+      ? `Variación contra ${_rshFecha(contra)}. En verde lo que compraron, en rojo lo que vendieron.`
+      : 'Sin comparación: elige un corte en "contra" para ver quién compró y quién vendió.';
+    rshPintar();
+  }catch(e){
+    if(est) est.textContent = 'error';
+    if(avi) avi.textContent = 'No se pudo leer: ' + e.message;
+  }
+}
+
+function rshVista(v){ _rshVista = v; rshPintar(); }
+
+function rshPintar(){
+  ['rshB1','rshB2','rshB3'].forEach((id,i)=>{
+    const b = document.getElementById(id);
+    if(b) b.classList.toggle('ghost', ['resumen','especie','fondo'][i] !== _rshVista);
+  });
+  const c = document.getElementById('rshCuerpo');
+  if(!c) return;
+  if(_rshVista === 'especie')    c.innerHTML = _rshTablaEspecie();
+  else if(_rshVista === 'fondo') c.innerHTML = _rshTablaFondo();
+  else                           c.innerHTML = _rshResumen();
+}
+
+// --- agrupador: suma valor y acciones por la clave que se le pida ---
+function _rshAgrupar(filas, clave){
+  const g = {};
+  filas.forEach(f=>{
+    const k = clave(f);
+    const a = g[k] || (g[k] = { valor:0, acciones:0, n:0 });
+    a.valor += Number(f.valor_mercado)||0;
+    a.acciones += Number(f.acciones)||0;
+    a.n++;
+  });
+  return g;
+}
+
+function _rshResumen(){
+  const hayPrev = _rshDatos.prev.length > 0;
+  const hoy  = _rshAgrupar(_rshDatos.filas, f=>f.afp);
+  const ant  = _rshAgrupar(_rshDatos.prev,  f=>f.afp);
+  const tot  = Object.values(hoy).reduce((s,a)=>s+a.valor,0);
+  let h = `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">`;
+  RSH_AFPS.forEach(a=>{
+    const v = (hoy[a]||{valor:0}).valor;
+    const p = (ant[a]||{valor:0}).valor;
+    const d = hayPrev ? v - p : null;
+    const pct = (hayPrev && p) ? (v/p-1)*100 : null;
+    const col = d === null ? 'var(--text-1)' : (d>=0 ? 'var(--buy,#22c55e)' : 'var(--sell,#ef4444)');
+    h += `<div class="card" style="padding:14px 18px;min-width:188px;flex:1;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.4px;opacity:.7;">${a}</div>
+      <div style="font-size:23px;font-weight:700;margin-top:4px;">${_rshMM(v/1e9)}<span style="font-size:12px;opacity:.6;"> mm</span></div>
+      <div style="font-size:12px;opacity:.75;margin-top:2px;">${tot? (v/tot*100).toFixed(1):'0.0'}% del total</div>
+      <div style="font-size:12px;margin-top:6px;color:${col};">${
+        d === null ? '<span style="opacity:.5;">sin comparación</span>'
+                   : (d>=0?'+':'') + _rshMM(d/1e9) + ' mm' + (pct!==null?` (${pct>=0?'+':''}${pct.toFixed(1)}%)`:'')
+      }</div></div>`;
+  });
+  h += `</div>`;
+
+  // Los movimientos más grandes del mes. Es lo primero que uno quiere ver.
+  if(hayPrev){
+    const hoyE = _rshAgrupar(_rshDatos.filas, f=>f.afp+'|'+f.nemo);
+    const antE = _rshAgrupar(_rshDatos.prev,  f=>f.afp+'|'+f.nemo);
+    const movs = [];
+    new Set([...Object.keys(hoyE), ...Object.keys(antE)]).forEach(k=>{
+      const [afp,nemo] = k.split('|');
+      const dv = (hoyE[k]||{valor:0}).valor - (antE[k]||{valor:0}).valor;
+      const da = (hoyE[k]||{acciones:0}).acciones - (antE[k]||{acciones:0}).acciones;
+      // Se ordena por ACCIONES, no por valor: una subida de precio no es
+      // una compra, y en valor las dos cosas se ven igual.
+      if(Math.abs(da) > 0.5) movs.push({afp, nemo, dv, da});
+    });
+    movs.sort((x,y)=>Math.abs(y.da)-Math.abs(x.da));
+    h += `<div class="section-label" style="margin:4px 0 8px;">Mayores movimientos en acciones · ${_rshFecha(_rshDatos.contra)} → ${_rshFecha(_rshDatos.corte)}</div>`;
+    h += `<div class="panel" style="padding:0;overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+      <thead><tr style="text-align:left;opacity:.65;">
+        <th style="padding:7px 10px;">AFP</th><th>Especie</th>
+        <th class="num">Δ acciones</th><th class="num">Δ valor (mm)</th></tr></thead><tbody>`;
+    movs.slice(0,20).forEach(m=>{
+      const col = m.da>0 ? 'var(--buy,#22c55e)' : 'var(--sell,#ef4444)';
+      h += `<tr style="border-top:1px solid var(--line,#222);">
+        <td style="padding:6px 10px;">${m.afp}</td>
+        <td style="font-weight:600;">${m.nemo}</td>
+        <td class="num" style="color:${col};">${m.da>0?'+':''}${fmtInt(m.da)}</td>
+        <td class="num" style="color:${col};">${m.dv>0?'+':''}${_rshMM(m.dv/1e9)}</td></tr>`;
+    });
+    if(!movs.length) h += `<tr><td colspan="4" style="padding:10px;opacity:.6;">Ningún movimiento entre los dos cortes.</td></tr>`;
+    h += `</tbody></table></div>`;
+  } else {
+    h += `<div class="panel"><span class="field-note">Carga por lo menos dos meses para ver
+          quién compró y quién vendió. Con un solo corte esto es una foto, no un seguimiento.</span></div>`;
+  }
+  return h;
+}
+
+function _rshTablaEspecie(){
+  const hayPrev = _rshDatos.prev.length > 0;
+  const hoy = _rshAgrupar(_rshDatos.filas, f=>f.nemo+'|'+f.afp);
+  const ant = _rshAgrupar(_rshDatos.prev,  f=>f.nemo+'|'+f.afp);
+  const totEsp = _rshAgrupar(_rshDatos.filas, f=>f.nemo);
+  const accEsp = {};
+  _rshDatos.filas.forEach(f=>{ accEsp[f.nemo] = (accEsp[f.nemo]||0) + (Number(f.acciones)||0); });
+  const nemos = Object.keys(totEsp).sort((a,b)=>totEsp[b].valor-totEsp[a].valor);
+
+  let h = `<div class="panel" style="padding:0;overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+    <thead><tr style="text-align:left;opacity:.65;">
+      <th style="padding:7px 10px;">Especie</th>`;
+  RSH_AFPS.forEach(a=>{ h += `<th class="num">${a.slice(0,9)}</th>`; });
+  h += `<th class="num">Total mm</th><th class="num">Δ mm</th><th class="num">Acciones</th><th class="num">% emisión</th></tr></thead><tbody>`;
+
+  nemos.forEach(n=>{
+    const t = totEsp[n].valor;
+    const tp = RSH_AFPS.reduce((s,a)=>s+((ant[n+'|'+a]||{valor:0}).valor),0);
+    const e = _rshDatos.emision[n];
+    // Solo se muestra el % cuando el monto de emisión es confiable.
+    const pctEm = (e && e.emision_confiable && e.monto_emision)
+      ? (accEsp[n]/Number(e.monto_emision)*100).toFixed(1)+'%'
+      : `<span style="opacity:.35;" title="El archivo de la Super trae ${e?e.emision_variantes:0} montos de emisión distintos para esta especie. El dato bueno sale de Bloomberg.">—</span>`;
+    h += `<tr style="border-top:1px solid var(--line,#222);">
+      <td style="padding:6px 10px;font-weight:600;">${n}</td>`;
+    RSH_AFPS.forEach(a=>{
+      const v = (hoy[n+'|'+a]||{valor:0}).valor;
+      h += `<td class="num">${v ? _rshMM(v/1e9) : '<span style="opacity:.3;">—</span>'}</td>`;
+    });
+    h += `<td class="num" style="font-weight:600;">${_rshMM(t/1e9)}</td>`;
+    h += _rshDelta(t, tp, hayPrev);
+    h += `<td class="num">${fmtInt(accEsp[n])}</td><td class="num">${pctEm}</td></tr>`;
+  });
+  h += `</tbody></table></div>
+    <div class="field-note" style="margin-top:8px;">Cifras en miles de millones de COP.
+    La columna <b>% emisión</b> va en guion cuando los AFPs reportan montos de emisión que
+    no coinciden entre sí, que es el caso en 21 de las 30 especies. Ese dato va a salir de
+    Bloomberg.</div>`;
+  return h;
+}
+
+function _rshTablaFondo(){
+  const hayPrev = _rshDatos.prev.length > 0;
+  const hoy = _rshAgrupar(_rshDatos.filas, f=>f.fondo+'|'+f.afp);
+  const ant = _rshAgrupar(_rshDatos.prev,  f=>f.fondo+'|'+f.afp);
+  const presentes = RSH_FONDOS.filter(f=>RSH_AFPS.some(a=>hoy[f+'|'+a]));
+  let h = `<div class="panel" style="padding:0;overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+    <thead><tr style="text-align:left;opacity:.65;"><th style="padding:7px 10px;">Fondo</th>`;
+  RSH_AFPS.forEach(a=>{ h += `<th class="num">${a.slice(0,9)}</th>`; });
+  h += `<th class="num">Total mm</th><th class="num">Δ mm</th></tr></thead><tbody>`;
+  presentes.forEach(f=>{
+    let t=0, tp=0;
+    let fila = `<tr style="border-top:1px solid var(--line,#222);">
+      <td style="padding:6px 10px;font-weight:600;">${f}</td>`;
+    RSH_AFPS.forEach(a=>{
+      const v = (hoy[f+'|'+a]||{valor:0}).valor;
+      const p = (ant[f+'|'+a]||{valor:0}).valor;
+      t += v; tp += p;
+      fila += `<td class="num">${v ? _rshMM(v/1e9) : '<span style="opacity:.3;">—</span>'}</td>`;
+    });
+    fila += `<td class="num" style="font-weight:600;">${_rshMM(t/1e9)}</td>` + _rshDelta(t, tp, hayPrev) + `</tr>`;
+    h += fila;
+  });
+  h += `</tbody></table></div>
+    <div class="field-note" style="margin-top:8px;">El fondo se identifica por el código
+    numérico de la Super, no por el nombre: el mismo fondo aparece escrito de tres formas
+    distintas según el AFP, con erratas y tildes que van y vienen.</div>`;
+  return h;
+}
+
+// Pide al PC que lea los archivos de la Super que estén en la carpeta.
+// Es el mismo camino de "Traer cierre de Bloomberg": el navegador no puede
+// abrir un .xlsx del disco ni bajarlo del portal de la Super.
+async function rshCargarSuper(btn){
+  const r = await pedirAlPC('CARGAR_SUPER', btn, null, 300);
+  _rshDatos.cortes = [];          // que vuelva a leer qué meses hay
+  await rshCargar();
+  return r;
+}
+
+const BUILD_ID = '2026-10-15 21:40 UTC · v223';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
