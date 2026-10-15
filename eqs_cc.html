@@ -24805,6 +24805,22 @@ function generarTC(){
     const _res = resolverPrecioNuestroRVI(_lnCli, _pxEsc);
     if(!_res.precio){
       const hay = (_res.candidatas||[]).length;
+      // El caso de PORVENIR, dicho por su nombre. Si no hay ninguna línea
+      // nuestra en la calle Y el precio escrito es el MISMO de la línea, lo
+      // que falta no es "nuestro precio": es el DEL CLIENTE. Hablarle aquí de
+      // Originating Firm CREDICORP lo manda a buscar una línea que no existe
+      // (Sergio, 15-oct).
+      const _pxLn = Number((_lnCli||{}).avgPr) || 0;
+      if(!hay && _pxLn && isFinite(_pxEsc) && Math.abs(_pxEsc - _pxLn) < 1e-9){
+        alert('Escribe el precio que le vas a dar al cliente.\n\n' +
+          `El que está arriba en Price (${_pxLn}) es el mismo de la ejecución, ` +
+          'así que el margen daría cero.\n\n' +
+          'Esta es una ejecución directa: se ejecutó contra el mercado a nombre ' +
+          'del cliente, así que esa misma línea es nuestra ejecución y arriba va ' +
+          'lo que se le cobra a él.\n\n' +
+          'Si de verdad no hubo margen, cambia el tipo a SIN MARGEN.');
+        return;
+      }
       alert('Falta NUESTRO precio de ejecución.\n\n' +
         'La operación está marcada CON MARGEN, así que el margen sale de la ' +
         'diferencia entre el precio del cliente y el nuestro. Sin eso, la planilla ' +
@@ -24838,7 +24854,17 @@ function generarTC(){
   // UN SOLO resolvedor para nuestro precio: el mismo número va a la comisión
   // que se ve en pantalla y al histórico que alimenta la planilla del BO y el
   // dashboard. Antes eran dos cálculos distintos que podían no coincidir.
-  const _nuestro   = resolverPrecioNuestroRVI(emsxData.find(r=>r.id===lineaActiva));
+  // CON `price`. Sin ese segundo argumento el resolvedor no puede resolver la
+  // EJECUCIÓN DIRECTA —la de Porvenir—, porque esa rama necesita saber que el
+  // precio escrito es distinto al de la línea. La pantalla (calcularRVI) y el
+  // freno duro de arriba sí se lo pasaban; el guardado no, así que la pantalla
+  // mostraba el margen bien, el freno lo dejaba pasar, y aquí se perdía:
+  // `precioNuestroBO` caía al precio del cliente y el margen se guardaba en
+  // CERO. El reporte al cliente salía correcto, así que nada lo delataba —
+  // solo la planilla del BO y el dashboard, horas después. Es la misma forma
+  // del bug del 30-sep que advierte el comentario de arriba: un número, un
+  // camino, y las tres llamadas con los mismos argumentos (Sergio, 15-oct).
+  const _nuestro   = resolverPrecioNuestroRVI(emsxData.find(r=>r.id===lineaActiva), price);
   const vincPrecio = _nuestro.precio;
   const c          = calcularComisiones(clienteKey, tipo, qty, price, {
     comCCSI: parseNum(document.getElementById('tc-com-ccsi').value),
@@ -25755,7 +25781,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-14 23:20 UTC · v213';
+const BUILD_ID = '2026-10-15 14:40 UTC · v214';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
