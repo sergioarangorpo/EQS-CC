@@ -2415,6 +2415,36 @@
       <div id="maestroEspeciesTabla" style="max-height:440px;overflow:auto;"></div>
     </div>
 
+    <div class="section-label" style="margin-top:16px;">Listas de correo</div>
+    <div style="padding:0 24px 8px;">
+      <div class="field-note" style="margin-bottom:8px;">
+        Quién recibe el informe de <b>RVL</b>, el de <b>RVI</b> y los <b>flujos del día</b>.
+        Una fila por persona: se marca o se desmarca la lista. Sacar a alguien lo
+        <b>desactiva</b>, no lo borra — si vuelve, su nombre ya está bien escrito.
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <input type="text" id="lcBuscar" placeholder="Buscar nombre, correo o dominio…"
+               oninput="renderListasCorreo()"
+               style="width:280px;font-size:12px;padding:5px 9px;background:var(--bg-2,#161b26);
+                      color:var(--text-1,#e5e7eb);border:1px solid var(--border,#232938);border-radius:6px;">
+        <select id="lcFiltro" onchange="renderListasCorreo()" style="font-size:12px;">
+          <option value="">Todas las listas</option>
+          <option value="RVL">Solo RVL</option>
+          <option value="RVI">Solo RVI</option>
+          <option value="FLUJOS">Solo FLUJOS</option>
+          <option value="NINGUNA">Sin ninguna lista</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
+          <input type="checkbox" id="lcVerInactivos" onchange="renderListasCorreo()">
+          Ver desactivados
+        </label>
+        <button class="btn small" id="btnLcNuevo" onclick="abrirCorreoNuevo()">+ Correo nuevo</button>
+        <button class="btn small ghost" onclick="cargarListasCorreo(true)">↻ Recargar</button>
+      </div>
+      <div id="lcAviso" style="margin-bottom:8px;"></div>
+      <div id="listasCorreoTabla" style="max-height:440px;overflow:auto;"></div>
+    </div>
+
     <div class="section-label" style="margin-top:16px;">Cargas y maestros</div>
     <div class="toolbar">
       <div class="tb-field" style="flex:1;min-width:340px;">
@@ -4744,17 +4774,7 @@ async function generarReporteExcel(){
   ws.getRow(r).height = 18;
 
   const buffer = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  const slug = fondoNombre.replace(/[^A-Z0-9]+/gi, '_').toUpperCase();
-  const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
-  a.href = url;
-  a.download = `FX_${slug}_${fechaSlug}.xlsx`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  await entregarReporteCliente(`FX_${slug}_${fechaSlug}.xlsx`, buffer);
 
   // El reporte queda REGISTRADO en el módulo Reportes, igual que los de RVL y
   // RVI. Se generaba el archivo pero no se anotaba en ninguna parte, así que
@@ -5186,11 +5206,7 @@ async function generarExcelHORZ(lineas, fechaOp){
 
   const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
   const buf = await wb.xlsx.writeBuffer();
-  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-  const a = document.createElement('a');
-  a.href = url; a.download = `Trade_Confirmation_Global_X_ETFs_${slug}.xlsx`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  await entregarReporteCliente(`Trade_Confirmation_Global_X_ETFs_${slug}.xlsx`, buf);
 }
 
 async function generarExcelBNP(lineas, tipoOrden, fechaOp){
@@ -5202,11 +5218,7 @@ async function generarExcelBNP(lineas, tipoOrden, fechaOp){
 
   const bajar = async (wb, nombre) => {
     const buf = await wb.xlsx.writeBuffer();
-    const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-    const a = document.createElement('a');
-    a.href = url; a.download = nombre;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    await entregarReporteCliente(nombre, buf);
   };
 
   // ---------- 1) EQTY EXECUTION ----------
@@ -5467,11 +5479,7 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
   const nomArchivo = 'Trade_Confirmation_' + clienteKey + '_' + String(trader||'').replace(/\s+/g,'_') + '_' +
     hoyDate.getFullYear() + String(hoyDate.getMonth()+1).padStart(2,'0') + String(hoyDate.getDate()).padStart(2,'0') + '.xlsx';
   const buf = await wb.xlsx.writeBuffer();
-  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-  const a = document.createElement('a');
-  a.href = url; a.download = nomArchivo;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  await entregarReporteCliente(nomArchivo, buf);
 }
 
 async function generarExcelCruce(clienteKey, registrados, trader){
@@ -5659,25 +5667,7 @@ async function generarExcelCruce(clienteKey, registrados, trader){
   ws.getRow(r).height = 18;
 
   const buffer = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
-  a.href = url;
-  // Nombre estándar que espera la mesa: Trade_Confirmation_<CLIENTE>_<TRADER>_<yyyymmdd>.
-  // El cliente se abrevia (MLI, CITI_NY); el trader va en MAYÚSCULAS con guion
-  // bajo (BEATRIZ_RIPAMONTI), como los archivos que llegan del cliente.
-  const clienteSlug = (String(clienteKey||'').toUpperCase().includes('CITI')) ? 'CITI_NY'
-                    : (String(clienteKey||'').toUpperCase().includes('MLI') || String(clienteKey||'').toUpperCase().includes('MERRILL')) ? 'MLI'
-                    : nombreCliente.replace(/[^A-Z0-9]+/gi, '_').toUpperCase();
-  const traderSlug = (trader||'').trim().replace(/\s+/g,'_').toUpperCase();
-  a.download = traderSlug
-    ? `Trade_Confirmation_${clienteSlug}_${traderSlug}_${fechaSlug}.xlsx`
-    : `Trade_Confirmation_${clienteSlug}_${fechaSlug}.xlsx`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  await entregarReporteCliente(traderSlug ? `Trade_Confirmation_${clienteSlug}_${traderSlug}_${fechaSlug}.xlsx` : `Trade_Confirmation_${clienteSlug}_${fechaSlug}.xlsx`, buffer);
 }
 
 // =====================================================================
@@ -5993,16 +5983,7 @@ async function generarExcelAndes(eqLotes, fxOps){
   ws.getRow(r).height = 18;
 
   const buffer = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
-  a.href = url;
-  a.download = `Operaciones Andes Investment Group Inc ${fechaSlug}.xlsx`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  await entregarReporteCliente(`Operaciones Andes Investment Group Inc ${fechaSlug}.xlsx`, buffer);
 }
 
 // Reporte genérico EQUITY (sin bloque FX). Mismo look de marca que el de Andes,
@@ -7339,13 +7320,10 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
   // El nombre lleva el prefijo Operaciones_ y el código del macrogrupo, igual
   // que lo que anuncia la confirmación (Sergio, 05-sep).
   const nombre = `Operaciones_${cfgMacro.archivo}_${fechaSlug}${window._sufijoReporte||''}.xlsx`;
-  wb.xlsx.writeBuffer().then(buf=>{
-    const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-    const a = document.createElement('a');
-    a.href = url; a.download = nombre;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  });
+  // Sin `.then`: la función ya es async y así el que la llama puede esperar a
+  // que el archivo quede escrito en la carpeta. Con el .then la promesa se
+  // soltaba y `generarExcelCCFFMM` devolvía antes de que el reporte existiera.
+  await entregarReporteCliente(nombre, await wb.xlsx.writeBuffer());
 }
 
 // =====================================================================
@@ -8757,6 +8735,10 @@ async function cargarMaestros(){
   aplicarMaestroPortafolios();
   aplicarMaestroPortafoliosRVI();
   renderListasMaestro();
+  // Las listas de correo viven en la misma pantalla. Si la tabla no existe o
+  // falla, `cargarListasCorreo` lo traga y deja el panel vacío: ningún maestro
+  // se cae por eso.
+  if(typeof cargarListasCorreo === 'function') cargarListasCorreo();
   // Si hay un cliente en pantalla, se repinta para que el portafolio nuevo
   // salga sin tener que cambiar de cliente y volver.
   if(typeof poblarSelectorNuevoPortafolio === 'function') poblarSelectorNuevoPortafolio();
@@ -14135,13 +14117,21 @@ function _bajarAlNavegador(nombre, buffer){
 // Devuelve { ok, mensaje, carpeta } . Si la carpeta no responde, el archivo
 // BAJA AL NAVEGADOR como toda la vida: el reporte del cliente no se pierde
 // nunca por un problema de carpeta o de runner apagado. REGLA DE ORO.
-async function entregarReporteCliente(nombre, buffer, opc){
+// TODO lo que el app genera va a la carpeta del equipo, no a la carpeta de
+// Descargas de cada PC. Un solo camino para los 19 archivos: el .xlsx se manda
+// al runner en base64 y él lo escribe en Reportes Clientes o en Reportes
+// Internos, en la carpeta del día.
+//
+// Si la carpeta no contesta —runner apagado, OneDrive caído, lo que sea— el
+// archivo BAJA AL NAVEGADOR como toda la vida. Nunca se pierde un reporte por
+// un problema de carpeta: esa es la red (Sergio, 15-oct).
+async function entregarArchivo(destino, nombre, buffer, opc){
   opc = opc || {};
   let b64 = null;
   try{ b64 = await _aBase64(buffer); }catch(e){ b64 = null; }
   if(b64){
     const r = await _pedidoSilencioso('REPORTE_CLIENTE', {
-      destino: 'clientes',
+      destino: destino || 'clientes',
       nombre,
       fecha: opc.fecha || null,
       archivo: b64,
@@ -14153,6 +14143,17 @@ async function entregarReporteCliente(nombre, buffer, opc){
   }
   _bajarAlNavegador(nombre, buffer);
   return { ok:true, carpeta:false, mensaje:'No se pudo preparar el archivo para la carpeta.' };
+}
+
+// Los reportes que recibe el CLIENTE. Se deja con su propio nombre porque es
+// el que lleva la papeleta de bolsa de FALCOM.
+async function entregarReporteCliente(nombre, buffer, opc){
+  return entregarArchivo('clientes', nombre, buffer, opc);
+}
+
+// Planillas y soportes del Back Office.
+async function entregarArchivoInterno(nombre, buffer, opc){
+  return entregarArchivo('planillas', nombre, buffer, opc);
 }
 
 // Manda el pedido y se queda esperando a que el PC conteste. El boton es el
@@ -14704,11 +14705,7 @@ async function descargarPlanillaBO(clientes){
   }
   const wb = await _libroPlanillaBO(filas);
   const buf = await wb.xlsx.writeBuffer();
-  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-  const a = document.createElement('a');
-  a.href = url; a.download = _nombrePlanillaBO();
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  await entregarArchivoInterno(_nombrePlanillaBO(), buf);
 
   try{
     await guardarEnLotesSupabase('cargas_cor', resumen.map(r=>({
@@ -15025,11 +15022,7 @@ async function descargarPlanillaFX(){
   if(!_fxPlanillaLista(filas)) return;
   const wb = _fxLibroPlanilla(filas);
   const buf = await wb.xlsx.writeBuffer();
-  const url = URL.createObjectURL(new Blob([buf],
-    {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-  const a = document.createElement('a');
-  a.href = url; a.download = _fxNombrePlanilla(); a.click();
-  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+  await entregarArchivoInterno(_fxNombrePlanilla(), buf);
 }
 
 // Abre el correo al BO con la planilla adjunta. Va por el runner, igual que
@@ -15242,11 +15235,7 @@ async function descargarFX(clientes){
 
   const slug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
   const buf = await wb.xlsx.writeBuffer();
-  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-  const a = document.createElement('a');
-  a.href = url; a.download = `COMISIONES_FX_${slug}.xlsx`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  await entregarArchivoInterno(`COMISIONES_FX_${slug}.xlsx`, buf);
 
   try{
     const resumen = [...new Set(filas.map(f=>f.cliente))]
@@ -15320,11 +15309,7 @@ async function descargarCOR(seleccion){
     ? `COMPLEMENTACION_MASIVO_${slug}_${String(resumen[0].cliente).replace(/[^A-Za-z0-9]+/g,'_').slice(0,24)}.xlsx`
     : `COMPLEMENTACION_MASIVO_${slug}.xlsx`;
   const buf = await wb.xlsx.writeBuffer();
-  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-  const a = document.createElement('a');
-  a.href = url; a.download = nombre;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  await entregarArchivoInterno(nombre, buf);
 
   // Registro: admite repetir, con consecutivo. Manda la última.
   try{
@@ -15896,6 +15881,197 @@ let _portGrupoPorNombre = {};
 const PRESUPUESTO_ANIO = 8668000000;
 
 function puedeEditarGrupos(){ return USUARIO === 'SAR'; }
+
+// =====================================================================
+// =====================================================================
+// LISTAS DE CORREO (Ayudas)
+// ---------------------------------------------------------------------
+// Quién recibe el informe de RVL, el de RVI y los flujos del día. Hasta hoy
+// esto solo se podía tocar con SQL contra `lista_correo`, aunque el propio
+// comentario de correo_informe.py prometía que "se hace desde Ayudas".
+//
+// En la tabla hay UNA FILA POR PERSONA Y POR LISTA. Aquí se agrupan por correo
+// y se muestran como una fila con tres casillas, que es como uno piensa en
+// esto: "Mariana está en los informes y en flujos". Marcar crea la fila,
+// desmarcar la DESACTIVA en vez de borrarla — si vuelve en tres meses, su
+// nombre ya está bien escrito y no hay que volver a teclearlo.
+//
+// El número de cada lista va arriba, grande: es lo que se mira antes de
+// mandar un correo a gente de afuera (Sergio, 15-oct).
+// =====================================================================
+const LC_LISTAS = ['RVL', 'RVI', 'FLUJOS'];
+let _listaCorreo = [];        // las filas crudas de Supabase
+
+function puedeEditarListas(){ return USUARIO === 'SAR' || USUARIO === 'MIG'; }
+
+async function cargarListasCorreo(avisar){
+  try{
+    _listaCorreo = await supaFetch('lista_correo',
+      'select=id,nombre,email,informe,activo&limit=2000') || [];
+  }catch(e){
+    console.warn('lista_correo:', e.message);
+    _listaCorreo = [];
+    if(avisar) alert('No se pudo leer la lista de correo: ' + e.message);
+  }
+  renderListasCorreo();
+}
+
+// De filas por lista a una fila por persona.
+function _lcPersonas(){
+  const por = new Map();
+  (_listaCorreo||[]).forEach(f=>{
+    const k = String(f.email||'').toLowerCase().trim();
+    if(!k) return;
+    if(!por.has(k)) por.set(k, { email:String(f.email).trim(), nombre:'', listas:{}, filas:{} });
+    const p = por.get(k);
+    // El nombre más completo de los que haya: una fila vieja puede estar vacía.
+    if(String(f.nombre||'').trim().length > p.nombre.length) p.nombre = String(f.nombre).trim();
+    p.listas[f.informe] = !!f.activo;
+    p.filas[f.informe] = f;
+  });
+  return [...por.values()];
+}
+
+function renderListasCorreo(){
+  const cont = document.getElementById('listasCorreoTabla');
+  if(!cont) return;
+  const editable = puedeEditarListas();
+  const btn = document.getElementById('btnLcNuevo');
+  if(btn) btn.style.display = editable ? '' : 'none';
+
+  const q = String((document.getElementById('lcBuscar')||{}).value||'').toLowerCase().trim();
+  const filtro = (document.getElementById('lcFiltro')||{}).value || '';
+  const verInact = !!(document.getElementById('lcVerInactivos')||{}).checked;
+
+  let gente = _lcPersonas();
+  const cuenta = l => gente.filter(p=>p.listas[l]).length;
+
+  if(q) gente = gente.filter(p=>
+    p.email.toLowerCase().includes(q) || p.nombre.toLowerCase().includes(q));
+  if(filtro === 'NINGUNA') gente = gente.filter(p=>!LC_LISTAS.some(l=>p.listas[l]));
+  else if(filtro) gente = gente.filter(p=>p.listas[filtro]);
+  if(!verInact) gente = gente.filter(p=>LC_LISTAS.some(l=>p.listas[l]));
+  gente.sort((a,b)=>(a.nombre||a.email).localeCompare(b.nombre||b.email));
+
+  const av = document.getElementById('lcAviso');
+  if(av){
+    av.innerHTML = `<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;align-items:center;">
+      ${LC_LISTAS.map(l=>`<span><b style="font-size:15px;">${cuenta(l)}</b> en ${l}</span>`).join('')}
+      <span style="opacity:.5;">· ${gente.length} mostrada(s) de ${_lcPersonas().length} persona(s)</span>
+      ${editable ? '' : '<span style="color:var(--amber,#f59e0b);">· solo lectura</span>'}
+    </div>`;
+  }
+
+  if(!gente.length){ cont.innerHTML = '<div class="field-note">Sin resultados.</div>'; return; }
+
+  const chk = (p, l) => {
+    const on = !!p.listas[l];
+    const existe = p.filas[l] !== undefined;
+    return `<td class="num" title="${existe && !on ? 'Desactivado: estaba y se sacó' : ''}">
+      <input type="checkbox" ${on?'checked':''} ${editable?'':'disabled'}
+        onchange="cambiarListaCorreo('${p.email.replace(/'/g,"\\'")}','${l}',this.checked,this)">
+      ${existe && !on ? '<span style="opacity:.45;font-size:10px;">●</span>' : ''}</td>`;
+  };
+
+  cont.innerHTML = `<table style="width:100%;font-size:12px;border-collapse:collapse;">
+    <thead><tr style="background:var(--bg-2,#0f1116);text-align:left;position:sticky;top:0;">
+      <th style="padding:6px 8px;">NOMBRE</th>
+      <th style="padding:6px 8px;">CORREO</th>
+      ${LC_LISTAS.map(l=>`<th style="padding:6px 8px;text-align:right;">${l}</th>`).join('')}
+    </tr></thead>
+    <tbody>${gente.map(p=>`<tr>
+      <td style="padding:4px 8px;">${p.nombre || '<span style="opacity:.5;">—</span>'}</td>
+      <td style="padding:4px 8px;" class="mono-id">${p.email}</td>
+      ${LC_LISTAS.map(l=>chk(p,l)).join('')}
+    </tr>`).join('')}</tbody></table>`;
+}
+
+// Marcar o desmarcar una lista para una persona.
+async function cambiarListaCorreo(email, lista, activo, el){
+  if(!puedeEditarListas()){ if(el) el.checked = !activo; return; }
+  const persona = _lcPersonas().find(p=>p.email.toLowerCase() === String(email).toLowerCase());
+  const fila = persona && persona.filas[lista];
+
+  // Sacar a alguien de una lista es lo único de aquí que se nota afuera:
+  // deja de recibir y nadie se entera. Se confirma.
+  if(!activo && !confirm(
+      `${(persona && persona.nombre) || email}\n\n` +
+      `Va a DEJAR de recibir ${lista}. La fila no se borra: queda desactivada ` +
+      'y se puede volver a marcar cuando quieras.\n\n¿Sigo?')){
+    if(el) el.checked = true; return;
+  }
+
+  try{
+    if(fila){
+      await _lcPatch(fila.id, { activo: !!activo });
+      fila.activo = !!activo;
+      const ref = (_listaCorreo||[]).find(f=>f.id === fila.id);
+      if(ref) ref.activo = !!activo;
+    }else{
+      const nueva = { nombre: (persona && persona.nombre) || '', email,
+                      informe: lista, activo: true };
+      const guardada = await _lcInsert(nueva);
+      _listaCorreo.push(guardada || nueva);
+    }
+    renderListasCorreo();
+  }catch(e){
+    if(el) el.checked = !activo;
+    alert('No se pudo guardar: ' + e.message);
+  }
+}
+
+async function _lcPatch(id, campos){
+  const r = await fetch(`${SUPA_URL}/rest/v1/lista_correo?id=eq.${id}`, {
+    method:'PATCH',
+    headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
+              'Content-Type':'application/json', 'Prefer':'return=minimal' },
+    body: JSON.stringify(campos) });
+  if(!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0,140));
+}
+
+async function _lcInsert(fila){
+  const r = await fetch(`${SUPA_URL}/rest/v1/lista_correo`, {
+    method:'POST',
+    headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
+              'Content-Type':'application/json', 'Prefer':'return=representation' },
+    body: JSON.stringify([fila]) });
+  if(!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0,140));
+  return (await r.json())[0];
+}
+
+// Agregar a alguien. Es la única pantalla del app donde un error se va para
+// afuera: un correo mal escrito no rebota, simplemente ese cliente deja de
+// recibir y nadie se entera. De ahí las dos validaciones.
+async function abrirCorreoNuevo(){
+  const email = String(prompt('Correo:') || '').trim();
+  if(!email) return;
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){
+    alert('Eso no tiene forma de correo: ' + email); return;
+  }
+  const ya = _lcPersonas().find(p=>p.email.toLowerCase() === email.toLowerCase());
+  if(ya){ alert(ya.nombre + ' ya está en la tabla. Búscalo y marca su lista.');
+          document.getElementById('lcBuscar').value = email; renderListasCorreo(); return; }
+
+  // El dominio nuevo. Es exactamente donde estuvo el "btgpacutal.com" de esta
+  // mañana: un dominio que nadie más tiene es casi siempre un error de dedo.
+  const dom = email.split('@')[1].toLowerCase();
+  const otros = _lcPersonas().filter(p=>p.email.toLowerCase().endsWith('@' + dom)).length;
+  if(!otros && !confirm(`El dominio @${dom} no lo tiene nadie más en la lista.\n\n` +
+      'Si es un error de dedo, ese cliente nunca va a recibir nada y no va a ' +
+      'rebotar.\n\n¿Está bien escrito?')) return;
+
+  const nombre = String(prompt('Nombre:', '') || '').trim();
+  const cual = String(prompt('¿A cuál lista? RVL, RVI o FLUJOS:', 'FLUJOS') || '')
+    .toUpperCase().trim();
+  if(LC_LISTAS.indexOf(cual) < 0){ alert('Lista desconocida: ' + cual); return; }
+
+  try{
+    const guardada = await _lcInsert({ nombre, email, informe: cual, activo: true });
+    _listaCorreo.push(guardada);
+    document.getElementById('lcBuscar').value = email;
+    renderListasCorreo();
+  }catch(e){ alert('No se pudo guardar: ' + e.message); }
+}
 
 // =====================================================================
 // PANEL DEL MAESTRO DE ESPECIES (Ayudas)
@@ -16596,11 +16772,7 @@ async function descargarPlanillaCOP(){
   const d = new Date();
   const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
   const buf = await wb.xlsx.writeBuffer();
-  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-  const a = document.createElement('a');
-  a.href = url; a.download = `PLANILLA_COP_${slug}.xlsx`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  await entregarArchivoInterno(`PLANILLA_COP_${slug}.xlsx`, buf);
 
   const totCom = filas.reduce((t,f)=>t+f.comision, 0);
   est.innerHTML = `<div style="background:rgba(34,197,94,.10);border-left:3px solid var(--buy,#22c55e);
@@ -22262,12 +22434,7 @@ async function generarReporteProteccion(cliente, loteDet){
   const nombre = `rtpcredicorp_${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}${window._sufijoReporte ? ' ' + window._sufijoReporte : ''}.xlsx`;
   autofitColumnas(ws);
   const buf = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = nombre;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  await entregarReporteCliente(nombre, buf);
 
   if(desconocidos.size > 0){
     alert('Ojo: estos portafolios no están en la tabla de sub-cuentas de PROTECCION, así que sus filas salieron SIN IdOrion / Documento / Deceval:\n\n' +
@@ -22352,12 +22519,7 @@ async function generarCredicorpProteccion(loteDet){
   const yyyymmdd = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
   autofitColumnas(ws);
   const buf = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `credicorp_${yyyymmdd}${window._sufijoReporte ? ' ' + window._sufijoReporte : ''}.xlsx`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  await entregarReporteCliente(`credicorp_${yyyymmdd}${window._sufijoReporte ? ' ' + window._sufijoReporte : ''}.xlsx`, buf);
 
   return sinOrdNum;
 }
@@ -22962,9 +23124,7 @@ async function generarReportePorvenir(cliente, loteDet, opciones){
 
   const bajar = async (wb, nombre) => {
     const buf = await wb.xlsx.writeBuffer();
-    const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-    const a = document.createElement('a'); a.href = url; a.download = nombre; a.click();
-    URL.revokeObjectURL(url);
+    await entregarReporteCliente(nombre, buf);
   };
   const suf = window._sufijoReporte ? ' ' + window._sufijoReporte : '';
   const NARANJA = 'FFE26C0A', VERDE = 'FF9BBB59', GRIS = 'FFA6A6A6';
@@ -23163,9 +23323,7 @@ async function generarReporteSkandia(cliente, loteDet){
 
   const bajar = async (wb, nombre) => {
     const buf = await wb.xlsx.writeBuffer();
-    const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-    const a = document.createElement('a'); a.href = url; a.download = nombre; a.click();
-    URL.revokeObjectURL(url);
+    await entregarReporteCliente(nombre, buf);
   };
   const suf = window._sufijoReporte ? ' ' + window._sufijoReporte : '';
 
@@ -23312,15 +23470,7 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
     for(let i=1; i<=todosHeaders.length; i++){ ws.getColumn(i).width = 16; }
     autofitColumnas(ws);
     const buffer = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = nombreArchivo;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    await entregarReporteCliente(nombreArchivo, buffer);
   }
 
   // ---------- Operaciones_COLFONDOS (por portafolio, resumen del lote) ----------
@@ -23519,17 +23669,7 @@ async function generarYDescargarReporteRVL(cliente){
   }
 
   const buffer = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  const slug = nombreCliente.replace(/[^A-Z0-9]+/gi, '_').toUpperCase();
-  const fechaSlug = `${hoyDate.getFullYear()}${String(hoyDate.getMonth()+1).padStart(2,'0')}${String(hoyDate.getDate()).padStart(2,'0')}`;
-  a.href = url;
-  a.download = `RVL_${slug}_${fechaSlug}.xlsx`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  await entregarReporteCliente(`RVL_${slug}_${fechaSlug}.xlsx`, buffer);
 }
 
 function renderHistoryRVL(){
@@ -25978,12 +26118,7 @@ async function generarTradeConfirmationPorvenirRVI(cliente, filas, opciones){
   }
 
   const buf = await wb.xlsx.writeBuffer();
-  const url = URL.createObjectURL(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `TRADE_CONFIRMATION_PORVENIR_${(opts.fechaSlug||'')}.xlsx`;
-  a.click();
-  URL.revokeObjectURL(url);
+  await entregarReporteCliente(`TRADE_CONFIRMATION_PORVENIR_${(opts.fechaSlug||'')}.xlsx`, buf);
 }
 
 // AVAL FIDUCIARIA pide TODO a 2 decimales, incluido el precio. No basta con
@@ -26196,12 +26331,7 @@ async function generarTradeConfirmationRVI(cliente, filas){
   // el banner/ficha con celdas combinadas.
   autofitColumnasRango(ws, filaHdr, filaFin, COLS, {min:8, max:44});
   const buf = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `Trade Confirmation ${nombreCliente} ${fecha}.xlsx`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  await entregarReporteCliente(`Trade Confirmation ${nombreCliente} ${fecha}.xlsx`, buf);
 }
 
 // =====================================================================
@@ -26309,7 +26439,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-15 17:30 UTC · v218';
+const BUILD_ID = '2026-10-15 19:00 UTC · v220';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
