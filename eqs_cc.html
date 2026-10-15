@@ -18685,11 +18685,15 @@ function armarAllocCustodio(cliente, filas){
         price: f.precio,
         gross,
         cost, secFee, net,
-        // Igual que `aplicarCanastaRVI`: el costo del broker no se arma por
-        // esta vía. Si algún día la canasta lo calcula, esto tiene que
-        // cambiar AL TIEMPO, para que una misma operación no dé distinto
-        // según por dónde se haya metido.
-        ccsi: 0,
+        // Lo que nos cobra la contraparte. Estaba en CERO, y cero solo es
+        // correcto cuando se opera por RFQE contra un market maker. Por CCSI,
+        // TFSC o BTGH sí nos cobran, y ponerlo en cero infla la utilidad
+        // reportada en el dashboard y en la planilla del BO.
+        // `comisionContraparteRVI` ya sabe la regla: devuelve 0 para los
+        // market makers y calcula para los tres brokers (Sergio, 15-oct).
+        ccsi: (typeof comisionContraparteRVI === 'function')
+          ? comisionContraparteRVI(g.ln ? (g.ln.broker||'') : '', tipo, f.qty, gross, f.isin)
+          : 0,
         tradeDate: f.fechaOp ? parseFechaLocal(f.fechaOp) : new Date(),
         // La fecha de cumplimiento viene EN EL CUADRO: se usa esa y no la
         // calculada. Es la del cliente, que es contra la que se arquea.
@@ -18871,7 +18875,14 @@ async function aplicarCanastaRVI(){
       side: e.lado === 'Sell' ? 'Sell' : 'Buy',
       symbol: a.ticker, isin, tipo,
       qty, price: px, gross,
-      cost, secFee, net, ccsi: 0,
+      cost, secFee, net,
+      // Igual que en el allocation completo: cero solo es correcto por RFQE.
+      // Por CCSI, TFSC o BTGH sí nos cobran. Las dos vías se cambiaron AL
+      // TIEMPO, para que una misma operación no dé distinto según por dónde
+      // se haya metido (Sergio, 15-oct).
+      ccsi: (typeof comisionContraparteRVI === 'function')
+        ? comisionContraparteRVI(ln ? (ln.broker||'') : '', tipo, qty, gross, isin)
+        : 0,
       tradeDate,
       // La especie COMPLETA ("CEMA LN Equity"): con el ticker pelado la función
       // no ve el exchange y cae a T+1. Los UCITS de Londres son T+2
@@ -26439,7 +26450,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-15 19:00 UTC · v220';
+const BUILD_ID = '2026-10-15 19:45 UTC · v221';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
