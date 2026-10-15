@@ -2574,6 +2574,10 @@
         <button class="btn small purple" onclick="copiarFlujoBBG(this)">📋 Copiar texto Bloomberg</button>
         <button class="btn small" onclick="copiarFlujoImagen(this)">🖼 Copiar imagen</button>
         <button class="btn small" onclick="descargarFlujoImagen()">⬇ Descargar PNG</button>
+        <!-- Mismo camino que los informes de RVL y RVI: la imagen viaja en el
+             pedido y el runner abre el borrador. Los destinatarios salen de
+             lista_correo, no de aquí (Sergio, 15-oct). -->
+        <button class="btn small purple soloDueno" onclick="correoFlujos(this)">📧 Abrir correo en Outlook</button>
         <button class="btn small ghost" onclick="limpiarFlujosDia()">Limpiar el día</button>
       </div>
       <div id="fdEstado" class="field-note" style="margin-top:8px;"></div>
@@ -8151,6 +8155,19 @@ async function descargarFlujoImagen(){
   if(!_flujosDia.length) return;
   try{ _bajarCanvas(await _fdCanvas(), `Flujos_${_fdHoyISO().replace(/-/g,'')}.png`); }
   catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
+}
+
+// El correo de flujos. Hasta hoy era: copiar la imagen, abrir el correo de
+// ayer, reemplazarla y mandarla con los 32 en copia oculta. Ahora es el mismo
+// camino de los informes de RVL y RVI —`CORREO_FLUJOS` al runner con la imagen
+// dentro del pedido— y la lista sale de `lista_correo` en Supabase, así que
+// agregar o quitar a alguien no obliga a tocar código (Sergio, 15-oct).
+async function correoFlujos(btn){
+  if(!_flujosDia.length){ alert('Todavía no hay flujos cargados hoy.'); return; }
+  try{
+    const canvas = await _fdCanvas();
+    await pedirAlPC('CORREO_FLUJOS', btn, canvas.toDataURL('image/png'), 90);
+  }catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
 }
 
 // =====================================================================
@@ -26292,7 +26309,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-15 17:05 UTC · v217';
+const BUILD_ID = '2026-10-15 17:30 UTC · v218';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
