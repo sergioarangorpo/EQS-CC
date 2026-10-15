@@ -4774,6 +4774,12 @@ async function generarReporteExcel(){
   ws.getRow(r).height = 18;
 
   const buffer = await wb.xlsx.writeBuffer();
+  // `slug` y `fechaSlug` se declaraban en el bloque de descarga que se
+  // reemplazo en la v220. Al reemplazarlo se fueron las dos declaraciones y
+  // quedo el nombre usandolas: ReferenceError justo aqui, con el Excel ya
+  // armado en memoria y a un paso de salir (Sergio, 15-oct).
+  const slug = _slugArchivo(fondoNombre);
+  const fechaSlug = _slugHoy();
   await entregarReporteCliente(`FX_${slug}_${fechaSlug}.xlsx`, buffer);
 
   // El reporte queda REGISTRADO en el módulo Reportes, igual que los de RVL y
@@ -5667,6 +5673,11 @@ async function generarExcelCruce(clienteKey, registrados, trader){
   ws.getRow(r).height = 18;
 
   const buffer = await wb.xlsx.writeBuffer();
+  // Mismo caso que el reporte de FX: las tres variables del nombre vivian en
+  // el bloque de descarga que se reemplazo en la v220 (Sergio, 15-oct).
+  const clienteSlug = _slugArchivo(nombreCliente);
+  const traderSlug  = trader ? _slugArchivo(trader) : '';
+  const fechaSlug   = _slugHoy();
   await entregarReporteCliente(traderSlug ? `Trade_Confirmation_${clienteSlug}_${traderSlug}_${fechaSlug}.xlsx` : `Trade_Confirmation_${clienteSlug}_${fechaSlug}.xlsx`, buffer);
 }
 
@@ -5983,7 +5994,16 @@ async function generarExcelAndes(eqLotes, fxOps){
   ws.getRow(r).height = 18;
 
   const buffer = await wb.xlsx.writeBuffer();
-  await entregarReporteCliente(`Operaciones Andes Investment Group Inc ${fechaSlug}.xlsx`, buffer);
+  // `fechaSlug` se perdio en la v220 igual que en los otros tres reportes.
+  // Este es el que reporto Sergio el 15-oct: el boton no hacia nada, el
+  // archivo no aparecia en la carpeta ni en Descargas, y no era que el PC
+  // no contestara — es que nunca se llego a pedir nada.
+  // El sufijo de version va aqui porque quien llama lo deja puesto
+  // (window._sufijoReporte) justo antes, igual que en los demas reportes: sin
+  // el, la version 2 del dia pisa a la version 1 en la carpeta compartida.
+  const fechaSlug = _slugHoy();
+  const suf = window._sufijoReporte ? ' ' + window._sufijoReporte : '';
+  await entregarReporteCliente(`Operaciones Andes Investment Group Inc ${fechaSlug}${suf}.xlsx`, buffer);
 }
 
 // Reporte genérico EQUITY (sin bloque FX). Mismo look de marca que el de Andes,
@@ -11865,6 +11885,47 @@ function avisoExito(titulo, detalle){
   div.onclick = ()=>div.remove();
 }
 
+// Aviso de FALLA. Mismo sitio y mismo tamaño que avisoExito, en rojo y sin
+// desaparecer solo: un error se cierra cuando uno lo leyó, no a los 9
+// segundos (Sergio, 15-oct).
+function avisoFalla(titulo, detalle){
+  const prev = document.getElementById('modalFalla');
+  if(prev) prev.remove();
+  const div = document.createElement('div');
+  div.id = 'modalFalla';
+  div.style.cssText = 'position:fixed;right:24px;bottom:24px;background:var(--bg-1,#12141a);border:1px solid var(--sell,#ef4444);border-left:4px solid var(--sell,#ef4444);border-radius:8px;padding:14px 18px;z-index:9999;max-width:440px;box-shadow:0 10px 30px rgba(0,0,0,.45);cursor:pointer;';
+  div.innerHTML = `<div style="font-weight:700;font-size:13px;color:var(--sell,#ef4444);">✕ ${titulo}</div>
+                   <div style="font-size:12px;margin-top:6px;line-height:1.5;">${detalle}</div>
+                   <div style="font-size:10.5px;margin-top:8px;opacity:.6;">clic para cerrar</div>`;
+  document.body.appendChild(div);
+  div.onclick = ()=>div.remove();
+}
+
+// Aviso de ESPERA, el que faltaba. El archivo se manda al PC y el app se
+// queda esperando hasta 90 segundos, callado: no se mueve un botón, no sale
+// un mensaje, nada. Miguel apretó, no vio nada y concluyó que el app estaba
+// roto — y no lo estaba, estaba esperando. Un proceso que tarda tiene que
+// decir que está trabajando (Sergio, 15-oct).
+// Devuelve un objeto con cerrar(); si lo llaman dos veces seguidas, el
+// segundo reemplaza al primero y no se apilan.
+function avisoEspera(titulo, detalle){
+  const prev = document.getElementById('modalEspera');
+  if(prev) prev.remove();
+  const div = document.createElement('div');
+  div.id = 'modalEspera';
+  div.style.cssText = 'position:fixed;right:24px;bottom:24px;background:var(--bg-1,#12141a);border:1px solid var(--line,#2a2f3a);border-left:4px solid var(--acc,#f59e0b);border-radius:8px;padding:14px 18px;z-index:9999;max-width:440px;box-shadow:0 10px 30px rgba(0,0,0,.45);';
+  div.innerHTML = `<div style="font-weight:700;font-size:13px;color:var(--acc,#f59e0b);">⏳ ${titulo}</div>
+                   <div id="esperaDetalle" style="font-size:12px;margin-top:6px;line-height:1.5;">${detalle||''}</div>`;
+  document.body.appendChild(div);
+  const t0 = Date.now();
+  const reloj = setInterval(()=>{
+    const d = div.querySelector('#esperaDetalle');
+    if(!d || !div.parentNode) return;
+    d.textContent = `${detalle||''} (${Math.round((Date.now()-t0)/1000)}s)`;
+  }, 1000);
+  return { cerrar(){ clearInterval(reloj); if(div.parentNode) div.remove(); } };
+}
+
 // =====================================================================
 // MÓDULO AYUDAS — canastas MLI
 // ---------------------------------------------------------------------
@@ -13539,6 +13600,19 @@ function _slugHoy(){
   const d = new Date();
   return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
 }
+
+// Un nombre de cliente o de trader convertido en algo que se pueda poner en
+// un nombre de archivo: sin tildes, sin eñes raras, sin dos rayas seguidas.
+// UNA sola funcion para los cuatro reportes que lo necesitan, que es la
+// leccion de siempre: dos caminos para un mismo nombre terminan en dos
+// nombres distintos para el mismo archivo (Sergio, 15-oct).
+function _slugArchivo(t){
+  return String(t||'')
+    .normalize('NFD').replace(/[̀-ͯ]/g,'')   // CESANTÍAS -> CESANTIAS
+    .replace(/[^A-Za-z0-9]+/g,'_')
+    .replace(/^_+|_+$/g,'')
+    || 'CLIENTE';
+}
 function _bajarCanvas(canvas, nombre){
   const a = document.createElement('a');
   a.href = canvas.toDataURL('image/png');
@@ -14125,23 +14199,51 @@ function _bajarAlNavegador(nombre, buffer){
 // Si la carpeta no contesta —runner apagado, OneDrive caído, lo que sea— el
 // archivo BAJA AL NAVEGADOR como toda la vida. Nunca se pierde un reporte por
 // un problema de carpeta: esa es la red (Sergio, 15-oct).
+// Los avisos van entre `typeof === 'function'` a proposito: si alguno falta o
+// falla, la ENTREGA del archivo no se puede caer por culpa de un mensaje en
+// pantalla. El aviso acompaña, no manda.
+function _avisoEsperaCarpeta(nombre){
+  try{
+    if(typeof avisoEspera === 'function')
+      return avisoEspera('Guardando en la carpeta del día…',
+                         `${nombre} · el PC tiene hasta 90s para contestar`);
+  }catch(e){}
+  return { cerrar(){} };
+}
+
 async function entregarArchivo(destino, nombre, buffer, opc){
   opc = opc || {};
   let b64 = null;
   try{ b64 = await _aBase64(buffer); }catch(e){ b64 = null; }
   if(b64){
-    const r = await _pedidoSilencioso('REPORTE_CLIENTE', {
-      destino: destino || 'clientes',
-      nombre,
-      fecha: opc.fecha || null,
-      archivo: b64,
-      papeleta: opc.papeleta || null,
-    }, 90);
-    if(r.ok) return { ok:true, carpeta:true, mensaje:r.mensaje };
+    const esperando = _avisoEsperaCarpeta(nombre);
+    let r;
+    try{
+      r = await _pedidoSilencioso('REPORTE_CLIENTE', {
+        destino: destino || 'clientes',
+        nombre,
+        fecha: opc.fecha || null,
+        archivo: b64,
+        papeleta: opc.papeleta || null,
+      }, 90);
+    } finally {
+      try{ esperando.cerrar(); }catch(e){}
+    }
+    if(r.ok){
+      try{ if(typeof avisoExito === 'function')
+        avisoExito('Guardado en la carpeta', r.mensaje || nombre); }catch(e){}
+      return { ok:true, carpeta:true, mensaje:r.mensaje };
+    }
     _bajarAlNavegador(nombre, buffer);
+    try{ if(typeof avisoFalla === 'function')
+      avisoFalla('No llegó a la carpeta — quedó en Descargas',
+                 `${nombre}<br><br>Motivo: ${r.mensaje || 'sin detalle'}`); }catch(e){}
     return { ok:true, carpeta:false, mensaje:r.mensaje };
   }
   _bajarAlNavegador(nombre, buffer);
+  try{ if(typeof avisoFalla === 'function')
+    avisoFalla('No llegó a la carpeta — quedó en Descargas',
+               `${nombre}<br><br>Motivo: no se pudo preparar el archivo.`); }catch(e){}
   return { ok:true, carpeta:false, mensaje:'No se pudo preparar el archivo para la carpeta.' };
 }
 
@@ -21666,7 +21768,12 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
 
   document.getElementById('verifAndesBody').innerHTML = html;
   const btn = document.getElementById('btnGenerarAndes');
+  // try/catch en TODO el handler. Sin esto, un error a mitad de camino se va
+  // al aire: el modal ya se cerró, el aviso verde del final nunca sale y
+  // desde afuera parece que el botón no hizo nada. Es exactamente lo que
+  // pasó hoy con `loteDet` (Sergio, 15-oct).
   btn.onclick = async () => {
+   try{
     document.getElementById('modalVerifAndes').style.display = 'none';
     const rep = window._andesReporte;
     const ctx = window._andesCtx || {};
@@ -21695,13 +21802,23 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
       a.bruto += q*px;
       a.comMonto += q*px*((Number(f.comisionPct)||0)/100);
     });
+    // UN SOLO arreglo de operaciones para los dos registros (COR y RVL). Antes
+    // esta línea pasaba `loteDet` y `loteOps` a secas: ninguna de las dos
+    // existe en esta función —se declaran dentro de OTRA, la del reporte
+    // normal— así que aquí reventaba con "loteDet is not defined" JUSTO
+    // despues de generar el Excel. El archivo salía y de ahí en adelante no
+    // corría nada más: ni COR, ni registrarLoteRVL, ni el registro de FX. El
+    // botón no avisaba porque el error se iba al aire, sin catch. Para Andes,
+    // el arqueo cliente vs COR nunca cuadró (Sergio, 15-oct).
+    const _lineasAndes = ctx.loteDet || [];
+    const _opsAndesArr = Object.values(_opsAndes).map(o=>({
+      ...o, precio: o.cantidad>0 ? o.bruto/o.cantidad : 0 }));
     // ANDES es extranjero pero SÍ complementa: está en COR_EXTRANJEROS_SI
     // (Sergio, 22-sep).
     if(typeof guardarCorLineasDeReporte === 'function'){
-      await guardarCorLineasDeReporte('RVL', cliente, loteDet, version, loteOps);
+      await guardarCorLineasDeReporte('RVL', cliente, _lineasAndes, version, _opsAndesArr);
     }
-    const nuevasRVL = await registrarLoteRVL(cliente,
-      Object.values(_opsAndes).map(o=>({...o, precio: o.cantidad>0 ? o.bruto/o.cantidad : 0})), version);
+    const nuevasRVL = await registrarLoteRVL(cliente, _opsAndesArr, version);
     let nuevasFX = 0;
     if(rep.fxOps && rep.fxOps.length){
       // Este registro guardaba `comision: 0`. Como hay DOS caminos que
@@ -21717,6 +21834,13 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
       (rep.fxOps && rep.fxOps.length ? `<br>FX: ${rep.fxOps.length} operación(es)` : '') +
       `<br><span style="opacity:.7;">${nuevasRVL} línea(s) nueva(s) en RVL${nuevasFX?` · ${nuevasFX} en FX`:''}.</span>`);
     renderFidessaTradesPanel();
+   }catch(e){
+    console.error('Reporte Andes:', e);
+    if(typeof avisoFalla === 'function')
+      avisoFalla('El reporte de Andes se cortó a mitad de camino',
+        `${e && e.message ? e.message : e}<br><br>Puede que el Excel SÍ se haya generado y lo que falte sea el registro en RVL / COR. Revísalo antes de volver a darle, para no duplicar.`);
+    else alert('Reporte Andes: ' + (e && e.message ? e.message : e));
+   }
   };
   document.getElementById('modalVerifAndes').style.display = 'flex';
 }
@@ -23680,7 +23804,12 @@ async function generarYDescargarReporteRVL(cliente){
   }
 
   const buffer = await wb.xlsx.writeBuffer();
-  await entregarReporteCliente(`RVL_${slug}_${fechaSlug}.xlsx`, buffer);
+  // Cuarto y ultimo del mismo origen (v220). Quien llama deja puesto
+  // window._sufijoReporte, asi que la version va en el nombre.
+  const slug = _slugArchivo(nombreCliente);
+  const fechaSlug = _slugHoy();
+  const suf = window._sufijoReporte ? ' ' + window._sufijoReporte : '';
+  await entregarReporteCliente(`RVL_${slug}_${fechaSlug}${suf}.xlsx`, buffer);
 }
 
 function renderHistoryRVL(){
@@ -26450,7 +26579,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-15 19:45 UTC · v221';
+const BUILD_ID = '2026-10-15 20:55 UTC · v222';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
