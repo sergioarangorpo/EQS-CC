@@ -187,6 +187,11 @@
     opacity:.4;background:var(--bg-2);cursor:not-allowed;
   }
   td.num{text-align:right;}
+  /* El encabezado tambien. Solo el td estaba alineado a la derecha, asi
+     que los titulos quedaban a la izquierda de su columna y el dato caia
+     visualmente bajo el titulo de al lado: en la canasta MLI el total de
+     nominales se leia bajo "Valor COP" (Sergio, 15-oct). */
+  th.num{text-align:right;}
   .chk{width:16px;height:16px;accent-color:var(--blue);cursor:pointer;}
   tr.row-pendiente td:first-child{position:relative;padding-left:16px;}
   tr.row-pendiente td:first-child::before{content:'';position:absolute;left:4px;top:50%;transform:translateY(-50%);width:6px;height:6px;border-radius:50%;background:#f5a623;}
@@ -440,6 +445,11 @@
   tbody tr.row-selected{background:#142235;}
   tbody tr.row-selected:hover{background:#16273d;}
   td.num{text-align:right;}
+  /* El encabezado tambien. Solo el td estaba alineado a la derecha, asi
+     que los titulos quedaban a la izquierda de su columna y el dato caia
+     visualmente bajo el titulo de al lado: en la canasta MLI el total de
+     nominales se leia bajo "Valor COP" (Sergio, 15-oct). */
+  th.num{text-align:right;}
   .chk{width:16px;height:16px;accent-color:var(--blue);cursor:pointer;}
   .side-badge{
     display:inline-flex;align-items:center;gap:5px;font-family:var(--sans);
@@ -665,6 +675,11 @@
   tbody tr.clickable:hover{background:#161c28;cursor:pointer;}
   tbody tr.row-active{background:#142235;}
   td.num{text-align:right;}
+  /* El encabezado tambien. Solo el td estaba alineado a la derecha, asi
+     que los titulos quedaban a la izquierda de su columna y el dato caia
+     visualmente bajo el titulo de al lado: en la canasta MLI el total de
+     nominales se leia bajo "Valor COP" (Sergio, 15-oct). */
+  th.num{text-align:right;}
   .mono-id{color:var(--text-1);font-size:11px;}
 
   .side-badge{display:inline-flex;align-items:center;font-family:var(--sans);font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:4px;}
@@ -950,6 +965,13 @@
           </select>
         </div>
         <button class="btn small ghost" onclick="borrarFiltrosHistorialFX()">✕ Borrar filtros</button>
+        <!-- Las WMCO del día se registran con el last para poder agruparlas, y
+             la tasa real solo se sabe cuando cierra el fixing. Corregirlas de a
+             una era el trabajo que se evitaba dejándolas pendientes; ahora se
+             corrigen todas de un golpe (Sergio, 15-oct). -->
+        <button class="btn small purple" onclick="abrirTasaMasivaWMCO()"
+                title="Pone la tasa final del cliente a todas las operaciones WMCO del día">
+          💱 Tasa final WMCO del día</button>
       </div>
 
       <div class="hist-filtros">
@@ -1752,6 +1774,12 @@
       <button class="btn purple" style="text-align:left;padding:12px 14px;" onclick="elegirModoCierreFX('wmco')">
         <b>WMCO (previo ya registrado)</b><br><span style="font-weight:400;opacity:.85;font-size:12px;">El FX ya se registró antes; solo corrijo el monto USD con el giro exacto en pesos del cruce.</span>
       </button>
+      <!-- No siempre que MLI manda una canasta se cierra FX. Cuando el correo
+           dice "FX: DONT EXECUTE" no hay nada que registrar ni que vincular:
+           se reporta la acción y ya (Sergio, 15-oct). -->
+      <button class="btn" style="text-align:left;padding:12px 14px;" onclick="elegirModoCierreFX('nofx')">
+        <b>SIN FX</b><br><span style="font-weight:400;opacity:.85;font-size:12px;">La canasta vino sin cierre de FX. No se registra ni se vincula nada: solo el resumen para reportar.</span>
+      </button>
     </div>
     <div class="edit-actions" style="margin-top:16px;">
       <button class="btn ghost" onclick="cancelarCruce();document.getElementById('modalTipoCierreFX').style.display='none';">Cancelar</button>
@@ -1795,6 +1823,47 @@
     <div class="edit-actions" style="margin-top:16px;">
       <button class="btn ghost" onclick="document.getElementById('modalNegociarFX').style.display='none';">Cancelar</button>
       <button class="btn primary" onclick="aplicarNegociacionFX()">Registrar los lados y seguir</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tasa final del cliente, a todas las WMCO del día de una vez -->
+<div class="edit-overlay" id="modalTasaWMCO" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(900px,95vw);margin-top:6vh;max-height:88vh;overflow:auto;">
+    <h3 style="font-size:15px;">Tasa final del cliente — WMCO del día</h3>
+    <div class="field-note" style="margin-bottom:12px;">
+      Las WMCO se registran con el last para poder agruparlas. Cuando cierra el
+      fixing, escribe la tasa aquí y se aplica a todas las del día.
+      <b>No las marca como verificadas</b> — esa casilla la sigues poniendo tú.
+    </div>
+    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+      <label class="field-note" style="font-weight:700;">Tasa final del cliente
+        <input type="number" step="0.01" id="tasaWMCONueva" oninput="previsualizarTasaWMCO()"
+               style="width:150px;display:block;margin-top:4px;padding:6px 8px;"></label>
+      <span class="field-note" id="tasaWMCOCuenta" style="opacity:.8;"></span>
+    </div>
+    <div id="tasaWMCOBody"></div>
+    <div class="edit-actions" style="margin-top:16px;">
+      <button class="btn ghost" onclick="document.getElementById('modalTasaWMCO').style.display='none';">Cancelar</button>
+      <button class="btn primary" id="btnAplicarTasaWMCO" style="display:none;"
+              onclick="aplicarTasaMasivaWMCO()">Aplicar a todas</button>
+    </div>
+  </div>
+</div>
+
+<!-- Cruce SIN FX: no hay tasas que elegir, solo el resumen y el trader -->
+<div class="edit-overlay" id="modalSinFX" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(820px,95vw);margin-top:6vh;max-height:88vh;overflow:auto;">
+    <h3 style="font-size:15px;">Cruce sin FX</h3>
+    <div class="field-note" style="margin-bottom:12px;">
+      Esta canasta vino sin cierre de FX, así que no se registra ni se vincula
+      ninguna operación en el módulo de FX. Esto es el resumen de lo que
+      seleccionaste, para reportar.
+    </div>
+    <div id="sinFXBody"></div>
+    <div class="edit-actions" style="margin-top:16px;">
+      <button class="btn ghost" onclick="cancelarCruce();document.getElementById('modalSinFX').style.display='none';">Cancelar</button>
+      <button class="btn primary" onclick="confirmarSinFX()">Confirmar sin FX →</button>
     </div>
   </div>
 </div>
@@ -2390,12 +2459,9 @@
         placeholder="Hi all,&#10;Please execute order as below:&#10;Entity: MLI&#10;Stocks: MOC&#10;FX: WMCO&#10;&#10;Side&#9;Quantity&#9;Ric&#9;BBG Code&#10;B&#9;500.00&#9;CIBEST.CN&#9;CIBEST CB Equity"></textarea>
     </div>
     <div id="canastaResultado" style="padding:0 24px 8px;"></div>
-    <div style="padding:0 24px 20px;">
-      <button class="btn small" onclick="dejarCanastaPendiente()">Dejar pendiente de tasa</button>
-      <button class="btn small purple" onclick="exportarCanastaEMSX()"
-              title="Archivo para cargar las órdenes de una vez en EMSX">📥 Cargar a EMSX</button>
-      <span class="field-note" style="margin-left:10px;">Queda guardada hasta que cierres la tasa en el mercado.</span>
-    </div>
+    <!-- El flujo se habilita por pasos: cada decisión abre la siguiente y
+         ninguna se puede saltar. Se dibuja en renderFlujoCanasta(). -->
+    <div id="canastaFlujo" style="padding:0 24px 20px;"></div>
 
     <div class="section-label">Pendientes de tasa</div>
     <div id="canastasPendientes" style="padding:0 24px 24px;"></div>
@@ -10006,9 +10072,227 @@ function elegirModoCierreFX(modo){
     // Los dos lados se negocian juntos ANTES de ir a la calculadora
     // (Sergio, 17-sep).
     abrirNegociacionFX();
+  } else if(modo === 'nofx'){
+    mostrarResumenSinFX();
   } else {
     mostrarSelectorPreviosWMCO();
   }
+}
+
+// =====================================================================
+// TASA FINAL DEL CLIENTE A TODAS LAS WMCO DEL DÍA
+// ---------------------------------------------------------------------
+// El COP es el ancla, no el USD: el giro en pesos ya está cerrado y lo que
+// cambia con la tasa es cuántos dólares son. Es la misma convención que usa
+// `aplicarCorreccionWMCO` cuando le cae un cruce a una op previa
+// (usd = netoCOP / tasa), y mantenerla es la única forma de que corregir por
+// un lado o por el otro dé lo mismo.
+//
+// Por eso la vista previa muestra el COP —que no se mueve— y el USD antes y
+// después: el número que cambia se ve antes de aplicarlo (Sergio, 15-oct).
+// =====================================================================
+function _wmcoDelDia(){
+  const hoy = new Date().toLocaleDateString('en-CA', {timeZone:'America/Bogota'});
+  return (operaciones || []).filter(o =>
+    String(o.tipoOperacion||'').toUpperCase() === 'WMCO' &&
+    String(o.tradeDate||'').slice(0,10) === hoy);
+}
+
+function abrirTasaMasivaWMCO(){
+  const ops = _wmcoDelDia();
+  document.getElementById('tasaWMCONueva').value = '';
+  document.getElementById('btnAplicarTasaWMCO').style.display = 'none';
+  document.getElementById('tasaWMCOCuenta').textContent =
+    ops.length ? ops.length + ' operación(es) WMCO hoy' : '';
+  document.getElementById('tasaWMCOBody').innerHTML = ops.length ? '' :
+    `<div style="padding:10px;border:1px solid var(--amber,#f59e0b);border-radius:6px;
+      color:var(--amber,#f59e0b);">No hay operaciones WMCO registradas hoy.</div>`;
+  document.getElementById('modalTasaWMCO').style.display = 'flex';
+  if(ops.length) previsualizarTasaWMCO();
+}
+
+function previsualizarTasaWMCO(){
+  const ops = _wmcoDelDia();
+  const nueva = Number(document.getElementById('tasaWMCONueva').value) || 0;
+  const btn = document.getElementById('btnAplicarTasaWMCO');
+  const money = n => (typeof fmtMoney === 'function' ? fmtMoney(n) : '$'+Number(n||0).toFixed(2));
+
+  const filas = ops.map(o=>{
+    const vieja = tasaPrevioOp(o);
+    const cop = (Number(o.amount)||0) * vieja;          // el giro, que no se mueve
+    const usdNuevo = nueva > 0 ? cop / nueva : null;
+    const cambia = nueva > 0 && Math.abs(nueva - vieja) > 1e-9;
+    return { o, vieja, cop, usdNuevo, cambia };
+  });
+  const nCambian = filas.filter(f=>f.cambia).length;
+
+  document.getElementById('tasaWMCOBody').innerHTML = `
+    <div style="overflow:auto;border:1px solid var(--border,#2a2f3a);border-radius:6px;">
+    <table style="width:100%;font-size:11.5px;border-collapse:collapse;">
+      <thead><tr style="background:var(--bg-2,#0f1116);text-align:left;">
+        <th style="padding:5px 8px;">HORA</th><th style="padding:5px 8px;">CLIENTE</th>
+        <th style="padding:5px 8px;">LADO</th>
+        <th style="padding:5px 8px;text-align:right;">GIRO COP</th>
+        <th style="padding:5px 8px;text-align:right;">TASA HOY</th>
+        <th style="padding:5px 8px;text-align:right;">USD HOY</th>
+        <th style="padding:5px 8px;text-align:right;">USD NUEVO</th>
+        <th style="padding:5px 8px;">VERIF.</th>
+      </tr></thead>
+      <tbody>${filas.map(f=>`<tr style="${f.cambia?'':'opacity:.5;'}">
+        <td style="padding:3px 8px;">${f.o.horaRegistro||'—'}</td>
+        <td style="padding:3px 8px;">${f.o.cliente||'—'}</td>
+        <td style="padding:3px 8px;">${f.o.side==='SELL'?'Venta':'Compra'}</td>
+        <td style="padding:3px 8px;text-align:right;">${money(f.cop)}</td>
+        <td style="padding:3px 8px;text-align:right;">${f.vieja||'—'}</td>
+        <td style="padding:3px 8px;text-align:right;">${Number(f.o.amount||0).toLocaleString('en-US',{maximumFractionDigits:2})}</td>
+        <td style="padding:3px 8px;text-align:right;font-weight:700;color:${f.cambia?'var(--buy,#22c55e)':'inherit'};">
+          ${f.usdNuevo != null ? f.usdNuevo.toLocaleString('en-US',{maximumFractionDigits:2}) : '—'}</td>
+        <td style="padding:3px 8px;">${f.o.verificado ? '✓' : '<span style="color:var(--amber,#f59e0b);">●</span>'}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    ${nueva > 0 ? `<div style="margin-top:8px;font-size:12px;">
+      ${nCambian} de ${ops.length} cambian. El giro en COP no se mueve: lo que cambia es el USD.</div>` : ''}`;
+
+  btn.style.display = nCambian > 0 ? '' : 'none';
+  btn.textContent = 'Aplicar a ' + nCambian + ' operación(es)';
+}
+
+function aplicarTasaMasivaWMCO(){
+  const nueva = Number(document.getElementById('tasaWMCONueva').value) || 0;
+  if(!(nueva > 0)){ alert('Escribe la tasa final del cliente.'); return; }
+  const ops = _wmcoDelDia();
+  let n = 0;
+  ops.forEach(o=>{
+    const vieja = tasaPrevioOp(o);
+    if(!vieja || Math.abs(nueva - vieja) < 1e-9) return;
+    const cop = (Number(o.amount)||0) * vieja;
+    const usd = redondear(cop / nueva, 2);
+    o.params = o.params || {};
+    // Se escribe en la misma llave que lee `tasaPrevioOp`, para que no queden
+    // dos sitios con la tasa del cliente.
+    if(o.params.rateUnica != null) o.params.rateUnica = nueva; else o.params.rate = nueva;
+    o.amount = usd;
+    // `verificado` NO se toca: corregir la tasa y confirmar para back office
+    // son dos actos distintos (Sergio, 15-oct).
+    actualizarOperacionSupabase(o.id, { amount: usd, params: o.params });
+    n++;
+  });
+  renderHistory();
+  document.getElementById('modalTasaWMCO').style.display = 'none';
+  const toast = document.getElementById('toast');
+  if(toast){
+    toast.textContent = '✓ Tasa final ' + nueva + ' aplicada a ' + n + ' WMCO';
+    toast.classList.add('show');
+    setTimeout(()=>{ toast.classList.remove('show');
+                     toast.textContent='✓ Operación registrada correctamente'; }, 2800);
+  }
+}
+
+// =====================================================================
+// CRUCE SIN FX
+// ---------------------------------------------------------------------
+// No siempre que MLI manda una canasta se cierra FX: el correo lo dice en la
+// línea `FX:`, y cuando trae DONT EXECUTE no hay tasa, no hay operación que
+// registrar y no hay nada que vincular. Antes había que elegir VWAP o WMCO
+// igual, que son las dos formas de SÍ cerrar.
+//
+// Esta rama es completamente aparte: no toca `abrirNegociacionFX` ni
+// `mostrarSelectorPreviosWMCO`. Lo único que comparte con ellas es el cierre
+// —limpiar la selección, soltar el cruce y mostrar el panel del Excel—, y eso
+// se repite aquí en vez de refactorizarlo: las otras dos rutas funcionan hoy
+// (Sergio, 15-oct).
+// =====================================================================
+function mostrarResumenSinFX(){
+  const p = _cruceFXPendiente;
+  if(!p){ return; }
+  const nombre = (getClienteDB(p.cliente) && getClienteDB(p.cliente).nombre) || p.cliente;
+  const traders = (typeof tradersDeCliente === 'function') ? tradersDeCliente(p.cliente) : [];
+
+  const bloque = (b, i) => {
+    const esps = (b.detalle||[]).map(d=>`
+      <tr>
+        <td style="padding:3px 8px;">${d.security}</td>
+        <td style="padding:3px 8px;text-align:right;">${fmtInt(d.qty)}</td>
+        <td style="padding:3px 8px;text-align:right;">${fmtRate(d.precio)}</td>
+        <td style="padding:3px 8px;text-align:right;">${fmtMoney(d.gross)}</td>
+      </tr>`).join('');
+    return `
+      <div style="margin-bottom:14px;">
+        <div style="font-weight:700;margin-bottom:5px;">
+          Lado ${i+1} — <span style="color:${b.ladoAccion==='Compra'?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};">${b.ladoAccion}</span>
+          de acciones · ${(b.detalle||[]).length} especie(s)
+        </div>
+        <div style="overflow:auto;border:1px solid var(--border,#2a2f3a);border-radius:6px;">
+        <table style="width:100%;font-size:11.5px;border-collapse:collapse;">
+          <thead><tr style="background:var(--bg-2,#0f1116);text-align:left;">
+            <th style="padding:5px 8px;">ESPECIE</th>
+            <th style="padding:5px 8px;text-align:right;">NOMINALES</th>
+            <th style="padding:5px 8px;text-align:right;">PRECIO</th>
+            <th style="padding:5px 8px;text-align:right;">VALOR COP</th>
+          </tr></thead>
+          <tbody>${esps}</tbody>
+        </table></div>
+        <div style="margin-top:5px;font-size:12px;display:flex;gap:18px;flex-wrap:wrap;">
+          <span>Bruto <b>${fmtMoney(b.bruto)}</b></span>
+          <span>Comisión <b>${fmtMoney(b.comision)}</b></span>
+          <span>Neto a girar <b>${fmtMoney(b.netoCOP)}</b></span>
+        </div>
+      </div>`;
+  };
+
+  document.getElementById('sinFXBody').innerHTML = `
+    <div style="margin-bottom:12px;font-size:13px;">
+      Cliente <b>${nombre}</b> · ${p.bloques.length} lado(s).
+    </div>
+    ${p.bloques.map(bloque).join('')}
+    ${traders.length ? `
+      <div style="margin-top:6px;">
+        <label class="field-note" style="font-weight:700;">Trader que dio las instrucciones</label>
+        <select id="sinFXTrader" style="width:100%;margin-top:4px;padding:6px 8px;">
+          <option value="">— selecciona —</option>
+          ${traders.map(t=>`<option value="${t}">${t}</option>`).join('')}
+        </select>
+      </div>` : ''}`;
+
+  document.getElementById('modalSinFX').style.display = 'flex';
+}
+
+function confirmarSinFX(){
+  const p = _cruceFXPendiente;
+  if(!p){ return; }
+  const nombre = (getClienteDB(p.cliente) && getClienteDB(p.cliente).nombre) || p.cliente;
+  const traders = (typeof tradersDeCliente === 'function') ? tradersDeCliente(p.cliente) : [];
+  const sel = document.getElementById('sinFXTrader');
+  const trader = sel ? sel.value : (p.trader || '');
+  // Mismo freno que las otras dos rutas: si el cliente maneja trader, hay que
+  // elegirlo — el reporte lo lleva y el archivo se nombra con él.
+  if(traders.length > 0 && !trader){
+    alert('Selecciona el trader de ' + nombre + ' antes de continuar.');
+    return;
+  }
+
+  // Las líneas quedan igual que en un cruce normal, pero SIN nada de FX:
+  // ni opId, ni tasas, ni USD. Que vayan en null y no en cero es a propósito:
+  // un cero se suma y se promedia, un null no.
+  const registrados = p.bloques.map(b => ({
+    ...b, opId:null, tasaFinalCliente:null, tasaMercado:null, usd:null, sinFX:true,
+  }));
+
+  document.getElementById('modalSinFX').style.display = 'none';
+  _tradesConsolidar.clear();
+  renderFidessaTradesPanel();
+  const cli = p.cliente;
+  _cruceFXPendiente = null;
+  _cruceActivo = null;
+
+  const toast = document.getElementById('toast');
+  if(toast){
+    toast.textContent = '✓ Cruce sin FX — ' + registrados.length + ' lado(s), nada registrado en FX';
+    toast.classList.add('show');
+    setTimeout(()=>{ toast.classList.remove('show');
+                     toast.textContent='✓ Operación registrada correctamente'; }, 2600);
+  }
+  mostrarPanelExcelCruce(cli, registrados, trader);
 }
 
 // Candidatas para el "previo WMCO" de un lado: operaciones FX manuales del mismo
@@ -11787,7 +12071,8 @@ function recalcularCanasta(){
   const cont = document.getElementById('canastaResultado');
   if(!cont) return;
   const texto = (document.getElementById('canastaTexto')||{}).value || '';
-  if(!texto.trim()){ cont.innerHTML = ''; _canastaActual = null; return; }
+  if(!texto.trim()){ cont.innerHTML = ''; _canastaActual = null;
+    if(typeof renderFlujoCanasta === 'function') renderFlujoCanasta(); return; }
   const c = parsearCanastaMLI(texto);
   // Los precios escritos a mano sobreviven al recálculo (por si una especie
   // no aparece en el archivo del mercado).
@@ -11814,7 +12099,7 @@ function recalcularCanasta(){
         <div class="stat-label" style="opacity:.6;">${netoCop>=0?'compran acciones':'venden acciones'}</div></div>
     </div>
     <div class="blotter-wrap" style="margin-bottom:14px;">
-      <table><thead><tr><th></th><th class="num">Papeletas</th><th class="num">Acciones</th><th class="num">Valor COP</th><th class="num">USD</th></tr></thead>
+      <table><thead><tr><th></th><th class="num">Papeletas</th><th class="num">Nominales</th><th class="num">Valor COP</th><th class="num">USD</th></tr></thead>
       <tbody>
         <tr><td><b>Buys</b></td><td class="num">${B.n||'—'}</td><td class="num">${B.n?fmtInt(B.acciones):'—'}</td><td class="num">${B.n?fmtMoney(B.cop):'—'}</td><td class="num"><b>${B.n?usdTxt(B.usd):'—'}</b></td></tr>
         <tr><td><b>Sells</b></td><td class="num">${S.n||'—'}</td><td class="num">${S.n?fmtInt(S.acciones):'—'}</td><td class="num">${S.n?fmtMoney(S.cop):'—'}</td><td class="num"><b>${S.n?usdTxt(S.usd):'—'}</b></td></tr>
@@ -11839,6 +12124,197 @@ function recalcularCanasta(){
       ${c.ceros.length ? `<tr><td colspan="7" class="field-note" style="opacity:.6;">Descartadas por cantidad 0.00: ${c.ceros.map(x=>x.nemo).join(', ')}</td></tr>` : ''}
       </tbody></table>
     </div>`;
+
+  renderFlujoCanasta();
+}
+
+// =====================================================================
+// EL FLUJO DE LA CANASTA — en pasos, sin saltarse ninguno
+// ---------------------------------------------------------------------
+// No siempre que MLI manda una canasta se cierra FX. El correo lo dice en la
+// línea `FX:`, así que la primera decisión viene leída y no adivinada:
+//   DONT EXECUTE / NO FX / NONE          -> SIN FX
+//   WMCO / INLINE / VWAP / lo que sea    -> CON FX
+//
+// SIN FX frena ahí: la canasta queda como información para leerle al cliente
+// y no se registra ni se vincula nada en el módulo de FX.
+//
+// CON FX abre el resto en cascada — tipo de operación, luego las dos tasas,
+// luego registrar. Los botones se ven siempre, para que se sepa qué falta,
+// pero solo se activan cuando les llega el turno.
+//
+// Se quitó "Dejar pendiente de tasa": era un segundo sitio donde vivía la
+// misma canasta —`canastas_mli` como pendiente y después la operación de FX—
+// y eso es justo lo que nos ha costado plata. Ahora se registra de una con el
+// last, la operación nace sin verificar (punto ámbar en REGISTROS), y la tasa
+// final se corrige en masa desde FX cuando cierre el WMCO (Sergio, 15-oct).
+// =====================================================================
+let _canastaFX = { conFx:null, tipo:'', tasaMercado:null, tasaFinal:null, autoDe:null };
+
+// Lee la línea FX: del correo y decide. Devuelve 'SIN', 'CON' o null.
+function lecturaFxCanasta(txtFx){
+  const t = String(txtFx||'').toUpperCase().replace(/[^A-Z ]/g,' ').trim();
+  if(!t) return null;                                   // sin línea FX: no se adivina
+  if(/\bDONT\b|\bDO NOT\b|\bNO FX\b|\bNONE\b|\bSIN FX\b/.test(t)) return 'SIN';
+  return 'CON';
+}
+
+function _tipoFxSugerido(txtFx){
+  const t = String(txtFx||'').toUpperCase();
+  if(/WMCO/.test(t)) return 'WMCO';
+  if(/NEXT\s*DAY|NEXTDAY/.test(t)) return 'NEXT_DAY';
+  if(/SPOT/.test(t)) return 'SPOT';
+  return '';
+}
+
+function renderFlujoCanasta(){
+  const cont = document.getElementById('canastaFlujo');
+  if(!cont) return;
+  const c = _canastaActual;
+  if(!c || !c.filas.length){ cont.innerHTML = ''; return; }
+
+  // La lectura del correo manda mientras no la toques a mano. Si el texto
+  // pegado cambia y la lectura cambia con él, se vuelve a aplicar.
+  const leido = lecturaFxCanasta(c.cab.fx);
+  if(_canastaFX.autoDe !== leido){
+    _canastaFX = { conFx: leido, tipo: leido === 'CON' ? _tipoFxSugerido(c.cab.fx) : '',
+                   tasaMercado:null, tasaFinal:null, autoDe: leido };
+  }
+  const f = _canastaFX;
+  const paso2 = f.conFx === 'CON';
+  const paso3 = paso2 && !!f.tipo;
+  const paso4 = paso3 && f.tasaMercado > 0 && f.tasaFinal > 0;
+
+  const btn = (act, on, onclick, txt, clase, id) => `
+    <button class="btn small ${on ? (clase||'primary') : 'ghost'}" ${act?'':'disabled'}
+      ${id?`id="${id}"`:''}
+      style="${act?'':'opacity:.35;cursor:not-allowed;'}" onclick="${act?onclick:''}">${txt}</button>`;
+
+  const sello = (ok, txt) => `<span style="font-size:11.5px;color:${ok?'var(--buy,#22c55e)':'var(--text-2,#9ca3af)'};">${ok?'✓':'•'} ${txt}</span>`;
+
+  cont.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:10px;">
+
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span class="field-note" style="min-width:140px;font-weight:700;">1 · ¿Hay FX?</span>
+        ${btn(true, f.conFx==='SIN', "elegirFxCanasta('SIN')", 'SIN FX', 'primary')}
+        ${btn(true, f.conFx==='CON', "elegirFxCanasta('CON')", 'CON FX', 'purple')}
+        <span class="field-note" style="opacity:.75;">
+          El correo dice <b>${c.cab.fx || '—'}</b>${leido ? ' → ' + (leido==='SIN'?'SIN FX':'CON FX') : ' · sin línea FX, elige tú'}
+        </span>
+      </div>
+
+      ${f.conFx === 'SIN' ? `
+        <div style="padding:10px 12px;border:1px solid var(--buy,#22c55e);border-radius:6px;
+                    color:var(--buy,#22c55e);font-size:12.5px;">
+          <b>Canasta sin FX.</b> No hay nada que registrar ni que vincular en el módulo de FX.
+          Arriba tienes el resumen para leerle al cliente. En la tarde, al consolidar los
+          trades, elige <b>SIN FX</b> en el menú de cierre.
+        </div>` : ''}
+
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;${paso2?'':'opacity:.4;'}">
+        <span class="field-note" style="min-width:140px;font-weight:700;">2 · Tipo de operación</span>
+        ${btn(paso2, f.tipo==='WMCO',     "elegirTipoCanasta('WMCO')",     'WMCO',     'purple')}
+        ${btn(paso2, f.tipo==='SPOT',     "elegirTipoCanasta('SPOT')",     'SPOT',     'purple')}
+        ${btn(paso2, f.tipo==='NEXT_DAY', "elegirTipoCanasta('NEXT_DAY')", 'NEXT DAY', 'purple')}
+        ${paso3 ? sello(true, 'se registra como ' + (f.tipo==='NEXT_DAY'?'NEXT DAY':f.tipo)) : ''}
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;${paso3?'':'opacity:.4;'}">
+        <span class="field-note" style="min-width:140px;font-weight:700;">3 · Tasas</span>
+        <label class="field-note">Tasa de mercado
+          <input type="number" step="0.01" id="canastaTasaMkt" ${paso3?'':'disabled'}
+                 value="${f.tasaMercado ?? ''}" oninput="fijarTasaCanasta('mkt', this.value)"
+                 style="width:120px;margin-left:6px;"></label>
+        <label class="field-note">Tasa final cliente
+          <input type="number" step="0.01" id="canastaTasaFin" ${paso3?'':'disabled'}
+                 value="${f.tasaFinal ?? ''}" oninput="fijarTasaCanasta('fin', this.value)"
+                 style="width:120px;margin-left:6px;"></label>
+        ${f.tipo === 'WMCO' && paso3 ? `<span class="field-note" style="color:var(--amber,#f59e0b);">
+          WMCO: escribe el last. La operación queda sin verificar y la tasa final
+          se corrige en masa desde FX cuando cierre.</span>` : ''}
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:2px;">
+        <span class="field-note" style="min-width:140px;font-weight:700;">4 · Acciones</span>
+        ${btn(paso4, false, 'registrarCanastaEnFX()', '💱 Registrar en FX', 'primary', 'btnRegistrarCanastaFX')}
+        <button class="btn small purple" onclick="exportarCanastaEMSX()"
+                title="Archivo para cargar las órdenes de una vez en EMSX">📥 Cargar a EMSX</button>
+        <span class="field-note" style="opacity:.75;">Cargar a EMSX funciona siempre, con FX o sin FX.</span>
+      </div>
+    </div>`;
+}
+
+function elegirFxCanasta(v){ _canastaFX.conFx = v;
+  if(v === 'SIN'){ _canastaFX.tipo=''; _canastaFX.tasaMercado=null; _canastaFX.tasaFinal=null; }
+  renderFlujoCanasta(); }
+function elegirTipoCanasta(t){ _canastaFX.tipo = t; renderFlujoCanasta(); }
+function fijarTasaCanasta(cual, v){
+  const n = Number(String(v).replace(/,/g,'')) || null;
+  if(cual === 'mkt') _canastaFX.tasaMercado = n; else _canastaFX.tasaFinal = n;
+  // Solo se repinta el paso 4: repintar todo le quitaría el foco al input
+  // mientras se escribe.
+  // Por ID y no por su onclick: apagado se dibuja con onclick="", así que un
+  // selector por onclick no lo encontraba nunca y el botón no se encendía jamás.
+  const b = document.getElementById('btnRegistrarCanastaFX');
+  const listo = _canastaFX.tasaMercado > 0 && _canastaFX.tasaFinal > 0;
+  if(b){ b.disabled = !listo; b.style.opacity = listo ? '' : '.35';
+         b.style.cursor = listo ? '' : 'not-allowed';
+         b.className = 'btn small ' + (listo ? 'primary' : 'ghost');
+         b.setAttribute('onclick', listo ? 'registrarCanastaEnFX()' : ''); }
+}
+
+// Registra la canasta en el módulo de FX.
+//
+// NO arma la operación por su cuenta: llena los campos del formulario de FX y
+// llama a `registrar()`, que es la función que ya calcula el P&G, el reparto
+// con Mesa Divisas y el cumplimiento. Rearmar el objeto aquí sería un segundo
+// camino para los mismos números, y eso siempre termina mal (Sergio, 15-oct).
+function registrarCanastaEnFX(){
+  const c = _canastaActual, f = _canastaFX;
+  if(!c || !c.filas.length){ alert('No hay canasta.'); return; }
+  if(f.conFx !== 'CON'){ alert('Esta canasta está marcada SIN FX.'); return; }
+  if(!f.tipo){ alert('Elige el tipo de operación.'); return; }
+  if(!(f.tasaMercado > 0) || !(f.tasaFinal > 0)){ alert('Faltan las tasas.'); return; }
+
+  const sinPx = c.filas.filter(x => x.precio == null);
+  if(sinPx.length){ alert('Faltan precios: ' + sinPx.map(x=>x.nemo).join(', ')); return; }
+
+  // El neto en COP de la canasta y de ahí el USD, con la tasa final del
+  // cliente. Compran acciones -> giran pesos -> nos venden USD.
+  const cop = c.filas.reduce((a,x)=> a + (x.side === 'B' ? 1 : -1) * x.qty * x.precio, 0);
+  if(!cop){ alert('La canasta queda en cero neto: no hay FX que registrar.'); return; }
+  const usd = Math.abs(cop) / f.tasaFinal;
+  const side = cop > 0 ? 'SELL' : 'BUY';   // compran acciones => venden USD
+
+  const g = id => document.getElementById(id);
+  switchModule('FX');
+
+  const cli = g('cliente');
+  const clave = (c.cab.entity || 'MLI').toUpperCase().trim();
+  const hay = [...cli.options].some(o => o.value === clave);
+  if(!hay){ alert('El cliente "' + clave + '" no está en el selector de FX. Regístralo a mano.'); return; }
+  cli.value = clave;
+  if(typeof cambiarCliente === 'function') cambiarCliente();
+
+  g('tipoOperacion').value = f.tipo;
+  if(typeof cambiarTipoOperacion === 'function') cambiarTipoOperacion();
+  g('side').value = side;
+  g('amount').value = usd.toFixed(2);
+  if(g('rateUnica')) g('rateUnica').value = String(f.tasaFinal);
+  if(g('rate'))      g('rate').value      = String(f.tasaFinal);
+  if(g('spotReal'))  g('spotReal').value  = String(f.tasaMercado);
+  if(typeof calcular === 'function') calcular();
+  if(typeof registrar === 'function') registrar();
+
+  const toast = document.getElementById('toast');
+  if(toast){
+    toast.textContent = '✓ Canasta registrada en FX — ' + (side==='SELL'?'venden':'compran') +
+      ' USD ' + usd.toFixed(0) + ' @ ' + f.tasaFinal;
+    toast.classList.add('show');
+    setTimeout(()=>{ toast.classList.remove('show');
+                     toast.textContent='✓ Operación registrada correctamente'; }, 3000);
+  }
 }
 
 // --- Canastas pendientes de tasa -------------------------------------
@@ -11968,7 +12444,7 @@ function renderCanastasPendientes(){
         <strong>${c.entity||'MLI'} · ${c.stocks||''}${c.fx_tipo?' + '+c.fx_tipo:''}</strong>
         <span class="field-note">${horaLocal(c.creado_en)} · USDCOP ${fmtRate(c.usdcop)}</span>
       </div>
-      <table><thead><tr><th>Lado acciones</th><th class="num">Papeletas</th><th class="num">Acciones</th><th class="num">Valor COP</th><th class="num">USD</th><th>Genera en FX</th></tr></thead>
+      <table><thead><tr><th>Lado acciones</th><th class="num">Papeletas</th><th class="num">Nominales</th><th class="num">Valor COP</th><th class="num">USD</th><th>Genera en FX</th></tr></thead>
       <tbody>
         ${b.papeletas ? `<tr><td>Buys</td><td class="num">${b.papeletas}</td><td class="num">${fmtInt(b.acciones)}</td><td class="num">${fmtMoney(b.cop)}</td><td class="num"><b>${usdCorto(b.usd)}</b><div class="stat-label" style="opacity:.55;">${fmtInt(montoUsdRedondeado(b.usd))}</div></td><td><span class="side-badge sell">Venta USD</span></td></tr>`:''}
         ${sv.papeletas ? `<tr><td>Sells</td><td class="num">${sv.papeletas}</td><td class="num">${fmtInt(sv.acciones)}</td><td class="num">${fmtMoney(sv.cop)}</td><td class="num"><b>${usdCorto(sv.usd)}</b><div class="stat-label" style="opacity:.55;">${fmtInt(montoUsdRedondeado(sv.usd))}</div></td><td><span class="side-badge buy">Compra USD</span></td></tr>`:''}
@@ -14481,8 +14957,39 @@ function _fxNombrePlanilla(){
 
 // Freno: sin NIT no se manda. La columna TAX ID es lo que el BO usa para
 // identificar la contraparte, y una fila sin él le llega inservible.
+// Las operaciones de FX de hoy que todavía no se han verificado para back
+// office. Las que llegan por correo quedan por fuera: Andes por DMA ya viene
+// operado y no hay nada que confirmar — es la misma excepción que hace la
+// columna Verif. del blotter.
+function _fxSinVerificarHoy(){
+  return (typeof operaciones !== 'undefined' ? operaciones : []).filter(o =>
+    String(o.tradeDate||o.fecha||'').slice(0,10) === _hoyISO() &&
+    o.origen !== 'inbox' && !o.verificado);
+}
+
 function _fxPlanillaLista(filas){
   if(!filas.length){ alert('No hay operaciones de FX de hoy para la planilla.'); return false; }
+
+  // FRENO DURO: la planilla es lo que el back office recibe, así que no puede
+  // salir con operaciones que nadie confirmó. Una WMCO registrada con el last
+  // se ve idéntica a una cerrada — el único que sabe la diferencia es quien
+  // pone el check. Frena, no pregunta: un confirm se acepta sin leer
+  // (Sergio, 15-oct).
+  const sinVerif = _fxSinVerificarHoy();
+  if(sinVerif.length){
+    const lista = sinVerif.slice(0, 12).map(o=>
+      `   · ${o.horaRegistro||'—'}  ${o.cliente||'—'}  ${o.side==='SELL'?'venta':'compra'} ` +
+      `${Number(o.amount||0).toLocaleString('en-US',{maximumFractionDigits:0})} USD` +
+      (String(o.tipoOperacion||'').toUpperCase()==='WMCO' ? '  (WMCO)' : '')).join('\n');
+    alert('La planilla NO se generó: hay ' + sinVerif.length +
+      ' operación(es) de FX sin verificar.\n\n' + lista +
+      (sinVerif.length > 12 ? `\n   … y ${sinVerif.length-12} más` : '') +
+      '\n\nMárcalas en la columna Verif. del blotter de REGISTROS. Si alguna es ' +
+      'WMCO a la que le falta la tasa de cierre, usa primero "Tasa final WMCO ' +
+      'del día".\n\nLas que llegan por correo no requieren verificación y no cuentan aquí.');
+    return false;
+  }
+
   const sinNit = filas.filter(f=>!f.nit).map(f=>f.cliente);
   if(sinNit.length && !confirm(
       `Faltan ${sinNit.length} NIT:\n\n   ` + [...new Set(sinNit)].join('\n   ') +
@@ -25781,7 +26288,7 @@ initDatesRVL();
 // Sello de versión. Sirve para saber, sin adivinar, si el navegador está
 // corriendo el archivo que se acaba de subir o una copia en caché (Vercel o el
 // propio navegador). Si el sello de la esquina no es el esperado: Ctrl+Shift+R.
-const BUILD_ID = '2026-10-15 14:40 UTC · v214';
+const BUILD_ID = '2026-10-15 16:55 UTC · v216';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
