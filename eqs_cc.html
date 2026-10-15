@@ -26701,12 +26701,25 @@ async function rshCargar(){
     }
     if(!_rshDatos.cortes.length){
       if(est) est.textContent = 'sin datos';
+      // Dos causas distintas se ven IGUAL desde aquí, y hay que nombrar las
+      // dos. Cuando la tabla tiene RLS activo sin política, Supabase no
+      // contesta con un error: contesta 200 con una lista vacía. O sea que
+      // "no han cargado nada" y "no tengo permiso para leer" llegan como la
+      // misma respuesta. Pasó el 15-oct: el cargue decía 347 filas y el app
+      // decía "sin datos" (Sergio, 15-oct).
       document.getElementById('rshCuerpo').innerHTML =
         `<div class="panel"><div style="padding:8px 0;">
-           <b>Todavía no hay nada cargado.</b><br>
-           <span class="field-note">Deja los archivos de la Super en la carpeta del proyecto
-           y aprieta <b>Leer archivos de la Super</b>. Son los del "Portafolio de inversión
-           detallado" de los fondos de pensiones obligatorias, uno por mes.</span>
+           <b>No estoy viendo ninguna fila.</b> Puede ser una de dos:<br>
+           <span class="field-note">
+           <b>1. No se ha cargado nada todavía.</b> Deja los archivos de la Super en la
+           carpeta del proyecto y aprieta <b>Leer archivos de la Super</b>. Son los del
+           "Portafolio de inversión detallado" de los fondos de pensiones obligatorias,
+           uno por mes.<br><br>
+           <b>2. Sí hay datos pero no los puedo leer.</b> Si la ventana del runner dijo
+           que cargó, entonces es permisos: el runner escribe con la service key y el app
+           lee con la llave publicable. Corre <b>permisos_afp.sql</b> en Supabase. Desde
+           aquí las dos cosas se ven idénticas, porque Supabase contesta lo mismo.
+           </span>
          </div></div>`;
       return;
     }
@@ -26902,7 +26915,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-15 21:40 UTC · v223';
+const BUILD_ID = '2026-10-15 22:10 UTC · v224';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
