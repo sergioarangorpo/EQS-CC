@@ -451,6 +451,35 @@
      nominales se leia bajo "Valor COP" (Sergio, 15-oct). */
   th.num{text-align:right;}
   .chk{width:16px;height:16px;accent-color:var(--blue);cursor:pointer;}
+  /* El receptor de las operaciones que llegan por correo se puede mover sin
+     devolver el correo a la bandeja. Tiene que leerse IGUAL que el texto de
+     las otras filas —misma tipografia, mismo tamaño, mismo color— y mostrar
+     que es un control solo al pasarle por encima: si cada fila de Andes se
+     viera como una caja, la columna se desordena.
+     La primera version usaba `class="chk"`, que es la de los checkboxes y
+     fija el ancho en 16px: el selector salia como una rayita y no se leia
+     el nombre (Sergio, 16-oct). */
+  select.trader-sel{
+    /* Heredados a proposito, no fijados: la celda es `.mono-id` y queda en
+       11px, no en los 12px del `td` general. Escribir el tamaño a mano aqui
+       era clavar un segundo numero que el dia que cambie el de la tabla deja
+       la columna despareja. */
+    font-family:inherit;font-size:inherit;line-height:1.3;color:inherit;
+    background:transparent;border:1px solid transparent;border-radius:4px;
+    padding:1px 17px 1px 5px;margin:-1px -5px;cursor:pointer;
+    -webkit-appearance:none;appearance:none;width:auto;max-width:100%;
+    background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%236b7280'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 5px center;
+  }
+  select.trader-sel:hover{
+    border-color:var(--border-strong);background-color:var(--bg-3);color:var(--text-0);
+  }
+  select.trader-sel:focus{
+    outline:none;border-color:var(--blue);background-color:var(--bg-3);
+  }
+  /* El desplegable abierto lo pinta el sistema: sin esto sale en blanco
+     sobre blanco en el tema oscuro. */
+  select.trader-sel option{background:var(--bg-2);color:var(--text-1);}
   .side-badge{
     display:inline-flex;align-items:center;gap:5px;font-family:var(--sans);
     font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:4px;
@@ -4296,8 +4325,7 @@ function renderHistory(){
     // sirve (Sergio, 16-oct). Para las manuales no se repite: el trader ya
     // está en el modal de Corregir.
     const traderCell = op.origen === 'inbox'
-      ? `<select class="chk" style="font-size:11px;padding:2px 4px;background:var(--bg-2,#161b26);
-                 color:var(--text-1,#e5e7eb);border:1px solid var(--border,#232938);border-radius:4px;"
+      ? `<select class="trader-sel"
                  title="Trader receptor. Se guarda en la operación: se ve aquí, en la Planilla COP y en el reporte del cliente."
                  onchange="cambiarTraderOp(${op.id}, this.value)">
            ${TRADERS_FX_PLANILLA.map(t=>`<option value="${t}"${op.trader===t?' selected':''}>${t}</option>`).join('')}
@@ -27139,7 +27167,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-16 18:50 UTC · v227';
+const BUILD_ID = '2026-10-16 19:20 UTC · v228';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
