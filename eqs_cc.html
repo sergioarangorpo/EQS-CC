@@ -2567,6 +2567,43 @@
            padding:11px 13px;max-height:320px;overflow:auto;"></pre>
     </div>
 
+    <!-- ===== CARGAR ÓRDENES A EMSX =====
+         El cliente manda su intención en un cuadro de Excel y de ahí hay que
+         sacar el archivo que EMSX carga. Se hacía a mano, y el riesgo no son
+         las cantidades: son los TICKERS. Cinco de los ocho papeles más
+         líquidos NO se llaman en Bloomberg como el nemo — están cortados a
+         ocho caracteres: ECOPETROL es ECOPETL, GRUPOSURA es GRUPOSUR,
+         GRUPOARGOS es GRUPOARG, PFGRUPSURA es PFGRUPSU y PFGRUPOARG es
+         PFGRUPOA. Escribirlos a mano es rebotar cinco de ocho líneas.
+         Aquí salen de `tickerBloomberg`, el mismo maestro que usa la canasta
+         de MLI (Sergio, 16-oct). -->
+    <div class="section-label" style="margin-top:16px;">Cargar órdenes a EMSX</div>
+    <div class="panel" style="margin-bottom:14px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">
+        <div class="tb-field" style="min-width:230px;">
+          <label for="emsxCuenta">Cuenta (Account)</label>
+          <input type="text" id="emsxCuenta" list="emsxCuentasUsadas" placeholder="ALLIANZ_SEG_CO"
+                 title="El código de cuenta tal como lo espera EMSX. Se recuerdan los que ya hayas usado."
+                 style="width:230px;text-transform:uppercase;">
+          <datalist id="emsxCuentasUsadas"></datalist>
+        </div>
+        <label class="field-note" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding-bottom:6px;"
+               title="El mismo papel repetido al mismo precio suele ser el reparto por portafolio: a EMSX va una sola orden y la asignación se hace después de ejecutar.">
+          <input type="checkbox" id="emsxConsolidar" class="chk" checked onchange="revisarOrdenesEMSX()">
+          Consolidar por especie
+        </label>
+        <span style="flex:1;"></span>
+        <button class="btn small" onclick="revisarOrdenesEMSX()">Revisar</button>
+        <button class="btn small purple" id="btnGenerarEMSX" onclick="generarExcelOrdenesEMSX(this)" disabled>📥 Generar Excel para EMSX</button>
+      </div>
+      <textarea id="emsxPegado" rows="7" oninput="revisarOrdenesEMSX()"
+        style="width:100%;font-family:var(--mono);font-size:12px;background:var(--bg-2);
+               color:var(--text-1);border:1px solid var(--border-strong);border-radius:6px;padding:10px 12px;"
+        placeholder="Pega aquí el cuadro del cliente, con o sin encabezado:&#10;&#10;Nombre&#9;Intencion&#9;Precio&#9;Lado&#10;PFCIBEST&#9;4,553&#9;$ 77,600&#9;Venta&#10;ECOPETROL&#9;30,687&#9;$ 3,840&#9;Venta&#10;GEB&#9;142,878&#9;$ 3,000&#9;Compra"></textarea>
+      <div id="emsxAvisos" style="margin-top:10px;"></div>
+      <div id="emsxPreview" style="margin-top:10px;"></div>
+    </div>
+
     <div class="section-label">Canasta MLI</div>
     <div style="padding:0 24px 8px;">
       <div class="field-note" style="margin-bottom:6px;">Pega el correo completo de Lucas (con Entity / Stocks / FX y la tabla). Las líneas en 0.00 se descartan solas.</div>
@@ -3082,6 +3119,7 @@ function switchModule(mod) {
     if(typeof renderListaFestivos === 'function') renderListaFestivos();
     if(typeof renderListasMaestro === 'function') renderListasMaestro();
     if(typeof cargarUniversoRVI === 'function') cargarUniversoRVI();
+    if(typeof _emsxPintarCuentas === 'function') _emsxPintarCuentas();
   }
   const ml = MARKET_LABELS[mod];
   if(ml) {
@@ -7811,6 +7849,18 @@ NEMO_TABLE.forEach(r=>{
   if(r.emsx) _EMSX_A_NUAM[r.emsx.trim().toUpperCase()] = r.nuam;
   if(r.fidessa) _FIDESSA_A_NUAM[r.fidessa.trim().toUpperCase()] = r.nuam;
 });
+
+// FOTO de los nemos que vienen en el maestro, tomada ANTES de que nadie
+// pueda agregarle nada.
+//
+// `nemoCanonico` registra en NEMO_TABLE los nemos que no conocía, para que
+// el resto de la sesión los trate igual que a los demás. Es correcto para lo
+// que hace, pero vuelve inútil cualquier pregunta posterior del tipo "¿este
+// nemo está en el maestro?": después de pasar por ahí, SIEMPRE está.
+// El módulo de órdenes a EMSX necesita esa pregunta de verdad — un nemo mal
+// escrito se carga como "<LOQUESEA> CB Equity" y rebota en Bloomberg, o
+// peor, pega con un ticker que existe pero no es (Sergio, 16-oct).
+const _NEMOS_DEL_MAESTRO = new Set(NEMO_TABLE.map(r=>String(r.nuam||'').toUpperCase()));
 
 // Nemos que aparecieron hoy y NO estaban en la tabla. Se deducen y se registran
 // para que el resto de la sesión los trate igual que a los conocidos.
@@ -16146,6 +16196,240 @@ function renderDashTotales(M, campo, destino){
 // detalle de QUIÉN falta. Antes era una línea de texto y había que adivinar a
 // qué cliente correspondía cada número (Sergio, 03-sep).
 // =====================================================================
+// =====================================================================
+// CARGAR ÓRDENES A EMSX
+// ---------------------------------------------------------------------
+// Pega el cuadro del cliente y sale el .xlsx que EMSX carga.
+//
+// El formato del archivo es EXACTAMENTE el de `exportarCanastaEMSX` — la
+// canasta de MLI — porque ese ya entra. Un segundo formato para el mismo
+// destino es pedir que algún día dejen de coincidir.
+//
+// Dos cosas que ya costaron caro y aquí están resueltas de entrada:
+//
+//  · Los TICKERS. Salen de `tickerBloomberg`, no de pegarle " CB Equity"
+//    al nemo. Cinco de los ocho papeles más líquidos están cortados a
+//    ocho caracteres en Bloomberg.
+//
+//  · Las CANTIDADES van en formato General. Con '#,##0' se ven como
+//    "1.900" y así las lee quien carga el archivo: a Juan Antonio no le
+//    entraban (Sergio, 15-oct).
+// =====================================================================
+let _emsxOrdenes = null;    // lo último que se revisó, listo para generar
+
+// Las cuentas que ya se han usado, para no volver a escribirlas.
+function _emsxCuentas(){
+  try{ return JSON.parse(localStorage.getItem('eqs_emsx_cuentas') || '[]'); }
+  catch(e){ return []; }
+}
+function _emsxRecordarCuenta(c){
+  c = String(c||'').trim().toUpperCase();
+  if(!c) return;
+  const l = _emsxCuentas().filter(x => x !== c);
+  l.unshift(c);
+  try{ localStorage.setItem('eqs_emsx_cuentas', JSON.stringify(l.slice(0,15))); }catch(e){}
+  _emsxPintarCuentas();
+}
+function _emsxPintarCuentas(){
+  const dl = document.getElementById('emsxCuentasUsadas');
+  if(dl) dl.innerHTML = _emsxCuentas().map(c=>`<option value="${c}">`).join('');
+}
+
+// Lado: el cliente lo escribe de muchas formas. Devuelve 'B', 'S' o null.
+// Null y no un default: adivinar el lado de una orden es lo último que se
+// debe hacer.
+function _emsxLado(t){
+  const v = String(t||'').trim().toUpperCase();
+  if(!v) return null;
+  if(/^(C|COMPRA|COMPRAR|B|BUY|BUYS)$/.test(v)) return 'B';
+  if(/^(V|VENTA|VENDER|S|SELL|SELLS)$/.test(v)) return 'S';
+  return null;
+}
+
+// Lee el pegado. Si la primera fila trae encabezados, las columnas se
+// resuelven POR NOMBRE; si no, por posición. Es la misma lección del
+// pegado del allocation: la posición cambia y el nombre no.
+function _emsxParsear(txt){
+  const lineas = String(txt||'').split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  if(!lineas.length) return { filas:[], errores:[] };
+
+  // Si la línea trae TABS, se parte SOLO por tabs — es lo que sale al copiar
+  // de Excel, y las celdas vienen con espacios de relleno adentro
+  // ("            4,553 "). La primera versión partía también por dos o más
+  // espacios y esos rellenos se volvían columnas: la cantidad terminaba en la
+  // casilla del precio y el lado quedaba en "$".
+  // Sin tabs se intenta el punto y coma, luego dos o más espacios, y de
+  // último un espacio suelto. Las vacías NO se descartan: la posición es lo
+  // que identifica la columna (Sergio, 16-oct).
+  const partir = l => {
+    let c;
+    if(l.includes('\t'))      c = l.split('\t');
+    else if(l.includes(';'))  c = l.split(';');
+    else                      c = l.split(/\s{2,}/);
+    c = c.map(x=>x.trim());
+    if(c.length === 1 && /\s/.test(l)) c = l.trim().split(/\s+/);
+    return c;
+  };
+  const prim = partir(lineas[0]).map(c=>c.toLowerCase());
+  const buscar = (...claves) => prim.findIndex(c => claves.some(k => c.includes(k)));
+  const iN = buscar('nombre','especie','nemo','ticker','papel');
+  const iQ = buscar('intencion','intención','cantidad','qty','nominales','acciones');
+  const iP = buscar('precio','price','limite','límite');
+  const iL = buscar('lado','side','operacion','operación');
+  const hayEncabezado = iN >= 0 && iQ >= 0;
+  const col = hayEncabezado ? { n:iN, q:iQ, p:iP, l:iL } : { n:0, q:1, p:2, l:3 };
+
+  const filas = [], errores = [];
+  lineas.slice(hayEncabezado ? 1 : 0).forEach((l, idx)=>{
+    const c = partir(l);
+    const nemoCrudo = String(c[col.n]||'').trim().toUpperCase();
+    if(!nemoCrudo) return;
+    const qty = parseLocaleNumber(String(c[col.q]||'').replace(/[$\s]/g,''));
+    const px  = col.p >= 0 ? parseLocaleNumber(String(c[col.p]||'').replace(/[$\s]/g,'')) : 0;
+    const lado = col.l >= 0 ? _emsxLado(c[col.l]) : null;
+    const nemo = (typeof nemoCanonico === 'function') ? (nemoCanonico(nemoCrudo) || nemoCrudo) : nemoCrudo;
+    const fila = { n: idx+1, nemoCrudo, nemo, qty: Math.abs(Number(qty)||0),
+                   precio: Number(px)||0, lado, bbg: tickerBloomberg(nemo) };
+    if(!fila.qty)  errores.push(`Línea ${idx+1} (${nemoCrudo}): cantidad en cero o ilegible.`);
+    if(!fila.lado) errores.push(`Línea ${idx+1} (${nemoCrudo}): no entendí el lado "${c[col.l]||''}".`);
+    filas.push(fila);
+  });
+  return { filas, errores, hayEncabezado };
+}
+
+function revisarOrdenesEMSX(){
+  const cont = document.getElementById('emsxPreview');
+  const avis = document.getElementById('emsxAvisos');
+  const btn  = document.getElementById('btnGenerarEMSX');
+  const consolidar = (document.getElementById('emsxConsolidar')||{}).checked !== false;
+  _emsxOrdenes = null;
+  if(btn) btn.disabled = true;
+  if(cont) cont.innerHTML = '';
+  if(avis) avis.innerHTML = '';
+
+  const { filas, errores } = _emsxParsear((document.getElementById('emsxPegado')||{}).value);
+  if(!filas.length) return;
+
+  const problemas = errores.slice();
+
+  // Un papel con dos precios o dos lados NO se consolida: se avisa. Promediar
+  // un límite o escoger un lado por mayoría es inventar la orden.
+  const porNemo = {};
+  filas.forEach(f=>{
+    const a = porNemo[f.nemo] || (porNemo[f.nemo] = { nemo:f.nemo, bbg:f.bbg, qty:0, lineas:0,
+                                                      precios:new Set(), lados:new Set() });
+    a.qty += f.qty; a.lineas++;
+    if(f.precio) a.precios.add(f.precio);
+    if(f.lado)   a.lados.add(f.lado);
+  });
+  Object.values(porNemo).forEach(a=>{
+    if(a.precios.size > 1)
+      problemas.push(`${a.nemo}: viene con ${a.precios.size} precios distintos (${[...a.precios].map(p=>fmtInt(p)).join(', ')}). No se puede consolidar el límite.`);
+    if(a.lados.size > 1)
+      problemas.push(`${a.nemo}: viene con compra Y venta en el mismo cuadro. Revísalo.`);
+  });
+
+  // Un nemo que no está en el maestro igual se carga, con " CB Equity", pero
+  // se avisa FUERTE: si está mal escrito, la línea rebota en EMSX.
+  // Contra la FOTO del maestro, no contra NEMO_TABLE: para cuando se llega
+  // aquí, `nemoCanonico` ya metió el nemo desconocido en la tabla y
+  // preguntarle a ella siempre diría que sí.
+  const desconocidos = [...new Set(filas
+    .filter(f => !_NEMOS_DEL_MAESTRO.has(f.nemo))
+    .map(f => f.nemo))];
+
+  const salida = consolidar
+    ? Object.values(porNemo).map(a=>({
+        bbg:a.bbg, nemo:a.nemo, qty:a.qty, lineas:a.lineas,
+        precio:[...a.precios][0] || 0, lado:[...a.lados][0] || null }))
+    : filas.map(f=>({ bbg:f.bbg, nemo:f.nemo, qty:f.qty, lineas:1, precio:f.precio, lado:f.lado }));
+
+  const bloquea = problemas.length > 0;
+  if(avis){
+    let h = '';
+    if(desconocidos.length){
+      h += `<div class="field-note" style="color:var(--acc,#f59e0b);margin-bottom:6px;">
+        ⚠ No están en el maestro de especies: <b>${desconocidos.join(', ')}</b>.
+        Se cargan como "<code>${desconocidos[0]} CB Equity</code>", que puede no ser el ticker real.</div>`;
+    }
+    if(problemas.length){
+      h += `<div class="field-note" style="color:var(--sell,#ef4444);">
+        <b>No genero el archivo hasta arreglar esto:</b><br>${problemas.join('<br>')}</div>`;
+    }
+    avis.innerHTML = h;
+  }
+
+  const totLineas = filas.length, totQty = salida.reduce((s,x)=>s+x.qty,0);
+  if(cont){
+    cont.innerHTML = `
+      <div class="field-note" style="margin-bottom:6px;">
+        ${totLineas} línea(s) pegada(s) → <b>${salida.length} orden(es)</b> · ${fmtInt(totQty)} acciones
+        ${consolidar && salida.length < totLineas ? ' · consolidadas por especie' : ''}
+      </div>
+      <div class="panel" style="padding:0;overflow:auto;max-height:320px;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr style="text-align:left;opacity:.65;">
+          <th style="padding:6px 9px;">Ticker Bloomberg</th><th>Side</th>
+          <th class="num">Unbooked Amt</th><th class="num">Limit</th><th class="num">Líneas</th>
+        </tr></thead><tbody>
+        ${salida.map(x=>`<tr style="border-top:1px solid var(--line,#222);">
+          <td style="padding:5px 9px;font-weight:600;${x.bbg.replace(' CB Equity','') !== x.nemo ? 'color:var(--acc,#f59e0b);' : ''}"
+              title="${x.bbg.replace(' CB Equity','') !== x.nemo ? 'En Bloomberg no se llama como el nemo ('+x.nemo+')' : ''}">${x.bbg}</td>
+          <td style="color:${x.lado==='B'?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};font-weight:600;">${x.lado||'—'}</td>
+          <td class="num">${fmtInt(x.qty)}</td>
+          <td class="num">${x.precio ? fmtInt(x.precio) : '<span style="opacity:.4;">—</span>'}</td>
+          <td class="num" style="opacity:.6;">${x.lineas}</td></tr>`).join('')}
+      </tbody></table></div>`;
+  }
+
+  if(!bloquea){
+    _emsxOrdenes = salida;
+    if(btn) btn.disabled = false;
+  }
+}
+
+async function generarExcelOrdenesEMSX(btn){
+  if(!_emsxOrdenes || !_emsxOrdenes.length){ alert('Primero pega las órdenes y dale Revisar.'); return; }
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  const cuenta = String((document.getElementById('emsxCuenta')||{}).value || '').trim().toUpperCase();
+  if(!cuenta){ alert('Falta la cuenta (Account). Es lo que EMSX usa para saber de quién es la orden.'); return; }
+
+  // MISMO formato y MISMO orden de columnas que la canasta de MLI.
+  const H = ['Ticker','Side','Unbooked Amt','Limit','TIF','Account'];
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Hoja1');
+  H.forEach((h,i)=>{
+    const c = ws.getCell(1, i+1);
+    c.value = h;
+    c.font = { name:'Calibri', size:11, bold:true };
+  });
+  let r = 2;
+  _emsxOrdenes.forEach(o=>{
+    if(!o.qty) return;
+    ws.getCell(r,1).value = o.bbg;
+    ws.getCell(r,2).value = o.lado;
+    ws.getCell(r,3).value = o.qty;
+    ws.getCell(r,3).numFmt = 'General';      // sin separador de miles: EMSX no lo lee
+    if(o.precio){ ws.getCell(r,4).value = o.precio; ws.getCell(r,4).numFmt = 'General'; }
+    ws.getCell(r,5).value = '';              // TIF: se define al operar
+    ws.getCell(r,6).value = cuenta;
+    r++;
+  });
+  if(r === 2){ alert('No quedó ninguna orden con cantidad.'); return; }
+  if(typeof autofitColumnas === 'function') autofitColumnas(ws, {min:9, max:24});
+
+  _emsxRecordarCuenta(cuenta);
+  const buf = await wb.xlsx.writeBuffer();
+  // Se BAJA al navegador, igual que la canasta de MLI: es un archivo de
+  // trabajo del momento, no un reporte que viva en la carpeta del equipo.
+  // Y así funciona también en el PC de quien no tenga el runner.
+  _bajarAlNavegador(`EMSX_${cuenta}_${_slugHoy()}.xlsx`, buf);
+  if(typeof avisoExito === 'function'){
+    avisoExito(`${r-2} orden(es) para ${cuenta}`,
+      'Carga la hoja <b>Hoja1</b> en EMSX. Las cantidades van sin separador de miles.');
+  }
+}
+
 // A nombre de quién sale el FX en la Planilla COP.
 // ---------------------------------------------------------------------
 // Lo normal es JAJ y así se queda mientras nadie lo mueva. El selector
@@ -27167,7 +27451,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-16 19:20 UTC · v228';
+const BUILD_ID = '2026-10-16 20:05 UTC · v229';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
