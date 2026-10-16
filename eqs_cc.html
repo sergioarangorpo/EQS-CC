@@ -7274,10 +7274,29 @@ let _asignacionOrden = {};
 function _normBook(v){ return String(v||'').toUpperCase().trim(); }
 
 // Los grupos que comparten un book, segun la tabla maestra.
+// Grupos que pueden llegar por un book compartido PERO que no están en
+// GRUPO_COMISIONES_DB con ese book.
+//
+// BNP AGENCY llega bajo el Client/Book CSI y `grupoDeTrade` ya sabe
+// devolverlo cuando el Account dice BNPAGENCY o BNPA. Pero cuando el
+// Account NO lo dice —el 16-oct llegó con Account "MOC*" y la única pista
+// era el Trailer "BNP ERICA"— el app pregunta de quién es... y ofrecía solo
+// los cinco del book. BNP AGENCY no estaba entre las opciones, así que la
+// pregunta no tenía respuesta posible y el día se quedaba trabado.
+//
+// La lista de candidatos tiene que incluir TODO lo que el resolver puede
+// devolver para ese book. Si no, hay un estado del que no se sale.
+// CREDIBOLSA NO va: salió del book CSI el 14-oct (Sergio, 16-oct).
+const EXTRA_CANDIDATOS_BOOK = {
+  CSI: ['BNP AGENCY'],
+};
+
 function gruposDelBook(book){
   const b = _normBook(book);
   if(!b || typeof GRUPO_COMISIONES_DB === 'undefined') return [];
-  return GRUPO_COMISIONES_DB.filter(x => _normBook(x.book) === b).map(x => x.grupo);
+  const propios = GRUPO_COMISIONES_DB.filter(x => _normBook(x.book) === b).map(x => x.grupo);
+  const extra = EXTRA_CANDIDATOS_BOOK[b] || [];
+  return [...new Set([...propios, ...extra])];
 }
 
 // Busca en el Account cual de los grupos del book es. Calce por nombre
@@ -22514,8 +22533,22 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
     // botón no avisaba porque el error se iba al aire, sin catch. Para Andes,
     // el arqueo cliente vs COR nunca cuadró (Sergio, 15-oct).
     const _lineasAndes = ctx.loteDet || [];
-    const _opsAndesArr = Object.values(_opsAndes).map(o=>({
-      ...o, precio: o.cantidad>0 ? o.bruto/o.cantidad : 0 }));
+    // EL IVA VIAJA CON LA LÍNEA. `registrarLoteRVL` lo toma de `ivaMonto`, y
+    // si no viene lo guarda en null — y entonces la Planilla COP FRENA con
+    // "reportada SIN IVA registrado", que es justo lo que pasó el 16-oct con
+    // las líneas de LARRAIN VIAL PP (que es Andes).
+    // Se calcula con `ivaDeLineaRVL`, la MISMA función del reporte normal: el
+    // IVA ya se calculó por tres caminos distintos una vez y costó $480.998
+    // en una línea (Sergio, 16-oct).
+    const _opsAndesArr = Object.values(_opsAndes).map(o=>{
+      const precio = o.cantidad>0 ? o.bruto/o.cantidad : 0;
+      const ivaMonto = (typeof ivaDeLineaRVL === 'function')
+        ? ivaDeLineaRVL(!!(_portAndes && _portAndes.iva), _portAndes, o.comMonto)
+        : 0;
+      const montoNeto = o.lado === 'Compra' ? o.bruto + o.comMonto + ivaMonto
+                                            : o.bruto - o.comMonto - ivaMonto;
+      return { ...o, precio, ivaMonto, montoNeto };
+    });
     // ANDES es extranjero pero SÍ complementa: está en COR_EXTRANJEROS_SI
     // (Sergio, 22-sep).
     if(typeof guardarCorLineasDeReporte === 'function'){
@@ -27574,7 +27607,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-16 21:45 UTC · v233';
+const BUILD_ID = '2026-10-16 22:00 UTC · v234';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
