@@ -5442,14 +5442,52 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
     }
     const mt = redondear(netoDeLado(x.lado), 2);
     const tasa = Number(x.lado.tasaFinalCliente) || 0;
-    ws.getCell(x.col + '7').value = tasa;
-    ws.getCell(x.col + '7').numFmt = '#,##0.00';
-    ws.getCell(x.col + '8').value = tasa ? redondear(mt / tasa, 2) : 0;
-    ws.getCell(x.col + '8').numFmt = '#,##0.00';
-    // FX SD: compras T+1 para que la plata llegue a Colombia, ventas T+3,
-    // T+2 en el caso normal. Sale del cierre del propio FX.
-    ws.getCell(x.col + '9').value = x.lado.fxSD || 'T+2';
-    ws.getCell(x.col + '9').alignment = { horizontal:'right' };
+
+    // ---- Canasta SIN FX ----
+    // Cuando el correo de MLI dice DONT EXECUTE no hay tasa, no hay USD y no
+    // hay cumplimiento de FX. `confirmarSinFX` manda tasaFinalCliente en null
+    // a proposito —un null no se promedia, un cero si— pero aqui ese null se
+    // convertia en 0 con `Number(null) || 0` y la hoja le decia a MLI que el
+    // FX se cerro a una tasa de CERO. El null llegaba bien y se perdia en la
+    // ultima linea. Se usa NOT TODAY, que es la convencion que esta hoja ya
+    // tiene para un lado que no opero (Sergio, 16-oct).
+    const sinFX = x.lado.sinFX === true || !(tasa > 0);
+    const noHoy = (celda) => {
+      const c = ws.getCell(celda);
+      c.value = 'NOT TODAY';
+      c.font = { name:'Calibri', size:11, italic:true, color:{argb:C.textMuted} };
+      c.alignment = { horizontal:'right' };
+    };
+
+    if(sinFX){
+      noHoy(x.col + '7');    // FX RATE
+      noHoy(x.col + '8');    // USD VALUE
+      noHoy(x.col + '9');    // FX SD
+    } else {
+      ws.getCell(x.col + '7').value = tasa;
+      ws.getCell(x.col + '7').numFmt = '#,##0.00';
+      ws.getCell(x.col + '8').value = redondear(mt / tasa, 2);
+      ws.getCell(x.col + '8').numFmt = '#,##0.00';
+      // FX SD: compras T+1 para que la plata llegue a Colombia, ventas T+3,
+      // T+2 en el caso normal. Eso lo resuelve `settleDateCruce`, que ya
+      // ajusta por festivo US segun el lado.
+      //
+      // Hasta el 16-oct esta celda leia `x.lado.fxSD`, un campo que NO SE
+      // ESCRIBE EN NINGUNA PARTE del archivo: aparecia una sola vez en las
+      // 23.700 lineas, justo aqui, leyendose. Siempre caia en el `|| 'T+2'`,
+      // asi que TODAS las confirmaciones de cruce —MLI, CITI, BNP,
+      // Credibolsa— han salido diciendo T+2 desde que existe la hoja.
+      // Leer una propiedad que no existe no es un error en JavaScript: da
+      // undefined y sigue de largo. Por eso no lo agarro nada.
+      // La etiqueta se calcula con `_fxDiasHabiles`, la MISMA que usa la
+      // columna T+ de la planilla de FX: un solo camino para el mismo dato.
+      ws.getCell(x.col + '9').value =
+        _fxDiasHabiles(_soloFecha(x.lado.tradeDate), _soloFecha(x.lado.settleDate)) || 'T+2';
+      ws.getCell(x.col + '9').alignment = { horizontal:'right' };
+    }
+
+    // El MT VALUE va SIEMPRE, con FX o sin el: los pesos del cruce son reales
+    // y son justo lo que el cliente tiene que girar.
     ws.getCell(x.col + '10').value = mt;
     ws.getCell(x.col + '10').numFmt = '#,##0.00';
   });
@@ -5668,11 +5706,29 @@ async function generarExcelCruce(clienteKey, registrados, trader){
   r += 2;
 
   // ================= BLOQUE 2: FX =================
+  // Los lados SIN FX no van en esta tabla. `confirmarSinFX` manda usd y
+  // tasaFinalCliente en null, y `redondear(null)` devuelve 0: sin este filtro
+  // la hoja le imprimía al cliente una línea de FX COMPLETA —con su Buy/Sell,
+  // su par USDCOP y sus fechas— de una operación que nunca existió, toda en
+  // ceros. Es peor que el caso de MLI, que al menos solo mostraba un panel
+  // con ceros y no una operación inventada.
+  // Si NINGÚN lado cerró FX, no se dibuja la tabla: va una línea que lo dice,
+  // con la misma palabra que usa la hoja de MLI (Sergio, 16-oct).
+  const _ladosConFX = registrados.filter(l =>
+    l.sinFX !== true && Number(l.tasaFinalCliente) > 0);
   tituloSeccion('FX');
+  if(!_ladosConFX.length){
+    ws.mergeCells(`B${r}:H${r}`);
+    const cNo = ws.getCell(`B${r}`);
+    cNo.value = 'NOT TODAY — esta canasta se cerró sin FX';
+    cNo.font = { name:'Calibri', size:10, italic:true, color:{argb:C.textMuted} };
+    ws.getRow(r).height = 18;
+    r += 3;
+  } else {
   headerFila(['Trade Date','Settle Date','Side','Pair','USD Amount','Rate','COP Value'],
              ['center','center','left','left','right','right','right']);
   const fxIni = r;
-  registrados.forEach(lado=>{
+  _ladosConFX.forEach(lado=>{
     const tdTxt = fmtFechaCorta(lado.tradeDate.toISOString().slice(0,10));
     const sdTxt = fmtFechaCorta(lado.settleDate.toISOString().slice(0,10));
     ws.getCell(`B${r}`).value = tdTxt;
@@ -5706,13 +5762,14 @@ async function generarExcelCruce(clienteKey, registrados, trader){
     if((rr-fxIni)%2===1){ colsFX.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}}); }
   }
   r += 2;
+  }   // fin del bloque FX: solo se dibuja si hubo al menos un lado con FX
 
   // ---------- FOOTER ----------
   allCols.forEach(col => ws.getCell(`${col}${r}`).fill = {type:'pattern', pattern:'solid', fgColor:{argb:C.orange}});
   ws.getRow(r).height = 4; r++;
   ws.mergeCells(`B${r}:K${r}`);
   const foot = ws.getCell(`B${r}`);
-  foot.value = `Generated by EQS CC · Credicorp Capital Colombia · ${registrados.length} FX side(s) · ${fechaHoyTxt}`;
+  foot.value = `Generated by EQS CC · Credicorp Capital Colombia · ${_ladosConFX.length} FX side(s) · ${fechaHoyTxt}`;
   foot.font = { name:'Calibri', size:8.5, italic:true, color:{argb:C.textMuted} };
   ws.getRow(r).height = 18;
 
@@ -26915,7 +26972,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-15 22:10 UTC · v224';
+const BUILD_ID = '2026-10-16 14:35 UTC · v225';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
