@@ -10809,6 +10809,40 @@ function mostrarResumenCruceFX(){
 
 // Manda el lado actual del cruce a la calculadora de FX, pre-cargando cliente,
 // lado, fechas y el COP objetivo. Sergio mete las tasas y registra.
+// El grupo del cruce traducido a la opción del selector de la calculadora.
+// Devuelve el `value` de la opción, o null si no hay forma de resolverlo —
+// y null quiere decir FRENAR, nunca "sigue con lo que haya".
+//
+// Los nombres no coinciden porque vienen de dos lados distintos: el grupo
+// sale de Fidessa y la opción es de la calculadora. Mientras existan los
+// dos, esta tabla es el puente; lo que no puede volver a pasar es que la
+// falta de puente se resuelva sola y en silencio (Sergio, 16-oct).
+const CRUCE_A_CALCULADORA = {
+  CITI_NY:    'CITI',
+  CREDIBOLSA: 'CCBOLSA',
+  BNPA:       'BNP',
+  'BNP AGENCY': 'BNP',
+};
+
+function _clienteCalculadoraDeCruce(grupo, sel){
+  const g = String(grupo||'').trim().toUpperCase();
+  if(!g || !sel) return null;
+  const valores = [...sel.options].map(o=>o.value);
+  if(valores.includes(g)) return g;                       // coincide tal cual
+  const alias = CRUCE_A_CALCULADORA[g];
+  if(alias && valores.includes(alias)) return alias;      // por la tabla
+  // Último intento: por el nombre del cliente, que es el mismo dato visto
+  // desde la ficha. Si tampoco, se devuelve null y quien llama frena.
+  const nom = (typeof getClienteDB === 'function' && getClienteDB(g))
+    ? String(getClienteDB(g).nombre||'').toUpperCase() : '';
+  if(nom){
+    const porNombre = [...sel.options].find(o =>
+      String(o.textContent||'').trim().toUpperCase() === nom);
+    if(porNombre) return porNombre.value;
+  }
+  return null;
+}
+
 function irACalculadoraCruce(){
   const p = _cruceFXPendiente;
   // Exigir trader si el cliente tiene lista (MLI, Citi). Nombra el archivo.
@@ -10824,11 +10858,36 @@ function irACalculadoraCruce(){
   // "VWAP del día" el cruce terminaba en la pantalla de entrada (Sergio, 17-sep).
   switchModule('FX');
 
-  // Cliente: si el grupo existe como opción de la calculadora, se selecciona;
-  // MLI existe. Se usa su modelo (UNICA — extranjero no-Andes).
+  // Cliente de la calculadora.
+  //
+  // El grupo con el que llega el cruce NO siempre se llama igual que la
+  // opción del selector: el cruce trae CITI_NY, CREDIBOLSA y BNPA, y el
+  // selector tiene CITI, CCBOLSA y BNP. De los cuatro clientes de cruce,
+  // el único que coincidía era MLI — y por eso nadie lo vio.
+  //
+  // Antes esto era `if(opt){ ... }` sin else: cuando no encontraba la
+  // opción NO HACÍA NADA y seguía de largo, así que la calculadora se
+  // quedaba con el cliente que estuviera puesto —ANDES, la primera de la
+  // lista— y `cambiarCliente()` le aplicaba el modelo de Andes.
+  // El 16-oct un cruce de CITI salió con los puntos finales de Andes
+  // (venta 0,25) encima: la tasa al cliente pasó de 3.164,00 a 3.164,25 y
+  // la operación quedó registrada a nombre de Andes (Sergio, 16-oct).
+  //
+  // Ahora: si no se puede resolver, SE FRENA. Entrar a la calculadora con
+  // el cliente equivocado es peor que no entrar.
   const selCliente = document.getElementById('cliente');
-  const opt = [...selCliente.options].find(o => o.value === p.cliente);
-  if(opt){ selCliente.value = p.cliente; }
+  const clienteCalc = _clienteCalculadoraDeCruce(p.cliente, selCliente);
+  if(!clienteCalc){
+    const nom = (getClienteDB(p.cliente) && getClienteDB(p.cliente).nombre) || p.cliente;
+    alert(`No puedo abrir la calculadora para ${nom} (${p.cliente}).\n\n` +
+          `Ese cliente no está en la lista de la calculadora de FX, y seguir ` +
+          `sin él haría que la operación se registre con el cliente anterior ` +
+          `y con SU modelo de tasas.\n\n` +
+          `Agrégalo al selector de la calculadora o avísale a Claude.`);
+    _cruceActivo = null;
+    return;
+  }
+  selCliente.value = clienteCalc;
   cambiarCliente();
 
   // VWAP: NO heredar el tipo de operación pegado de una op anterior (fue lo que
@@ -27451,7 +27510,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-16 20:05 UTC · v229';
+const BUILD_ID = '2026-10-16 20:35 UTC · v230';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
