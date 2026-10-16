@@ -5937,7 +5937,8 @@ async function generarExcelAndes(eqLotes, fxOps){
 
   // FX de Andes del día: si no se pasan, se toman del histórico de operaciones.
   if(!fxOps){
-    fxOps = (typeof operaciones !== 'undefined' ? operaciones : []).filter(o=> o.cliente === 'ANDES');
+    // Las MANUALES también. Ver `esFXdeAndes`: son el mismo cliente.
+    fxOps = (typeof operaciones !== 'undefined' ? operaciones : []).filter(esFXdeAndes);
   }
   eqLotes = eqLotes || [];
 
@@ -22364,8 +22365,10 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
     })),
   }));
 
-  // FX de Andes del día.
-  const fxOps = (typeof operaciones !== 'undefined' ? operaciones : []).filter(o=> o.cliente === 'ANDES');
+  // FX de Andes del día — DMA y manuales. Este filtro decía
+  // `o.cliente === 'ANDES'` y dejaba las manuales por fuera del consolidado
+  // que ve el cliente (Sergio, 16-oct).
+  const fxOps = (typeof operaciones !== 'undefined' ? operaciones : []).filter(esFXdeAndes);
 
   // Guardar para el botón de confirmar.
   window._andesReporte = { eqLotes, fxOps };
@@ -27562,7 +27565,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-16 20:55 UTC · v231';
+const BUILD_ID = '2026-10-16 21:20 UTC · v232';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
