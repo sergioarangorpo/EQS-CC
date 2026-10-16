@@ -889,6 +889,21 @@
               Solo sale con TODO reportado.</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;">
+            <!-- El FX de la planilla salía SIEMPRE a nombre de JAJ, fijo en el
+                 código. El comentario de allá decía "salvo que esté de
+                 vacaciones", y el día que pasó no había forma de cambiarlo
+                 sin editar y desplegar (Sergio, 16-oct). -->
+            <label class="field-note" style="font-size:11px;" for="planillaTraderFX"
+                   title="A nombre de quién sale el FX en la planilla. Lo normal es JAJ.">FX a nombre de</label>
+            <select id="planillaTraderFX" onchange="guardarTraderFX(this.value)"
+                    title="A nombre de quién sale el FX en la planilla. Se guarda en este navegador."
+                    style="font-size:12px;padding:5px 9px;
+                           background:var(--bg-2,#161b26);color:var(--text-1,#e5e7eb);
+                           border:1px solid var(--border,#232938);border-radius:6px;">
+              <option value="JAJ">JAJ</option>
+              <option value="SAR">SAR</option>
+              <option value="MIG">MIG</option>
+            </select>
             <label class="field-note" style="font-size:11px;">USDCOP</label>
             <input type="text" id="planillaTRM"
                    style="width:110px;font-size:12px;padding:5px 9px;
@@ -4274,6 +4289,20 @@ function renderHistory(){
     const verifCell = op.origen === 'inbox'
       ? `<span class="text-muted" title="Andes por correo ya está operado vía DMA — no requiere verificación">—</span>`
       : `<input type="checkbox" class="chk" ${op.verificado?'checked':''} title="${op.verificado?'Verificado':'Pendiente de verificar para back office'}" onchange="toggleVerificadoFX(${op.id})">`;
+    // Las de correo (Andes) no tienen el ✎ Corregir: tienen el ↩ Devolver,
+    // porque una operación que vino de un correo no se edita, se devuelve a
+    // la bandeja. Pero el TRADER sí hay que poder moverlo sin devolver nada
+    // — el día que falte alguien, esperar a corregirlo en la planilla no
+    // sirve (Sergio, 16-oct). Para las manuales no se repite: el trader ya
+    // está en el modal de Corregir.
+    const traderCell = op.origen === 'inbox'
+      ? `<select class="chk" style="font-size:11px;padding:2px 4px;background:var(--bg-2,#161b26);
+                 color:var(--text-1,#e5e7eb);border:1px solid var(--border,#232938);border-radius:4px;"
+                 title="Trader receptor. Se guarda en la operación: se ve aquí, en la Planilla COP y en el reporte del cliente."
+                 onchange="cambiarTraderOp(${op.id}, this.value)">
+           ${TRADERS_FX_PLANILLA.map(t=>`<option value="${t}"${op.trader===t?' selected':''}>${t}</option>`).join('')}
+         </select>`
+      : op.trader;
     const rowClass = (op.origen !== 'inbox' && !op.verificado) ? 'row-pendiente' : '';
     return `<tr class="${rowClass}">
       <td class="mono-id">${op.horaRegistro}</td>
@@ -4286,7 +4315,7 @@ function renderHistory(){
       <td class="num">${fmtRate(r.tasaClienteT0)}</td>
       <td class="num">${fmtRate(r.tasaFinalCliente)}</td>
       <td class="num">${fmtMoney(r.comEqs)}</td>
-      <td class="mono-id">${op.trader}</td>
+      <td class="mono-id">${traderCell}</td>
       <td class="num">${verifCell}</td>
       <td>${accionBtn}</td>
     </tr>`;
@@ -4299,6 +4328,31 @@ function renderHistory(){
 // que quedó registrado es el definitivo (aplica igual a WMCO editados
 // a mano y a clientes como BNP que ya envían un monto exacto de entrada).
 // =====================================================================
+// Cambia el trader de UNA operación, desde la tabla de REGISTROS.
+// Es el mismo campo que guarda el modal de Corregir; lo único que cambia es
+// desde dónde se toca. Un solo sitio donde vive el dato (Sergio, 16-oct).
+async function cambiarTraderOp(id, v){
+  const op = (typeof operaciones !== 'undefined' ? operaciones : []).find(o=>o.id===id);
+  if(!op) return;
+  v = String(v||'').toUpperCase();
+  if(!TRADERS_FX_PLANILLA.includes(v)) return;
+  const antes = op.trader;
+  op.trader = v;
+  if(typeof actualizarOperacionSupabase === 'function'){
+    try{ await actualizarOperacionSupabase(id, { trader: v }); }
+    catch(e){
+      // Si no se pudo guardar, se devuelve en pantalla: dejarlo cambiado
+      // aquí y viejo en Supabase es la peor de las dos.
+      op.trader = antes;
+      if(typeof avisoFalla === 'function')
+        avisoFalla('No se pudo guardar el trader', e.message || 'sin detalle');
+      if(typeof renderHistory === 'function') renderHistory();
+      return;
+    }
+  }
+  if(typeof renderHistory === 'function') renderHistory();
+}
+
 function toggleVerificadoFX(id){
   const op = operaciones.find(o=>o.id===id);
   if(!op) return;
@@ -12664,7 +12718,11 @@ async function cerrarCanastaYRegistrar(id){
       amount: l.amount,
       noches: nochesT0,
       params: { rateUnica, spotReal, ptsVenta, ptsCompra, nochesT0 },
-      trader: 'JAJ',
+      // El trader del FX nuevo sale del selector de la Planilla COP, que por
+      // defecto es JAJ. Antes estaba fijo aquí, así que en un día de
+      // vacaciones había que corregir cada operación a mano después de
+      // crearla (Sergio, 16-oct).
+      trader: (typeof traderFXPlanilla === 'function') ? traderFXPlanilla() : 'JAJ',
       origen: 'manual',
       emailsOrigen: null,
       verificado: false,
@@ -15833,6 +15891,10 @@ function _dashDatos(){
 function renderDashboard(){
   const cont = document.getElementById('dashMercados');
   if(!cont) return;
+  // El selector del trader de FX se pinta aquí y no en el arranque: la
+  // tarjeta de la Planilla COP vive en este módulo, y así queda bien
+  // puesto tanto al abrir la página como al volver al Dashboard.
+  if(typeof pintarTraderFX === 'function') pintarTraderFX();
   const M = _dashDatos();
   const el = document.getElementById('dashHora');
   if(el) el.textContent = new Date().toLocaleString('es-CO',{dateStyle:'long', timeStyle:'short'});
@@ -16056,6 +16118,100 @@ function renderDashTotales(M, campo, destino){
 // detalle de QUIÉN falta. Antes era una línea de texto y había que adivinar a
 // qué cliente correspondía cada número (Sergio, 03-sep).
 // =====================================================================
+// A nombre de quién sale el FX en la Planilla COP.
+// ---------------------------------------------------------------------
+// Lo normal es JAJ y así se queda mientras nadie lo mueva. El selector
+// existe para los días que él no está: antes eso era editar el HTML y
+// desplegar, con el mercado abierto (Sergio, 16-oct).
+//
+// Vive en localStorage y no en Supabase A PROPÓSITO: es una preferencia
+// de quien está armando la planilla hoy, no un dato de la operación. Si
+// se guardara compartido, Sergio lo cambia un martes y tres semanas
+// después el FX de Juan Antonio sigue saliendo a nombre de Sergio sin
+// que nadie se acuerde de por qué.
+const TRADERS_FX_PLANILLA = ['JAJ','SAR','MIG'];
+
+function traderFXPlanilla(){
+  let v = null;
+  try{ v = localStorage.getItem('eqs_trader_fx'); }catch(e){ v = null; }
+  v = String(v||'').toUpperCase();
+  return TRADERS_FX_PLANILLA.includes(v) ? v : 'JAJ';
+}
+
+// Mover el selector ESCRIBE el trader en las operaciones de FX del día.
+//
+// Antes filtraba al final: la planilla ignoraba el trader de la operación y
+// escribía lo que dijera el selector. Eso dejaba dos números para la misma
+// pregunta — la columna Trader de REGISTROS decía una cosa y la planilla
+// otra, y el campo "Trader receptor" del modal de Corregir no servía para
+// nada aunque existiera desde hace meses.
+//
+// Ahora el trader de la operación es LA verdad, y esto es una acción en
+// bloque para el día que falte alguien. Pregunta antes, y dice cuántas va a
+// cambiar: reescribir en silencio las operaciones de otro es peor que
+// obligar a corregirlas una por una (Sergio, 16-oct).
+async function guardarTraderFX(v){
+  v = String(v||'').toUpperCase();
+  if(!TRADERS_FX_PLANILLA.includes(v)) v = 'JAJ';
+  const antes = traderFXPlanilla();
+  try{ localStorage.setItem('eqs_trader_fx', v); }catch(e){}
+  const sel = document.getElementById('planillaTraderFX');
+  if(sel) sel.value = v;
+
+  // Las de HOY que no están ya a ese nombre. Las de días anteriores no se
+  // tocan: lo de ayer ya se reportó y se cuadró.
+  // Bogotá explícito, igual que `_wmcoDelDia`, que filtra este mismo arreglo
+  // por la misma fecha. Con `toISOString()` a secas, después de las 7 pm el
+  // día se corre al siguiente y "las operaciones de hoy" salen cero.
+  const hoyISO = new Date().toLocaleDateString('en-CA', {timeZone:'America/Bogota'});
+  const porCambiar = (typeof operaciones !== 'undefined' ? operaciones : [])
+    .filter(o => String(o.tradeDate||'').slice(0,10) === hoyISO && o.trader !== v);
+
+  if(!porCambiar.length){
+    if(typeof avisoExito === 'function' && v !== antes){
+      avisoExito('El FX nuevo va a nombre de ' + v,
+        'No hay operaciones de hoy que cambiar. Lo normal es JAJ — acuérdate de devolverlo.');
+    }
+    if(typeof renderDashboard === 'function') renderDashboard();
+    return;
+  }
+
+  const lista = porCambiar.slice(0, 8)
+    .map(o => `${o.cliente} ${o.side === 'BUY' ? 'Compra' : 'Venta'} ${fmtUSD(o.amount)} (${o.trader||'—'})`)
+    .join('\n');
+  const ok = confirm(
+    `¿Pasar a ${v} las ${porCambiar.length} operación(es) de FX de hoy?\n\n` +
+    lista + (porCambiar.length > 8 ? `\n… y ${porCambiar.length - 8} más` : '') +
+    `\n\nEsto cambia el trader EN LA OPERACIÓN: se ve en REGISTROS, en la ` +
+    `Planilla COP y en el reporte de FX del cliente.\n` +
+    `Si cancelas, el FX nuevo igual queda a nombre de ${v}.`);
+
+  if(ok){
+    for(const o of porCambiar){
+      o.trader = v;
+      if(typeof actualizarOperacionSupabase === 'function'){
+        try{ await actualizarOperacionSupabase(o.id, { trader: v }); }
+        catch(e){ console.warn('No se pudo guardar el trader de', o.id, e.message); }
+      }
+    }
+    if(typeof renderHistory === 'function') renderHistory();
+    if(typeof avisoExito === 'function'){
+      avisoExito(`${porCambiar.length} operación(es) de FX a nombre de ${v}`,
+        v === 'JAJ' ? 'Volvió a lo normal.'
+                    : 'Lo normal es JAJ — acuérdate de devolverlo cuando vuelva.');
+    }
+  } else if(typeof avisoExito === 'function' && v !== antes){
+    avisoExito('El FX NUEVO va a nombre de ' + v,
+      `Las ${porCambiar.length} de hoy quedaron como estaban.`);
+  }
+  if(typeof renderDashboard === 'function') renderDashboard();
+}
+
+function pintarTraderFX(){
+  const sel = document.getElementById('planillaTraderFX');
+  if(sel) sel.value = traderFXPlanilla();
+}
+
 // PLANILLA COP — una fila por operación del día
 // ---------------------------------------------------------------------
 // Reemplaza el archivo que Sergio armaba a mano desde tres libros con macros.
@@ -16783,9 +16939,13 @@ function filasPlanillaCOP(){
       fondo: o.fondo || '', grupo: g.grupo, tipo: o.lado, nemo: o.nemo,
       cantidad: o.cantidad, precio: o.precio, bruto,
       comision: com, comisionPct: bruto ? com / bruto : 0, iva, giro,
-      // El FX es de Juan Antonio salvo que esté de vacaciones; por defecto JAJ
-      // sin importar el trader del grupo (Sergio, 18-sep).
-      trader: o.mercado === 'FX' ? 'JAJ' : g.trader,
+      // El FX lleva el trader de SU OPERACIÓN, que es lo que se ve en la
+      // columna Trader de REGISTROS y lo que va en el reporte del cliente.
+      // Si la operación no trae ninguno —una vieja, de antes— se usa el del
+      // selector, que por defecto es JAJ.
+      // El selector ya no filtra aquí: ahora ESCRIBE en las operaciones, que
+      // es lo que lo vuelve un solo número en vez de dos (Sergio, 16-oct).
+      trader: o.mercado === 'FX' ? (o.trader || traderFXPlanilla()) : g.trader,
       mercado: o.mercado, categoria: g.categoria,
       liquidacion: o.liquidacion, cumplimiento: o.cumplimiento,
     });
@@ -16899,6 +17059,13 @@ function filasPlanillaCOP(){
       nemo:'USDCOP', lado:String(o.side||'').toUpperCase()==='BUY'?'Compra':'Venta',
       cantidad:monto, precio:tasa, bruto:monto*tasa,
       comision:comFX, mercado:'FX', iva:false, ivaReportado:0,
+      // EL TRADER SALE DE LA OPERACIÓN. Hasta el 16-oct esta línea no lo
+      // mandaba y la planilla escribía 'JAJ' fijo para todo el FX, así que
+      // el campo "Trader receptor" del modal de Corregir —que existe desde
+      // hace meses— nunca llegaba aquí. Se podía cambiar y no cambiaba nada.
+      // Sí llegaba al reporte de FX del cliente, o sea que los dos papeles
+      // podían decir traders distintos (Sergio, 16-oct).
+      trader: o.trader,
       // LAS FECHAS SE LEEN DE LA OPERACIÓN. Antes se recalculaban las dos acá:
       // la liquidación con `hoy` a secas —que le pisaba la fecha a los NEXT_DAY
       // y los WMCO— y el cumplimiento con `cumplimientoFX`, que tiene a ANDES
@@ -26972,7 +27139,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-16 14:35 UTC · v225';
+const BUILD_ID = '2026-10-16 18:50 UTC · v227';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
