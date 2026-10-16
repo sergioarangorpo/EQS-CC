@@ -3400,9 +3400,26 @@ function _fechaAndes(v){
 }
 
 // Las operaciones de Andes de HOY, en el orden en que se hicieron.
+// ¿Esta operación de FX es de Andes?
+// ---------------------------------------------------------------------
+// Andes opera por DMA y, cuando el DMA no está, a mano. La calculadora los
+// tiene como DOS modelos —ANDES y ANDES_MANUAL— porque las tasas se
+// calculan distinto, pero es UN SOLO CLIENTE y todo va en el mismo reporte.
+//
+// Esto estaba escrito de tres formas: el texto del UPDATE de Bloomberg
+// usaba /ANDES/i y sí las traía todas, pero el reporte consolidado filtraba
+// `cliente === 'ANDES'` exacto en dos sitios y dejaba por fuera las
+// manuales. El 16-oct hubo operaciones manuales y el reporte salió sin
+// ellas. Una pregunta, una función (Sergio, 16-oct).
+const CLIENTES_ANDES = ['ANDES', 'ANDES_MANUAL'];
+function esFXdeAndes(o){
+  const c = String((o && (o.cliente || o.grupo)) || '').trim().toUpperCase();
+  return CLIENTES_ANDES.includes(c) || /^ANDES[ _]/.test(c);
+}
+
 function _opsAndesHoy(){
   return (typeof operaciones !== 'undefined' ? operaciones : [])
-    .filter(o => /ANDES/i.test(String(o.cliente || o.grupo || '')) &&
+    .filter(o => esFXdeAndes(o) &&
                  (!o.fecha || String(o.fecha).slice(0,10) === _hoyISO()) &&
                  (Number(o.amount || o.monto) || 0) > 0)
     .sort((a,b) => String(a.hora||'').localeCompare(String(b.hora||'')));
