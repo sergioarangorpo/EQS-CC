@@ -5718,8 +5718,21 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
   COLS.forEach(function(c){ ws.getCell(c + rFin).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.orange}}; });
   ws.getRow(rFin).height = 4;
 
-  const nomArchivo = 'Trade_Confirmation_' + clienteKey + '_' + String(trader||'').replace(/\s+/g,'_') + '_' +
-    hoyDate.getFullYear() + String(hoyDate.getMonth()+1).padStart(2,'0') + String(hoyDate.getDate()).padStart(2,'0') + '.xlsx';
+  // El nombre, con `_slugArchivo` y sin tramos vacios. Antes se pegaba
+  // `clienteKey` crudo y el trader con un guion bajo fijo: BNP AGENCY —que no
+  // tiene lista de traders— salia como
+  //     "Trade_Confirmation_BNP AGENCY__20261019.xlsx"
+  // con el espacio sin pasar y un guion bajo doble. El archivo real que
+  // recibe el cliente se llama Trade_Confirmation_BNP_AGENCY_20260922.xlsx
+  // (Sergio, 19-oct). MLI y CITI no se mueven: sus keys no tienen espacios y
+  // siempre traen trader.
+  const _fechaSlugCr = hoyDate.getFullYear() + String(hoyDate.getMonth()+1).padStart(2,'0') +
+                       String(hoyDate.getDate()).padStart(2,'0');
+  const nomArchivo = ['Trade_Confirmation',
+                      (typeof _slugArchivo === 'function' ? _slugArchivo(clienteKey) : String(clienteKey||'')),
+                      (typeof _slugArchivo === 'function' && trader ? _slugArchivo(trader) : ''),
+                      _fechaSlugCr]
+    .filter(function(x){ return x !== '' && x != null; }).join('_') + '.xlsx';
   const buf = await wb.xlsx.writeBuffer();
   await entregarReporteCliente(nomArchivo, buf);
 }
@@ -16004,6 +16017,27 @@ const COMISION_NO_REPORTA = {
   'XPUS': 0.00084,
 };
 
+// Devuelve { tasa, allIn } en UNA sola búsqueda. La tasa y el flag tienen que
+// salir de la MISMA fila: si cada uno se buscara por su lado podrían
+// desalinearse, que es el error de siempre. `allIn` sale solo de
+// `GRUPO_COMISIONES_DB` —el campo existía desde el principio y no lo consumía
+// nadie— y por defecto es false, que es como se ha comportado la planilla
+// hasta hoy (Sergio, 19-oct).
+function _tarifaCiertaDe(cliente){
+  const t = _dashTarifaCierta(cliente);
+  if(t == null) return null;
+  const norm = x => String(x||'').toUpperCase().trim();
+  const g = (typeof GRUPO_COMISIONES_DB !== 'undefined' ? GRUPO_COMISIONES_DB : [])
+    .find(x=>{
+      if(normalizarGrupo(x.grupo) === normalizarGrupo(cliente)) return true;
+      if(norm(x.book) === norm(cliente)) return true;
+      if(norm(x.grupo) === norm(cliente)) return true;
+      const cfg = (typeof clientesDB !== 'undefined') ? clientesDB[x.grupo] : null;
+      return cfg && norm(cfg.nombre) === norm(cliente);
+    });
+  return { tasa: t, allIn: !!(g && g.allIn === true) };
+}
+
 function _dashTarifaCierta(cliente){
   // Tarifa única = certeza. Variable por especie o por bloque/pantalla = no.
   // Los que no llevan reporte tienen tarifa única conocida.
@@ -17509,6 +17543,14 @@ function filasPlanillaCOP(){
     let iva;
     if(o.ivaReportado != null)      iva = Number(o.ivaReportado);
     else if(o.anclada)              { faltan.push(`${g.grupo} ${o.nemo} — reportada SIN IVA registrado (regenera el reporte)`); return; }
+    // `ivaPropio`: la línea NO se le reporta al cliente (brokers de tarifa
+    // cierta), así que no hay archivo contra el que anclarse, pero el IVA
+    // tampoco es "19% de la comisión": si la tarifa es ALL IN el IVA ya va
+    // DENTRO de ese porcentaje y hay que extraerlo, no sumarlo. Quien llama lo
+    // calcula con `desgloseComisionCliente` y lo manda resuelto.
+    // Va DESPUÉS del freno a propósito: una línea reportada tiene que seguir
+    // frenando aunque alguien le pase este campo por error (Sergio, 19-oct).
+    else if(o.ivaPropio != null)    iva = Number(o.ivaPropio);
     else                            iva = o.mercado === 'ACCIONES' && o.iva !== false ? com * 0.19 : 0;
     // El giro también sale del archivo cuando existe.
     const giro = o.netoReportado != null ? Number(o.netoReportado)
@@ -17582,9 +17624,20 @@ function filasPlanillaCOP(){
       faltan.push(`${cli} ${esp} — operado pero SIN reportar (tarifa variable)`);
       return;
     }
+    // ALL IN: la tarifa de estos brokers INCLUYE comisión + IVA. Sergio,
+    // 19-oct: "esos son como MLI, 0.1% incluye la comisión e IVA". Hasta hoy
+    // la planilla les ponía el 19% ENCIMA, que es lo contrario: GOLDMAN salía
+    // al 0,119% en vez de 0,10%, SCOTIA al 0,0714% en vez de 0,06%. Son nueve
+    // brokers y pasaba todos los días.
+    //
+    // Los que NO son all-in (HORZ, CREDICORP FFMM, ASHMORE y los demás del
+    // book CSI) se comportan exactamente como antes: `allIn` sale de su fila
+    // en GRUPO_COMISIONES_DB y por defecto es false.
+    const _tc = _tarifaCiertaDe(cli);
+    const _dc = desgloseComisionCliente(q*px, tarifa, !!(_tc && _tc.allIn));
     agregar({ cliente:cli, account:t.notes||'', fondo:t.grupo||cli,
       nemo:esp, lado:t.lado, cantidad:q, precio:px, bruto:q*px,
-      comision:q*px*tarifa, mercado:'ACCIONES',
+      comision:_dc.comMonto, ivaPropio:_dc.ivaMonto, mercado:'ACCIONES',
       liquidacion:parseFechaLocal(hoy), cumplimiento:sumarDiasHabiles(parseFechaLocal(hoy),2,'CO') });
   });
 
@@ -27917,7 +27970,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-19 18:50 UTC · v238';
+const BUILD_ID = '2026-10-19 20:20 UTC · v240';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
