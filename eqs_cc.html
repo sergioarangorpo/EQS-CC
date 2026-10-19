@@ -6277,10 +6277,24 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase, 
   // guardado: un portafolio que NO esta en el mapa por deceval se comporta
   // exactamente como antes (19%), asi que esto no mueve a nadie mas
   // (Sergio, 14-oct).
+  //
+  // 19-oct: ESTO NO FUNCIONABA. Buscaba `f.portafolio` y NINGUNA fila trae esa
+  // propiedad: tanto `filasEquity` como `foliosDetalle` la llaman `portNombre`
+  // —el builder la lee asi nueve veces y `portafolio` cero—. `find` no
+  // encontraba nada, `port` quedaba en null, `ivaDeLineaRVL` se saltaba el mapa
+  // por deceval y caia en `baseLlevaIva ? com*0.19 : 0` con baseLlevaIva=true.
+  // Resultado: 19% a TODO desde el 14-oct, con el arreglo escrito y su
+  // comentario explicando lo contrario. El 17-oct se le fue con IVA el FONDO
+  // VOLUNTARIO DE PENSIONES ALLIANZ, que no lo lleva ni en su ficha
+  // (`iva:false`) ni en el mapa (`[3904871, false]`).
+  //
+  // Se aceptan los dos nombres: si algun dia otro generador manda `portafolio`,
+  // sigue funcionando (Sergio, 19-oct).
   const _ivaFila = (f, comision) => {
     const cfgCli = (typeof getClienteDB === 'function') ? (getClienteDB(nombreCliente) || {}) : {};
+    const _nomPort = (f && f.portNombre != null) ? f.portNombre : (f ? f.portafolio : null);
     const port = (cfgCli.portafolios || []).find(p =>
-      String(p.nombre) === String(f.portafolio) || String(p.id) === String(f.portafolio)) || null;
+      String(p.nombre) === String(_nomPort) || String(p.id) === String(_nomPort)) || null;
     return (typeof ivaDeLineaRVL === 'function')
       ? ivaDeLineaRVL(true, port, comision)
       : (Number(comision) || 0) * 0.19;
@@ -6735,13 +6749,15 @@ const clientesDB = {
   },
   // Clientes de reporte genérico equity (misma lógica que FIDUCIARIA BANCOLOMBIA).
   // fileNombre = base del nombre de archivo "Operaciones <fileNombre> yyyymmdd".
-  'ALLIANZ SEGUROS DE VIDA S.A.': {
-    nombre: 'ALLIANZ SEGUROS DE VIDA S.A.',
-    formatoReporte: 'generico_equity', reparteManual: true,
-    portafoliosDeCategorias: 'ALLIANZ', portafolios: [],
-    fileNombre: 'Allianz Seguros S.A',
-    comisionBloque: 0.0015, comisionPantalla: 0.0008,
-  },
+  // 19-oct: aqui habia una SEGUNDA ficha con la clave
+  // 'ALLIANZ SEGUROS DE VIDA S.A.', identica de nombre a la que esta mas
+  // abajo. En un objeto de JavaScript la clave repetida se queda con la
+  // ULTIMA, asi que esta nunca existio: tenia `reparteManual: true` y
+  // `portafoliosDeCategorias: 'ALLIANZ'` que no se aplicaron jamas. Se borra
+  // para que no vuelva a leerse como si estuviera viva. La buena es la de
+  // portafolio unico DEC_3904871, que es la que si toma los folios de
+  // ALLIANZ_SEG_CO de Fidessa (Sergio, 19-oct).
+  // OJO: misma forma que el ITAU duplicado en ALIAS_GRUPO (pendiente 37).
   'METLIFE SEGUROS DE VIDA S.A.': {
     nombre: 'METLIFE SEGUROS DE VIDA S.A.',
     // Tiene UN solo portafolio, así que se autoasigna como Andes o BTG Cayman:
@@ -9791,6 +9807,13 @@ function aplicarFiltros(){
   renderEmsxCBTable();
   renderFidessaTradesPanel();
   inicializarAllocationsDesdeCliente();
+  // Las comisiones de la ficha, al final y protegido: si esto fallara, el
+  // filtro ya hizo todo su trabajo y la pantalla no se queda a medias.
+  try{
+    if(typeof aplicarComisionesDeFicha === 'function' && aplicarComisionesDeFicha(cliente)){
+      if(typeof recalcularTodo === 'function') recalcularTodo();
+    }
+  }catch(e){ console.warn('No se pudieron poner las comisiones de la ficha:', e.message); }
 }
 
 // =====================================================================
@@ -20955,6 +20978,70 @@ function renderAllocations(){
 // desde un selector de valores frecuentes (0.08/0.09/0.10/0.15/0.18%), con
 // opción de escribir un valor distinto para casos raros — en vez de usar
 // la tarifa fija por cliente que había antes (placeholder sin confirmar).
+// =====================================================================
+// LA FICHA MANDA: las comisiones del cliente entran solas
+// ---------------------------------------------------------------------
+// El viernes 17-oct se le reporto a PROTECCION al 0,09% cuando su tarifa
+// pactada de pantalla es 0,08%. Nadie escribio mal un numero: Miguel habia
+// generado antes FIDUASHMORE —que si cobra 0,09%— y "Comision del dia" es UN
+// SOLO selector global que no se mueve al cambiar de cliente. El archivo salio
+// perfecto, a la hora, con la tarifa del cliente anterior, y hubo que mandar
+// un alcance tres horas despues.
+//
+// El arreglo es al principio, no al final: al escoger Client/Book los dos
+// campos se llenan con lo que dice la ficha. De entrada la comision ya es la
+// correcta y no existe la forma de que quede pegada la del anterior.
+//
+// Se llena UNA SOLA VEZ por cliente: `aplicarFiltros()` tambien corre cuando
+// se mueve el filtro de especie o de lado, y ahi no se puede pisar un cambio
+// que alguien hizo a proposito (Sergio, 19-oct).
+// =====================================================================
+let _clienteConComisionPuesta = null;
+
+// Deja el selector del tipo ('Cruce' | 'Pantalla') en esa fraccion (0.0008).
+// Si la tarifa no esta entre las opciones se AGREGA una, en vez de usar el
+// campo "Otro": asi el valor sale de `sel.value` como numero y no pasa por un
+// campo de texto, que depende del separador decimal. Pasa con HORZ (0,06%).
+// Devuelve true si movio algo.
+function ponerComisionEnCampo(tipo, frac){
+  const sel = document.getElementById(`comision${tipo}Sel`);
+  const f = Number(frac);
+  if(!sel || !(f > 0)) return false;
+  let opt = [...sel.options].find(o => o.value !== 'otro' && Number(o.value) === f);
+  if(!opt){
+    opt = document.createElement('option');
+    opt.value = String(f);
+    opt.textContent = (f * 100).toFixed(2).replace(/\.?0+$/, '') + '%';
+    const otroOpt = [...sel.options].find(o => o.value === 'otro');
+    sel.insertBefore(opt, otroOpt || null);
+  }
+  sel.value = opt.value;
+  // Si venia de "Otro", se esconde el campo libre: quedaria un numero escrito
+  // que ya no se esta usando y el que mira la pantalla no sabria cual manda.
+  const row = document.getElementById(`comision${tipo}OtroRow`);
+  if(row) row.style.display = 'none';
+  return true;
+}
+
+// `forzar` solo para las pruebas y para un posible boton futuro de "volver a
+// la tarifa de la ficha". En uso normal se llama sin el.
+function aplicarComisionesDeFicha(cliente, forzar){
+  const c = cliente || '';
+  if(!forzar && c === _clienteConComisionPuesta) return false;
+  _clienteConComisionPuesta = c;
+  if(!c) return false;
+  const cfg = (typeof getClienteDB === 'function') ? (getClienteDB(c) || {}) : {};
+  // Unos clientes la tienen como `comisionBloque` y otros como `comisionCruce`,
+  // igual que en `tarifasPactadas()`.
+  const bloque = cfg.comisionBloque != null ? cfg.comisionBloque : cfg.comisionCruce;
+  // PROTECCION entra con 0,15% de bloque, que es su base. El 0,08% puntual de
+  // ECOPETROL y PFCIBEST lo sigue poniendo `comisionFolioPct` por encima del
+  // campo: ese bloqueo no se toca.
+  const movioB = ponerComisionEnCampo('Cruce', bloque);
+  const movioP = ponerComisionEnCampo('Pantalla', cfg.comisionPantalla);
+  return movioB || movioP;
+}
+
 function onCambioComisionSel(tipo){
   const sel = document.getElementById(`comision${tipo}Sel`);
   const row = document.getElementById(`comision${tipo}OtroRow`);
@@ -21379,6 +21466,23 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
   const comPantalla = tarifaUnica != null ? tarifaUnica : leerComisionSeleccionada('Pantalla');
   const ports = cfg.portafolios || [];
   const nomPort = id => { const p = ports.find(x=>x.id===id); return p?p.nombre:id; };
+
+  // Guardian de comisiones, tambien por ESTA ruta. `generarReporte()` se
+  // devuelve antes de llamarlo cuando el cliente es generico_equity, asi que
+  // ALLIANZ, FIDU BANCOLOMBIA y los demas de este formato nunca lo tuvieron
+  // (Sergio, 19-oct). Se revisa con los folios de las ordenes completas, que
+  // son los que van al archivo: cada uno trae su especie y su marca.
+  //
+  // Solo cuando la tarifa NO es unica: si `tarifaUnica != null` el generador
+  // ignora los selectores y usa la ficha, asi que avisar de una diferencia
+  // contra los selectores seria un falso positivo — y un aviso que grita sin
+  // razon es un aviso que la gente aprende a contestar "si" sin leer.
+  if(tarifaUnica == null && typeof revisarComisiones === 'function'){
+    const _idsCompletas = new Set(completas.map(o => String(o.parentOrderId)));
+    const _foliosDelArchivo = (typeof foliosFidessa !== 'undefined' ? foliosFidessa : [])
+      .filter(f => _idsCompletas.has(String(f.parentOrderId)));
+    if(!revisarComisiones(cliente, _foliosDelArchivo)) return;
+  }
 
   // Fecha de registro/cumplimiento desde el panel (T y T+2).
   const fechaReg = document.getElementById('fechaRegistro').value;
@@ -23055,23 +23159,61 @@ function revisarComisiones(cliente, folios){
     const usada = tipo === 'bloque'
       ? Number(f.comBloquePct != null ? f.comBloquePct : comisionCrucePct())
       : Number(comisionPantallaPct());
-    // La de la tabla para ESA especie, con su override si lo tiene.
-    const pactada = (typeof comisionFolioPct === 'function')
-      ? comisionFolioPct(cliente, { especie: f.especie, marca: tipo })
-      : t[tipo];
+    // La pactada. BLOQUE sale de `comisionFolioPct`, que ya resuelve el
+    // override por especie (PROTECCION cobra 0,08% en ECOPETROL y PFCIBEST
+    // aunque su base de bloque sea 0,15%).
+    //
+    // PANTALLA sale de la FICHA, no de `comisionFolioPct`. 19-oct: ese era el
+    // agujero. `comisionFolioPct`, para pantalla, hace
+    // `if(marca !== 'bloque') return comisionPantallaPct()` — devuelve el
+    // propio selector. Entonces este aviso comparaba el selector contra si
+    // mismo: `usada` y `pactada` eran literalmente el mismo numero y la
+    // desviacion no podia existir. Por eso PROTECCION se fue al 0,09% el
+    // 17-oct con el guardian encendido y sin decir una palabra.
+    // Un control cuyos dos lados salen del mismo lugar no es un control.
+    let pactada;
+    if(tipo !== 'bloque'){
+      pactada = t.pantalla;
+    } else {
+      // El campo de BLOQUE no siempre decide, y avisar donde no decide es un
+      // falso positivo. Un aviso que grita sin razon es un aviso que la gente
+      // aprende a contestar "si" sin leer — y entonces tampoco sirve el dia
+      // que tiene razon. Dos casos donde el campo no manda:
+      //
+      //   · tarifa VARIABLE por especie (PROTECCION, PORVENIR):
+      //     `comisionFolioPct` devuelve siempre el valor de la tabla por
+      //     especie y pasa por encima. PROTECCION entra con 0,15% en el campo
+      //     y ECOPETROL se reporta igual a 0,08%, que es lo correcto.
+      //   · tarifa UNICA en la ficha (BTG, FIDUASHMORE, ALIANZA):
+      //     `comisionFolioPct` y los generadores usan la ficha sin mirar el
+      //     campo.
+      const gc = (typeof GRUPO_COMISIONES_DB !== 'undefined')
+        ? GRUPO_COMISIONES_DB.find(x => x.grupo === cliente || x.book === cliente) : null;
+      if(gc && gc.variable && gc.bloque) return;
+      const cfgB = (typeof getClienteDB === 'function') ? (getClienteDB(cliente) || {}) : {};
+      if(cfgB.comisionBloque != null && cfgB.comisionPantalla != null &&
+         cfgB.comisionBloque === cfgB.comisionPantalla) return;
+      pactada = t.bloque;
+    }
     if(pactada == null) return;
     const k = f.especie + '|' + tipo + '|' + usada;
     if(vistos.has(k)) return;
     vistos.add(k);
     if(Math.abs(usada - pactada) > 1e-9){
-      avisos.push(`${f.especie} (${tipo==='bloque'?'bloque/cruce':'pantalla'}): ` +
-                  `se va a reportar ${fmtPct(usada)} y la tarifa de ${nombre} para esa especie es ${fmtPct(pactada)}.`);
+      avisos.push(`   • ${f.especie} (${tipo==='bloque'?'bloque/cruce':'pantalla'}): ` +
+                  `vas a reportar ${fmtPct(usada)} y la ficha de ${nombre} dice ${fmtPct(pactada)}.`);
     }
   });
   if(avisos.length === 0) return true;
-  return confirm('⚠ OJO CON LA COMISIÓN\n\n' + avisos.join('\n') +
-    '\n\nSuele pasar cuando quedó el selector del cliente anterior.\n' +
-    'Revisa "Comisión del día" antes de seguir.\n\n¿Generar de todos modos?');
+  // Si dice NO no se arregla nada solo: el usuario corrige "Comisión del día"
+  // a mano y vuelve a generar. Que la app "devuelva" valores sola seria un
+  // tercer camino para el mismo numero (Sergio, 19-oct).
+  return confirm(
+    `⚠ ESTÁS MOVIENDO LA COMISIÓN BASE DE ${nombre}\n\n` +
+    avisos.join('\n') +
+    '\n\nSuele pasar cuando quedó el selector del cliente anterior.\n\n' +
+    '¿Seguro que quieres mover la comisión base del cliente?\n\n' +
+    'Si dices NO: corrige "Comisión del día" a mano y genera otra vez.');
 }
 
 // Registra en el módulo Reportes EXACTAMENTE lo que salió en el Excel. Recibe
@@ -27607,7 +27749,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-16 22:00 UTC · v234';
+const BUILD_ID = '2026-10-19 15:30 UTC · v235';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
