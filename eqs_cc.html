@@ -15134,11 +15134,20 @@ function _precioNuestroRVI(h){
 // del blotter es una fila: la compra a CCSI y cada venta al cliente. Va en el
 // mismo formato de 14 columnas que RVI, porque el BO recibe una sola planilla
 // (Sergio, 16-sep).
-function filasBORFI(){
+// `clientes` acota a los negocios de ESOS clientes. Sin argumento salen todos,
+// como antes.
+// Antes las filas de RFI se montaban en TODA planilla, aunque se pidiera un
+// solo cliente de RVI: bajando tres clientes por separado con el boton de cada
+// ficha, al BO le llegaban las de RFI tres veces (Sergio, 19-oct).
+function filasBORFI(clientes){
   if(typeof negociosRFI !== 'function') return [];
+  const pedidos = Array.isArray(clientes) ? clientes : null;
+  const _n = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const quiere = cli => !pedidos || pedidos.some(p => _n(p) === _n(cli));
   const filas = [];
   negociosRFI().forEach(n=>{
     if(!rfiEstaVerificado(n)) return;    // solo lo verificado pasa al BO
+    if(!quiere(n.cliente)) return;
     const agrega = (f, lado, cliente) => {
       filas.push({
         'TIPO OP': 'RFI',
@@ -15297,11 +15306,19 @@ function filasPlanillaBO(clientes){
   });
   // RFI entra en la MISMA planilla: el BO recibe un solo archivo, sea de RVI o
   // de RFI. Solo lo verificado (Sergio, 16-sep).
-  const fRFI = (typeof filasBORFI === 'function') ? filasBORFI() : [];
-  if(fRFI.length){
-    filas = filas.concat(fRFI);
-    resumen.push({ cliente:'RFI', n:fRFI.length });
-  }
+  //
+  // Pero SOLO los negocios de los clientes pedidos, y el registro queda a
+  // nombre del CLIENTE, no de "RFI". Antes se registraba bajo la etiqueta
+  // 'RFI', asi que `vecesCargadoCOR('BO', <cliente>)` nunca subia de cero y el
+  // badge del cliente de RFI se quedaba en SIN CARGAR para siempre, generara
+  // la planilla las veces que generara (Sergio, 19-oct).
+  (clientes||[]).forEach(cli=>{
+    const f = (typeof filasBORFI === 'function') ? filasBORFI([cli]) : [];
+    if(!f.length) return;
+    filas = filas.concat(f);
+    const ya = resumen.find(r=>r.cliente === cli);
+    if(ya) ya.n += f.length; else resumen.push({cliente:cli, n:f.length});
+  });
   return { filas, resumen };
 }
 
@@ -15313,7 +15330,15 @@ function filasPlanillaBO(clientes){
 function clientesRVIdeHoy(){
   const vig = (typeof ultimaVersionPorLinea === 'function')
     ? ultimaVersionPorLinea(_reportesGenerados) : (_reportesGenerados || []);
-  return [...new Set(vig.filter(r=>r.modulo === 'RVI').map(r=>r.cliente))].sort();
+  const deRVI = vig.filter(r=>r.modulo === 'RVI').map(r=>r.cliente);
+  // Los negocios de RFI verificados tambien son clientes del dia. NO estan en
+  // _reportesGenerados: `lineasReporteRFI` los sintetiza al pintar. Antes el
+  // correo les llevaba las filas de todos modos porque `filasBORFI` no miraba
+  // la lista de clientes; ahora que si la mira, tienen que aparecer aqui o el
+  // BO dejaria de recibir RFI (Sergio, 19-oct).
+  const deRFI = (typeof lineasReporteRFI === 'function')
+    ? lineasReporteRFI().filter(r=>r.modulo === 'RVI').map(r=>r.cliente) : [];
+  return [...new Set(deRVI.concat(deRFI).filter(Boolean))].sort();
 }
 
 function _nombrePlanillaBO(){
@@ -18293,10 +18318,28 @@ function vecesReportada(parentOrderId){
   // reconocen y son distintos. Si alguno no resuelve, se deja pasar: mejor un
   // reenvio que una linea sin reportar. Hoy los 42 clientes convergen entre su
   // clave y el nombre de su ficha, asi que esto no deja a nadie por fuera.
+  // "Reconocido" tiene que significar que el nombre cae en un CLIENTE DE
+  // VERDAD. `_dashClave` nunca falla: si no encuentra nada devuelve el nombre
+  // limpio, asi que usarla como prueba de reconocimiento hacia que TODO nombre
+  // contara como reconocido — y entonces dos escrituras del mismo cliente
+  // quedaban como dos clientes distintos.
+  //
+  // Paso con CREDICORPFFMM, que es UN book con cuatro macrogrupos: el reporte
+  // se registra por macrogrupo ("CREDICORP CAPITAL FIDUCIARIA") y la orden de
+  // Fidessa trae el book ("CREDICORPFFMM"). Las dos claves resolvian, eran
+  // distintas, y la linea reportada se quedaba en PENDIENTE (Sergio, 19-oct).
+  //
+  // Los tres macrogrupos NO son claves de clientesDB; MLI y PROTECCION si. Por
+  // eso exigir cliente de verdad libera a FFMM sin aflojar el filtro que de
+  // hecho hace falta.
+  const _claveCliente = x => {
+    const k = (typeof _dashClave === 'function') ? _dashClave(x) : '';
+    if(!k) return '';
+    return (typeof clientesDB !== 'undefined' && clientesDB[k]) ? k : '';
+  };
   const _otroCliente = (nomReporte, grupoTrade) => {
-    const k = x => (typeof _dashClave === 'function') ? _dashClave(x) : '';
-    const a = k(nomReporte), b = k(grupoTrade);
-    if(!a || !b) return false;          // alguno no resuelve: no se descarta
+    const a = _claveCliente(nomReporte), b = _claveCliente(grupoTrade);
+    if(!a || !b) return false;   // alguno no es un cliente conocido: no se descarta
     return a !== b;
   };
   const suyas = _reportesGenerados.filter(r =>
