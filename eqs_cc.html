@@ -16050,7 +16050,13 @@ const COMISION_NO_REPORTA = {
   'ITAU': 0.00070,
   'JPMNY': 0.00060,
   'JPMORGANCL': 0.00060,
-  'MLI': 0.00084,
+  // MLI es ALL IN 0,10% — comision + IVA adentro (Sergio, 19-oct). Aqui decia
+  // 0,00084, que es 0,10%/1,19: la comision NETA de IVA. Esta tabla guarda la
+  // tarifa BRUTA —los otros ocho all-in tienen aqui el mismo numero que en
+  // GRUPO_COMISIONES_DB— asi que el neto estaba en la columna equivocada.
+  // Con el desglose all-in de la v238 eso se partia otra vez
+  // (0,084%/1,19 = 0,0706%) y la linea de MLI salia baja en la Planilla COP.
+  'MLI': 0.001,
   'MORGAN STANLEY': 0.00077,
   'PLURAL': 0.00084,
   'SANTNYCV': 0.00060,
