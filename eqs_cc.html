@@ -7908,6 +7908,33 @@ function ivaProteccionDeFolio(portafolio, comMonto){
 // que traen las filas del reporte (`portNombre`), y de ahi manda el deceval
 // via ivaDeLineaRVL. Se aceptan los dos nombres de la propiedad por si algun
 // generador manda `portafolio`.
+// Desglose de una comision para la Planilla COP.
+//
+// ALL IN (MLI, CITI, BNP Agency, BNP Paribas): el porcentaje es el TOTAL que
+// paga el cliente, IVA incluido. Sergio, 19-oct: "ALL IN MLI, 0.1% es el total
+// cliente, comision + iva = 0.1%". El archivo del cliente muestra ese total —
+// en el de BNP la celda se llama literalmente "Commission+Tax"— asi que la
+// planilla tiene que PARTIRLO: la comision es total/1,19 y el IVA es el resto.
+// Los dos suman el total, y el giro no se mueve ni un peso.
+//
+// NO all-in (CREDIBOLSA, 0,15% + IVA): el porcentaje ES la comision y el IVA
+// se factura por fuera, sin tocar el archivo del cliente. La planilla guarda
+// los dos y el giro sigue siendo bruto +/- comision, como en el archivo.
+//
+// `totalCliente` es el ancla: es lo que el cliente paga y es lo que va en
+// `montoNeto`. Se devuelve aparte justamente para no tener que volver a
+// sumarlo afuera y arriesgar una tercera cuenta.
+function desgloseComisionCliente(bruto, tasa, allIn){
+  const b = Number(bruto) || 0, t = Number(tasa) || 0;
+  if(allIn){
+    const total = b * t;
+    const com = total / 1.19;
+    return { comMonto: com, ivaMonto: total - com, totalCliente: total };
+  }
+  const com = b * t;
+  return { comMonto: com, ivaMonto: com * 0.19, totalCliente: com };
+}
+
 function ivaGenericoDeLinea(nombreCliente, nombrePort, comMonto){
   const cfgCli = (typeof getClienteDB === 'function') ? (getClienteDB(nombreCliente) || {}) : {};
   const port = (cfgCli.portafolios || []).find(p =>
@@ -10174,8 +10201,11 @@ const MLI_COMISION_ALL_IN = 0.001; // 0.1%
 // Trade Confirmation ni al COP que se cierra en FX — la plata que se mueve es
 // bruto +/- 0,15%. Lo unico que cambia es la etiqueta de la tarifa, que deja de
 // decir ALL IN porque ya no es cierto.
+// `allIn` explicito, no deducido de la etiqueta: la etiqueta es para que la
+// lea un humano en el archivo y puede cambiar de redaccion sin que cambie la
+// cuenta (Sergio, 19-oct).
 const CRUCE_TARIFAS = {
-  CREDIBOLSA: { tasa: 0.0015, etiqueta: '0,15% + IVA' },
+  CREDIBOLSA: { tasa: 0.0015, etiqueta: '0,15% + IVA', allIn: false },
 };
 function tarifaCruce(clienteKey){
   const k = String(clienteKey||'').toUpperCase().trim();
@@ -10184,7 +10214,8 @@ function tarifaCruce(clienteKey){
   const directa = CRUCE_TARIFAS[k];
   if(directa) return directa;
   const porNombre = Object.keys(CRUCE_TARIFAS).find(x => k.includes(x) || nom.includes(x));
-  return porNombre ? CRUCE_TARIFAS[porNombre] : { tasa: MLI_COMISION_ALL_IN, etiqueta: 'ALL IN' };
+  return porNombre ? CRUCE_TARIFAS[porNombre]
+                   : { tasa: MLI_COMISION_ALL_IN, etiqueta: 'ALL IN', allIn: true };
 }
 
 // Traders de los clientes extranjeros que operan cruce FX. Se usan para (a) el
@@ -10853,12 +10884,30 @@ async function generarExcelCrucePendiente(){
       (b.detalle||[]).forEach(d=>{
         const q = Number(d.qty) || 0, px = Number(d.precio) || 0;
         if(!q) return;
+        // EL IVA VIAJA CON LA LINEA. Antes solo iba `comMonto`: la linea
+        // quedaba con `iva` en null y la Planilla COP frenaba con "reportada
+        // SIN IVA registrado". MLI, CITI, BNP Agency y CREDIBOLSA estaban
+        // todos asi (Sergio, 19-oct).
+        //
+        // MLI/CITI/BNP son ALL IN: su 0,10% es el total que paga el cliente,
+        // IVA adentro, asi que la comision que va a la planilla es ese total
+        // entre 1,19 y el IVA es el resto. CREDIBOLSA no: su 0,15% es la
+        // comision y el IVA va aparte. Lo resuelve `desgloseComisionCliente`.
+        const _t = tarifaCruce(cli);
+        const _brutoL = q * px;
+        const _d = desgloseComisionCliente(_brutoL, _t.tasa, _t.allIn === true);
         lineas.push({
           portafolio: { nombre: (getClienteDB(cli)||{}).nombre || cli },
           especie: nemoCanonico(d.security) || d.security,
           lado: b.ladoAccion,
           cantidad: q, precio: px,
-          comMonto: q * px * tarifaCruce(cli).tasa,
+          comMonto: _d.comMonto,
+          ivaMonto: _d.ivaMonto,
+          // El giro: lo que el cliente paga o recibe. Sale del TOTAL, que es
+          // lo que dice el archivo — no de comision + IVA por separado, para
+          // que no haya forma de que se separen.
+          montoNeto: b.ladoAccion === 'Venta' ? _brutoL - _d.totalCliente
+                                              : _brutoL + _d.totalCliente,
         });
       });
     });
@@ -22428,10 +22477,21 @@ async function generarReporte(){
     await generarExcelBNP(lineasBNP, tipo, _fOpB);
     const cfgB = getClienteDB(cliente);
     const portB = (cfgB.portafolios||[])[0] || { nombre: cfgB.nombre };
-    const nuevasB = await registrarLoteRVL(cliente, lineasBNP.map(a=>({
-      portafolio: portB, especie:a.especie, lado:a.lado,
-      cantidad:a.cantidad, precio:a.precio, comMonto: a.bruto * BNP_COMISION,
-    })), versionB);
+    // EL IVA VIAJA CON LA LINEA. BNP es ALL IN: su 0,10% es el total que paga
+    // el cliente con el IVA adentro — en el archivo esa celda se llama
+    // literalmente "Commission+Tax". La planilla lo parte en comision
+    // (total/1,19) e IVA (el resto). Antes iba sin `ivaMonto`, quedaba en null
+    // y la Planilla COP frenaba (Sergio, 19-oct).
+    const nuevasB = await registrarLoteRVL(cliente, lineasBNP.map(a=>{
+      const _d = desgloseComisionCliente(a.bruto, BNP_COMISION, true);
+      return {
+        portafolio: portB, especie:a.especie, lado:a.lado,
+        cantidad:a.cantidad, precio:a.precio,
+        comMonto: _d.comMonto, ivaMonto: _d.ivaMonto,
+        montoNeto: a.lado === 'Venta' ? a.bruto - _d.totalCliente
+                                      : a.bruto + _d.totalCliente,
+      };
+    }), versionB);
     avisoLoteGenerado(cliente, seleccionados, versionB, nuevasB, `EQTY EXECUTION + ${tipo}`);
     renderFidessaTradesPanel();
 
@@ -27857,7 +27917,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-19 18:05 UTC · v237';
+const BUILD_ID = '2026-10-19 18:50 UTC · v238';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
