@@ -5563,6 +5563,18 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
     }, 0);
   }
 
+  // NOT TODAY es la convencion de esta hoja para "esto no pasa hoy". Vive aqui
+  // arriba, fuera del forEach, porque la usan LAS DOS ramas: el lado que no
+  // opero y el lado que opero sin FX. Antes estaba declarada adentro y
+  // DESPUES del `return` del lado que no opero, asi que esa rama no podia
+  // usarla ni queriendo, y escribia ceros a mano (Sergio, 19-oct).
+  const noHoy = (celda) => {
+    const c = ws.getCell(celda);
+    c.value = 'NOT TODAY';
+    c.font = { name:'Calibri', size:11, italic:true, color:{argb:C.textMuted} };
+    c.alignment = { horizontal:'right' };
+  };
+
   [{col:'G', titulo:'SELLS COP', lado:porLado.SELL},
    {col:'H', titulo:'BUYS COP',  lado:porLado.BUY }].forEach(function(x){
     const cT = ws.getCell(x.col + '6');
@@ -5570,11 +5582,22 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
     cT.font = { name:'Calibri', size:11, bold:true, color:{argb:C.white} };
     cT.fill = { type:'pattern', pattern:'solid', fgColor:{argb:C.navy} };
     cT.alignment = { horizontal:'center' };
+    // ---- Un lado que NO OPERO ----
+    // Hoy esto escribia FX RATE 0 y USD VALUE 0: exactamente la misma mentira
+    // que se arreglo el 16-oct para la canasta SIN FX, en la rama de al lado.
+    // Una confirmacion que le dice a MLI que el FX de los BUYS se cerro a tasa
+    // CERO, cuando lo que pasa es que no hubo BUYS. Y el FX SD quedaba en
+    // blanco, que tampoco dice nada.
+    //
+    // Un lado que no opero no tiene tasa, no tiene USD, no tiene cumplimiento
+    // y no tiene pesos: las cuatro celdas van en NOT TODAY. Es la unica de las
+    // dos ramas donde el MT VALUE tambien va en NOT TODAY — si el lado si
+    // opero, los pesos son reales y van siempre (Sergio, 19-oct).
     if(!x.lado){
-      ws.getCell(x.col + '7').value = 0;
-      ws.getCell(x.col + '8').value = 0;
-      ws.getCell(x.col + '10').value = 'NOT TODAY';
-      ws.getCell(x.col + '10').font = { name:'Calibri', size:11, italic:true, color:{argb:C.textMuted} };
+      noHoy(x.col + '7');    // FX RATE
+      noHoy(x.col + '8');    // USD VALUE
+      noHoy(x.col + '9');    // FX SD
+      noHoy(x.col + '10');   // MT VALUE — no hay pesos que girar
       return;
     }
     const mt = redondear(netoDeLado(x.lado), 2);
@@ -5589,12 +5612,6 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
     // ultima linea. Se usa NOT TODAY, que es la convencion que esta hoja ya
     // tiene para un lado que no opero (Sergio, 16-oct).
     const sinFX = x.lado.sinFX === true || !(tasa > 0);
-    const noHoy = (celda) => {
-      const c = ws.getCell(celda);
-      c.value = 'NOT TODAY';
-      c.font = { name:'Calibri', size:11, italic:true, color:{argb:C.textMuted} };
-      c.alignment = { horizontal:'right' };
-    };
 
     if(sinFX){
       noHoy(x.col + '7');    // FX RATE
@@ -27749,7 +27766,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-19 15:30 UTC · v235';
+const BUILD_ID = '2026-10-19 17:10 UTC · v236';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
