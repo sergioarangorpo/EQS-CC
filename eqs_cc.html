@@ -7303,6 +7303,22 @@ const ALIAS_GRUPO = {
   BTG_PACTUAL_PP: 'BANCO BTG PACTUAL CAYMAN BRANCH',
   FIDUASHMORE: 'FIDUASHMORE',
   ASHMORE: 'FIDUASHMORE',
+  // El nombre largo con el que llega la fiduciaria — "SOC" es Sociedad
+  // Fiduciaria, y sus portafolios son los FIC ASHMORE. Sin este alias el
+  // MISMO cliente entraba dos veces al dashboard: una como FIDUASHMORE (desde
+  // Fidessa Trades) y otra con el nombre largo (desde EMSX), porque el
+  // deduplicador compara `cliente|especie|lado` y con dos escrituras del
+  // cliente no deduplica.
+  //
+  // El 19-oct eso se vio en pantalla: dos barras de $6.075,1 MM identicas al
+  // decimal — el volumen de RVL inflado en 6.075 MM, un 16% — y un aviso de
+  // "falta 1 cliente por reportar" por un cliente que no existe: el reporte
+  // quedo bajo FIDUASHMORE y el fantasma seguia esperando el suyo.
+  // Confirmado por Sergio: el nombre largo es Fiduashmore.
+  //
+  // Va EN MAYUSCULAS porque `normalizarGrupo` busca por clave exacta y quien
+  // llama desde el dashboard ya pasa el nombre en mayusculas.
+  'ASHMORE INVESTMENT ADVSRS SA SOC': 'FIDUASHMORE',
   SURA: 'FIDUCIARIA SURA',
   AVAL_FIDU: 'AVAL FIDUCIARIA',
 };
@@ -10126,8 +10142,16 @@ function renderFidessaTradesPanel(){
   panel.style.display = '';
   // _estadoReporte permite ORDENAR por la columna Reportado, que era el único
   // <th> fijo de la tabla (Sergio, 19-ago). 0 pendiente · 1 no se reporta · 2 reportado.
-  const _estadoDe = folioOrden => _lineasNoReportar.has(String(folioOrden)) ? 1
-    : (_reportesGenerados.some(r=>String(r.parent_order_id)===String(folioOrden)) ? 2 : 0);
+  // 19-oct: esta linea tenia SU PROPIA cuenta de "esta reportada" —comparaba
+  // el folio contra `parent_order_id` a secas— mientras el badge de la columna
+  // usaba `vecesReportada`. Dos caminos para el mismo dato: la columna podia
+  // decir REPORTADO y el orden ponerla entre las pendientes. Ahora las dos
+  // salen de `vecesReportada`, que ya filtra por cliente.
+  const _estadoDe = folioOrden => {
+    const n = (typeof vecesReportada === 'function') ? vecesReportada(folioOrden) : 0;
+    if(n > 0) return 2;
+    return _lineasNoReportar.has(String(folioOrden)) ? 1 : 0;
+  };
   const filas = ordenarArrayGenerico(
       Object.entries(_fidessaTradesRaw).map(([folioOrden, t]) => ({folioOrden, ...t, _estadoReporte: _estadoDe(folioOrden)})),
       'fidessaTrades')
@@ -18256,8 +18280,28 @@ function vecesReportada(parentOrderId){
   if(!t) return 0;
   const esp = nemoCanonico(t.security, 'fidessa');
   const lado = t.lado;
+  // 19-oct: este respaldo comparaba especie + lado y NO EL CLIENTE. Entonces
+  // si CUALQUIER cliente reporto PFCIBEST Compra hoy, TODAS las ordenes de
+  // PFCIBEST Compra del dia salian en verde — las de MLI tambien, sin haberlas
+  // reportado. Sergio lo vio filtrando por MLI.
+  //
+  // Es el peor sentido posible del error: una linea que dice REPORTADO sin
+  // estarlo se deja de reportar, y el cliente no recibe su archivo. Al reves
+  // —decir PENDIENTE estando reportada— solo cuesta un reenvio.
+  //
+  // Por eso el filtro del cliente descarta SOLO cuando los dos nombres se
+  // reconocen y son distintos. Si alguno no resuelve, se deja pasar: mejor un
+  // reenvio que una linea sin reportar. Hoy los 42 clientes convergen entre su
+  // clave y el nombre de su ficha, asi que esto no deja a nadie por fuera.
+  const _otroCliente = (nomReporte, grupoTrade) => {
+    const k = x => (typeof _dashClave === 'function') ? _dashClave(x) : '';
+    const a = k(nomReporte), b = k(grupoTrade);
+    if(!a || !b) return false;          // alguno no resuelve: no se descarta
+    return a !== b;
+  };
   const suyas = _reportesGenerados.filter(r =>
     r.modulo === 'RVL' &&
+    !_otroCliente(r.cliente, t.grupo) &&
     String(r.especie||'').toUpperCase() === String(esp||'').toUpperCase() &&
     String(r.lado||'') === String(lado||''));
   return new Set(suyas.map(r=>Number(r.version)||1)).size;
@@ -28017,7 +28061,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-19 21:40 UTC · v242';
+const BUILD_ID = '2026-10-19 22:35 UTC · v244';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
