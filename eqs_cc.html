@@ -6307,15 +6307,13 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase, 
   //
   // Se aceptan los dos nombres: si algun dia otro generador manda `portafolio`,
   // sigue funcionando (Sergio, 19-oct).
-  const _ivaFila = (f, comision) => {
-    const cfgCli = (typeof getClienteDB === 'function') ? (getClienteDB(nombreCliente) || {}) : {};
-    const _nomPort = (f && f.portNombre != null) ? f.portNombre : (f ? f.portafolio : null);
-    const port = (cfgCli.portafolios || []).find(p =>
-      String(p.nombre) === String(_nomPort) || String(p.id) === String(_nomPort)) || null;
-    return (typeof ivaDeLineaRVL === 'function')
-      ? ivaDeLineaRVL(true, port, comision)
-      : (Number(comision) || 0) * 0.19;
-  };
+  // 19-oct: esto quedo en una sola linea que llama a `ivaGenericoDeLinea`,
+  // porque el REGISTRO en la Planilla COP necesita el mismo numero y antes lo
+  // recalculaba por su cuenta (o peor: no lo pasaba y quedaba en null).
+  const _ivaFila = (f, comision) => ivaGenericoDeLinea(
+    nombreCliente,
+    (f && f.portNombre != null) ? f.portNombre : (f ? f.portafolio : null),
+    comision);
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
   if(!filasEquity || filasEquity.length===0){ alert('No hay operaciones para generar el reporte.'); return; }
 
@@ -7878,6 +7876,45 @@ function ivaDeLineaRVL(baseLlevaIva, portafolio, comision){
   // portafolios sin deceval (CREDICORPFFMM y HORZ) ya traen su `iva` escrito
   // a mano y coinciden con lo que marco Sergio, asi que no hacen falta aqui.
   return baseLlevaIva ? com * 0.19 : 0;
+}
+
+// =====================================================================
+// EL IVA QUE SE REGISTRA ES EL QUE SE REPORTO
+// ---------------------------------------------------------------------
+// La Planilla COP no calcula el IVA: lo LEE de la linea registrada, y si no
+// viene FRENA con "reportada SIN IVA registrado" en vez de inventarlo. El
+// freno esta bien. El problema era que seis generadores calculaban el IVA
+// para el archivo del cliente y despues volvian a armar la linea para
+// `registrarLoteRVL` SIN llevarselo: quedaba en null y la planilla se
+// trababa. El 17-oct fueron 29 lineas y no se pudo generar la planilla.
+//
+// Estas dos funciones existen para que el archivo y el registro lean el IVA
+// del MISMO sitio. Un solo camino por numero (Sergio, 19-oct).
+// =====================================================================
+
+// PROTECCION: la sub-cuenta manda (CES-LP paga IVA, el resto no). Es la tabla
+// PROTECCION_SUBCUENTAS, no los portafolios de clientesDB — esos son otros
+// tres y no tienen deceval. Si la sub-cuenta no esta en la tabla, paga IVA:
+// es el supuesto conservador que el archivo ya traia.
+function ivaProteccionDeFolio(portafolio, comMonto){
+  const sub = (typeof PROTECCION_SUBCUENTAS !== 'undefined')
+    ? PROTECCION_SUBCUENTAS[portafolio] : null;
+  const pagaIva = sub ? sub.iva : true;
+  return pagaIva ? (Number(comMonto) || 0) * 0.19 : 0;
+}
+
+// Formato generico equity (ALLIANZ, FIDU BANCOLOMBIA, BTG CAYMAN, FALCOM,
+// METLIFE, los del book CSI...). El portafolio se busca por NOMBRE, que es lo
+// que traen las filas del reporte (`portNombre`), y de ahi manda el deceval
+// via ivaDeLineaRVL. Se aceptan los dos nombres de la propiedad por si algun
+// generador manda `portafolio`.
+function ivaGenericoDeLinea(nombreCliente, nombrePort, comMonto){
+  const cfgCli = (typeof getClienteDB === 'function') ? (getClienteDB(nombreCliente) || {}) : {};
+  const port = (cfgCli.portafolios || []).find(p =>
+    String(p.nombre) === String(nombrePort) || String(p.id) === String(nombrePort)) || null;
+  return (typeof ivaDeLineaRVL === 'function')
+    ? ivaDeLineaRVL(true, port, comMonto)
+    : (Number(comMonto) || 0) * 0.19;
 }
 
 function comisionFolioPct(cliente, f){
@@ -21643,16 +21680,32 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
   if(typeof guardarCorLineasDeReporte === 'function' && _detalleCOR.length){
     await guardarCorLineasDeReporte('RVL', cliente, _detalleCOR, version);
   }
-  const nuevas = await registrarLoteRVL(cliente, filasEquity.map(l=>({
-    portafolio: { nombre: l.portNombre || '' },
-    especie: l.especie, lado: l.lado,
-    cantidad: l.cantidad, precio: l.precio,
-    comMonto: (Number(l.cantidad)||0) * (Number(l.precio)||0) * (Number(l.comPct)||0),
-  })), version);
+  // EL IVA VIAJA CON LA LINEA. `registrarLoteRVL` lo lee de `ivaMonto`; antes
+  // no se pasaba, quedaba en null y la Planilla COP frenaba con "reportada SIN
+  // IVA registrado". Fueron las 8 lineas de ALLIANZ del 17-oct, y le pasaba a
+  // TODOS los clientes de este formato. Sale de `ivaGenericoDeLinea`, la misma
+  // que usa el archivo del cliente (Sergio, 19-oct).
+  const nuevas = await registrarLoteRVL(cliente, filasEquity.map(l=>{
+    const comMonto = (Number(l.cantidad)||0) * (Number(l.precio)||0) * (Number(l.comPct)||0);
+    const ivaMonto = ivaGenericoDeLinea(cfg.nombre, l.portNombre, comMonto);
+    const bruto = (Number(l.cantidad)||0) * (Number(l.precio)||0);
+    return {
+      portafolio: { nombre: l.portNombre || '' },
+      especie: l.especie, lado: l.lado,
+      cantidad: l.cantidad, precio: l.precio,
+      comMonto, ivaMonto,
+      montoNeto: l.lado === 'Venta' ? bruto - comMonto - ivaMonto
+                                    : bruto + comMonto + ivaMonto,
+    };
+  }), version);
   const lineas = filasEquity;
 
   const qtyTotal = lineas.reduce((s,l)=>s+l.cantidad,0);
-  const comTotal = lineas.reduce((s,l)=>s+l.comision,0);
+  // `l.comision` NO existe en estas filas —se arman con `comPct`— asi que esto
+  // sumaba undefined y el aviso decia "comisión NaN" en todos los reportes de
+  // este formato. Otra propiedad fantasma (Sergio, 19-oct).
+  const comTotal = lineas.reduce((s,l)=>
+    s + (Number(l.cantidad)||0) * (Number(l.precio)||0) * (Number(l.comPct)||0), 0);
   avisoExito(`Reporte generado — ${cfg.nombre} · ${etiquetaVersion(version)}`,
     `${filasEquity.length} línea(s) · ${fmtInt(qtyTotal)} acciones · comisión ${fmtMoney(comTotal)}` +
     (nuevas === 0 ? '<br><span style="opacity:.7;">Reenvío: ninguna línea nueva respecto a lo ya reportado.</span>'
@@ -21758,8 +21811,21 @@ async function _generarUnMacroFFMM(macro, lote, cliente, fechaReg){
   if(typeof guardarCorLineasDeReporte === 'function'){
     await guardarCorLineasDeReporte('RVL', _nombreReporte, lote, version);
   }
-  await registrarLoteRVL(_nombreReporte, Object.values(_agr)
-    .map(o=>({ ...o, precio: o.cantidad > 0 ? o.bruto / o.cantidad : 0 })), version);
+  // EL IVA VIAJA CON LA LINEA (ver ivaDeLineaRVL). El archivo de CREDICORP
+  // FFMM lo muestra —columna IVA, `com * 0.19`— y el registro lo tiraba, asi
+  // que la Planilla COP frenaba con "reportada SIN IVA registrado".
+  // Los tres portafolios de FFMM son `iva:true` y sin deceval, asi que
+  // `ivaDeLineaRVL` da exactamente el 19% del archivo (Sergio, 19-oct).
+  await registrarLoteRVL(_nombreReporte, Object.values(_agr).map(o=>{
+    const _iva = ivaDeLineaRVL(true, o.portafolio, o.comMonto);
+    return {
+      ...o,
+      precio: o.cantidad > 0 ? o.bruto / o.cantidad : 0,
+      ivaMonto: _iva,
+      montoNeto: o.lado === 'Venta' ? o.bruto - o.comMonto - _iva
+                                    : o.bruto + o.comMonto + _iva,
+    };
+  }), version);
 
 }
 
@@ -22307,10 +22373,22 @@ async function generarReporte(){
     await generarExcelHORZ(lineasH.map(a=>({ ...a, fechaOp:_fOpH, fechaCumpl:_cumH })), _fOpH);
     const cfgH = getClienteDB(cliente);
     const portH = (cfgH.portafolios||[])[0] || { nombre: cfgH.nombre };
-    const nuevasH = await registrarLoteRVL(cliente, lineasH.map(a=>({
-      portafolio: portH, especie:a.especie, lado:a.lado,
-      cantidad:a.cantidad, precio:a.precio, comMonto: a.bruto * HORZ_FEE,
-    })), versionH);
+    // EL IVA VIAJA CON LA LINEA (ver ivaDeLineaRVL). Sin esto la Planilla COP
+    // frena con "reportada SIN IVA registrado": el archivo de HORZ si lo
+    // calcula —`com * HORZ_IVA`, justo arriba— y el registro lo tiraba.
+    // Se usa `ivaDeLineaRVL` y no un 19% a mano: hoy da lo mismo (el unico
+    // portafolio de HORZ es `iva:true` y no tiene deceval), y el dia que
+    // tenga deceval manda el mapa, que es el ancla (Sergio, 19-oct).
+    const nuevasH = await registrarLoteRVL(cliente, lineasH.map(a=>{
+      const _com = a.bruto * HORZ_FEE;
+      const _iva = ivaDeLineaRVL(true, portH, _com);
+      return {
+        portafolio: portH, especie:a.especie, lado:a.lado,
+        cantidad:a.cantidad, precio:a.precio,
+        comMonto: _com, ivaMonto: _iva,
+        montoNeto: a.lado === 'Venta' ? a.bruto - _com - _iva : a.bruto + _com + _iva,
+      };
+    }), versionH);
     avisoLoteGenerado(cliente, seleccionados, versionH, nuevasH, 'Trade Confirmation Global X');
     renderFidessaTradesPanel();
 
@@ -22815,15 +22893,28 @@ function mostrarAprobacionProteccion(cliente, loteDet){
       const k = String(f.especie||'') + '|' + String(f.lado||'') + '|' + port;
       const a = _opsProt[k] || (_opsProt[k] = {
         portafolio: { nombre: port }, especie: f.especie, lado: f.lado,
-        cantidad: 0, bruto: 0, comMonto: 0,
+        cantidad: 0, bruto: 0, comMonto: 0, ivaMonto: 0,
       });
       const q = Number(f.cantidad)||0, px = Number(f.precio)||0;
       a.cantidad += q;
       a.bruto += q * px;
-      a.comMonto += q * px * ((Number(f.comisionPct)||0)/100);
+      // EL IVA VIAJA CON LA LINEA. Se acumula POR FOLIO y con la misma
+      // funcion que usa el archivo rtpcredicorp — la sub-cuenta decide, y
+      // CES-LP es la unica de PROTECCION que paga. Antes no se pasaba:
+      // `registrarLoteRVL` lo lee de `ivaMonto`, lo guardaba en null y la
+      // Planilla COP frenaba con "reportada SIN IVA registrado". Fue parte de
+      // las 29 lineas trabadas del 17-oct (Sergio, 19-oct).
+      const _com = q * px * ((Number(f.comisionPct)||0)/100);
+      a.comMonto += _com;
+      a.ivaMonto += ivaProteccionDeFolio(f.portafolio, _com);
     });
-    const _loteOpsProt = Object.values(_opsProt)
-      .map(o=>({ ...o, precio: o.cantidad > 0 ? o.bruto / o.cantidad : 0 }));
+    const _loteOpsProt = Object.values(_opsProt).map(o=>({
+      ...o,
+      precio: o.cantidad > 0 ? o.bruto / o.cantidad : 0,
+      // El neto con la misma convencion del archivo: compra suma, venta resta.
+      montoNeto: o.lado === 'Venta' ? o.bruto - o.comMonto - o.ivaMonto
+                                    : o.bruto + o.comMonto + o.ivaMonto,
+    }));
     // Se pasa `_loteOpsProt`, que es el reparto armado ARRIBA: `loteOps` no
     // existe en esta función y al usarla reventaba antes de registrar, así que
     // el archivo salía pero PROTECCIÓN no quedaba reportada (Sergio, 24-sep).
@@ -23419,8 +23510,8 @@ async function generarReporteProteccion(cliente, loteDet){
     const bruto  = f.cantidad * f.precio;
     const comPct = f.comisionPct;                    // 0.08 pantalla / 0.15 cruce (visto en el archivo real)
     const comMon = bruto * comPct / 100;
-    const pagaIva = sub ? sub.iva : true;
-    const ivaMon = pagaIva ? comMon * 0.19 : 0;
+    // Mismo calculo que usa el registro en la Planilla COP: una sola funcion.
+    const ivaMon = ivaProteccionDeFolio(f.portafolio, comMon);
     const neto   = f.lado === 'Venta' ? bruto - comMon - ivaMon : bruto + comMon + ivaMon;
 
     const fila = [
