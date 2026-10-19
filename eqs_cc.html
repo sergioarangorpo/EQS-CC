@@ -818,7 +818,8 @@
     <button data-mod="RVI"     onclick="switchModule('RVI')"     class="">RVI</button>
     <button data-mod="RFI"     onclick="switchModule('RFI')">RFI</button>
     <button data-mod="Reportes" onclick="switchModule('Reportes')" class="">Reportes</button>
-    <button data-mod="Ayudas"   onclick="switchModule('Ayudas')"   class="">Ayudas</button>
+    <button data-mod="Maestros" onclick="switchModule('Maestros')" class="">Maestros</button>
+    <button data-mod="Herramientas" onclick="switchModule('Herramientas')" class="">Herramientas</button>
     <button data-mod="Informe"  onclick="switchModule('Informe')"  class="">Informe diario RVL</button>
     <button data-mod="CierreRVI" onclick="switchModule('CierreRVI')" class="">Informe diario RVI</button>
     <button data-mod="Research" onclick="switchModule('Research')" class="">Research RVL</button>
@@ -2438,7 +2439,15 @@
   </div>
 
   <!-- ===== AYUDAS ===== -->
-  <div id="mod-Ayudas" class="mod-section">
+  <!-- ===== MAESTROS =====
+       Las tablas y la configuracion: se tocan una vez y quedan. Salio del
+       modulo Ayudas el 19-oct, que tenia 16 secciones mezcladas — "demasiada
+       informacion y mezclada" (Sergio). La regla del corte: si es una tabla
+       que llena la mesa, esta aqui; si lo usas durante el dia y produce algo,
+       esta en Herramientas.
+       Se movieron BLOQUES ENTEROS, sin editar su contenido: los ids son
+       globales, asi que todo `getElementById` sigue funcionando igual. -->
+  <div id="mod-Maestros" class="mod-section">
     <!-- Quién está usando la app: firma los cambios del maestro de grupos y
          decide si el panel es editable (Sergio, 24-sep). -->
     <div class="toolbar" style="border-bottom:none;padding-bottom:0;">
@@ -2501,6 +2510,96 @@
       <div id="maestroEspeciesTabla" style="max-height:440px;overflow:auto;"></div>
     </div>
 
+    <!-- ===== MAESTROS: portafolios y especies =====
+         Antes había que pedirle a Claude que los agregara a mano; ahora se
+         crean aquí y quedan en Supabase, así los ven todos (Sergio, 27-ago). -->
+    <div class="card" style="margin-top:18px;">
+      <div class="section-label">Portafolio nuevo</div>
+      <div class="field-note" style="margin-bottom:10px;">
+        Cuando un cliente abre un portafolio que todavía no está en la base.
+        El DECEVAL es el identificador: no cambia y es por el que se cruza el allocation.
+        <b>Si el portafolio solo va a operar afuera</b>, marca "Solo RVI": ahí no hace
+        falta deceval, porque el nombre va directo a la columna ACCOUNT del Trade
+        Confirmation.</div>
+      <div class="field-row">
+        <div class="field" style="align-self:flex-end;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="checkbox" id="mpSoloRvi" onchange="toggleSoloRviMaestro()">
+            <span>Solo RVI <span class="field-note">(sin deceval)</span></span></label></div>
+        <div class="field" id="mpCampoDeceval"><label>DECEVAL</label>
+          <input type="text" id="mpDeceval" placeholder="4352995" style="width:130px;"></div>
+        <div class="field"><label>Client/Book</label>
+          <select id="mpClientBook" style="width:220px;"></select></div>
+        <div class="field" style="flex:1;"><label>Nombre del portafolio</label>
+          <input type="text" id="mpNombre" placeholder="FIDUBANCOLOMBIA P.A. INVERLASER"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Especial fiduciario <span class="field-note">(opcional)</span></label>
+          <input type="text" id="mpEspecial" placeholder="27" style="width:130px;"></div>
+        <div class="field"><label>IVA</label>
+          <select id="mpIva" style="width:130px;">
+            <option value="1">Sí — 19%</option>
+            <option value="0">No (FPV/FPO)</option>
+          </select></div>
+        <div class="field" style="align-self:flex-end;">
+          <button class="btn purple" onclick="guardarPortafolioMaestro()">Guardar portafolio</button></div>
+      </div>
+      <div id="mpEstado" class="field-note" style="margin-top:8px;"></div>
+      <div id="mpLista" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="section-label">Festivo nuevo</div>
+      <div class="field-note" style="margin-bottom:10px;">
+        Los calendarios cambian. <b>Colombia</b> define el cumplimiento de RVL;
+        <b>Estados Unidos</b> el de FX, donde además frena la operación si cae en festivo.</div>
+      <div class="field-row">
+        <div class="field"><label>Fecha</label>
+          <input type="date" id="mfFecha" style="width:170px;"></div>
+        <div class="field"><label>País</label>
+          <select id="mfPais" style="width:200px;">
+            <option value="CO">Colombia — afecta RVL</option>
+            <option value="US">Estados Unidos — afecta FX</option>
+          </select></div>
+        <div class="field" style="flex:1;"><label>Nombre <span class="field-note">(opcional)</span></label>
+          <input type="text" id="mfNombre" placeholder="Día de la Independencia"></div>
+        <div class="field" style="align-self:flex-end;">
+          <button class="btn purple" onclick="guardarFestivo()">Guardar festivo</button></div>
+      </div>
+      <div id="mfEstado" class="field-note" style="margin-top:8px;"></div>
+      <div id="mfLista" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="section-label">Especie nueva</div>
+      <div class="field-note" style="margin-bottom:10px;">
+        El mercado define los tickers: RVL arma <b>NEMO CB Equity</b> y <b>NEMO.BGa</b>;
+        RVI arma <b>NEMO US Equity</b> o <b>NEMO LN Equity</b>. No hay que escribirlos.</div>
+      <div class="field-row">
+        <div class="field"><label>Especie</label>
+          <input type="text" id="meEspecie" placeholder="EMXC" style="width:130px;text-transform:uppercase;"></div>
+        <div class="field"><label>ISIN</label>
+          <input type="text" id="meIsin" placeholder="US46434G7640" style="width:180px;text-transform:uppercase;"></div>
+        <div class="field"><label>SEDOL</label>
+          <input type="text" id="meSedol" placeholder="BYXKYV3" style="width:140px;text-transform:uppercase;"></div>
+        <div class="field"><label>Mercado</label>
+          <select id="meMercado" style="width:200px;" onchange="previsualizarTickersMaestro()">
+            <option value="RVL">RVL — Bolsa de Colombia</option>
+            <option value="RVI_US">RVI — US Equity</option>
+            <option value="RVI_LN">RVI — LN Equity</option>
+          </select></div>
+      </div>
+      <div class="field-row">
+        <div class="field" style="flex:1;"><label>Descripción <span class="field-note">(para la proforma de Porvenir)</span></label>
+          <input type="text" id="meDesc" placeholder="iShares MSCI Emerging Markets ex China ETF"></div>
+        <div class="field" style="align-self:flex-end;">
+          <button class="btn purple" onclick="guardarEspecieMaestro()">Guardar especie</button></div>
+      </div>
+      <div id="meTickers" class="field-note" style="margin-top:8px;"></div>
+      <div id="meEstado" class="field-note" style="margin-top:4px;"></div>
+      <div id="meLista" style="margin-top:12px;"></div>
+    </div>
+
     <div class="section-label" style="margin-top:16px;">Listas de correo</div>
     <div style="padding:0 24px 8px;">
       <div class="field-note" style="margin-bottom:8px;">
@@ -2531,22 +2630,59 @@
       <div id="listasCorreoTabla" style="max-height:440px;overflow:auto;"></div>
     </div>
 
-    <div class="section-label" style="margin-top:16px;">Cargas y maestros</div>
-    <div class="toolbar">
-      <div class="tb-field" style="flex:1;min-width:340px;">
-        <label>Trades del mercado (All_Trades .csv)</label>
-        <input type="file" id="fileMercado" accept=".csv" multiple onchange="cargarTradesMercado(this)" style="font-size:12px;width:100%;"
-               title="Puedes cargar varios días de una: el más reciente arma el informe y los anteriores quedan guardados como cierre de su día.">
+    <!-- ===== UNIVERSO DEL INFORME DE RVI =====
+         Hasta hoy cambiar un ticker era un UPDATE a mano en Supabase, o sea
+         algo que Sergio no podía hacer solo. El día que FXC resultó cargado
+         como 'FXC US Equity' (que es el ETF del dólar canadiense) en vez de
+         'FXC LN Equity' quedó claro que esto tenía que vivir acá
+         (Sergio, 29-sep). -->
+    <div class="card" style="margin-top:18px;">
+      <div class="section-label">Universo del informe de RVI</div>
+      <div class="field-note" style="margin-bottom:10px;">
+        Los papeles que <b>bbg_cierre_rvi.py</b> le pide a Bloomberg cada tarde.
+        El <b>ticker</b> es el completo de Bloomberg (<code>IVV US Equity</code>,
+        <code>SPX Index</code>, <code>FXC LN Equity</code>) y el <b>rótulo</b> es lo
+        que se ve en la imagen del correo. Lo que cambies acá lo toma el script la
+        próxima vez que corra — no hay que tocar nada más.</div>
+
+      <div class="field-row">
+        <div class="field"><label>Ticker de Bloomberg</label>
+          <input type="text" id="unNemo" placeholder="FXC LN Equity" style="width:190px;"></div>
+        <div class="field"><label>Bloque</label>
+          <select id="unBloque" style="width:230px;" onchange="toggleBloqueNuevoRVI()"></select></div>
+        <div class="field" id="unCampoBloqueNuevo" style="display:none;"><label>Nombre del bloque</label>
+          <input type="text" id="unBloqueNuevo" placeholder="ASIA EQUITY"
+                 style="width:180px;text-transform:uppercase;"></div>
+        <div class="field" id="unCampoColumna" style="display:none;"><label>Columna</label>
+          <select id="unColumna" style="width:120px;">
+            <option value="IZQ">Izquierda</option>
+            <option value="DER">Derecha</option></select></div>
+        <div class="field"><label>Tipo</label>
+          <select id="unTipo" style="width:140px;">
+            <option value="FONDO">Fondo / ETF</option>
+            <option value="INDICE">Índice</option></select></div>
       </div>
-      <div class="tb-field">
-        <label>USDCOP</label>
-        <input type="text" inputmode="decimal" id="usdcopAyudas" placeholder="4,000.00"
-               oninput="sincronizarUsdcop(this)" onblur="formatInputAsNumber(this,2);sincronizarUsdcop(this)" style="width:120px;">
+      <div class="field-row">
+        <div class="field"><label>Rótulo</label>
+          <input type="text" id="unEtiqueta" placeholder="FXC" style="width:150px;"></div>
+        <div class="field" style="flex:1;"><label>Descripción <span class="field-note">(opcional)</span></label>
+          <input type="text" id="unDescripcion" placeholder="iShares China Large Cap (UCITS)"></div>
+        <div class="field" style="align-self:flex-end;">
+          <button class="btn small purple" onclick="agregarPapelRVI()">Agregar al universo</button></div>
       </div>
-      <div class="tb-field" style="flex:2;">
-        <label>&nbsp;</label>
-        <span class="field-note" id="mercadoStatus">Carga el archivo de trades del mercado para tener los últimos precios.</span>
+      <div class="field-note" style="margin-top:6px;">
+        El app no puede preguntarle a Bloomberg si un ticker existe. Si te equivocas,
+        el script te lo dice en el log como <b>TICKER DESCONOCIDO</b> y no guarda
+        nada inventado.</div>
+
+      <div style="display:flex;gap:10px;margin:14px 0 8px;flex-wrap:wrap;align-items:center;">
+        <button class="btn small" onclick="cargarUniversoRVI()">↻ Actualizar</button>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;">
+          <input type="checkbox" id="unVerInactivos" onchange="renderUniversoRVI()">
+          <span>Ver los desactivados</span></label>
+        <span id="unResumen" class="field-note"></span>
       </div>
+      <div id="unListado" style="max-height:520px;overflow:auto;"></div>
     </div>
 
     <!-- La carpeta compartida del equipo: la biblioteca de Teams que
@@ -2566,6 +2702,48 @@
            color:var(--text-1);border:1px solid var(--border-strong);border-radius:6px;
            padding:11px 13px;max-height:320px;overflow:auto;"></pre>
     </div>
+
+  </div>
+
+  <!-- ===== HERRAMIENTAS =====
+       Lo que se usa durante el dia y produce algo: un archivo, un correo, un
+       numero. La otra mitad del viejo modulo Ayudas (19-oct).
+       "Cargas y maestros" vive aqui y no en Maestros: su nombre engaña — lo
+       que tiene adentro es el CSV de trades del mercado y el USDCOP DEL DIA,
+       que es operacion diaria, no base de datos (Sergio, 19-oct). -->
+  <div id="mod-Herramientas" class="mod-section">
+    <div class="section-label" style="margin-top:16px;">Cargas y maestros</div>
+    <div class="toolbar">
+      <div class="tb-field" style="flex:1;min-width:340px;">
+        <label>Trades del mercado (All_Trades .csv)</label>
+        <input type="file" id="fileMercado" accept=".csv" multiple onchange="cargarTradesMercado(this)" style="font-size:12px;width:100%;"
+               title="Puedes cargar varios días de una: el más reciente arma el informe y los anteriores quedan guardados como cierre de su día.">
+      </div>
+      <div class="tb-field">
+        <label>USDCOP</label>
+        <input type="text" inputmode="decimal" id="usdcopAyudas" placeholder="4,000.00"
+               oninput="sincronizarUsdcop(this)" onblur="formatInputAsNumber(this,2);sincronizarUsdcop(this)" style="width:120px;">
+      </div>
+      <div class="tb-field" style="flex:2;">
+        <label>&nbsp;</label>
+        <span class="field-note" id="mercadoStatus">Carga el archivo de trades del mercado para tener los últimos precios.</span>
+      </div>
+    </div>
+
+    <div class="section-label">Canasta MLI</div>
+    <div style="padding:0 24px 8px;">
+      <div class="field-note" style="margin-bottom:6px;">Pega el correo completo de Lucas (con Entity / Stocks / FX y la tabla). Las líneas en 0.00 se descartan solas.</div>
+      <textarea id="canastaTexto" rows="8" oninput="recalcularCanasta()"
+        style="width:100%;font-family:var(--mono,monospace);font-size:12px;background:var(--bg-2,#0f1116);color:var(--text-1,#e5e7eb);border:1px solid var(--border,#2a2f3a);border-radius:6px;padding:10px;"
+        placeholder="Hi all,&#10;Please execute order as below:&#10;Entity: MLI&#10;Stocks: MOC&#10;FX: WMCO&#10;&#10;Side&#9;Quantity&#9;Ric&#9;BBG Code&#10;B&#9;500.00&#9;CIBEST.CN&#9;CIBEST CB Equity"></textarea>
+    </div>
+    <div id="canastaResultado" style="padding:0 24px 8px;"></div>
+    <!-- El flujo se habilita por pasos: cada decisión abre la siguiente y
+         ninguna se puede saltar. Se dibuja en renderFlujoCanasta(). -->
+    <div id="canastaFlujo" style="padding:0 24px 20px;"></div>
+
+    <div class="section-label">Pendientes de tasa</div>
+    <div id="canastasPendientes" style="padding:0 24px 24px;"></div>
 
     <!-- ===== CARGAR ÓRDENES A EMSX =====
          El cliente manda su intención en un cuadro de Excel y de ahí hay que
@@ -2603,21 +2781,6 @@
       <div id="emsxAvisos" style="margin-top:10px;"></div>
       <div id="emsxPreview" style="margin-top:10px;"></div>
     </div>
-
-    <div class="section-label">Canasta MLI</div>
-    <div style="padding:0 24px 8px;">
-      <div class="field-note" style="margin-bottom:6px;">Pega el correo completo de Lucas (con Entity / Stocks / FX y la tabla). Las líneas en 0.00 se descartan solas.</div>
-      <textarea id="canastaTexto" rows="8" oninput="recalcularCanasta()"
-        style="width:100%;font-family:var(--mono,monospace);font-size:12px;background:var(--bg-2,#0f1116);color:var(--text-1,#e5e7eb);border:1px solid var(--border,#2a2f3a);border-radius:6px;padding:10px;"
-        placeholder="Hi all,&#10;Please execute order as below:&#10;Entity: MLI&#10;Stocks: MOC&#10;FX: WMCO&#10;&#10;Side&#9;Quantity&#9;Ric&#9;BBG Code&#10;B&#9;500.00&#9;CIBEST.CN&#9;CIBEST CB Equity"></textarea>
-    </div>
-    <div id="canastaResultado" style="padding:0 24px 8px;"></div>
-    <!-- El flujo se habilita por pasos: cada decisión abre la siguiente y
-         ninguna se puede saltar. Se dibuja en renderFlujoCanasta(). -->
-    <div id="canastaFlujo" style="padding:0 24px 20px;"></div>
-
-    <div class="section-label">Pendientes de tasa</div>
-    <div id="canastasPendientes" style="padding:0 24px 24px;"></div>
 
     <!-- ===== Calculadora de ejecución ===== -->
     <div class="section-label">Calculadora de ejecución</div>
@@ -2744,151 +2907,6 @@
         <div id="fdImagen" style="background:#ffffff;color:#171B30;width:430px;padding:16px 18px;
              font-family:Calibri,Segoe UI,Arial,sans-serif;"></div>
       </div>
-    </div>
-
-    <!-- ===== UNIVERSO DEL INFORME DE RVI =====
-         Hasta hoy cambiar un ticker era un UPDATE a mano en Supabase, o sea
-         algo que Sergio no podía hacer solo. El día que FXC resultó cargado
-         como 'FXC US Equity' (que es el ETF del dólar canadiense) en vez de
-         'FXC LN Equity' quedó claro que esto tenía que vivir acá
-         (Sergio, 29-sep). -->
-    <div class="card" style="margin-top:18px;">
-      <div class="section-label">Universo del informe de RVI</div>
-      <div class="field-note" style="margin-bottom:10px;">
-        Los papeles que <b>bbg_cierre_rvi.py</b> le pide a Bloomberg cada tarde.
-        El <b>ticker</b> es el completo de Bloomberg (<code>IVV US Equity</code>,
-        <code>SPX Index</code>, <code>FXC LN Equity</code>) y el <b>rótulo</b> es lo
-        que se ve en la imagen del correo. Lo que cambies acá lo toma el script la
-        próxima vez que corra — no hay que tocar nada más.</div>
-
-      <div class="field-row">
-        <div class="field"><label>Ticker de Bloomberg</label>
-          <input type="text" id="unNemo" placeholder="FXC LN Equity" style="width:190px;"></div>
-        <div class="field"><label>Bloque</label>
-          <select id="unBloque" style="width:230px;" onchange="toggleBloqueNuevoRVI()"></select></div>
-        <div class="field" id="unCampoBloqueNuevo" style="display:none;"><label>Nombre del bloque</label>
-          <input type="text" id="unBloqueNuevo" placeholder="ASIA EQUITY"
-                 style="width:180px;text-transform:uppercase;"></div>
-        <div class="field" id="unCampoColumna" style="display:none;"><label>Columna</label>
-          <select id="unColumna" style="width:120px;">
-            <option value="IZQ">Izquierda</option>
-            <option value="DER">Derecha</option></select></div>
-        <div class="field"><label>Tipo</label>
-          <select id="unTipo" style="width:140px;">
-            <option value="FONDO">Fondo / ETF</option>
-            <option value="INDICE">Índice</option></select></div>
-      </div>
-      <div class="field-row">
-        <div class="field"><label>Rótulo</label>
-          <input type="text" id="unEtiqueta" placeholder="FXC" style="width:150px;"></div>
-        <div class="field" style="flex:1;"><label>Descripción <span class="field-note">(opcional)</span></label>
-          <input type="text" id="unDescripcion" placeholder="iShares China Large Cap (UCITS)"></div>
-        <div class="field" style="align-self:flex-end;">
-          <button class="btn small purple" onclick="agregarPapelRVI()">Agregar al universo</button></div>
-      </div>
-      <div class="field-note" style="margin-top:6px;">
-        El app no puede preguntarle a Bloomberg si un ticker existe. Si te equivocas,
-        el script te lo dice en el log como <b>TICKER DESCONOCIDO</b> y no guarda
-        nada inventado.</div>
-
-      <div style="display:flex;gap:10px;margin:14px 0 8px;flex-wrap:wrap;align-items:center;">
-        <button class="btn small" onclick="cargarUniversoRVI()">↻ Actualizar</button>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;">
-          <input type="checkbox" id="unVerInactivos" onchange="renderUniversoRVI()">
-          <span>Ver los desactivados</span></label>
-        <span id="unResumen" class="field-note"></span>
-      </div>
-      <div id="unListado" style="max-height:520px;overflow:auto;"></div>
-    </div>
-
-    <!-- ===== MAESTROS: portafolios y especies =====
-         Antes había que pedirle a Claude que los agregara a mano; ahora se
-         crean aquí y quedan en Supabase, así los ven todos (Sergio, 27-ago). -->
-    <div class="card" style="margin-top:18px;">
-      <div class="section-label">Portafolio nuevo</div>
-      <div class="field-note" style="margin-bottom:10px;">
-        Cuando un cliente abre un portafolio que todavía no está en la base.
-        El DECEVAL es el identificador: no cambia y es por el que se cruza el allocation.
-        <b>Si el portafolio solo va a operar afuera</b>, marca "Solo RVI": ahí no hace
-        falta deceval, porque el nombre va directo a la columna ACCOUNT del Trade
-        Confirmation.</div>
-      <div class="field-row">
-        <div class="field" style="align-self:flex-end;">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-            <input type="checkbox" id="mpSoloRvi" onchange="toggleSoloRviMaestro()">
-            <span>Solo RVI <span class="field-note">(sin deceval)</span></span></label></div>
-        <div class="field" id="mpCampoDeceval"><label>DECEVAL</label>
-          <input type="text" id="mpDeceval" placeholder="4352995" style="width:130px;"></div>
-        <div class="field"><label>Client/Book</label>
-          <select id="mpClientBook" style="width:220px;"></select></div>
-        <div class="field" style="flex:1;"><label>Nombre del portafolio</label>
-          <input type="text" id="mpNombre" placeholder="FIDUBANCOLOMBIA P.A. INVERLASER"></div>
-      </div>
-      <div class="field-row">
-        <div class="field"><label>Especial fiduciario <span class="field-note">(opcional)</span></label>
-          <input type="text" id="mpEspecial" placeholder="27" style="width:130px;"></div>
-        <div class="field"><label>IVA</label>
-          <select id="mpIva" style="width:130px;">
-            <option value="1">Sí — 19%</option>
-            <option value="0">No (FPV/FPO)</option>
-          </select></div>
-        <div class="field" style="align-self:flex-end;">
-          <button class="btn purple" onclick="guardarPortafolioMaestro()">Guardar portafolio</button></div>
-      </div>
-      <div id="mpEstado" class="field-note" style="margin-top:8px;"></div>
-      <div id="mpLista" style="margin-top:12px;"></div>
-    </div>
-
-    <div class="card" style="margin-top:18px;">
-      <div class="section-label">Festivo nuevo</div>
-      <div class="field-note" style="margin-bottom:10px;">
-        Los calendarios cambian. <b>Colombia</b> define el cumplimiento de RVL;
-        <b>Estados Unidos</b> el de FX, donde además frena la operación si cae en festivo.</div>
-      <div class="field-row">
-        <div class="field"><label>Fecha</label>
-          <input type="date" id="mfFecha" style="width:170px;"></div>
-        <div class="field"><label>País</label>
-          <select id="mfPais" style="width:200px;">
-            <option value="CO">Colombia — afecta RVL</option>
-            <option value="US">Estados Unidos — afecta FX</option>
-          </select></div>
-        <div class="field" style="flex:1;"><label>Nombre <span class="field-note">(opcional)</span></label>
-          <input type="text" id="mfNombre" placeholder="Día de la Independencia"></div>
-        <div class="field" style="align-self:flex-end;">
-          <button class="btn purple" onclick="guardarFestivo()">Guardar festivo</button></div>
-      </div>
-      <div id="mfEstado" class="field-note" style="margin-top:8px;"></div>
-      <div id="mfLista" style="margin-top:12px;"></div>
-    </div>
-
-    <div class="card" style="margin-top:18px;">
-      <div class="section-label">Especie nueva</div>
-      <div class="field-note" style="margin-bottom:10px;">
-        El mercado define los tickers: RVL arma <b>NEMO CB Equity</b> y <b>NEMO.BGa</b>;
-        RVI arma <b>NEMO US Equity</b> o <b>NEMO LN Equity</b>. No hay que escribirlos.</div>
-      <div class="field-row">
-        <div class="field"><label>Especie</label>
-          <input type="text" id="meEspecie" placeholder="EMXC" style="width:130px;text-transform:uppercase;"></div>
-        <div class="field"><label>ISIN</label>
-          <input type="text" id="meIsin" placeholder="US46434G7640" style="width:180px;text-transform:uppercase;"></div>
-        <div class="field"><label>SEDOL</label>
-          <input type="text" id="meSedol" placeholder="BYXKYV3" style="width:140px;text-transform:uppercase;"></div>
-        <div class="field"><label>Mercado</label>
-          <select id="meMercado" style="width:200px;" onchange="previsualizarTickersMaestro()">
-            <option value="RVL">RVL — Bolsa de Colombia</option>
-            <option value="RVI_US">RVI — US Equity</option>
-            <option value="RVI_LN">RVI — LN Equity</option>
-          </select></div>
-      </div>
-      <div class="field-row">
-        <div class="field" style="flex:1;"><label>Descripción <span class="field-note">(para la proforma de Porvenir)</span></label>
-          <input type="text" id="meDesc" placeholder="iShares MSCI Emerging Markets ex China ETF"></div>
-        <div class="field" style="align-self:flex-end;">
-          <button class="btn purple" onclick="guardarEspecieMaestro()">Guardar especie</button></div>
-      </div>
-      <div id="meTickers" class="field-note" style="margin-top:8px;"></div>
-      <div id="meEstado" class="field-note" style="margin-top:4px;"></div>
-      <div id="meLista" style="margin-top:12px;"></div>
     </div>
 
   </div>
@@ -3091,7 +3109,10 @@ const MARKET_LABELS = {
   RVI: { label:'Mercado NY abierto',  color:'var(--buy)' },
   RFI: { label:'Mercado NY abierto',  color:'var(--buy)' },
   Reportes: { label:'',              color:'var(--text-1)' },
-  Ayudas:   { label:'',              color:'var(--text-1)' },
+  // 19-oct: Ayudas se partio en Maestros y Herramientas. Los dos van sin
+  // etiqueta de mercado, igual que iba Ayudas.
+  Maestros: { label:'',              color:'var(--text-1)' },
+  Herramientas: { label:'',          color:'var(--text-1)' },
   Informe:  { label:'BVC abierto',   color:'var(--buy)' },
   Research: { label:'',              color:'var(--text-1)' },
 };
@@ -3114,11 +3135,17 @@ function switchModule(mod) {
   // El selector de Client/Book se llena al ENTRAR a Ayudas: al arrancar la app
   // `clientesDB` todavía puede no estar completo y el desplegable quedaba vacío
   // (Sergio, 03-sep).
-  if(mod === 'Ayudas'){
+  // Los cinco render que corria Ayudas, repartidos segun donde quedo cada
+  // seccion (19-oct). Si uno queda en el modulo equivocado no da error: la
+  // tabla simplemente sale vacia, que es como se descubrio el 03-sep que el
+  // desplegable de Client/Book habia que poblarlo AL ENTRAR.
+  if(mod === 'Maestros'){
     if(typeof poblarClientBookMaestro === 'function') poblarClientBookMaestro();
     if(typeof renderListaFestivos === 'function') renderListaFestivos();
     if(typeof renderListasMaestro === 'function') renderListasMaestro();
     if(typeof cargarUniversoRVI === 'function') cargarUniversoRVI();
+  }
+  if(mod === 'Herramientas'){
     if(typeof _emsxPintarCuentas === 'function') _emsxPintarCuentas();
   }
   const ml = MARKET_LABELS[mod];
