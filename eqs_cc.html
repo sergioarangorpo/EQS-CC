@@ -9231,7 +9231,7 @@ function tickersDeMercado(nemo, mercado){
 // Abre Ayudas con la especie precargada. Se llama desde el aviso de nemo
 // desconocido en RVL/RVI.
 function abrirAltaEspecie(nemo, mercado){
-  switchModule('Ayudas');
+  switchModule('Maestros');   // el alta vive en Maestros (19-oct)
   const e = document.getElementById('meEspecie');
   const m = document.getElementById('meMercado');
   if(e) e.value = String(nemo||'').toUpperCase();
@@ -9244,7 +9244,7 @@ function abrirAltaEspecie(nemo, mercado){
 
 // Igual para un portafolio que aparece en un alloc y no está en la base.
 function abrirAltaPortafolio(deceval, clientBook, nombre){
-  switchModule('Ayudas');
+  switchModule('Maestros');   // el alta vive en Maestros (19-oct)
   const d = document.getElementById('mpDeceval');
   const b = document.getElementById('mpClientBook');
   const n = document.getElementById('mpNombre');
@@ -28011,7 +28011,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-19 20:55 UTC · v241';
+const BUILD_ID = '2026-10-19 21:40 UTC · v242';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
