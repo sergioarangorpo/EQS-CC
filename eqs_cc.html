@@ -7468,7 +7468,7 @@ function grupoDeTrade(clientRaw, notes, parentOrderId){
 // Con esto normalizamos cualquiera de los dos formatos al nemo real, y de
 // paso mejoramos MUCHO la vinculación EMSX<->Fidessa (ya no solo por
 // precio/cantidad parecidos — ahora se puede confirmar por nemo exacto).
-const GRUPO_COMISIONES_DB = [{"grupo": "COLFONDOS", "book": "COLFONDOS", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0018}}, {"grupo": "SANTANDER", "book": "SANTANDER", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": true, "bloque": null}, {"grupo": "PROTECCION", "book": "PROTECCION", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0008, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "PORVENIR", "book": "PORVENIR", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0008, "ICOLCAP": 0.001, "OTRAS": 0.0015}}, {"grupo": "LARRAIN VIAL PP", "book": "LV_CO", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "CREDICORPFFMM", "book": "CREDICORPFFMM", "reporte": true, "formato": "SI", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "FIDUASHMORE", "book": "FIDUASHMORE", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.0009, "allIn": false, "bloque": null}, {"grupo": "CITIGROUP GLOBAL MARKETS LTD", "book": "CITI_NY", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.00084, "allIn": false, "bloque": null}, {"grupo": "GOLDMAN", "book": "GOLDMAN", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "BTG PACTUAL PP", "book": "BTG", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "SKANDIA", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "HSBC BANK PLC", "book": "HSBC_NY", "reporte": false, "formato": "NO", "fx": true, "variable": false, "base": 0.00055, "allIn": true, "bloque": null}, {"grupo": "BRADESCO", "book": "BRSE", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": true, "bloque": null}, {"grupo": "SCOTIA", "book": "SCOTIA", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": true, "bloque": null}, {"grupo": "FIDUCIARIA BANCOLOMBIA", "book": "VALORES_AM", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.001, "allIn": false, "bloque": {"ECOPETROL": 0.002, "PFCIBEST": 0.002, "ICOLCAP": 0.002, "OTRAS": 0.002}}, {"grupo": "MERRILL LYNCH INTERNATIONAL", "book": "MLI", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "AVAL FIDUCIARIA", "book": "AVAL_FIDU", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "PLURAL", "book": "PLURAL", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00084, "allIn": true, "bloque": null}, {"grupo": "BNP PARIBAS", "book": "BNP_B", "reporte": true, "formato": "SI", "fx": true, "variable": false, "base": 0.00084, "allIn": true, "bloque": null}, {"grupo": "HORZ", "book": "HORZ", "reporte": true, "formato": "SI", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "SURAMERICANA", "book": "SURA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "METLIFE COLOMBIA", "book": "METLIFE", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "ALLIANZ", "book": "ALLIANZ_SEG_CO", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "ITAU", "book": "ITAU_NY", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0007, "allIn": true, "bloque": null}, {"grupo": "SEGUROS BOLIVAR", "book": "BOLIVAR", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.002, "allIn": false, "bloque": {"ECOPETROL": 0.002, "PFCIBEST": 0.002, "ICOLCAP": 0.002, "OTRAS": 0.002}}, {"grupo": "FIDUCIARIA SURA", "book": "FIDUSURA", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.001, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "FIDUDAVIVIENDA", "book": "FIDUDAVI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "MORGAN STANLEY", "book": "MORGAN_STANLEY", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00077, "allIn": true, "bloque": null}, {"grupo": "SKANDIA SEGUROS", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "COWEN", "book": "COWEN", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.002, "allIn": false, "bloque": null}, {"grupo": "CAXDAC", "book": "CAXDAC", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0015, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "MONEDA", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.00126, "allIn": false, "bloque": null}, {"grupo": "SOCIETTE", "book": "BISG", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00042, "allIn": true, "bloque": null}, {"grupo": "FALCOM", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "ASHMORE", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.0005, "allIn": false, "bloque": null}, {"grupo": "FIDUCIARIA SKANDIA", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "CREDICORP CAPITAL BOLSA", "book": "CREDIBOLSA", "reporte": false, "formato": "NO", "fx": true, "variable": false, "base": 0.0008, "allIn": false, "bloque": null}, {"grupo": "TORDESILHAS", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.002, "allIn": false, "bloque": null}, {"grupo": "IMPERA CAPITAL", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.00126, "allIn": false, "bloque": null},
+const GRUPO_COMISIONES_DB = [{"grupo": "COLFONDOS", "book": "COLFONDOS", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0018}}, {"grupo": "SANTANDER", "book": "SANTANDER", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": true, "bloque": null}, {"grupo": "PROTECCION", "book": "PROTECCION", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0008, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "PORVENIR", "book": "PORVENIR", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0008, "ICOLCAP": 0.001, "OTRAS": 0.0015}}, {"grupo": "LARRAIN VIAL PP", "book": "LV_CO", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "CREDICORPFFMM", "book": "CREDICORPFFMM", "reporte": true, "formato": "SI", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "FIDUASHMORE", "book": "FIDUASHMORE", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.0009, "allIn": false, "bloque": null}, {"grupo": "CITIGROUP GLOBAL MARKETS LTD", "book": "CITI_NY", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "GOLDMAN", "book": "GOLDMAN", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "BTG PACTUAL PP", "book": "BTG", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "SKANDIA", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "HSBC BANK PLC", "book": "HSBC_NY", "reporte": false, "formato": "NO", "fx": true, "variable": false, "base": 0.00055, "allIn": true, "bloque": null}, {"grupo": "BRADESCO", "book": "BRSE", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": true, "bloque": null}, {"grupo": "SCOTIA", "book": "SCOTIA", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": true, "bloque": null}, {"grupo": "FIDUCIARIA BANCOLOMBIA", "book": "VALORES_AM", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.001, "allIn": false, "bloque": {"ECOPETROL": 0.002, "PFCIBEST": 0.002, "ICOLCAP": 0.002, "OTRAS": 0.002}}, {"grupo": "MERRILL LYNCH INTERNATIONAL", "book": "MLI", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "AVAL FIDUCIARIA", "book": "AVAL_FIDU", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "PLURAL", "book": "PLURAL", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00084, "allIn": true, "bloque": null}, {"grupo": "BNP PARIBAS", "book": "BNP_B", "reporte": true, "formato": "SI", "fx": true, "variable": false, "base": 0.00084, "allIn": true, "bloque": null}, {"grupo": "HORZ", "book": "HORZ", "reporte": true, "formato": "SI", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "SURAMERICANA", "book": "SURA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "METLIFE COLOMBIA", "book": "METLIFE", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "ALLIANZ", "book": "ALLIANZ_SEG_CO", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "ITAU", "book": "ITAU_NY", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0007, "allIn": true, "bloque": null}, {"grupo": "SEGUROS BOLIVAR", "book": "BOLIVAR", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.002, "allIn": false, "bloque": {"ECOPETROL": 0.002, "PFCIBEST": 0.002, "ICOLCAP": 0.002, "OTRAS": 0.002}}, {"grupo": "FIDUCIARIA SURA", "book": "FIDUSURA", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.001, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "FIDUDAVIVIENDA", "book": "FIDUDAVI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "MORGAN STANLEY", "book": "MORGAN_STANLEY", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00077, "allIn": true, "bloque": null}, {"grupo": "SKANDIA SEGUROS", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "COWEN", "book": "COWEN", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.002, "allIn": false, "bloque": null}, {"grupo": "CAXDAC", "book": "CAXDAC", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0015, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "MONEDA", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.00126, "allIn": false, "bloque": null}, {"grupo": "SOCIETTE", "book": "BISG", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00042, "allIn": true, "bloque": null}, {"grupo": "FALCOM", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "ASHMORE", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.0005, "allIn": false, "bloque": null}, {"grupo": "FIDUCIARIA SKANDIA", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "CREDICORP CAPITAL BOLSA", "book": "CREDIBOLSA", "reporte": false, "formato": "NO", "fx": true, "variable": false, "base": 0.0008, "allIn": false, "bloque": null}, {"grupo": "TORDESILHAS", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.002, "allIn": false, "bloque": null}, {"grupo": "IMPERA CAPITAL", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.00126, "allIn": false, "bloque": null},
 // BNP AGENCY (Sergio, 19-oct). Tenia ficha en clientesDB y esta en
 // `maestro_grupos` —es de JAJ— pero NO tenia fila aqui, y de eso cuelgan dos
 // cosas: `_dashTarifaCierta` devolvia null, asi que si operaba y no se habia
@@ -16100,7 +16100,13 @@ const COMISION_NO_REPORTA = {
   'BISG': 0.00042,
   'BNPB': 0.00084,
   'BRSE': 0.00060,
-  'CITI_NY': 0.00084,
+  // CITI es el gemelo de MLI: ALL IN 0,10%, comision + IVA adentro. Aqui decia
+  // 0,00084 —la tarifa NETA, 0,10%/1,19 redondeada— y su fila en
+  // GRUPO_COMISIONES_DB era la UNICA del grupo sin la marca allIn. El total al
+  // cliente salia en 0,09996% en vez de 0,10%: sobre los 2.984 millones que
+  // CITI opero el 19-oct, $446,96 de menos. Es el mismo neto-en-columna-de-bruto
+  // que MLI (ver el comentario de MLI abajo), y se arregla igual.
+  'CITI_NY': 0.001,
   'COWEN': 0.00200,
   'CREDICORPFFMM': 0.00100,
   'CSI': 0.00100,            // la tabla decía 0,252%: era un error de la dinámica
@@ -17703,7 +17709,23 @@ function filasPlanillaCOP(){
     const t = _fidessaTradesRaw[oid];
     const cli = normalizarGrupo(t.grupo);
     if(!cli) return;
-    if(typeof _lineasNoReportar !== 'undefined' && _lineasNoReportar.has(String(oid))) return;
+    // "NO SE REPORTA" significa NO LE MANDES REPORTE AL CLIENTE. No significa
+    // que la linea no exista: sigue siendo una operacion con comision.
+    //
+    // Aqui estaba `if(_lineasNoReportar.has(oid)) return;` y era un return
+    // SILENCIOSO. El 19-oct se cayeron 7 de las 9 ordenes de CITI_NY —
+    // PFDAVIGRP, PFCIBEST x2, ISA x2, CIBEST x2 — por $1.117.398 de comision,
+    // sin un solo aviso: la planilla se genero completa y corta.
+    //
+    // Y la marca es CORRECTA: el propio comentario de `_lineasNoReportar` dice
+    // que "a CITI_NY se le reporta parte de lo operado y parte no". CITI tiene
+    // tarifa cierta (0,1% all in), asi que su comision se sabe sin reporte.
+    //
+    // Una marca no puede hacer dos trabajos. Ahora la linea sigue de largo y la
+    // decide la tarifa, mas abajo: si es cierta entra con ella; si no, cae en
+    // `faltan` y se ve (Sergio, 19-oct).
+    const _marcadaNoReportar = (typeof _lineasNoReportar !== 'undefined') &&
+                                _lineasNoReportar.has(String(oid));
     // Book compartido sin resolver: NO se sabe de quien es la orden, y las
     // tarifas de los candidatos van de 0,05% a 0,20%. Antes se mandaba al
     // default en silencio; el 13-oct eso fueron $808.400 de menos.
@@ -17728,7 +17750,12 @@ function filasPlanillaCOP(){
     const tarifa = _dashTarifaCierta(cli);
     if(tarifa == null){
       // Tarifa variable sin reportar: no se puede saber la comisión.
-      faltan.push(`${cli} ${esp} — operado pero SIN reportar (tarifa variable)`);
+      // Si además está marcada "no se reporta" a mano, se dice así: la línea
+      // no va a llegar por la vía del reporte nunca, así que hay que resolverle
+      // la tarifa de otra forma.
+      faltan.push(_marcadaNoReportar
+        ? `${cli} ${esp} — marcada "NO SE REPORTA" y de tarifa variable: no hay de dónde sacar la comisión`
+        : `${cli} ${esp} — operado pero SIN reportar (tarifa variable)`);
       return;
     }
     // ALL IN: la tarifa de estos brokers INCLUYE comisión + IVA. Sergio,
@@ -17742,7 +17769,25 @@ function filasPlanillaCOP(){
     // en GRUPO_COMISIONES_DB y por defecto es false.
     const _tc = _tarifaCiertaDe(cli);
     const _dc = desgloseComisionCliente(q*px, tarifa, !!(_tc && _tc.allIn));
-    agregar({ cliente:cli, account:t.notes||'', fondo:t.grupo||cli,
+    // EL NOTES NO ES UN PORTAFOLIO. Aqui iba `account: t.notes`, y `account`
+    // es justo lo que `grupoDeOperacion` usa para resolver el grupo — con
+    // preferencia sobre el nombre del cliente, porque un portafolio identifica
+    // al grupo sin ambiguedad. Pero en esta rama solo entran brokers de tarifa
+    // cierta, y para ellos el Notes es la INSTRUCCION de ejecucion: 'MOC*',
+    // 'INLINE', 'VWAP NO CLOSE'. No es el portafolio de nadie.
+    //
+    // `grupoDePortafolio` termina en un match por substring sobre todos los
+    // nombres de portafolio, asi que 'MOC*' calzaba con alguno y el grupo salia
+    // de ahi. El 19-oct las cuatro compras MOC* de GOLDMAN —CIBEST 142,
+    // ECOPETROL 62.157, PFCIBEST 328 y 1.120— salieron con Grupo FIDUCIARIA
+    // SURA, categoria INSTITUCIONAL y trader SAR, $248.542 al cliente
+    // equivocado. El Fondo de la misma fila decia GOLDMAN: el archivo se
+    // contradecia consigo mismo (Sergio, 19-oct).
+    //
+    // Los clientes donde el Notes SI es el portafolio (CREDICORPFFMM, que trae
+    // 'AHORRO ESPECIAL 56', o PROTECCION con su ORD_NUM) llevan reporte y
+    // entran por la rama de arriba, que pasa `r.portafolios`. No pasan por aca.
+    agregar({ cliente:cli, account:'', fondo:t.grupo||cli,
       nemo:esp, lado:t.lado, cantidad:q, precio:px, bruto:q*px,
       comision:_dc.comMonto, ivaPropio:_dc.ivaMonto, mercado:'ACCIONES',
       liquidacion:parseFechaLocal(hoy), cumplimiento:sumarDiasHabiles(parseFechaLocal(hoy),2,'CO') });
@@ -22317,15 +22362,46 @@ async function generarReporte(){
     const pppOrden = foliosOrden.reduce((x,f)=>x+f.cantidad*f.precio, 0) / qOrden;
     const espOrden = foliosOrden[0].especie;
     const ladoOrden = foliosOrden[0].lado;
-    // Comisión ponderada de ESA orden, con la tarifa que tenga cada folio.
-    const comOrden = foliosOrden.reduce((x,f)=>x + f.cantidad*(comisionFolioPct(cliente, f)/100), 0) / qOrden;
+    // LA COMISIÓN SE SUMA FOLIO POR FOLIO, igual que en el archivo.
+    //
+    // Antes esto era un promedio ponderado por CANTIDAD
+    //     comOrden = Σ(cantidad_f × pct_f) / qOrden
+    // y después se aplicaba al bruto calculado con el PRECIO PROMEDIO
+    //     montoBruto = a.cantidad × pppOrden
+    //
+    // El archivo del cliente, en cambio, cobra cada folio con SU bruto y SU
+    // tarifa. Los dos números coinciden solo si todos los folios tienen la
+    // misma tarifa — y un bloque imprime fuera del promedio de pantalla por
+    // definición, así que en cuanto hay mezcla se separan.
+    //
+    // COLFONDOS, 19-oct: 2 folios de bloque (10.000 @ 75.900 y 25.000 @ 76.700,
+    // el cruce de 35.000 a Larraín Vial) al 0,15% y 116 de pantalla al 0,08%.
+    // El archivo que se le envió dice 11.341.664,37, que es exacto. El registro
+    // guardó 10.795.774,63 y la Planilla COP lee del registro: $545.889,74 de
+    // menos, con el reporte al cliente correcto. El mismo molde del IVA del
+    // 30-sep — el error solo se ve de nuestro lado.
+    //
+    // Ahora el registro suma lo mismo que el archivo y la tarifa de la línea
+    // sale de dividir, no de promediar aparte: un solo camino por número.
+    // Sergio, 19-oct: "la data principal es el reporte al cliente, es la misma
+    // fuente".
+    const brutoOrden = foliosOrden.reduce((x,f)=>x + f.cantidad*f.precio, 0);
+    const comMontoOrden = foliosOrden.reduce(
+      (x,f)=>x + f.cantidad*f.precio*(comisionFolioPct(cliente, f)/100), 0);
+    const comOrden = brutoOrden ? comMontoOrden / brutoOrden : 0;
 
     (o.allocations||[]).forEach(a=>{
       if(a.cantidad<=0) return;
       const port = ports.find(p=>p.id===a.portId);
       if(!port) return;
-      const montoBruto = a.cantidad * pppOrden;
-      const comisionMonto = montoBruto * comOrden;
+      // El bruto y la comisión se PRORRATEAN por cantidad desde los totales
+      // exactos de la orden, para que la suma de las líneas registradas dé
+      // exactamente lo que dice el archivo. `a.cantidad * pppOrden` arrastraba
+      // el redondeo del precio promedio: en COLFONDOS, 156.000 × 75.866,301 da
+      // 11.835.142.956 y el bruto de verdad es 11.835.142.960.
+      const _part = qOrden ? (a.cantidad / qOrden) : 0;
+      const montoBruto = brutoOrden * _part;
+      const comisionMonto = comMontoOrden * _part;
       const ivaMonto = ivaDeLineaRVL(!!(port && port.iva), port, comisionMonto);
       const montoNeto = ladoOrden==='Compra' ? montoBruto + comisionMonto + ivaMonto
                                              : montoBruto - comisionMonto - ivaMonto;
