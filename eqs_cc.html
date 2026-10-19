@@ -15153,6 +15153,12 @@ function filasBORFI(clientes){
         'TIPO OP': 'RFI',
         'CLIENTE': cliente,
         'PORTFOLIO': cliente,
+        // El cliente DEL NEGOCIO, no el de la fila: en la pata de compra
+        // 'CLIENTE' es la contraparte (CCSI). Con esto el registro queda a
+        // nombre del cliente sin tener que volver a recorrer los negocios.
+        // No es columna del archivo — `_libroPlanillaBO` solo escribe
+        // BO_COLUMNAS — asi que viaja sin salir en el Excel.
+        _cliente: n.cliente,
         'NEMO': n.security,
         'ISIN': n.isin,
         'PP B/S': lado,
@@ -15312,13 +15318,18 @@ function filasPlanillaBO(clientes){
   // 'RFI', asi que `vecesCargadoCOR('BO', <cliente>)` nunca subia de cero y el
   // badge del cliente de RFI se quedaba en SIN CARGAR para siempre, generara
   // la planilla las veces que generara (Sergio, 19-oct).
-  (clientes||[]).forEach(cli=>{
-    const f = (typeof filasBORFI === 'function') ? filasBORFI([cli]) : [];
-    if(!f.length) return;
-    filas = filas.concat(f);
-    const ya = resumen.find(r=>r.cliente === cli);
-    if(ya) ya.n += f.length; else resumen.push({cliente:cli, n:f.length});
-  });
+  // UNA sola llamada con la lista completa, no una por cliente: recorrer los
+  // negocios N veces no agrega nada y deja la correccion dependiendo de que
+  // `filasBORFI` respete el argumento.
+  const fRFI = (typeof filasBORFI === 'function') ? filasBORFI(clientes||[]) : [];
+  if(fRFI.length){
+    filas = filas.concat(fRFI);
+    fRFI.forEach(f=>{
+      const cli = f._cliente || 'RFI';
+      const ya = resumen.find(r=>r.cliente === cli);
+      if(ya) ya.n += 1; else resumen.push({cliente:cli, n:1});
+    });
+  }
   return { filas, resumen };
 }
 
@@ -28104,7 +28115,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-19 22:35 UTC · v244';
+const BUILD_ID = '2026-10-19 22:45 UTC · v245';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
