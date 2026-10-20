@@ -21848,7 +21848,22 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
     const qtyOrden = folios.reduce((s,f)=>s+f.cantidad,0);
     const brutoOrden = folios.reduce((s,f)=>s+f.cantidad*f.precio,0);
     const precioPond = qtyOrden>0 ? brutoOrden/qtyOrden : 0;
-    const comOrden = qtyOrden>0 ? folios.reduce((s,f)=> s + f.cantidad*(f.marca==='bloque'?comBloque:comPantalla), 0)/qtyOrden : 0;
+    // Ponderada por NOCIONAL, no por cantidad. El pie del reporte cobra cada
+    // folio con su bruto y su tarifa (ver `comisionPct` en _detalleCOR, abajo),
+    // asi que promediar por cantidad y aplicarlo al bruto da otro numero en
+    // cuanto hay mezcla de bloque y pantalla — y un bloque imprime fuera del
+    // promedio de pantalla por definicion.
+    //
+    // COLFONDOS, 19-oct: por cantidad daba 11.326.838,74 y el archivo dice
+    // 11.341.664,37. La Planilla COP lee del registro, asi que los 14.825,63
+    // solo se veian de nuestro lado (Sergio, 19-oct).
+    //
+    // Asi la suma de las lineas cierra exacto: la suma de los brutos por
+    // allocation es qtyOrden x precioPond = brutoOrden, y brutoOrden x comOrden
+    // es justo la suma folio por folio.
+    const comMontoOrden = folios.reduce(
+      (s,f)=> s + f.cantidad*f.precio*(f.marca==='bloque'?comBloque:comPantalla), 0);
+    const comOrden = brutoOrden>0 ? comMontoOrden/brutoOrden : 0;
     const lado = folios[0].lado;
     const especie = folios[0].especie;
     o.allocations.forEach(a=>{
@@ -28191,7 +28206,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-19 22:45 UTC · v245';
+const BUILD_ID = '2026-10-19 22:55 UTC · v246';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
