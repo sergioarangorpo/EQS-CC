@@ -822,7 +822,8 @@
     <button data-mod="Herramientas" onclick="switchModule('Herramientas')" class="">Herramientas</button>
     <button data-mod="Informe"  onclick="switchModule('Informe')"  class="">Informe diario RVL</button>
     <button data-mod="CierreRVI" onclick="switchModule('CierreRVI')" class="">Informe diario RVI</button>
-    <button data-mod="Research" onclick="switchModule('Research')" class="">Research RVL</button>
+    <button data-mod="Research" id="navRshRVL" onclick="rshIrA('RVL')" class="">Research RVL</button>
+    <button data-mod="Research" id="navRshRVI" onclick="rshIrA('RVI')" class="">Research RVI</button>
   </div>
 
   <!-- ===== CIERRE RVI =====
@@ -871,7 +872,7 @@
     <div style="padding:0 24px 24px;">
       <div class="section-label" style="margin-top:16px;display:flex;align-items:center;
            justify-content:space-between;gap:12px;flex-wrap:wrap;">
-        <span>Research RVL · posición de los AFPs</span>
+        <span id="rshTitulo">Research RVL · posición de los AFPs</span>
         <span class="field-note" id="rshEstado">—</span>
       </div>
 
@@ -28315,6 +28316,24 @@ initDatesRVL();
 // ===================================================================
 let _rshDatos = { corte:null, contra:null, filas:[], prev:[], emision:{}, cortes:[] };
 let _rshVista = 'resumen';
+// RVL o RVI. Es el MISMO modulo: los datos, las tres vistas y la logica de
+// variacion son identicas, lo unico que cambia es el filtro. Dos modulos
+// separados serian dos copias del mismo codigo, y el dia que se arregle algo
+// habria que acordarse de arreglarlo dos veces. En la barra de arriba se ven
+// como dos botones, que es lo que importa para quien lo usa.
+let _rshModulo = 'RVL';
+// Las de baja liquidez vienen marcadas `mostrar=false` en el maestro y por
+// defecto no se piden. No estan borradas: es un filtro de pantalla.
+let _rshVerEscondidos = false;
+
+function rshIrA(mod){
+  _rshModulo = (mod === 'RVI') ? 'RVI' : 'RVL';
+  // Los cortes se vuelven a pedir: un instrumento de RVI puede existir en
+  // meses en los que no hay nada de RVL y al reves.
+  _rshDatos.cortes = [];
+  if(typeof switchModule === 'function') switchModule('Research');
+  else rshCargar();
+}
 
 const RSH_AFPS = ['PORVENIR','PROTECCION','COLFONDOS','SKANDIA'];
 // El orden de los fondos es el del riesgo, no alfabético: así se lee de
@@ -28351,7 +28370,11 @@ async function rshCargar(){
   try{
     // Los cortes disponibles. Se piden una sola vez por entrada al módulo.
     if(!_rshDatos.cortes.length){
-      const f = await supaFetchTodo('afp_portafolio', 'select=fecha_corte&order=fecha_corte.desc');
+      // `afp_cortes` es una vista de UNA columna con los meses distintos.
+      // Antes esto pedia `select=fecha_corte` sobre `afp_portafolio`, que
+      // con un solo mes cargado eran 347 filas; con los 21 meses son
+      // 127.000 filas bajadas solo para armar un desplegable de 21 opciones.
+      const f = await supaFetchTodo('afp_cortes', 'select=fecha_corte&order=fecha_corte.desc');
       _rshDatos.cortes = [...new Set(f.map(x=>x.fecha_corte))].sort().reverse();
       const s1 = document.getElementById('rshCorte');
       const s2 = document.getElementById('rshContra');
@@ -28389,23 +28412,65 @@ async function rshCargar(){
     }
     const corte  = document.getElementById('rshCorte').value || _rshDatos.cortes[0];
     const contra = document.getElementById('rshContra').value || '';
-    const [filas, prev, emis] = await Promise.all([
-      supaFetchTodo('afp_portafolio', `select=*&fecha_corte=eq.${corte}`),
-      contra ? supaFetchTodo('afp_portafolio', `select=*&fecha_corte=eq.${contra}`)
+    // Se lee `afp_posicion`, NO `afp_portafolio`. La vista es la que resuelve
+    // las cadenas y suma los duplicados: leyendo la tabla cruda, Bancolombia
+    // y Cibest saldrian como dos especies distintas —una que se muere en
+    // abril-2025 y otra que nace en mayo— y Banco Popular partido en dos
+    // lineas, $6.242 MM y $20.735 MM, porque llega con dos ISIN a la vez.
+    // Esa logica vive en la vista y en ningun otro lado (Sergio, 20-oct).
+    const _filtro = `&modulo=eq.${_rshModulo}` +
+                    (_rshVerEscondidos ? '' : '&mostrar=is.true');
+    const [filas, prev, emis, huerfanos] = await Promise.all([
+      supaFetchTodo('afp_posicion', `select=*&fecha_corte=eq.${corte}${_filtro}`),
+      contra ? supaFetchTodo('afp_posicion', `select=*&fecha_corte=eq.${contra}${_filtro}`)
              : Promise.resolve([]),
       supaFetchTodo('afp_emision', `select=*&fecha_corte=eq.${corte}`),
+      // SIN CLASIFICAR. Un instrumento que llegue y no este en
+      // `maestro_afp_instrumento` sale con `modulo` nulo, y entonces no
+      // cae ni en RVL ni en RVI: desaparece de las dos pantallas sin que
+      // nadie lo note. Por eso se piden aparte y se avisa. El dato SI
+      // esta cargado; lo que falta es decidir a donde va.
+      supaFetchTodo('afp_posicion',
+        `select=isin,nemo,nombre,valor_mercado&fecha_corte=eq.${corte}&modulo=is.null`),
     ]);
+    // La etiqueta con la que se agrupa y se muestra. Los ADR y los 136 ETF
+    // del exterior llegan SIN nemotecnico: antes `f.nemo` era la llave y
+    // todos esos caian en un mismo balde vacio. Se cae al nombre y, si
+    // tampoco hay, al ISIN — nunca a una celda en blanco.
+    const _etiq = f => f.nemo || f.nombre || f.isin || '(sin nombre)';
+    filas.forEach(f=>{ f._et = _etiq(f); });
+    prev .forEach(f=>{ f._et = _etiq(f); });
     _rshDatos.corte = corte;
     _rshDatos.contra = contra;
     _rshDatos.filas = filas;
     _rshDatos.prev = prev;
+    // La emision va por ISIN, que es la llave de la tabla. Para encontrarla
+    // desde una etiqueta hace falta el puente etiqueta -> ISIN.
     _rshDatos.emision = {};
-    emis.forEach(e=>{ _rshDatos.emision[e.nemo] = e; });
+    emis.forEach(e=>{ _rshDatos.emision[e.isin] = e; });
+    _rshDatos.isinDe = {};
+    filas.forEach(f=>{ if(f.isin && !_rshDatos.isinDe[f._et]) _rshDatos.isinDe[f._et] = f.isin; });
     const tot = filas.reduce((s,f)=>s+(Number(f.valor_mercado)||0),0);
     if(est) est.textContent = `${_rshFecha(corte)} · ${filas.length} posiciones · ${_rshMM(tot/1e9)} mm`;
-    if(avi) avi.textContent = contra
-      ? `Variación contra ${_rshFecha(contra)}. En verde lo que compraron, en rojo lo que vendieron.`
-      : 'Sin comparación: elige un corte en "contra" para ver quién compró y quién vendió.';
+    if(avi){
+      const base = contra
+        ? `Variación contra ${_rshFecha(contra)}. En verde lo que compraron, en rojo lo que vendieron.`
+        : 'Sin comparación: elige un corte en "contra" para ver quién compró y quién vendió.';
+      const hu = Array.isArray(huerfanos) ? huerfanos : [];
+      if(hu.length){
+        const mm = hu.reduce((s,x)=>s+(Number(x.valor_mercado)||0),0)/1e9;
+        const quienes = hu.slice(0,4)
+          .map(x=>`${x.nemo || x.nombre || x.isin} (${x.isin})`).join(', ');
+        avi.innerHTML = base +
+          `<br><b style="color:var(--warn,#f59e0b);">${hu.length} instrumento(s) sin clasificar` +
+          ` · ${_rshMM(mm)} mm:</b> ${quienes}${hu.length>4?', …':''}. ` +
+          `No salen ni en RVL ni en RVI porque no están en el maestro. ` +
+          `Agrégalos a <b>maestro_afp_instrumento</b> y vuelve a actualizar — ` +
+          `no hay que recargar los meses, la vista los recoge sola.`;
+      } else {
+        avi.textContent = base;
+      }
+    }
     rshPintar();
   }catch(e){
     if(est) est.textContent = 'error';
@@ -28420,6 +28485,17 @@ function rshPintar(){
     const b = document.getElementById(id);
     if(b) b.classList.toggle('ghost', ['resumen','especie','fondo'][i] !== _rshVista);
   });
+  // Los dos botones de la barra comparten `data-mod="Research"`, asi que
+  // `switchModule` deja los DOS en activo. Aqui se corrige para que se vea
+  // cual esta abierto.
+  const bL = document.getElementById('navRshRVL');
+  const bI = document.getElementById('navRshRVI');
+  if(bL) bL.classList.toggle('active', _rshModulo === 'RVL');
+  if(bI) bI.classList.toggle('active', _rshModulo === 'RVI');
+  const t = document.getElementById('rshTitulo');
+  if(t) t.textContent = _rshModulo === 'RVI'
+    ? 'Research RVI · posición de los AFPs en renta variable internacional'
+    : 'Research RVL · posición de los AFPs en la bolsa local';
   const c = document.getElementById('rshCuerpo');
   if(!c) return;
   if(_rshVista === 'especie')    c.innerHTML = _rshTablaEspecie();
@@ -28465,8 +28541,8 @@ function _rshResumen(){
 
   // Los movimientos más grandes del mes. Es lo primero que uno quiere ver.
   if(hayPrev){
-    const hoyE = _rshAgrupar(_rshDatos.filas, f=>f.afp+'|'+f.nemo);
-    const antE = _rshAgrupar(_rshDatos.prev,  f=>f.afp+'|'+f.nemo);
+    const hoyE = _rshAgrupar(_rshDatos.filas, f=>f.afp+'|'+f._et);
+    const antE = _rshAgrupar(_rshDatos.prev,  f=>f.afp+'|'+f._et);
     const movs = [];
     new Set([...Object.keys(hoyE), ...Object.keys(antE)]).forEach(k=>{
       const [afp,nemo] = k.split('|');
@@ -28501,11 +28577,11 @@ function _rshResumen(){
 
 function _rshTablaEspecie(){
   const hayPrev = _rshDatos.prev.length > 0;
-  const hoy = _rshAgrupar(_rshDatos.filas, f=>f.nemo+'|'+f.afp);
-  const ant = _rshAgrupar(_rshDatos.prev,  f=>f.nemo+'|'+f.afp);
-  const totEsp = _rshAgrupar(_rshDatos.filas, f=>f.nemo);
+  const hoy = _rshAgrupar(_rshDatos.filas, f=>f._et+'|'+f.afp);
+  const ant = _rshAgrupar(_rshDatos.prev,  f=>f._et+'|'+f.afp);
+  const totEsp = _rshAgrupar(_rshDatos.filas, f=>f._et);
   const accEsp = {};
-  _rshDatos.filas.forEach(f=>{ accEsp[f.nemo] = (accEsp[f.nemo]||0) + (Number(f.acciones)||0); });
+  _rshDatos.filas.forEach(f=>{ accEsp[f._et] = (accEsp[f._et]||0) + (Number(f.acciones)||0); });
   const nemos = Object.keys(totEsp).sort((a,b)=>totEsp[b].valor-totEsp[a].valor);
 
   let h = `<div class="panel" style="padding:0;overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;">
@@ -28517,7 +28593,14 @@ function _rshTablaEspecie(){
   nemos.forEach(n=>{
     const t = totEsp[n].valor;
     const tp = RSH_AFPS.reduce((s,a)=>s+((ant[n+'|'+a]||{valor:0}).valor),0);
-    const e = _rshDatos.emision[n];
+    // El puente etiqueta -> ISIN puede no tener esta etiqueta. Si se usa esa
+    // llave vacia tal cual, `emision[undefined]` NO devuelve nada en el caso
+    // bueno pero SI devuelve una fila cuando alguna emision llego sin ISIN:
+    // todas se guardarian bajo la misma llave `undefined` y cualquier especie
+    // se llevaria el porcentaje de la ultima. Un numero de otro papel es peor
+    // que un guion, asi que sin llave no se busca.
+    const _ik = (_rshDatos.isinDe || {})[n];
+    const e = _ik ? _rshDatos.emision[_ik] : null;
     // Solo se muestra el % cuando el monto de emisión es confiable.
     const pctEm = (e && e.emision_confiable && e.monto_emision)
       ? (accEsp[n]/Number(e.monto_emision)*100).toFixed(1)+'%'
@@ -28579,7 +28662,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-20 18:20 UTC · v249';
+const BUILD_ID = '2026-10-20 20:55 UTC · v250';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
