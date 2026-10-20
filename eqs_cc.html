@@ -889,6 +889,8 @@
           <button class="btn small ghost" onclick="rshVista('especie')" id="rshB2">Por especie</button>
           <button class="btn small ghost" onclick="rshVista('fondo')"   id="rshB3">Por fondo</button>
           <button class="btn small ghost" onclick="rshVista('evolucion')" id="rshB4">Evolución</button>
+          <button class="btn small ghost" onclick="rshVista('spreads')" id="rshB5">Spreads</button>
+          <button class="btn small ghost" onclick="rshVista('dividendos')" id="rshB6">Dividendos</button>
         </div>
         <div id="rshAviso" class="field-note" style="margin-top:8px;"></div>
       </div>
@@ -28479,7 +28481,17 @@ async function rshCargar(){
   }
 }
 
-function rshVista(v){ _rshVista = v; rshPintar(); }
+function rshVista(v){
+  _rshVista = v;
+  // El calendario se trae la PRIMERA vez que se entra, no al abrir el
+  // módulo: son tres consultas más y la mayoría de las veces uno entra a
+  // Research a mirar posiciones, no dividendos.
+  if(v === 'dividendos' && !_rshDiv.cargado && !_rshDiv.cargando){
+    rshCargarDividendos();
+    return;
+  }
+  rshPintar();
+}
 
 // ===================================================================
 // EVOLUCIÓN EN EL TIEMPO
@@ -28705,9 +28717,10 @@ function _rshTablaEvolucion(){
 }
 
 function rshPintar(){
-  ['rshB1','rshB2','rshB3','rshB4'].forEach((id,i)=>{
+  ['rshB1','rshB2','rshB3','rshB4','rshB5','rshB6'].forEach((id,i)=>{
     const b = document.getElementById(id);
-    if(b) b.classList.toggle('ghost', ['resumen','especie','fondo','evolucion'][i] !== _rshVista);
+    if(b) b.classList.toggle('ghost',
+      ['resumen','especie','fondo','evolucion','spreads','dividendos'][i] !== _rshVista);
   });
   // Los dos botones de la barra comparten `data-mod="Research"`, asi que
   // `switchModule` deja los DOS en activo. Aqui se corrige para que se vea
@@ -28722,10 +28735,12 @@ function rshPintar(){
     : 'Research RVL · posición de los AFPs en la bolsa local';
   const c = document.getElementById('rshCuerpo');
   if(!c) return;
-  if(_rshVista === 'especie')        c.innerHTML = _rshTablaEspecie();
-  else if(_rshVista === 'fondo')     c.innerHTML = _rshTablaFondo();
-  else if(_rshVista === 'evolucion') c.innerHTML = _rshTablaEvolucion();
-  else                               c.innerHTML = _rshResumen();
+  if(_rshVista === 'especie')         c.innerHTML = _rshTablaEspecie();
+  else if(_rshVista === 'fondo')      c.innerHTML = _rshTablaFondo();
+  else if(_rshVista === 'evolucion')  c.innerHTML = _rshTablaEvolucion();
+  else if(_rshVista === 'spreads')    c.innerHTML = _rshTablaSpread();
+  else if(_rshVista === 'dividendos') c.innerHTML = _rshTablaDividendos();
+  else                                c.innerHTML = _rshResumen();
 }
 
 // --- agrupador: suma valor y acciones por la clave que se le pida ---
@@ -28848,6 +28863,384 @@ function _rshTablaEspecie(){
   return h;
 }
 
+// ===================================================================
+// DIVIDENDOS — calendario de la semana
+// -------------------------------------------------------------------
+// Dos fechas y dos colores, como los pidió Sergio:
+//   EX   — desde ahí la acción ya NO trae el dividendo. Es la que manda
+//          para operar.
+//   PAGO — cuando entra la plata. Al cliente le importa, pero no mueve
+//          el precio.
+// Un mismo dividendo aparece en dos semanas distintas si sus fechas caen
+// en semanas distintas, y eso es correcto: son dos eventos.
+//
+// El sello de "datos al …" va arriba y grande. No es adorno: si el feed
+// dejó de correr, este cuadro se ve exactamente igual que uno al día, y
+// alguien le va a decir a un cliente que Ecopetrol paga el lunes con
+// datos de hace tres semanas. Pasados 8 días se pone en alerta.
+// (Sergio, 20-oct)
+// ===================================================================
+let _rshDiv = { semana:0, filas:[], estado:null, cargando:false, cargado:false };
+
+function rshDivSemana(d){ _rshDiv.semana += d; rshCargarDividendos(); }
+
+function _rshLunes(offsetSemanas){
+  const d = new Date();
+  d.setHours(0,0,0,0);
+  // getDay(): 0 = domingo. Se corre al lunes de esta semana.
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + (offsetSemanas||0) * 7);
+  return d;
+}
+function _rshISO(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+async function rshCargarDividendos(){
+  _rshDiv.cargando = true; rshPintar();
+  try{
+    const lun = _rshLunes(_rshDiv.semana);
+    const dom = new Date(lun); dom.setDate(dom.getDate() + 6);
+    const a = _rshISO(lun), b = _rshISO(dom);
+    // Dos consultas en vez de un `or`: una por fecha EX y otra por fecha de
+    // pago. Se mezclan por (isin, ex_date), que es la llave del dividendo.
+    const [porEx, porPago, est] = await Promise.all([
+      supaFetchTodo('dividendos_calendario', `select=*&ex_date=gte.${a}&ex_date=lte.${b}`),
+      supaFetchTodo('dividendos_calendario', `select=*&pago_date=gte.${a}&pago_date=lte.${b}`),
+      supaFetchTodo('dividendos_estado', 'select=*&limit=1'),
+    ]);
+    const map = {};
+    [...porEx, ...porPago].forEach(x=>{ map[x.isin + '|' + x.ex_date] = x; });
+    _rshDiv.filas = Object.values(map);
+    _rshDiv.estado = (est && est[0]) || null;
+    _rshDiv.cargado = true;
+  }catch(e){
+    _rshDiv.filas = [];
+    _rshDiv.estado = { mensaje:'No se pudo leer: ' + e.message };
+    _rshDiv.cargado = true;
+  }
+  _rshDiv.cargando = false;
+  rshPintar();
+}
+
+function _rshMonto(m, moneda){
+  const n = Number(m)||0;
+  if(String(moneda||'').toUpperCase() === 'COP'){
+    return '$' + n.toLocaleString('es-CO',{maximumFractionDigits:2});
+  }
+  return n.toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:4}) +
+         ' ' + (moneda || '');
+}
+
+function _rshTablaDividendos(){
+  const EX   = '#a855f7';   // morado: fecha ex
+  const PAGO = '#22c55e';   // verde: fecha de pago
+  const lun = _rshLunes(_rshDiv.semana);
+  const dias = [];
+  for(let i=0;i<7;i++){ const d = new Date(lun); d.setDate(d.getDate()+i); dias.push(d); }
+  const NOM = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
+
+  let h = `<div class="panel" style="margin-bottom:12px;">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <button class="btn small" onclick="rshDivSemana(-1)">← semana anterior</button>
+      <button class="btn small${_rshDiv.semana===0?'':' ghost'}" onclick="_rshDiv.semana=0;rshCargarDividendos()">Esta semana</button>
+      <button class="btn small" onclick="rshDivSemana(1)">semana siguiente →</button>
+      <span style="flex:1;"></span>
+      <span class="field-note">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${EX};"></span> fecha ex
+        &nbsp;&nbsp;
+        <span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${PAGO};"></span> fecha de pago
+      </span>
+    </div>`;
+
+  // El sello. Esto va arriba a propósito.
+  const est = _rshDiv.estado;
+  if(est && est.corrida){
+    const dd = Math.floor((Date.now() - new Date(est.corrida).getTime())/86400000);
+    const viejo = dd > 8;
+    h += `<div style="margin-top:10px;padding:9px 12px;border-radius:7px;
+        background:${viejo?'rgba(245,158,11,.14)':'rgba(34,197,94,.10)'};
+        border:1px solid ${viejo?'rgba(245,158,11,.45)':'rgba(34,197,94,.3)'};
+        font-size:13px;">
+      <b>Datos al ${new Date(est.corrida).toLocaleDateString('es-CO',{day:'2-digit',month:'long',year:'numeric'})}</b>
+      · hace ${dd} día${dd===1?'':'s'} · fuente: ${est.fuente||'—'}
+      ${viejo ? `<br><b style="color:var(--warn,#f59e0b);">Este calendario tiene más de 8 días.
+        No lo uses para hablar con un cliente sin volver a correr el cargue.</b>` : ''}
+    </div>`;
+  } else if(_rshDiv.cargado){
+    h += `<div style="margin-top:10px;padding:9px 12px;border-radius:7px;
+        background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.45);font-size:13px;">
+      <b style="color:var(--warn,#f59e0b);">No hay sello de carga.</b>
+      Nunca ha corrido el feed de dividendos, o no se pudo leer
+      <code>dividendos_estado</code>. Lo que veas abajo puede estar vacío por eso
+      y no porque nadie pague.</div>`;
+  }
+  h += `</div>`;
+
+  if(_rshDiv.cargando) return h + `<div class="panel"><span class="field-note">cargando…</span></div>`;
+  if(!_rshDiv.cargado) return h + `<div class="panel"><span class="field-note">
+      Aprieta <b>Esta semana</b> para traer el calendario.</span></div>`;
+
+  // Se reparte cada fila en los días que le tocan. Una misma distribución
+  // puede caer dos veces en la semana: una por la ex y otra por el pago.
+  const porDia = {};
+  dias.forEach(d=>{ porDia[_rshISO(d)] = []; });
+  _rshDiv.filas.forEach(x=>{
+    if(porDia[x.ex_date])   porDia[x.ex_date].push({...x, que:'ex'});
+    if(porDia[x.pago_date]) porDia[x.pago_date].push({...x, que:'pago'});
+  });
+  const hayFinde = dias.slice(5).some(d=>porDia[_rshISO(d)].length);
+  const mostrar = hayFinde ? dias : dias.slice(0,5);
+  const total = Object.values(porDia).reduce((s,a)=>s+a.length,0);
+
+  h += `<div class="section-label" style="margin:4px 0 8px;">
+      Semana del ${lun.toLocaleDateString('es-CO',{day:'2-digit',month:'short'})}
+      al ${dias[6].toLocaleDateString('es-CO',{day:'2-digit',month:'short',year:'numeric'})}
+      · ${total} evento${total===1?'':'s'}</div>`;
+
+  h += `<div style="display:flex;gap:10px;flex-wrap:wrap;">`;
+  mostrar.forEach((d,i)=>{
+    const iso = _rshISO(d);
+    const items = porDia[iso];
+    const hoy = iso === _rshISO(new Date());
+    h += `<div class="card" style="flex:1;min-width:172px;padding:0;overflow:hidden;
+        ${hoy?'outline:2px solid var(--purple,#a855f7);outline-offset:-2px;':''}">
+      <div style="padding:8px 11px;border-bottom:1px solid var(--line,#222);
+           font-size:12px;font-weight:700;${hoy?'color:var(--purple,#a855f7);':'opacity:.75;'}">
+        ${NOM[i]} ${d.getDate()}${hoy?' · hoy':''}</div>
+      <div style="padding:8px 11px;">`;
+    if(!items.length){
+      h += `<span class="field-note" style="opacity:.45;">—</span>`;
+    } else {
+      items.sort((a,b)=>String(a.ticker).localeCompare(String(b.ticker)));
+      items.forEach(x=>{
+        const col = x.que === 'ex' ? EX : PAGO;
+        h += `<div style="margin-bottom:7px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="width:8px;height:8px;border-radius:2px;background:${col};
+                  display:inline-block;flex-shrink:0;"></span>
+            <b style="font-size:13px;">${x.ticker||x.isin}</b>
+            <span style="font-size:10px;opacity:.6;">${x.modulo||''}</span>
+          </div>
+          <div style="font-size:13px;font-weight:600;margin-left:14px;">${_rshMonto(x.monto, x.moneda)}</div>
+          ${x.tipo && !/ordinari|income|regular/i.test(x.tipo)
+            ? `<div style="font-size:10.5px;margin-left:14px;color:var(--warn,#f59e0b);">${x.tipo}</div>` : ''}
+        </div>`;
+      });
+    }
+    h += `</div></div>`;
+  });
+  h += `</div>`;
+
+  if(!total){
+    h += `<div class="field-note" style="margin-top:10px;">Ningún evento esta semana.
+      <b>Eso no es lo mismo que "no hay datos"</b>: mira el sello de arriba para saber
+      si el calendario está al día.</div>`;
+  }
+  h += `<div class="field-note" style="margin-top:10px;">
+    La <b>fecha ex</b> es la que manda para operar: desde ese día la acción ya no trae
+    el dividendo. La de <b>pago</b> es cuando entra la plata. Los montos van en la moneda
+    de cada papel y <b>no se suman entre monedas</b>.</div>`;
+  return h;
+}
+
+// ===================================================================
+// SPREADS — valor relativo entre dos papeles
+// -------------------------------------------------------------------
+// Dibuja el RATIO A/B a lo largo del tiempo, no dos líneas de precio.
+// Dos líneas con escalas distintas esconden justo lo que se viene a
+// mirar: una puede subir 5% y la otra 8% y en el gráfico las dos "suben".
+// El ratio dice de una cuál le ganó a cuál.
+//
+// Y dibuja la mediana y la banda de ±1 desviación de SU PROPIA historia,
+// porque un ratio solo no dice nada: 1,37 no es caro ni barato hasta que
+// se sabe que su rango del último año fue 1,20–1,45.
+//
+// Lo que esta pantalla NO dice, y hay que tenerlo presente al recomendar:
+// que un ratio esté en un extremo no significa que vaya a volver. Dos
+// acciones pueden separarse durante años con toda la razón del mundo si
+// los fundamentales cambiaron. La reversión a la media es un SUPUESTO.
+// La herramienta muestra dónde está; el juicio es de la mesa.
+//
+// No mezcla monedas: un papel en pesos contra uno en dólares necesita la
+// TRM de cada día y eso es otra cosa. Cuando no coinciden, lo dice y no
+// calcula.
+// (Sergio, 20-oct)
+// ===================================================================
+let _rshSpr = { a:null, b:null, datos:null, cargando:false, msg:'' };
+
+async function rshSpreadElegir(cual, isin){
+  _rshSpr[cual] = isin || null;
+  if(_rshSpr.a && _rshSpr.b) return rshCargarSpread();
+  _rshSpr.datos = null; _rshSpr.msg = '';
+  rshPintar();
+}
+
+async function rshCargarSpread(){
+  const {a, b} = _rshSpr;
+  if(!a || !b){ _rshSpr.datos = null; rshPintar(); return; }
+  if(a === b){ _rshSpr.datos = null; _rshSpr.msg = 'Elige dos papeles distintos.'; rshPintar(); return; }
+  _rshSpr.cargando = true; _rshSpr.msg = ''; rshPintar();
+  try{
+    const pedir = i => supaFetchTodo('precios_diarios',
+      `select=fecha,isin,ticker,cierre,moneda&isin=eq.${encodeURIComponent(i)}&order=fecha.asc`);
+    const [pa, pb] = await Promise.all([pedir(a), pedir(b)]);
+    if(!pa.length || !pb.length){
+      _rshSpr.datos = null;
+      _rshSpr.msg = !pa.length && !pb.length
+        ? 'No hay precios cargados para ninguno de los dos.'
+        : `No hay precios cargados para ${!pa.length ? 'el primero' : 'el segundo'}.`;
+      _rshSpr.cargando = false; rshPintar(); return;
+    }
+    const mA = (pa[0].moneda||'').toUpperCase(), mB = (pb[0].moneda||'').toUpperCase();
+    if(mA !== mB){
+      _rshSpr.datos = null;
+      _rshSpr.msg = `No se puede: ${pa[0].ticker} está en ${mA} y ${pb[0].ticker} en ${mB}. ` +
+        `Un ratio entre monedas distintas necesita la TRM de cada día y sería otra cosa — ` +
+        `estarías graficando el dólar, no el valor relativo de los dos papeles.`;
+      _rshSpr.cargando = false; rshPintar(); return;
+    }
+    // Solo los días que tienen los DOS. Rellenar el que falta con el precio
+    // anterior inventa un movimiento del ratio que nunca pasó.
+    const mapB = {}; pb.forEach(x=>{ mapB[x.fecha] = Number(x.cierre); });
+    const pts = [];
+    pa.forEach(x=>{
+      const vb = mapB[x.fecha];
+      const va = Number(x.cierre);
+      if(vb > 0 && va > 0) pts.push({ f:x.fecha, r: va/vb, a:va, b:vb });
+    });
+    if(pts.length < 5){
+      _rshSpr.datos = null;
+      _rshSpr.msg = `Solo hay ${pts.length} día(s) con precio de los dos a la vez. ` +
+        `Con eso no se puede decir si un nivel es alto o bajo.`;
+      _rshSpr.cargando = false; rshPintar(); return;
+    }
+    const rs = pts.map(p=>p.r);
+    const med = [...rs].sort((x,y)=>x-y)[Math.floor(rs.length/2)];
+    const prom = rs.reduce((s,v)=>s+v,0)/rs.length;
+    const sd = Math.sqrt(rs.reduce((s,v)=>s+(v-prom)*(v-prom),0)/rs.length) || 0;
+    const hoy = rs[rs.length-1];
+    const menores = rs.filter(v=>v < hoy).length;
+    _rshSpr.datos = {
+      pts, med, prom, sd, hoy,
+      pct: Math.round(menores/rs.length*100),
+      z: sd ? (hoy-prom)/sd : 0,
+      min: Math.min(...rs), max: Math.max(...rs),
+      tA: pa[pa.length-1].ticker || a, tB: pb[pb.length-1].ticker || b,
+      moneda: mA, desde: pts[0].f, hasta: pts[pts.length-1].f,
+      pxA: pts[pts.length-1].a, pxB: pts[pts.length-1].b,
+    };
+  }catch(e){
+    _rshSpr.datos = null; _rshSpr.msg = 'No se pudo leer: ' + e.message;
+  }
+  _rshSpr.cargando = false;
+  rshPintar();
+}
+
+function _rshSpreadSvg(d, W, H){
+  const ML = 62, MR = 12, MT = 10, MB = 28;
+  const w = W-ML-MR, h = H-MT-MB;
+  const rs = d.pts.map(p=>p.r);
+  let lo = Math.min(...rs), hi = Math.max(...rs);
+  const pad = (hi-lo)*0.08 || Math.abs(hi)*0.02 || 1;
+  lo -= pad; hi += pad;
+  const X = i => ML + (d.pts.length===1 ? w/2 : (i/(d.pts.length-1))*w);
+  const Y = v => MT + h - ((v-lo)/(hi-lo))*h;
+  let o = '';
+  // banda de ±1 desviación
+  const y1 = Y(d.prom + d.sd), y2 = Y(d.prom - d.sd);
+  o += `<rect x="${ML}" y="${Math.min(y1,y2).toFixed(1)}" width="${w}"
+          height="${Math.abs(y2-y1).toFixed(1)}" fill="var(--purple,#a855f7)" opacity=".10"/>`;
+  // mediana
+  o += `<line x1="${ML}" y1="${Y(d.med).toFixed(1)}" x2="${ML+w}" y2="${Y(d.med).toFixed(1)}"
+          stroke="var(--purple,#a855f7)" stroke-width="1.2" stroke-dasharray="5 4" opacity=".75"/>`;
+  // eje
+  for(let k=0;k<=4;k++){
+    const v = lo + (hi-lo)*k/4, y = Y(v);
+    o += `<line x1="${ML}" y1="${y.toFixed(1)}" x2="${ML+w}" y2="${y.toFixed(1)}"
+            stroke="var(--line,#222)" stroke-width="1" opacity=".4"/>
+          <text x="${ML-7}" y="${(y+3.5).toFixed(1)}" text-anchor="end" font-size="10"
+            fill="currentColor" opacity=".6">${v.toFixed(v<10?3:1)}</text>`;
+  }
+  const salto = Math.ceil(d.pts.length/8);
+  d.pts.forEach((p,i)=>{
+    if(i % salto) return;
+    o += `<text x="${X(i).toFixed(1)}" y="${H-10}" text-anchor="middle" font-size="10"
+            fill="currentColor" opacity=".6">${p.f.slice(5).replace('-','/')}</text>`;
+  });
+  o += `<polyline points="${d.pts.map((p,i)=>`${X(i).toFixed(1)},${Y(p.r).toFixed(1)}`).join(' ')}"
+          fill="none" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round"/>`;
+  o += `<circle cx="${X(d.pts.length-1).toFixed(1)}" cy="${Y(d.hoy).toFixed(1)}" r="3.5" fill="#38bdf8"/>`;
+  return `<svg width="${W}" height="${H}" style="display:block;max-width:100%;">${o}</svg>`;
+}
+
+function _rshTablaSpread(){
+  const porEt = {};
+  (_rshDatos.filas||[]).forEach(f=>{
+    const a = porEt[f._et] || (porEt[f._et] = { valor:0, isin:f.isin });
+    a.valor += Number(f.valor_mercado)||0;
+  });
+  const ops = Object.keys(porEt).sort((a,b)=>porEt[b].valor-porEt[a].valor);
+  const sel = (cual, val) => `<select onchange="rshSpreadElegir('${cual}', this.value)"
+      style="min-width:230px;"><option value="">— elige —</option>` +
+    ops.map(e=>`<option value="${porEt[e].isin}"${porEt[e].isin===val?' selected':''}>${e}</option>`).join('') +
+    `</select>`;
+
+  let h = `<div class="panel" style="margin-bottom:12px;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <label class="field-note">Vender</label>${sel('a', _rshSpr.a)}
+      <span style="opacity:.6;font-size:17px;">/</span>
+      <label class="field-note">Comprar</label>${sel('b', _rshSpr.b)}
+      <button class="btn small" onclick="rshCargarSpread()">↻</button>
+    </div></div>`;
+
+  if(_rshSpr.cargando) return h + `<div class="panel"><span class="field-note">cargando…</span></div>`;
+  if(_rshSpr.msg)      return h + `<div class="panel"><span class="field-note">${_rshSpr.msg}</span></div>`;
+  const d = _rshSpr.datos;
+  if(!d) return h + `<div class="panel"><span class="field-note">
+      Elige dos papeles para ver cómo se ha movido uno contra el otro.</span></div>`;
+
+  const caro = d.z >= 1, barato = d.z <= -1;
+  const col = caro ? 'var(--sell,#ef4444)' : (barato ? 'var(--buy,#22c55e)' : 'var(--text-1)');
+  h += `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+    <div class="card" style="padding:13px 17px;flex:1;min-width:168px;">
+      <div style="font-size:11px;opacity:.7;font-weight:700;letter-spacing:.4px;">RATIO HOY</div>
+      <div style="font-size:25px;font-weight:700;margin-top:3px;">${d.hoy.toFixed(d.hoy<10?3:2)}</div>
+      <div style="font-size:12px;opacity:.7;">${d.tA} ${d.pxA.toLocaleString('en-US')} /
+        ${d.tB} ${d.pxB.toLocaleString('en-US')} ${d.moneda}</div></div>
+    <div class="card" style="padding:13px 17px;flex:1;min-width:168px;">
+      <div style="font-size:11px;opacity:.7;font-weight:700;letter-spacing:.4px;">MEDIANA</div>
+      <div style="font-size:25px;font-weight:700;margin-top:3px;">${d.med.toFixed(d.med<10?3:2)}</div>
+      <div style="font-size:12px;opacity:.7;">rango ${d.min.toFixed(d.min<10?3:2)} – ${d.max.toFixed(d.max<10?3:2)}</div></div>
+    <div class="card" style="padding:13px 17px;flex:1;min-width:168px;">
+      <div style="font-size:11px;opacity:.7;font-weight:700;letter-spacing:.4px;">CONTRA SU HISTORIA</div>
+      <div style="font-size:25px;font-weight:700;margin-top:3px;color:${col};">${d.z>=0?'+':''}${d.z.toFixed(2)} σ</div>
+      <div style="font-size:12px;opacity:.7;">más alto que el ${d.pct}% de los días</div></div>
+    <div class="card" style="padding:13px 17px;flex:1;min-width:168px;">
+      <div style="font-size:11px;opacity:.7;font-weight:700;letter-spacing:.4px;">HISTORIA</div>
+      <div style="font-size:25px;font-weight:700;margin-top:3px;">${d.pts.length}</div>
+      <div style="font-size:12px;opacity:.7;">días · desde ${d.desde}</div></div>
+  </div>`;
+
+  h += `<div class="section-label" style="margin:4px 0 8px;">${d.tA} / ${d.tB}
+      · línea punteada = mediana · banda = ±1 desviación</div>`;
+  h += `<div class="panel" style="padding:12px;">` + _rshSpreadSvg(d, 980, 320) + `</div>`;
+
+  // La lectura, dicha con los límites que tiene.
+  let lectura;
+  if(caro)        lectura = `<b>${d.tA} está caro contra ${d.tB}</b> frente a su propia historia.`;
+  else if(barato) lectura = `<b>${d.tA} está barato contra ${d.tB}</b> frente a su propia historia.`;
+  else            lectura = `El ratio está <b>dentro de su rango normal</b>. No hay nada que destacar acá.`;
+  h += `<div class="panel" style="margin-top:10px;">
+    <div style="font-size:13.5px;">${lectura}</div>
+    <div class="field-note" style="margin-top:7px;">
+      Esto compara el ratio contra <b>sus propios ${d.pts.length} días</b>, nada más.
+      Que esté en un extremo <b>no significa que vaya a volver</b>: dos papeles pueden
+      separarse por años si cambió algo de fondo en uno de los dos. Antes de recomendarlo,
+      vale la pena saber si pasó algo que explique la separación — la gráfica no lo sabe.
+    </div></div>`;
+  return h;
+}
+
 function _rshTablaFondo(){
   const hayPrev = _rshDatos.prev.length > 0;
   const hoy = _rshAgrupar(_rshDatos.filas, f=>f.fondo+'|'+f.afp);
@@ -28887,7 +29280,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-20 21:55 UTC · v251';
+const BUILD_ID = '2026-10-20 22:40 UTC · v252';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
