@@ -888,6 +888,7 @@
           <button class="btn small ghost" onclick="rshVista('resumen')" id="rshB1">Resumen</button>
           <button class="btn small ghost" onclick="rshVista('especie')" id="rshB2">Por especie</button>
           <button class="btn small ghost" onclick="rshVista('fondo')"   id="rshB3">Por fondo</button>
+          <button class="btn small ghost" onclick="rshVista('evolucion')" id="rshB4">Evolución</button>
         </div>
         <div id="rshAviso" class="field-note" style="margin-top:8px;"></div>
       </div>
@@ -28480,10 +28481,233 @@ async function rshCargar(){
 
 function rshVista(v){ _rshVista = v; rshPintar(); }
 
+// ===================================================================
+// EVOLUCIÓN EN EL TIEMPO
+// -------------------------------------------------------------------
+// Una especie, los meses que haya cargados, una línea por AFP.
+//
+// Grafica ACCIONES, no valor, y esa es la decisión que hace que sirva.
+// En enero-2026 el RVL pasó de $55,0 a $65,7 billones sin que nadie
+// comprara nada: los precios subieron 21% parejo y las cantidades
+// quedaron planas. Una gráfica de valor muestra eso como una compra
+// enorme. El cuadro de mayores movimientos ya ordena por Δ acciones por
+// la misma razón. El valor queda disponible en el botón de al lado,
+// pero no es el defecto.
+//
+// Cuatro líneas se leen; veinticuatro no. Por eso el primer nivel es
+// por AFP y los seis fondos solo se abren de a una AFP a la vez.
+// (Sergio, 20-oct)
+// ===================================================================
+const RSH_COLOR = { PORVENIR:'#a855f7', PROTECCION:'#38bdf8',
+                    COLFONDOS:'#f59e0b', SKANDIA:'#34d399' };
+let _rshSerie = { isin:null, etiqueta:'', meses:[], porAfp:{}, porFondo:{},
+                  campo:'acciones', afpAbierta:null, cargando:false };
+
+function rshSerieCampo(c){ _rshSerie.campo = c; rshPintar(); }
+function rshAbrirAfp(a){
+  _rshSerie.afpAbierta = (_rshSerie.afpAbierta === a) ? null : a;
+  rshPintar();
+}
+
+async function rshCargarSerie(isin){
+  if(!isin){ _rshSerie.isin = null; rshPintar(); return; }
+  _rshSerie.cargando = true; rshPintar();
+  try{
+    // Se piden TODOS los meses de esa especie. Sin filtro de `mostrar`: si
+    // alguien la busca a propósito, la quiere ver aunque esté escondida.
+    const f = await supaFetchTodo('afp_posicion',
+      `select=fecha_corte,afp,fondo,nemo,nombre,acciones,valor_mercado` +
+      `&isin=eq.${encodeURIComponent(isin)}&order=fecha_corte.asc`);
+    const meses = [...new Set(f.map(x=>String(x.fecha_corte).slice(0,7)))].sort();
+    // Se guardan LAS DOS medidas, acciones y valor, y el botón elige cuál se
+    // pinta. Guardar solo la elegida obligaba a volver a pedir los datos al
+    // cambiar de botón — y si no se pedían, el rótulo decía "valor" mientras
+    // la línea seguía siendo la de acciones: un eje en billones dibujando
+    // cantidades. Esa es la forma de siempre: dos cosas distintas compartiendo
+    // un solo lugar donde guardarse.
+    const porAfp = {}, porFondo = {};
+    const sumar = (destino, clave, m, x)=>{
+      const d = destino[clave] = destino[clave] || {};
+      const a = d[m] = d[m] || { acciones:0, valor:0 };
+      a.acciones += Number(x.acciones)||0;
+      a.valor    += Number(x.valor_mercado)||0;
+    };
+    f.forEach(x=>{
+      const m = String(x.fecha_corte).slice(0,7);
+      const a = x.afp || '?';
+      sumar(porAfp, a, m, x);
+      sumar(porFondo, a + '§' + (x.fondo || '?'), m, x);
+    });
+    _rshSerie.isin = isin;
+    _rshSerie.etiqueta = (f[0] && (f[0].nemo || f[0].nombre)) || isin;
+    _rshSerie.meses = meses;
+    _rshSerie.porAfp = porAfp;
+    _rshSerie.porFondo = porFondo;
+  }catch(e){
+    _rshSerie.isin = null;
+    _rshSerie.etiqueta = 'No se pudo leer: ' + e.message;
+  }
+  _rshSerie.cargando = false;
+  rshPintar();
+}
+
+// El dibujo. SVG a mano, como el resto del app.
+function _rshLineas(series, meses, W, H){
+  if(!meses.length) return '<div class="field-note">Sin meses para graficar.</div>';
+  const ML = 68, MR = 14, MT = 12, MB = 34;      // márgenes
+  const w = W - ML - MR, h = H - MT - MB;
+  // De las dos medidas guardadas se saca la que esté elegida. `undefined`
+  // significa que ese mes no tiene posición y NO se dibuja: un cero dice
+  // "vendieron todo" y un hueco dice "no hay dato", que no es lo mismo.
+  const VAL = (s, m) => {
+    const a = s.datos[m];
+    return a === undefined ? undefined : a[_rshSerie.campo === 'valor' ? 'valor' : 'acciones'];
+  };
+  let min = Infinity, max = -Infinity;
+  Object.values(series).forEach(s=>meses.forEach(m=>{
+    const v = VAL(s, m); if(v === undefined) return;
+    if(v < min) min = v; if(v > max) max = v;
+  }));
+  if(!isFinite(min)) return '<div class="field-note">Sin datos para esta especie.</div>';
+  // El eje NO arranca en cero a propósito: con posiciones grandes y estables
+  // un eje desde cero aplana todo y no se ve el movimiento, que es lo que se
+  // viene a mirar. Para que no se lea mal, el mínimo y el máximo van
+  // ESCRITOS en el eje: quien mire sabe contra qué está viendo la pendiente.
+  if(min === max){ min = min * 0.98 || -1; max = max * 1.02 || 1; }
+  const rango = max - min;
+  const X = i => ML + (meses.length === 1 ? w/2 : (i/(meses.length-1))*w);
+  const Y = v => MT + h - ((v - min)/rango)*h;
+  let o = '';
+  // rejilla
+  for(let k=0;k<=4;k++){
+    const v = min + rango*k/4, y = Y(v);
+    o += `<line x1="${ML}" y1="${y.toFixed(1)}" x2="${ML+w}" y2="${y.toFixed(1)}"
+            stroke="var(--line,#222)" stroke-width="1" opacity=".5"/>`;
+    o += `<text x="${ML-7}" y="${(y+3.5).toFixed(1)}" text-anchor="end"
+            font-size="10" fill="currentColor" opacity=".6">${_rshEje(v)}</text>`;
+  }
+  // meses: se escriben salteados si no caben
+  const salto = Math.ceil(meses.length / 11);
+  meses.forEach((m,i)=>{
+    if(i % salto) return;
+    o += `<text x="${X(i).toFixed(1)}" y="${H-12}" text-anchor="middle"
+            font-size="10" fill="currentColor" opacity=".6">${m.slice(2).replace('-','/')}</text>`;
+  });
+  // líneas
+  Object.keys(series).forEach(k=>{
+    const s = series[k];
+    const pts = [];
+    meses.forEach((m,i)=>{
+      const v = VAL(s, m);
+      if(v === undefined) return;          // un hueco NO se dibuja como cero
+      pts.push(`${X(i).toFixed(1)},${Y(v).toFixed(1)}`);
+    });
+    if(!pts.length) return;
+    o += `<polyline points="${pts.join(' ')}" fill="none" stroke="${s.color}"
+            stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const ult = pts[pts.length-1].split(',');
+    o += `<circle cx="${ult[0]}" cy="${ult[1]}" r="3" fill="${s.color}"/>`;
+  });
+  return `<svg width="${W}" height="${H}" style="display:block;max-width:100%;">${o}</svg>`;
+}
+
+function _rshEje(v){
+  const a = Math.abs(v);
+  if(_rshSerie.campo === 'valor'){
+    if(a >= 1e12) return (v/1e12).toFixed(1)+' bn';
+    return (v/1e9).toFixed(0)+' mm';
+  }
+  if(a >= 1e6) return (v/1e6).toFixed(1)+'M';
+  if(a >= 1e3) return (v/1e3).toFixed(0)+'k';
+  return String(Math.round(v));
+}
+
+function _rshTablaEvolucion(){
+  // El desplegable sale de lo que hay en el corte abierto, de mayor a menor.
+  const porEt = {};
+  (_rshDatos.filas||[]).forEach(f=>{
+    const a = porEt[f._et] || (porEt[f._et] = { valor:0, isin:f.isin });
+    a.valor += Number(f.valor_mercado)||0;
+  });
+  const ops = Object.keys(porEt).sort((a,b)=>porEt[b].valor-porEt[a].valor);
+  const sel = `<select id="rshEspecieSerie" onchange="rshCargarSerie(this.value)"
+                 style="min-width:280px;">
+      <option value="">— elige una especie —</option>` +
+    ops.map(e=>`<option value="${porEt[e].isin}"${porEt[e].isin===_rshSerie.isin?' selected':''}>${e}</option>`).join('') +
+    `</select>`;
+
+  let h = `<div class="panel" style="margin-bottom:12px;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <label class="field-note" for="rshEspecieSerie">Especie</label>${sel}
+      <button class="btn small${_rshSerie.campo==='acciones'?'':' ghost'}"
+              onclick="rshSerieCampo('acciones')">Acciones</button>
+      <button class="btn small${_rshSerie.campo==='valor'?'':' ghost'}"
+              onclick="rshSerieCampo('valor')">Valor</button>
+      <span class="field-note" style="flex:1;">Las <b>acciones</b> son lo que se mira:
+        el valor sube y baja también por precio, y una subida de precio no es una compra.</span>
+    </div></div>`;
+
+  if(_rshSerie.cargando) return h + `<div class="panel"><span class="field-note">cargando…</span></div>`;
+  if(!_rshSerie.isin)   return h + `<div class="panel"><span class="field-note">
+      Elige una especie arriba para ver cómo se movió mes a mes.</span></div>`;
+
+  const series = {};
+  RSH_AFPS.forEach(a=>{
+    if(_rshSerie.porAfp[a]) series[a] = { datos:_rshSerie.porAfp[a], color:RSH_COLOR[a]||'#94a3b8' };
+  });
+  h += `<div class="section-label" style="margin:4px 0 8px;">${_rshSerie.etiqueta}
+        · ${_rshSerie.campo === 'valor' ? 'valor de mercado' : 'acciones'}
+        · ${_rshSerie.meses.length} meses</div>`;
+  h += `<div class="panel" style="padding:12px;">` + _rshLineas(series, _rshSerie.meses, 980, 330);
+  h += `<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;">`;
+  RSH_AFPS.forEach(a=>{
+    if(!series[a]) return;
+    const d = _rshSerie.porAfp[a];
+    const _c = _rshSerie.campo === 'valor' ? 'valor' : 'acciones';
+    const _u = d[_rshSerie.meses[_rshSerie.meses.length-1]];
+    const _p = d[_rshSerie.meses[0]];
+    const ult = _u ? _u[_c] : undefined;
+    const pri = _p ? _p[_c] : undefined;
+    const dif = (ult !== undefined && pri !== undefined) ? ult - pri : null;
+    const abierta = _rshSerie.afpAbierta === a;
+    h += `<button class="btn small${abierta?'':' ghost'}" onclick="rshAbrirAfp('${a}')"
+            style="display:flex;align-items:center;gap:7px;">
+        <span style="width:11px;height:11px;border-radius:3px;background:${RSH_COLOR[a]};
+              display:inline-block;"></span>${a}
+        <span style="opacity:.7;">${ult !== undefined ? _rshEje(ult) : '—'}</span>
+        ${dif === null ? '' : `<span style="color:${dif>=0?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};">
+          ${dif>=0?'+':''}${_rshEje(dif)}</span>`}
+      </button>`;
+  });
+  h += `</div></div>`;
+
+  if(_rshSerie.afpAbierta){
+    const a = _rshSerie.afpAbierta;
+    const sf = {};
+    const pal = ['#a855f7','#38bdf8','#f59e0b','#34d399','#f472b6','#facc15'];
+    RSH_FONDOS.forEach((fo,i)=>{
+      const d = _rshSerie.porFondo[a+'§'+fo];
+      if(d) sf[fo] = { datos:d, color:pal[i % pal.length] };
+    });
+    h += `<div class="section-label" style="margin:14px 0 8px;">${a} · por fondo</div>`;
+    h += `<div class="panel" style="padding:12px;">` + _rshLineas(sf, _rshSerie.meses, 980, 260);
+    h += `<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;">`;
+    Object.keys(sf).forEach(fo=>{
+      h += `<span class="field-note" style="display:flex;align-items:center;gap:6px;">
+        <span style="width:11px;height:11px;border-radius:3px;background:${sf[fo].color};
+              display:inline-block;"></span>${fo}</span>`;
+    });
+    h += `</div></div>`;
+  } else {
+    h += `<div class="field-note" style="margin-top:10px;">Haz clic en una AFP para abrir sus seis fondos.</div>`;
+  }
+  return h;
+}
+
 function rshPintar(){
-  ['rshB1','rshB2','rshB3'].forEach((id,i)=>{
+  ['rshB1','rshB2','rshB3','rshB4'].forEach((id,i)=>{
     const b = document.getElementById(id);
-    if(b) b.classList.toggle('ghost', ['resumen','especie','fondo'][i] !== _rshVista);
+    if(b) b.classList.toggle('ghost', ['resumen','especie','fondo','evolucion'][i] !== _rshVista);
   });
   // Los dos botones de la barra comparten `data-mod="Research"`, asi que
   // `switchModule` deja los DOS en activo. Aqui se corrige para que se vea
@@ -28498,9 +28722,10 @@ function rshPintar(){
     : 'Research RVL · posición de los AFPs en la bolsa local';
   const c = document.getElementById('rshCuerpo');
   if(!c) return;
-  if(_rshVista === 'especie')    c.innerHTML = _rshTablaEspecie();
-  else if(_rshVista === 'fondo') c.innerHTML = _rshTablaFondo();
-  else                           c.innerHTML = _rshResumen();
+  if(_rshVista === 'especie')        c.innerHTML = _rshTablaEspecie();
+  else if(_rshVista === 'fondo')     c.innerHTML = _rshTablaFondo();
+  else if(_rshVista === 'evolucion') c.innerHTML = _rshTablaEvolucion();
+  else                               c.innerHTML = _rshResumen();
 }
 
 // --- agrupador: suma valor y acciones por la clave que se le pida ---
@@ -28662,7 +28887,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-20 20:55 UTC · v250';
+const BUILD_ID = '2026-10-20 21:55 UTC · v251';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
