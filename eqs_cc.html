@@ -8712,6 +8712,48 @@ function renderCierreRVI(){
   }
 
   // ---- la imagen ----
+  // La arma `informeRviHTML`, que recibe la GEOMETRIA. Aqui se pide la de
+  // pantalla; la del correo se pide en `_rviCompactoACanvas`. Los numeros
+  // salen del mismo sitio en los dos casos: un solo camino, dos anchos.
+  cont.innerHTML = informeRviHTML(RVI_GEO.pantalla);
+}
+
+// Las dos geometrias del informe de RVI. Lo UNICO que cambia entre ellas es el
+// ancho y el tamano de la letra: ni un dato, ni un bloque, ni un color.
+//
+// Hasta el 20-oct habia una sola, de 1320 px con los bloques en dos columnas,
+// y esa misma imagen viajaba al correo. El panel de lectura de Outlook mide
+// unos 650, asi que se encogia a 0,49x y las celdas de 12 px llegaban a 5,9.
+// Era el peor de los dos informes — el de RVL al menos tenia letra de 17.
+const RVI_GEO = {
+  // Lo que se ve en el monitor: ancho, dos columnas. Igual que siempre.
+  pantalla: {
+    apilado:false, padding:null,
+    fsEnc:11, fsCelda:12, fsDesc:11, fsBloque:15, fsBloqueN:12,
+    fsTitulo:30, fsFecha:16, fsCifraLab:15, fsCifra:34, fsCifraVar:19,
+    fsTarjetaLab:12, fsTarjetaVal:19, anchoTarjeta:'calc(25% - 8px)',
+    anchosIdx:['30%','18%','26%','26%'],
+    anchosPapel:['11%','11%','14%','10%','10%','44%'],
+  },
+  // Lo que viaja al correo: 650 px para llegar 1:1, los bloques apilados, y la
+  // letra de las celdas subida de 12 a 14. Las cuatro tarjetas de indices se
+  // quedan en una fila: a 650 cada una toma 155 px, que alcanza de sobra.
+  correo: {
+    apilado:true, padding:19,
+    fsEnc:12, fsCelda:14, fsDesc:12, fsBloque:16, fsBloqueN:13,
+    fsTitulo:23, fsFecha:14, fsCifraLab:13, fsCifra:27, fsCifraVar:16,
+    fsTarjetaLab:12, fsTarjetaVal:20, anchoTarjeta:'calc(25% - 6px)',
+    anchosIdx:['34%','20%','23%','23%'],
+    // A 578 utiles, el 11% del Nemo son 64 px y una etiqueta como
+    // "Russell 2000" no cabe en 14 px. Industry/Group cede: su descripcion
+    // mas larga se parte en dos lineas, que es preferible a letra ilegible.
+    anchosPapel:['21%','13%','16%','10%','10%','30%'],
+  },
+};
+const RVI_ANCHO_CORREO = 650;
+
+function informeRviHTML(geo){
+  const g = geo || RVI_GEO.pantalla;
   const porBloque = {};
   _rviUniverso.forEach(u=>{ (porBloque[u.bloque] = porBloque[u.bloque] || []).push(u); });
   const bloquesDe = col => {
@@ -8730,14 +8772,14 @@ function renderCierreRVI(){
     // Industry/Group pasa de 34% a 44%: con 34% la descripcion mas larga del
     // universo (42 caracteres) no cabia y se partia en dos lineas, y las filas
     // quedaban desalineadas. El resto de columnas cede lo justo (Sergio, 29-sep).
-    const anchos = esIdx ? ['30%','18%','26%','26%'] : ['11%','11%','14%','10%','10%','44%'];
+    const anchos = esIdx ? g.anchosIdx : g.anchosPapel;
     const th = enc.map((h,i)=>`<th style="width:${anchos[i]};text-align:${i===0?'left':(i===enc.length-1&&!esIdx?'left':'right')};
-        padding:0 7px 6px;font-size:11px;font-weight:700;letter-spacing:.3px;opacity:.55;
+        padding:0 6px 7px;font-size:${g.fsEnc}px;font-weight:700;letter-spacing:.3px;opacity:.55;
         text-transform:uppercase;">${h}</th>`).join('');
     const tds = filas.map((u,k)=>{
       const d = _rviDatos[u.nemo] || {};
       const cel = (txt,align,color,bold) =>
-        `<td style="padding:3.5px 7px;font-size:12px;text-align:${align};
+        `<td style="padding:${g.apilado?'5px 6px':'3.5px 7px'};font-size:${g.fsCelda}px;text-align:${align};
             ${color?`color:${color};`:''}${bold?'font-weight:700;':''}">${txt}</td>`;
       const fondo = k % 2 ? 'background:rgba(255,255,255,.025);' : '';
       if(esIdx){
@@ -8752,12 +8794,12 @@ function renderCierreRVI(){
              cel(_rviPx(d.last),'right') +
              cel(_rviPct(d.mtd),'right',_rviColor(d.mtd)) +
              cel(_rviPct(d.ytd),'right',_rviColor(d.ytd)) +
-             `<td style="padding:3.5px 7px;font-size:11px;opacity:.55;">${u.descripcion||''}</td></tr>`;
+             `<td style="padding:${g.apilado?'5px 6px':'3.5px 7px'};font-size:${g.fsDesc}px;opacity:.6;">${u.descripcion||''}</td></tr>`;
     }).join('');
     // Mismo molde de tarjeta que los bloques del informe de RVL.
-    return `<div style="border:1px solid ${_RVI_BORDE};border-radius:10px;padding:14px 16px;margin-bottom:16px;">
-      <div style="font-size:15px;font-weight:800;letter-spacing:.4px;margin-bottom:10px;">${b.bloque}
-        <span style="font-size:12px;font-weight:600;opacity:.45;"> · ${filas.length}</span></div>
+    return `<div style="border:1px solid ${_RVI_BORDE};border-radius:10px;padding:14px ${g.apilado?15:16}px;margin-bottom:${g.apilado?14:16}px;">
+      <div style="font-size:${g.fsBloque}px;font-weight:800;letter-spacing:.4px;margin-bottom:10px;">${b.bloque}
+        <span style="font-size:${g.fsBloqueN}px;font-weight:600;opacity:.45;"> · ${filas.length}</span></div>
       <table style="width:100%;table-layout:fixed;border-collapse:collapse;">
         <thead><tr>${th}</tr></thead><tbody>${tds}</tbody></table></div>`;
   };
@@ -8772,32 +8814,63 @@ function renderCierreRVI(){
     : new Date()).toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   const spx = _rviDatos['SPX Index'] || {};
   const tarjeta = (lab, val, color) => `
-    <div style="flex:1 1 calc(25% - 8px);background:${_RVI_TARJETA};border-radius:9px;padding:11px 13px;">
-      <div style="font-size:12px;opacity:.55;margin-bottom:3px;">${lab}</div>
-      <div style="font-size:19px;font-weight:800;${color?`color:${color};`:''}">${val}</div></div>`;
+    <div style="flex:1 1 ${g.anchoTarjeta};min-width:0;background:${_RVI_TARJETA};border-radius:9px;padding:${g.apilado?'10px 11px':'11px 13px'};">
+      <div style="font-size:${g.fsTarjetaLab}px;opacity:.55;margin-bottom:3px;">${lab}</div>
+      <div style="font-size:${g.fsTarjetaVal}px;font-weight:800;${color?`color:${color};`:''}">${val}</div></div>`;
   const idx = n => { const d=_rviDatos[n]||{}; return {v:d.var_dia, t:_rviPct(d.var_dia)}; };
   const tarjetas = [['DOW JONES','INDU Index'],['S&P 500','SPX Index'],
                     ['NASDAQ','CCMP Index'],['COLOMBIA','COLCAP Index']]
     .map(([lab,n])=>{ const x=idx(n); return tarjeta(lab, x.t, _rviColor(x.v)); }).join('');
 
-  cont.innerHTML = `
+  // APILADO vs LADO A LADO. Es el unico cambio estructural entre las dos
+  // geometrias: cada columna ya medía lo que mide un correo, asi que ponerlas
+  // una debajo de la otra no obligo a rediseñar nada por dentro. El costo es
+  // el alto, que pasa de ~490 a ~1.080 px — en correo eso solo es scroll.
+  const cuerpo = g.apilado
+    ? `<div>${col('IZQ')}${col('DER')}</div>`
+    : `<div style="display:flex;gap:22px;align-items:flex-start;">
+         <div style="flex:1;min-width:0;">${col('IZQ')}</div>
+         <div style="flex:1;min-width:0;">${col('DER')}</div>
+       </div>`;
+
+  return `
     <div style="display:flex;align-items:baseline;justify-content:space-between;
-         border-bottom:4px solid ${_RVI_MORADO};padding-bottom:14px;margin-bottom:18px;">
+         border-bottom:${g.apilado?3:4}px solid ${_RVI_MORADO};padding-bottom:${g.apilado?12:14}px;margin-bottom:${g.apilado?16:18}px;">
       <div>
-        <div style="font-size:30px;font-weight:800;letter-spacing:-.4px;">Informe diario RVI</div>
-        <div style="font-size:16px;opacity:.6;text-transform:capitalize;">${fecha}</div>
+        <div style="font-size:${g.fsTitulo}px;font-weight:800;letter-spacing:-.4px;">Informe diario RVI</div>
+        <div style="font-size:${g.fsFecha}px;opacity:.6;text-transform:capitalize;">${fecha}</div>
       </div>
       <div style="text-align:right;">
-        <div style="font-size:15px;opacity:.6;">S&amp;P 500</div>
-        <div style="font-size:34px;font-weight:800;line-height:1.1;">${_rviPx(spx.last)}</div>
-        <div style="font-size:19px;color:${_rviColor(spx.var_dia)};font-weight:700;">${_rviPct(spx.var_dia)}</div>
+        <div style="font-size:${g.fsCifraLab}px;opacity:.6;">S&amp;P 500</div>
+        <div style="font-size:${g.fsCifra}px;font-weight:800;line-height:1.1;">${_rviPx(spx.last)}</div>
+        <div style="font-size:${g.fsCifraVar}px;color:${_rviColor(spx.var_dia)};font-weight:700;">${_rviPct(spx.var_dia)}</div>
       </div>
     </div>
-    <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;">${tarjetas}</div>
-    <div style="display:flex;gap:22px;align-items:flex-start;">
-      <div style="flex:1;min-width:0;">${col('IZQ')}</div>
-      <div style="flex:1;min-width:0;">${col('DER')}</div>
-    </div>`;
+    <div style="display:flex;gap:${g.apilado?8:10}px;margin-bottom:${g.apilado?18:20}px;flex-wrap:wrap;">${tarjetas}</div>
+    ${cuerpo}`;
+}
+
+// La captura ANGOSTA del informe de RVI, la que va al correo. Se monta fuera
+// de la pantalla, se fotografia y se descarta — el mismo patron que
+// `_compactoACanvas` para el de RVL. El div de pantalla (`#rviImagen`) no se
+// toca: sigue de 1320 px.
+async function _rviCompactoACanvas(){
+  if(typeof html2canvas === 'undefined') throw new Error('no cargó html2canvas (revisa la conexión)');
+  const fuera = document.createElement('div');
+  fuera.style.cssText = 'position:fixed;left:-9999px;top:0;';
+  const caja = document.createElement('div');
+  caja.id = 'informeRviCompacto';
+  caja.style.cssText = `width:${RVI_ANCHO_CORREO}px;background:#0d0f14;color:#e5e7eb;` +
+    `padding:${RVI_GEO.correo.padding}px;font-family:Inter,system-ui,sans-serif;box-sizing:border-box;`;
+  caja.innerHTML = informeRviHTML(RVI_GEO.correo);
+  fuera.appendChild(caja);
+  document.body.appendChild(fuera);
+  try{
+    return await html2canvas(caja,
+      { backgroundColor:'#0d0f14', scale:2, logging:false, useCORS:true });
+  } finally {
+    fuera.remove();
+  }
 }
 
 // El nombre que devuelve Bloomberg al lado del rotulo nuestro. Es la forma de
@@ -9127,7 +9200,10 @@ function _rviListo(){
 async function copiarCierreRVIImagen(btn){
   if(!_rviListo()) return;
   try{
-    const canvas = await _rviCanvas();
+    // La ANGOSTA: esta imagen se copia para pegarla en el correo, que es el
+    // mismo destino del boton de Outlook. Con la de 1320 px el cliente la
+    // recibia encogida a 0,49x (Sergio, 20-oct).
+    const canvas = await _rviCompactoACanvas();
     const blob = await new Promise(r=>canvas.toBlob(r, 'image/png'));
     await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
     if(btn){ const p = btn.innerHTML; btn.innerHTML = '✓ Copiada'; setTimeout(()=>{ btn.innerHTML = p; }, 1400); }
@@ -9135,7 +9211,14 @@ async function copiarCierreRVIImagen(btn){
 }
 async function descargarCierreRVIImagen(){
   if(!_rviListo()) return;
-  try{ _bajarCanvas(await _rviCanvas(), `Cierre_RVI_${(_rviFecha||_rviHoyISO()).replace(/-/g,'')}.png`); }
+  // Las DOS, igual que en el informe de RVL: la angosta es la que se manda y
+  // la ancha queda como detalle, para mirarla en pantalla. Asi el cambio del
+  // 20-oct no le quita nada a nadie.
+  const slug = (_rviFecha||_rviHoyISO()).replace(/-/g,'');
+  try{
+    _bajarCanvas(await _rviCompactoACanvas(), `Cierre_RVI_${slug}.png`);
+    _bajarCanvas(await _rviCanvas(),          `Cierre_RVI_${slug}_detalle.png`);
+  }
   catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
 }
 
@@ -13942,11 +14025,23 @@ function informeCompactoHTML(){
   const pct = v => `<span style="color:${v>=0?'#22c55e':'#ef4444'};font-weight:700;">${v>=0?'+':''}${v.toFixed(2)}%</span>`;
 
   // Un bloque por segmento: treemap + alzas/bajas + dónde estuvo el volumen.
-  // Van DOS lado a lado (continuo y MGC), media caja cada uno: 1268 de ancho
-  // util menos 20 de separacion, sobre dos = 624; menos 18 de padding por
-  // lado y el borde = 586 para el treemap. Antes iban uno debajo del otro y
-  // eran lo que mas alto gastaba de todo el informe.
-  const ANCHO_SEG = 586;
+  //
+  // VAN APILADOS, uno debajo del otro, y cada uno ocupa el ancho completo.
+  // Hasta el 20-oct iban DOS LADO A LADO, y eso es lo que forzaba los 1320 px
+  // de ancho de toda la imagen. El panel de lectura de Outlook mide unos 650,
+  // asi que la imagen se encogia a 0,49x: la letra de 17 px llegaba a 8 y la
+  // tabla de 14 llegaba a 7. Los clientes llevaban semanas quejandose y no
+  // era peso del archivo, era geometria (Sergio, 20-oct).
+  //
+  // Apilados, cada columna ya medía lo que mide un correo, asi que no hubo que
+  // rediseñar nada por dentro: 650 de ancho menos 19 de padding por lado = 612
+  // utiles; menos 16 de padding del bloque por lado y el borde = 578 para el
+  // treemap. El costo es el alto, que se duplica — en correo eso solo es
+  // scroll. El informe de PANTALLA (`informeLienzo`) sigue ancho: esto es solo
+  // la captura que viaja.
+  const ANCHO_INFORME = 650;      // = el panel de lectura, para llegar 1:1
+  const ANCHO_UTIL    = 612;      // 650 - 19 de padding por lado
+  const ANCHO_SEG     = 578;
   const bloqueSeg = (titulo, filtro) => {
     const gs = stats.filter(filtro);
     if(!gs.length) return '';
@@ -13996,11 +14091,17 @@ function informeCompactoHTML(){
     </div>`;
   };
 
-  // Estas filas van en DOS tablas lado a lado de 624px. A todo el ancho las
-  // 8 columnas quedaban repartidas en 1268 con huecos enormes entre ellas:
-  // se veia estirada y vacia, que es lo contrario de lo que se buscaba. Con
-  // la mitad del ancho las columnas se juntan y ademas el informe pierde la
-  // mitad del alto de su parte mas larga (Sergio, 30-sep).
+  // Estas filas van en UNA tabla de 612px. Iban en dos lado a lado de 624
+  // cada una, que es lo mismo que decir 1320 de ancho total — la causa de que
+  // la imagen se encogiera en el correo. A 612 las 8 columnas quedan juntas,
+  // que es lo que se buscaba el 30-sep cuando se partieron en dos; lo que
+  // cambia ahora es que la mitad de abajo va debajo y no al lado
+  // (Sergio, 20-oct).
+  //
+  // El volumen va en MILLONES. `$11.835.142.960` ocupa 15 caracteres y
+  // `$11.835,1 MM` ocupa 12: es la misma cifra y libera el ancho que la letra
+  // necesita para no bajar de 14 px. Ya se mostraba asi — `mm()` — y aqui solo
+  // se deja dicho por que no se puede volver al numero completo.
   const filaResumen = d=>`<tr>
     <td style="padding:5px 4px;font-family:monospace;font-size:14px;">${d.esp}</td>
     <td style="padding:5px 4px;text-align:right;font-size:14px;">${fmtRate(d.ultimo)}</td>
@@ -14011,11 +14112,16 @@ function informeCompactoHTML(){
     <td style="padding:5px 4px;text-align:right;font-size:14px;white-space:nowrap;">${mm(d.monto)}</td>
     <td style="padding:5px 4px;text-align:right;font-size:14px;color:#f59e0b;white-space:nowrap;">${U(d.monto)}</td>
   </tr>`;
-  const th = (t,al) => `<th style="padding:6px 4px;text-align:${al||'left'};font-size:12px;opacity:.6;font-weight:600;">${t}</th>`;
-  const thAncho = (t,al) => `<th style="padding:7px 8px;text-align:${al||'left'};font-size:14px;opacity:.6;font-weight:600;">${t}</th>`;
+  // 13 px, no 12: era la unica letra de la captura que seguia por debajo de lo
+  // legible una vez el informe deja de encogerse. Las celdas que encabeza van
+  // en 14, asi que en 12 ademas se veia desparejo (Sergio, 20-oct).
+  const th = (t,al) => `<th style="padding:6px 4px;text-align:${al||'left'};font-size:13px;opacity:.6;font-weight:600;">${t}</th>`;
+  // 13 px y padding apretado: estas dos tablas tienen 6 columnas y ahora caben
+  // en 612 y no en 1020. Antes eran 14 px con padding de 8 (Sergio, 20-oct).
+  const thAncho = (t,al) => `<th style="padding:7px 5px;text-align:${al||'left'};font-size:13px;opacity:.6;font-weight:600;">${t}</th>`;
   const cabezaResumen = `<tr>${th('Especie')}${th('Último','right')}${th('Día','right')}${th('MTD','right')}${th('YTD','right')}${th('VWAP','right')}${th('Vol COP','right')}${th('USD','right')}</tr>`;
 
-  return `<div id="informeCompacto" style="width:1320px;background:#0d0f14;color:#e5e7eb;padding:26px;
+  return `<div id="informeCompacto" style="width:${ANCHO_INFORME}px;background:#0d0f14;color:#e5e7eb;padding:19px;
       font-family:Inter,system-ui,sans-serif;box-sizing:border-box;">
 
     <div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:4px solid #818cf8;padding-bottom:14px;margin-bottom:20px;">
@@ -14033,7 +14139,7 @@ function informeCompactoHTML(){
     <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;">
       ${[['Volumen total',total],['Mercado continuo',volCont],['Subasta de cierre',subasta?subasta.monto:0],
          ['MGC',volMGC],['ETFs',volETF]].map(([lab,v])=>`
-        <div style="flex:1 1 calc(20% - 8px);background:#161b26;border-radius:9px;padding:12px 14px;">
+        <div style="flex:1 1 calc(33.333% - 7px);background:#161b26;border-radius:9px;padding:12px 14px;">
           <div style="font-size:14px;opacity:.6;margin-bottom:3px;">${lab}</div>
           <div style="font-size:21px;font-weight:800;">${mm(v)}</div>
           ${usdcop?`<div style="font-size:15px;color:#f59e0b;">${U(v)}</div>`:''}
@@ -14043,23 +14149,23 @@ function informeCompactoHTML(){
 
     <div style="font-size:16px;font-weight:700;letter-spacing:.4px;opacity:.75;margin-bottom:10px;">
       MAPA DEL MERCADO — tamaño por volumen, color por variación</div>
-    ${treemapVolumen(porVolTodo.slice(0,20).map(d=>({nombre:d.esp, valor:d.monto, varPct: d.esIntradia ? 0 : d.varPct})), 1268, 340)}
+    ${treemapVolumen(porVolTodo.slice(0,20).map(d=>({nombre:d.esp, valor:d.monto, varPct: d.esIntradia ? 0 : d.varPct})), ANCHO_UTIL, 380)}
 
-    <div style="display:flex;gap:20px;align-items:stretch;margin-top:20px;">
+    <div style="display:flex;flex-direction:column;gap:16px;margin-top:20px;">
       ${bloqueSeg('MERCADO CONTINUO', d=>d.seg==='CONTINUO')}
       ${bloqueSeg('MERCADO GLOBAL COLOMBIANO (MGC)', d=>d.seg==='MGC')}
     </div>
 
     <div style="font-size:16px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:24px 0 10px;">LOS 3 MAYORES BLOQUES</div>
-    <table style="width:100%;max-width:880px;border-collapse:collapse;">
+    <table style="width:100%;border-collapse:collapse;">
       <tr>${thAncho('Especie')}${thAncho('Cantidad','right')}${thAncho('Precio','right')}${thAncho('Monto COP','right')}${thAncho('USD','right')}${thAncho('Hora')}</tr>
       ${bloques.map(b=>`<tr style="border-top:1px solid #232938;">
-        <td style="padding:9px 8px;font-family:monospace;font-size:17px;">${b.esp}</td>
-        <td style="padding:9px 8px;text-align:right;font-size:17px;">${fmtInt(b.qt)}</td>
-        <td style="padding:9px 8px;text-align:right;font-size:17px;">${fmtRate(b.px)}</td>
-        <td style="padding:9px 8px;text-align:right;font-size:17px;">${mm(b.monto)}</td>
-        <td style="padding:9px 8px;text-align:right;font-size:17px;color:#f59e0b;">${U(b.monto)}</td>
-        <td style="padding:9px 8px;font-size:16px;opacity:.7;">${b.hora}</td>
+        <td style="padding:7px 5px;font-family:monospace;font-size:15px;">${b.esp}</td>
+        <td style="padding:7px 5px;text-align:right;font-size:15px;">${fmtInt(b.qt)}</td>
+        <td style="padding:7px 5px;text-align:right;font-size:15px;">${fmtRate(b.px)}</td>
+        <td style="padding:7px 5px;text-align:right;font-size:15px;white-space:nowrap;">${mm(b.monto)}</td>
+        <td style="padding:7px 5px;text-align:right;font-size:15px;color:#f59e0b;white-space:nowrap;">${U(b.monto)}</td>
+        <td style="padding:7px 5px;font-size:14px;opacity:.7;">${b.hora}</td>
       </tr>`).join('')}
     </table>
 
@@ -14077,35 +14183,34 @@ function informeCompactoHTML(){
         return `<span style="font-size:13px;opacity:.6;">MTD medido contra el cierre del ${d}/${m}/${y}</span>`;
       })()}
     </div>
-    <div style="display:flex;gap:20px;align-items:flex-start;">
+    <div>
       ${(()=>{
-        // Partida por la mitad, en orden de volumen: la columna izquierda
-        // arranca con la especie mas negociada y la derecha continua donde
-        // esa termina. Si quedara impar, la izquierda lleva una mas.
-        const mitad = Math.ceil(porVol.length / 2);
-        const mitades = [porVol.slice(0, mitad), porVol.slice(mitad)];
-        return mitades.map(filas => `
-          <table style="flex:1 1 0;min-width:0;border-collapse:collapse;">
+        // UNA sola tabla, en orden de volumen, de la especie mas negociada
+        // hacia abajo. Iba partida en dos mitades lado a lado; apilar el
+        // informe para el correo las vuelve a juntar en una sola columna y se
+        // lee el ranking completo de arriba abajo, sin saltar de columna.
+        return `
+          <table style="width:100%;border-collapse:collapse;">
             ${cabezaResumen}
-            ${filas.map(filaResumen).join('')}
-          </table>`).join('');
+            ${porVol.map(filaResumen).join('')}
+          </table>`;
       })()}
     </div>
 
     ${subasta ? `
     <div style="font-size:16px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:24px 0 10px;">
       SUBASTA DE CIERRE · ${subasta.hora} · ${subasta.nTrades} trades</div>
-    <table style="width:100%;max-width:1020px;border-collapse:collapse;">
-      <tr>${thAncho('Especie')}${thAncho('Cantidad','right')}${thAncho('Precio','right')}${thAncho('Volumen COP','right')}${thAncho('USD','right')}${thAncho('% del volumen diario','right')}</tr>
+    <table style="width:100%;border-collapse:collapse;">
+      <tr>${thAncho('Especie')}${thAncho('Cantidad','right')}${thAncho('Precio','right')}${thAncho('Volumen COP','right')}${thAncho('USD','right')}${thAncho('% del día','right')}</tr>
       ${subasta.especies.map(a=>{
         const d = _mercadoStats[a.esp];
         return `<tr style="border-top:1px solid #232938;">
-          <td style="padding:9px 8px;font-family:monospace;font-size:17px;">${a.esp}</td>
-          <td style="padding:9px 8px;text-align:right;font-size:17px;">${fmtInt(a.qty)}</td>
-          <td style="padding:9px 8px;text-align:right;font-size:17px;">${fmtRate(a.precio)}</td>
-          <td style="padding:9px 8px;text-align:right;font-size:17px;">${mm(a.monto)}</td>
-          <td style="padding:9px 8px;text-align:right;font-size:17px;color:#f59e0b;">${U(a.monto)}</td>
-          <td style="padding:9px 8px;text-align:right;font-size:17px;opacity:.75;">${d?(a.monto/d.monto*100).toFixed(0)+'%':'—'}</td>
+          <td style="padding:7px 5px;font-family:monospace;font-size:15px;">${a.esp}</td>
+          <td style="padding:7px 5px;text-align:right;font-size:15px;">${fmtInt(a.qty)}</td>
+          <td style="padding:7px 5px;text-align:right;font-size:15px;">${fmtRate(a.precio)}</td>
+          <td style="padding:7px 5px;text-align:right;font-size:15px;white-space:nowrap;">${mm(a.monto)}</td>
+          <td style="padding:7px 5px;text-align:right;font-size:15px;color:#f59e0b;white-space:nowrap;">${U(a.monto)}</td>
+          <td style="padding:7px 5px;text-align:right;font-size:15px;opacity:.75;">${d?(a.monto/d.monto*100).toFixed(0)+'%':'—'}</td>
         </tr>`;
       }).join('')}
     </table>` : ''}
@@ -14886,7 +14991,8 @@ async function traerCierreBloomberg(btn){
 async function correoInformeRVI(btn){
   if(!_rviListo()) return;
   try{
-    const canvas = await _rviCanvas();
+    // La ANGOSTA, de 650 px: llega al correo 1:1 en vez de encogida a 0,49x.
+    const canvas = await _rviCompactoACanvas();
     await pedirAlPC('CORREO_RVI', btn, canvas.toDataURL('image/png'), 90);
   }catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
 }
@@ -28206,7 +28312,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-19 22:55 UTC · v246';
+const BUILD_ID = '2026-10-20 14:40 UTC · v247';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
