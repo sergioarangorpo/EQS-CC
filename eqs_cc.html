@@ -23084,7 +23084,7 @@ async function generarReporte(){
     const _nomPortBtg = f => { const p = portBtgAmDeFolio(f); return p ? p.nombre : '⚠ sin fondo'; };
     const ok = await previsualizarReporte({
       titulo: `${getClienteDB(cliente).nombre} — ${etiquetaVersion(version)}`,
-      archivo: `Insumo_BTG_PACTUAL_AM_${(fechaReg||'').replace(/-/g,'')}${sufijoVersion(version)?' '+sufijoVersion(version):''}.xlsx`,
+      archivo: `Operaciones_BTG_PACTUAL_AM_${(fechaReg||'').replace(/-/g,'')}${sufijoVersion(version)?' '+sufijoVersion(version):''}.xlsx`,
       columnas: ['Folio','Fondo','Especie','Lado','Cantidad','Precio','Com %'],
       filas: loteDet.map(f=>[String(f.folio), _nomPortBtg(f), f.especie, f.lado,
                              fmtInt(f.cantidad), fmtRate(f.precio),
@@ -23108,7 +23108,7 @@ async function generarReporte(){
     // archivo — el error que mas cuesta (Sergio, 19-oct).
     if(!salio) return;
     const nuevas = await registrarLoteRVLConCOR(cliente, loteOps, version, loteDet);
-    avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivo Insumo');
+    avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivo de operaciones');
     renderFidessaTradesPanel();
   } else if(formato === 'andes_fxequity'){
     // ANDES: reporte unificado Equity + FX. Se arma el equity de los folios
@@ -25110,7 +25110,10 @@ async function generarReporteBtgAm(cliente, loteDet){
   const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
   const suf = (typeof window !== 'undefined' && window._sufijoReporte) ? ' ' + window._sufijoReporte : '';
   const buf = await wb.xlsx.writeBuffer();
-  await entregarReporteCliente(`Insumo_BTG_PACTUAL_AM_${slug}${suf}.xlsx`, buf);
+  // El NOMBRE del archivo es Operaciones_...; la HOJA se sigue llamando
+  // `Insumo` porque asi viene la plantilla que mando el cliente y es lo que
+  // ellos leen. Son dos cosas distintas (Sergio, 20-oct).
+  await entregarReporteCliente(`Operaciones_BTG_PACTUAL_AM_${slug}${suf}.xlsx`, buf);
   return true;
 }
 
@@ -28576,7 +28579,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-20 16:35 UTC · v248';
+const BUILD_ID = '2026-10-20 18:20 UTC · v249';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
