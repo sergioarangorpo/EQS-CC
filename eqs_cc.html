@@ -13792,7 +13792,13 @@ function sparkline(serie, subeBaja, ancho, alto){
 // Treemap estilo finviz: área = volumen, color = variación.
 // Algoritmo squarified simplificado: se van cortando franjas alternando
 // horizontal y vertical, que da rectángulos con proporciones razonables.
-function treemapVolumen(items, W, H){
+// `fluido` = el SVG se estira al ancho de su contenedor en vez de quedarse
+// en los W px de diseño. Es para el informe de PANTALLA, donde las tarjetas
+// de volumen son fluidas y el mapa se quedaba corto en 960 px: quedaba un
+// vacío entre el borde del mapa y el de la tarjeta de ETFs (Sergio, 21-oct).
+// Las capturas del correo NO lo usan: ahí el contenedor mide exactamente lo
+// que se quiere y un ancho fijo es lo correcto.
+function treemapVolumen(items, W, H, fluido){
   const total = items.reduce((a,i)=>a+i.valor, 0);
   if(!total) return '';
   const colorDe = v => {
@@ -13883,7 +13889,12 @@ function treemapVolumen(items, W, H){
             font-family="Inter,system-ui,sans-serif" font-size="11" fill="rgba(255,255,255,.92)">${r.it.varPct>=0?'+':''}${r.it.varPct.toFixed(2)}%</text>` : ''}
     </g>`;
   });
-  return `<svg width="${W}" height="${H}" style="display:block;">${out.join('')}</svg>`;
+  // Con `fluido` el SVG lleva viewBox y se estira: mismas proporciones, el
+  // ancho lo pone el contenedor. Sin él, sale exactamente en W×H como siempre.
+  return fluido
+    ? `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" width="${W}" height="${H}"
+            style="display:block;width:100%;height:${H}px;">${out.join('')}</svg>`
+    : `<svg width="${W}" height="${H}" style="display:block;">${out.join('')}</svg>`;
 }
 
 // Barras horizontales de concentración de volumen (más legible que una torta
@@ -14241,7 +14252,7 @@ function _datosInformeRVL(){
 // Reparte las especies en filas de un mapa tipo treemap hecho con celdas.
 // No es el algoritmo del treemap de pantalla —ese corta en dos direcciones—
 // sino franjas horizontales, que es lo único que una tabla sabe hacer.
-function _mapaFilasCorreo(items, nFilas){
+function _mapaFilasCorreo(items, nFilas, altoTotal){
   const vivos = items.filter(i=>i.valor > 0);
   if(!vivos.length) return [];
   const total = vivos.reduce((a,i)=>a+i.valor, 0);
@@ -14260,7 +14271,7 @@ function _mapaFilasCorreo(items, nFilas){
   });
   if(fila.length) filas.push({ items: fila, valor: acum });
   return filas.map(f=>({
-    alto: Math.max(26, Math.round(f.valor / total * 150)),
+    alto: Math.max(26, Math.round(f.valor / total * (altoTotal || 150))),
     celdas: f.items.map(it=>({
       ...it,
       ancho: (it.valor / f.valor * 100).toFixed(2) + '%',
@@ -14268,16 +14279,26 @@ function _mapaFilasCorreo(items, nFilas){
   }));
 }
 
+// EN HEXADECIMAL, no en rgb(). El atributo `bgcolor` de HTML solo acepta hex
+// o un nombre de color: con `rgb(25,147,55)` Outlook lo ignora y la celda
+// queda NEGRA. Asi salio el mapa en la prueba del 21-oct — los nombres y los
+// porcentajes flotando sobre fondo negro, sin un solo color.
+//
+// Y mi prueba lo dejo pasar porque medía que el atributo ESTUVIERA
+// (`bgcolor="rgb(`), no que su valor sirviera. Medir la forma y no el efecto
+// es como no medir. Ahora la prueba exige `bgcolor="#rrggbb"`.
+// (Sergio, 21-oct)
 function _colorMapaCorreo(v){
+  const h = n => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
   const t = Math.max(-4, Math.min(4, v)) / 4;
   if(Math.abs(v) < 0.05) return '#4a4a48';
-  if(t > 0) return `rgb(${Math.round(30 - 10*t)},${Math.round(110 + 70*t)},${Math.round(60 - 10*t)})`;
-  return `rgb(${Math.round(150 + 80*(-t))},${Math.round(60 - 25*(-t))},${Math.round(60 - 25*(-t))})`;
+  if(t > 0) return '#' + h(30 - 10*t) + h(110 + 70*t) + h(60 - 10*t);
+  return '#' + h(150 + 80*(-t)) + h(60 - 25*(-t)) + h(60 - 25*(-t));
 }
 
 function informeRvlCorreoHTML(){
-  const { colcap, colcapVar, usdcop, U, mm, total, subasta,
-          volMGC, volETF, volCont, porVolTodo, porVol, bloques, fecha } = _datosInformeRVL();
+  const { colcap, colcapVar, usdcop, U, mm, stats, total, subasta,
+          volMGC, volETF, volCont, porVolTodo, contin, porVol, bloques, fecha } = _datosInformeRVL();
 
   const F = '#0d0f14', C = '#151926', L = '#1b2232';
   const TX = '#e5e7eb', GR = '#9aa3b8', VE = '#4ade80', RO = '#f87171';
@@ -14301,15 +14322,12 @@ function informeRvlCorreoHTML(){
       <div style="font-size:11.5px;color:${GR};">${c[2]}% del día</div></td>`;
 
   // El mapa: del DÍA COMPLETO, igual que la imagen — continuo, MGC y ETFs.
+  // 14, no 18: con mas, la ultima franja se parte en astillas de 2 px donde
+  // no cabe ni el nemotecnico. El mapa es para el golpe de vista; el detalle
+  // completo esta abajo, en el resumen del continuo.
   const mapa = _mapaFilasCorreo(
-    porVolTodo.slice(0, 18).map(d=>({ nemo:d.esp, valor:d.monto,
-                                      varPct: d.esIntradia ? 0 : d.varPct })), 3);
-
-  const conMov = porVol.filter(d=>d.trades >= 5 && !d.esIntradia);
-  const suben = conMov.slice().sort((a,b)=>b.varPct-a.varPct).slice(0,4);
-  const bajan = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,4);
-  const vol = porVol.slice(0, 7);
-  const totVol = vol.reduce((a,d)=>a+d.monto, 0) || 1;
+    porVolTodo.slice(0, 14).map(d=>({ nemo:d.esp, valor:d.monto,
+                                      varPct: d.esIntradia ? 0 : d.varPct })), 3, 170);
 
   const filaAlza = d=>`<tr>
     <td style="padding:4px 0;font-size:13px;font-weight:600;color:${TX};">${d.esp}</td>
@@ -14317,10 +14335,12 @@ function informeRvlCorreoHTML(){
     <td style="padding:4px 0 4px 14px;font-size:13px;font-weight:700;text-align:right;
         color:${colPct(d.varPct)};">${pctTxt(d.varPct)}</td></tr>`;
 
+  // Despues del % van las DOS cifras: COP en blanco y USD en ambar, que es
+  // como ya estaban en el informe de pantalla (Sergio, 21-oct).
   const filaVol = d=>{
     const p = d.monto/totVol*100;
     return `<tr>
-      <td style="padding:4px 0;font-size:13px;font-weight:600;color:${TX};width:110px;">${d.esp}</td>
+      <td style="padding:4px 0;font-size:13px;font-weight:600;color:${TX};width:108px;">${d.esp}</td>
       <td style="padding:4px 8px;">
         <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${L}"
                style="border-collapse:collapse;">
@@ -14328,11 +14348,77 @@ function informeRvlCorreoHTML(){
               <td style="font-size:1px;line-height:1px;">&nbsp;</td></tr></table></td>
       <td style="padding:4px 0;font-size:12.5px;color:${GR};text-align:right;width:52px;">${p.toFixed(1)}%</td>
       <td style="padding:4px 0 4px 10px;font-size:13px;color:${TX};text-align:right;
-          white-space:nowrap;">${mm(d.monto)}</td></tr>`;
+          white-space:nowrap;">${mm(d.monto)}</td>
+      ${usdcop ? `<td style="padding:4px 0 4px 10px;font-size:12.5px;color:#f59e0b;
+          text-align:right;white-space:nowrap;">${U(d.monto)}</td>` : ''}</tr>`;
   };
 
   const thB = t=>`<td style="padding:7px 12px;font-size:11px;color:${GR};">${t}</td>`;
   const thBd = t=>`<td style="padding:7px 12px;font-size:11px;color:${GR};text-align:right;">${t}</td>`;
+
+  // Un bloque por segmento, con su propio mapa, sus alzas/bajas y su volumen
+  // — lo mismo que trae la imagen. La primera version del correo se los habia
+  // saltado y Sergio lo noto de una: "veo menos informacion de la que
+  // tenemos" (21-oct).
+  let totVol = 1;                         // lo fija cada bloque antes de pintar
+  const bloqueSeg = (titulo, filtro) => {
+    const gs = stats.filter(filtro);
+    if(!gs.length) return '';
+    const totSeg = gs.reduce((a,d)=>a+d.monto, 0);
+    const orden = gs.slice().sort((a,b)=>b.monto - a.monto);
+    const conMov = gs.filter(d=>d.trades >= 5 && !d.esIntradia);
+    const suben = conMov.slice().sort((a,b)=>b.varPct-a.varPct).slice(0,4);
+    const bajan = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,4);
+    const vol = orden.slice(0, 7);
+    totVol = totSeg;
+    const mapaSeg = _mapaFilasCorreo(
+      orden.slice(0, 12).map(d=>({ nemo:d.esp, valor:d.monto,
+                                   varPct: d.esIntradia ? 0 : d.varPct })), 3, 110);
+    return `
+    <div style="font-size:14px;font-weight:700;color:#ffffff;margin:18px 0 2px;">${titulo}</div>
+    <div style="font-size:12px;color:${GR};margin-bottom:8px;">${mm(totSeg)} COP${
+      usdcop ? ` · <span style="color:#f59e0b;">${U(totSeg)} USD</span>` : ''
+    } · ${gs.length} especies · ${(totSeg/total*100).toFixed(1)}% del día</div>
+    <table width="100%" cellpadding="0" cellspacing="2" border="0">
+      ${mapaSeg.map(f=>`<tr>${f.celdas.map(m=>`
+        <td width="${m.ancho}" bgcolor="${_colorMapaCorreo(m.varPct)}"
+            style="background-color:${_colorMapaCorreo(m.varPct)};height:${f.alto}px;
+                   text-align:center;vertical-align:middle;padding:3px 2px;">
+          <div style="font-size:11.5px;font-weight:700;color:#ffffff;line-height:1.2;">${m.nemo}</div>
+          <div style="font-size:10.5px;color:#e8f5e9;">${pctTxt(m.varPct)}</div></td>`).join('')}</tr>`).join('')}
+    </table>
+    <table width="100%" cellpadding="0" cellspacing="10" border="0" style="margin-top:4px;">
+      <tr>
+        <td width="44%" bgcolor="${C}" style="vertical-align:top;padding:12px 14px;">
+          <div style="font-size:11px;color:${GR};letter-spacing:.07em;text-transform:uppercase;
+              padding-bottom:7px;">Mayores alzas y bajas</div>
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+            ${suben.concat(bajan).map(filaAlza).join('')}
+          </table></td>
+        <td width="56%" bgcolor="${C}" style="vertical-align:top;padding:12px 14px;">
+          <div style="font-size:11px;color:${GR};letter-spacing:.07em;text-transform:uppercase;
+              padding-bottom:7px;">Dónde estuvo el volumen</div>
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+            ${vol.map(filaVol).join('')}
+          </table></td>
+      </tr>
+    </table>`;
+  };
+
+  // El resumen del continuo: la misma tabla de ocho columnas de la imagen.
+  const filaRes = d=>`<tr>
+    <td style="padding:5px 8px;font-size:12.5px;font-weight:600;color:${TX};border-top:1px solid ${L};">${d.esp}</td>
+    <td style="padding:5px 8px;font-size:12.5px;color:#c3cad9;text-align:right;border-top:1px solid ${L};">${fmtRate(d.ultimo)}</td>
+    <td style="padding:5px 8px;font-size:12.5px;font-weight:700;text-align:right;border-top:1px solid ${L};
+        color:${d.esIntradia ? GR : colPct(d.varPct)};">${d.esIntradia ? '—' : pctTxt(d.varPct)}</td>
+    <td style="padding:5px 8px;font-size:12.5px;text-align:right;border-top:1px solid ${L};
+        color:${d.mtd==null ? GR : colPct(d.mtd)};">${d.mtd==null ? '—' : pctTxt(d.mtd)}</td>
+    <td style="padding:5px 8px;font-size:12.5px;text-align:right;border-top:1px solid ${L};
+        color:${d.ytd==null ? GR : colPct(d.ytd)};">${d.ytd==null ? '—' : pctTxt(d.ytd)}</td>
+    <td style="padding:5px 8px;font-size:12.5px;color:#c3cad9;text-align:right;border-top:1px solid ${L};">${fmtRate(d.monto/d.qty)}</td>
+    <td style="padding:5px 8px;font-size:12.5px;color:${TX};text-align:right;white-space:nowrap;border-top:1px solid ${L};">${mm(d.monto)}</td>
+    ${usdcop ? `<td style="padding:5px 8px;font-size:12.5px;color:#f59e0b;text-align:right;
+        white-space:nowrap;border-top:1px solid ${L};">${U(d.monto)}</td>` : ''}</tr>`;
 
   return `<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${F}"
     style="border-collapse:collapse;background:${F};color:${TX};
@@ -14362,27 +14448,14 @@ function informeRvlCorreoHTML(){
     <table width="100%" cellpadding="0" cellspacing="2" border="0">
       ${mapa.map(f=>`<tr>${f.celdas.map(m=>`
         <td width="${m.ancho}" bgcolor="${_colorMapaCorreo(m.varPct)}"
-            style="height:${f.alto}px;text-align:center;vertical-align:middle;padding:4px 2px;">
+            style="background-color:${_colorMapaCorreo(m.varPct)};height:${f.alto}px;
+                   text-align:center;vertical-align:middle;padding:4px 2px;">
           <div style="font-size:12px;font-weight:700;color:#ffffff;line-height:1.2;">${m.nemo}</div>
           <div style="font-size:11px;color:#e8f5e9;">${pctTxt(m.varPct)}</div></td>`).join('')}</tr>`).join('')}
     </table>
 
-    <table width="100%" cellpadding="0" cellspacing="10" border="0" style="margin-top:10px;">
-      <tr>
-        <td width="50%" bgcolor="${C}" style="vertical-align:top;padding:12px 14px;">
-          <div style="font-size:11px;color:${GR};letter-spacing:.07em;text-transform:uppercase;
-              padding-bottom:7px;">Mayores alzas y bajas</div>
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
-            ${suben.concat(bajan).map(filaAlza).join('')}
-          </table></td>
-        <td width="50%" bgcolor="${C}" style="vertical-align:top;padding:12px 14px;">
-          <div style="font-size:11px;color:${GR};letter-spacing:.07em;text-transform:uppercase;
-              padding-bottom:7px;">Dónde estuvo el volumen</div>
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
-            ${vol.map(filaVol).join('')}
-          </table></td>
-      </tr>
-    </table>
+    ${bloqueSeg('MERCADO CONTINUO', d=>d.seg !== 'MGC')}
+    ${bloqueSeg('MERCADO GLOBAL COLOMBIANO (MGC)', d=>d.seg === 'MGC')}
 
     ${bloques.length ? `
     <div style="font-size:11px;color:${GR};letter-spacing:.07em;text-transform:uppercase;
@@ -14399,6 +14472,28 @@ function informeRvlCorreoHTML(){
         <td style="padding:8px 12px;font-size:13px;color:${GR};text-align:right;border-top:1px solid ${L};">${b.hora||''}</td>
       </tr>`).join('')}
     </table>` : ''}
+
+    ${(()=>{
+      const cont = contin.slice().sort((a,b)=>b.monto - a.monto);
+      if(!cont.length) return '';
+      return `
+      <div style="font-size:11px;color:${GR};letter-spacing:.07em;text-transform:uppercase;
+          margin:18px 0 7px;">Resumen del continuo</div>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${C}"
+             style="border-collapse:collapse;">
+        <tr bgcolor="${L}">
+          <td style="padding:7px 8px;font-size:11px;color:${GR};">Especie</td>
+          <td style="padding:7px 8px;font-size:11px;color:${GR};text-align:right;">Último</td>
+          <td style="padding:7px 8px;font-size:11px;color:${GR};text-align:right;">Día</td>
+          <td style="padding:7px 8px;font-size:11px;color:${GR};text-align:right;">MTD</td>
+          <td style="padding:7px 8px;font-size:11px;color:${GR};text-align:right;">YTD</td>
+          <td style="padding:7px 8px;font-size:11px;color:${GR};text-align:right;">VWAP</td>
+          <td style="padding:7px 8px;font-size:11px;color:${GR};text-align:right;">Vol COP</td>
+          ${usdcop ? `<td style="padding:7px 8px;font-size:11px;color:${GR};text-align:right;">USD</td>` : ''}
+        </tr>
+        ${cont.map(filaRes).join('')}
+      </table>`;
+    })()}
 
     <div style="font-size:11.5px;color:#6b7280;padding-top:14px;">
       Credicorp Capital Colombia · Equity Sales</div>
@@ -14891,7 +14986,7 @@ function renderInformeDiario(){
       </div>
 
       <div style="font-size:12px;font-weight:700;letter-spacing:.4px;opacity:.75;margin:14px 0 8px;">MAPA DEL MERCADO — tamaño por volumen, color por variación</div>
-      ${treemapVolumen(porVol.slice(0,22).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 960, 260)}
+      ${treemapVolumen(porVol.slice(0,22).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 960, 260, true)}
 
       ${bloqueSegmento('MERCADO CONTINUO', d=>d.seg==='CONTINUO', 0)}
       ${bloqueSegmento('MERCADO GLOBAL COLOMBIANO (MGC)', d=>d.seg==='MGC', 10)}
@@ -29640,7 +29735,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-21 16:45 UTC · v254';
+const BUILD_ID = '2026-10-21 17:35 UTC · v255';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
