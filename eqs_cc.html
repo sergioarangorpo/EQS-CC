@@ -14624,12 +14624,23 @@ async function _compactoACanvas(){
   document.body.appendChild(cont);
   try{
     await new Promise(r=>setTimeout(r, 60));
-    // scale 2 sobre 1.320 de diseño: el PNG sale a 2.640px de ancho, igual
-    // que el del informe de RVI, así que se ve nítido aunque el correo lo
-    // reescale. El `width` tiene que ir igual al del contenedor: html2canvas
-    // recorta a ese ancho, y dejarlo en 680 cortaría el informe por la mitad.
+    // NO se le pasa `width`. Aquí había un `width:1320` escrito a mano, de
+    // cuando el informe medía 1.320. El 20-oct lo bajé a 650 y ese 1320 se
+    // quedó: html2canvas siguió pintando un lienzo del doble de ancho que el
+    // contenido, así que el PNG salía con el informe en la mitad izquierda y
+    // LA MITAD DERECHA EN NEGRO. Medido sobre la captura de Sergio del
+    // 21-oct: el contenido terminaba al 47,7% del bloque, en todas las filas.
+    //
+    // Y explica por qué el correo EMPEORÓ ese día en vez de mejorar: la
+    // imagen pasó a ser 2.640 px de ancho con el informe ocupando la mitad,
+    // así que Outlook la encogía para que cupiera y el informe quedaba a la
+    // mitad de algo ya encogido.
+    //
+    // Sin `width`, html2canvas mide el elemento. Es lo que hace el de RVI, y
+    // por eso a RVI no le pasó. Un ancho escrito a mano al lado de un ancho
+    // calculado son dos verdades: tarde o temprano se separan.
     return await html2canvas(cont.firstElementChild, {
-      backgroundColor:'#0d0f14', scale:2, logging:false, useCORS:true, width:1320,
+      backgroundColor:'#0d0f14', scale:2, logging:false, useCORS:true,
     });
   } finally { cont.remove(); }
 }
@@ -29629,7 +29640,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-21 15:55 UTC · v253';
+const BUILD_ID = '2026-10-21 16:45 UTC · v254';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
