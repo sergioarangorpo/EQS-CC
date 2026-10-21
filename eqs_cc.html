@@ -13916,18 +13916,33 @@ function sparkline(serie, subeBaja, ancho, alto){
 function treemapVolumen(items, W, H, fluido){
   const total = items.reduce((a,i)=>a+i.valor, 0);
   if(!total) return '';
-  const colorDe = v => {
-    const t = Math.max(-4, Math.min(4, v)) / 4;         // satura en ±4%
-    if(Math.abs(v) < 0.05) return '#4a4a48';
-    if(t > 0) return `rgb(${Math.round(30 - 10*t)},${Math.round(110 + 70*t)},${Math.round(60 - 10*t)})`;
-    return `rgb(${Math.round(150 + 80*(-t))},${Math.round(60 - 25*(-t))},${Math.round(60 - 25*(-t))})`;
-  };
   // SQUARIFIED, el mismo criterio de Finviz: se agrupan las especies en franjas
   // buscando que los rectángulos tiendan a cuadrado. Con el reparto anterior
   // (cortar una franja por especie, alternando) ECOPETROL se llevaba una
   // columna entera con su 43% y las últimas quedaban como tiras donde no cabía
   // el texto.
-  const rects = [];
+  const { rects } = _squarify(items, W, H);
+  return _treemapSVG(rects, W, H, fluido);
+}
+
+// EL REPARTO, UNA SOLA VEZ (Sergio, 21-oct).
+// ---------------------------------------------------------------------
+// Antes este algoritmo vivia dentro de `treemapVolumen` y el correo tenia
+// SU PROPIO reparto —`_mapaFilasCorreo`, tres franjas horizontales—, que daba
+// areas correctas pero formas ilegibles: ECOPETROL salia de ancho completo y
+// 69 px de alto, y PFCIBEST de 62% de ancho y 65 px. El area era 1,71 veces
+// mayor, que es lo correcto, pero el ojo compara ALTURAS y las dos franjas se
+// veian casi iguales. Sergio: "ECO opero casi el doble de PFCIBEST y la
+// diferencia en los cuadros es muy poca".
+//
+// Ahora hay UN reparto y DOS pintores: el de pantalla pinta SVG, el del correo
+// pinta tablas anidadas (lo unico que entiende Outlook). Si manana cambia el
+// criterio, cambia en los dos a la vez.
+//
+// Devuelve, ademas de los rectangulos, las FRANJAS en el orden en que se
+// cortaron: eso es lo que el correo necesita para armar el anidado.
+function _squarify(items, W, H){
+  const rects = [], franjas = [];
   (function sq(lista, x, y, w, h){
     if(!lista.length) return;
     const tot = lista.reduce((a,i)=>a+i.valor, 0);
@@ -13952,18 +13967,32 @@ function treemapVolumen(items, W, H, fluido){
     // Nunca dejar una banda de menos de 1px sin usar por errores de redondeo.
     if(!ultima && Math.abs((w >= h ? w : h) - grosor) < 1) grosor = (w >= h ? w : h);
     let off = 0;
+    // La franja, tal como se corta: su orientacion, su grosor y cuanto mide
+    // cada caja a lo largo. Es lo mismo que se dibuja en el SVG, anotado para
+    // que el correo lo pueda armar con tablas.
+    const franja = { vertical: (w >= h), grosor, w, h, items: [] };
     fila.forEach(it=>{
       const p = it.valor / s;
-      if(w >= h){ rects.push({x, y:y+off, w:grosor, h:h*p, it}); off += h*p; }
-      else      { rects.push({x:x+off, y, w:w*p, h:grosor, it}); off += w*p; }
+      if(w >= h){ rects.push({x, y:y+off, w:grosor, h:h*p, it}); franja.items.push({it, ext:h*p}); off += h*p; }
+      else      { rects.push({x:x+off, y, w:w*p, h:grosor, it}); franja.items.push({it, ext:w*p}); off += w*p; }
     });
+    franjas.push(franja);
     // Si ya no queda nada por colocar, la franja actual se estiró al 100% y no
     // hay resto: sin esto quedaba una banda vacía en el borde.
     if(ultima) return;
     if(w >= h) sq(lista.slice(i), x+grosor, y, w-grosor, h);
     else       sq(lista.slice(i), x, y+grosor, w, h-grosor);
   })(items.slice().sort((a,b)=>b.valor-a.valor), 0, 0, W, H);
+  return { rects, franjas };
+}
 
+function _treemapSVG(rects, W, H, fluido){
+  const colorDe = v => {
+    const t = Math.max(-4, Math.min(4, v)) / 4;         // satura en ±4%
+    if(Math.abs(v) < 0.05) return '#4a4a48';
+    if(t > 0) return `rgb(${Math.round(30 - 10*t)},${Math.round(110 + 70*t)},${Math.round(60 - 10*t)})`;
+    return `rgb(${Math.round(150 + 80*(-t))},${Math.round(60 - 25*(-t))},${Math.round(60 - 25*(-t))})`;
+  };
   const out = rects.map(r=>{
     // NINGUNA caja se queda sin nombre: si no cabe el texto horizontal, se
     // achica la fuente y, si sigue sin caber, se rota 90°. Solo se omite el
@@ -14367,6 +14396,88 @@ function _datosInformeRVL(){
 // Reparte las especies en filas de un mapa tipo treemap hecho con celdas.
 // No es el algoritmo del treemap de pantalla —ese corta en dos direcciones—
 // sino franjas horizontales, que es lo único que una tabla sabe hacer.
+// EL MAPA DEL CORREO, CON EL MISMO REPARTO QUE EL DE PANTALLA.
+// ---------------------------------------------------------------------
+// Outlook usa el motor de Word: no hay SVG, ni flex, ni posicion absoluta.
+// Pero un treemap squarified SI se puede escribir con TABLAS ANIDADAS, que es
+// lo unico que Word dibuja bien, y queda identico al de pantalla.
+//
+// La estructura sale sola de como corta `_squarify`: cada franja se lleva una
+// tajada del rectangulo que queda, y el resto se dibuja adentro de la celda de
+// al lado. Franja vertical -> dos celdas en una fila (franja | resto). Franja
+// horizontal -> dos filas (franja / resto). Y asi hasta que no queda nada.
+//
+// Los anchos y altos van en PIXELES, no en porcentaje: Word redondea los
+// porcentajes de forma distinta en cada nivel de anidamiento y las cajas se
+// desalinean. Con pixeles enteros el mapa cuadra siempre.
+function _treemapCorreoHTML(items, W, H){
+  const vivos = (items||[]).filter(i=>Number(i.valor) > 0)
+    .map(i=>({ nombre: i.nemo || i.nombre, valor: Number(i.valor), varPct: Number(i.varPct)||0 }));
+  if(!vivos.length) return '';
+  const { franjas } = _squarify(vivos, W, H);
+  if(!franjas.length) return '';
+
+  // Una caja: color de fondo, nemo y —si cabe— el porcentaje. El nemo NUNCA
+  // se omite; el porcentaje si, cuando la caja es chica.
+  const caja = (it, w, h)=>{
+    const col = _colorMapaCorreo(it.varPct);
+    const nom = String(it.nombre||'');
+    // Mismo criterio que el SVG: por debajo de 9px el nemo no se lee.
+    let fuente = Math.min(13, Math.max(9, w / (nom.length * 0.62)));
+    // 20 px, no 26: con el umbral del SVG, PEI (23 px) y GEB (22 px) salian
+    // como cajas de color SIN NOMBRE. En pantalla el SVG las rota 90 grados,
+    // pero Word no rota texto, asi que aqui se achica la letra y lo que no
+    // quepa se recorta — un nemo recortado se lee; una caja muda no.
+    const cabe = w >= 20 && h > 12;
+    const pct = w > 54 && h > 34;
+    const sg = it.varPct > 0 ? '+' : '';
+    return `<table width="${Math.round(w)}" height="${Math.round(h)}" cellpadding="0" cellspacing="0"
+        border="0" bgcolor="${col}" style="background-color:${col};border-collapse:collapse;
+        width:${Math.round(w)}px;height:${Math.round(h)}px;">
+      <tr><td align="center" valign="middle" height="${Math.round(h)}"
+          style="height:${Math.round(h)}px;overflow:hidden;">${
+        cabe ? `<div style="font-family:Arial,sans-serif;font-size:${fuente.toFixed(0)}px;
+                 font-weight:bold;color:#ffffff;line-height:1.1;">${nom}</div>${
+          pct ? `<div style="font-family:Arial,sans-serif;font-size:10px;color:#e8ecf4;
+                 line-height:1.2;">${sg}${it.varPct.toFixed(2)}%</div>` : ''}` : '&nbsp;'
+      }</td></tr></table>`;
+  };
+
+  // La franja: las cajas apiladas a lo largo de ella.
+  const franjaHTML = (f)=>{
+    if(f.vertical){
+      // Vertical: ancho = grosor, las cajas se apilan hacia abajo.
+      return `<table width="${Math.round(f.grosor)}" cellpadding="0" cellspacing="0" border="0"
+          style="border-collapse:collapse;width:${Math.round(f.grosor)}px;">${
+        f.items.map(x=>`<tr><td>${caja(x.it, f.grosor, x.ext)}</td></tr>`).join('')
+      }</table>`;
+    }
+    // Horizontal: alto = grosor, las cajas se ponen una al lado de otra.
+    return `<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr>${
+      f.items.map(x=>`<td>${caja(x.it, x.ext, f.grosor)}</td>`).join('')
+    }</tr></table>`;
+  };
+
+  // El anidado: franja + lo que queda, recursivamente.
+  const pintar = (idx, w, h)=>{
+    const f = franjas[idx];
+    if(!f) return '';
+    const ultima = (idx === franjas.length - 1);
+    if(ultima) return franjaHTML(f);
+    if(f.vertical){
+      const resto = w - f.grosor;
+      return `<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+        <tr><td valign="top">${franjaHTML(f)}</td>
+            <td valign="top">${pintar(idx+1, resto, h)}</td></tr></table>`;
+    }
+    const resto = h - f.grosor;
+    return `<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+      <tr><td valign="top">${franjaHTML(f)}</td></tr>
+      <tr><td valign="top">${pintar(idx+1, w, resto)}</td></tr></table>`;
+  };
+  return pintar(0, W, H);
+}
+
 function _mapaFilasCorreo(items, nFilas, altoTotal){
   const vivos = items.filter(i=>i.valor > 0);
   if(!vivos.length) return [];
@@ -14440,9 +14551,14 @@ function informeRvlCorreoHTML(){
   // 14, no 18: con mas, la ultima franja se parte en astillas de 2 px donde
   // no cabe ni el nemotecnico. El mapa es para el golpe de vista; el detalle
   // completo esta abajo, en el resumen del continuo.
-  const mapa = _mapaFilasCorreo(
+  // 640 px: el ancho util de un correo en Outlook con el panel de lectura
+  // abierto. Se dibuja en pixeles fijos porque el motor de Word no sabe
+  // repartir porcentajes dentro de tablas anidadas sin desalinearlas.
+  const ANCHO_CORREO = 640;
+  const mapa = _treemapCorreoHTML(
     porVolTodo.slice(0, 14).map(d=>({ nemo:d.esp, valor:d.monto,
-                                      varPct: d.esIntradia ? 0 : d.varPct })), 3, 170);
+                                      varPct: d.esIntradia ? 0 : d.varPct })),
+    ANCHO_CORREO, 190);
 
   const filaAlza = d=>`<tr>
     <td style="padding:4px 0;font-size:13px;font-weight:600;color:${TX};">${d.esp}</td>
@@ -14486,22 +14602,16 @@ function informeRvlCorreoHTML(){
     const bajan = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,4);
     const vol = orden.slice(0, 7);
     totVol = totSeg;
-    const mapaSeg = _mapaFilasCorreo(
+    const mapaSeg = _treemapCorreoHTML(
       orden.slice(0, 12).map(d=>({ nemo:d.esp, valor:d.monto,
-                                   varPct: d.esIntradia ? 0 : d.varPct })), 3, 110);
+                                   varPct: d.esIntradia ? 0 : d.varPct })),
+      ANCHO_CORREO, 130);
     return `
     <div style="font-size:14px;font-weight:700;color:#ffffff;margin:18px 0 2px;">${titulo}</div>
     <div style="font-size:12px;color:${GR};margin-bottom:8px;">${mm(totSeg)} COP${
       usdcop ? ` · <span style="color:#f59e0b;">${U(totSeg)} USD</span>` : ''
     } · ${gs.length} especies · ${(totSeg/total*100).toFixed(1)}% del día</div>
-    <table width="100%" cellpadding="0" cellspacing="2" border="0">
-      ${mapaSeg.map(f=>`<tr>${f.celdas.map(m=>`
-        <td width="${m.ancho}" bgcolor="${_colorMapaCorreo(m.varPct)}"
-            style="background-color:${_colorMapaCorreo(m.varPct)};height:${f.alto}px;
-                   text-align:center;vertical-align:middle;padding:3px 2px;">
-          <div style="font-size:11.5px;font-weight:700;color:#ffffff;line-height:1.2;">${m.nemo}</div>
-          <div style="font-size:10.5px;color:#e8f5e9;">${pctTxt(m.varPct)}</div></td>`).join('')}</tr>`).join('')}
-    </table>
+    ${mapaSeg}
     <table width="100%" cellpadding="0" cellspacing="10" border="0" style="margin-top:4px;">
       <tr>
         <td width="44%" bgcolor="${C}" style="vertical-align:top;padding:12px 14px;">
@@ -14560,14 +14670,7 @@ function informeRvlCorreoHTML(){
 
     <div style="font-size:11px;color:${GR};letter-spacing:.07em;text-transform:uppercase;
         margin:16px 0 7px;">Mapa del mercado — tamaño por volumen, color por variación</div>
-    <table width="100%" cellpadding="0" cellspacing="2" border="0">
-      ${mapa.map(f=>`<tr>${f.celdas.map(m=>`
-        <td width="${m.ancho}" bgcolor="${_colorMapaCorreo(m.varPct)}"
-            style="background-color:${_colorMapaCorreo(m.varPct)};height:${f.alto}px;
-                   text-align:center;vertical-align:middle;padding:4px 2px;">
-          <div style="font-size:12px;font-weight:700;color:#ffffff;line-height:1.2;">${m.nemo}</div>
-          <div style="font-size:11px;color:#e8f5e9;">${pctTxt(m.varPct)}</div></td>`).join('')}</tr>`).join('')}
-    </table>
+    ${mapa}
 
     ${bloqueSeg('MERCADO CONTINUO', d=>d.seg !== 'MGC')}
     ${bloqueSeg('MERCADO GLOBAL COLOMBIANO (MGC)', d=>d.seg === 'MGC')}
@@ -15004,7 +15107,12 @@ function renderInformeDiario(){
         <div style="font-size:13px;font-weight:700;letter-spacing:.4px;">${titulo}</div>
         <div class="field-note">${M(totSeg)} COP${usdcop?' · <span style="color:var(--amber,#f59e0b);">'+U(totSeg)+' USD</span>':''} · ${gs.length} especies · ${(totSeg/total*100).toFixed(1)}% del día</div>
       </div>
-      ${nTree ? treemapVolumen(vol.slice(0,nTree).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 960, 150) : ''}
+      ${/* FLUIDO, igual que el mapa grande de arriba. Sin esto el SVG se
+            dibujaba a 960 px fijos dentro de una tarjeta que es mas ancha, y
+            el mapa del MGC quedaba RECORTADO: terminaba antes del margen
+            derecho mientras el de arriba si llegaba. Un ancho escrito a mano
+            al lado de un ancho calculado son dos verdades (Sergio, 21-oct). */''}
+      ${nTree ? treemapVolumen(vol.slice(0,nTree).map(d=>({nombre:d.esp, valor:d.monto, varPct:d.varPct})), 960, 150, true) : ''}
       <div style="display:flex;gap:22px;flex-wrap:wrap;margin-top:${nTree?14:0}px;">
         <div style="flex:1;min-width:290px;">
           <div style="font-size:11px;font-weight:700;letter-spacing:.4px;opacity:.7;margin-bottom:6px;">LO QUE MÁS SUBIÓ</div>
@@ -27763,8 +27871,13 @@ function calcularComisiones(clienteKey, tipo, qty, price, opts){
 // el lado, así que se lo cobraba a los UCITS y el cobro llegaba hasta el Excel
 // (Sergio, 02-sep). Se delega en secFeeRVI, que ya tenía la regla completa.
 function calcularSecFee(lado, gross, tipo, isin){
-  if(typeof secFeeRVI === 'function') return secFeeRVI(tipo, lado, gross, isin);
-  return lado==='Sell' ? gross * SEC_FEE_RATE : 0;
+  // Aqui habia un respaldo —`return lado==='Sell' ? gross*SEC_FEE_RATE : 0`—
+  // para el caso de que `secFeeRVI` no existiera. En un solo archivo eso no
+  // puede pasar: las dos funciones viven aqui. Lo que si podia pasar es que
+  // alguien moviera el orden y el respaldo se activara con la regla
+  // EQUIVOCADA, sin tipo y sin ISIN. Codigo muerto con una regla vieja
+  // adentro es una trampa esperando (Sergio, 21-oct).
+  return secFeeRVI(tipo, lado, gross, isin);
 }
 
 // Los dos campos de comisión del broker son EXCLUYENTES: al escribir en uno se
