@@ -8799,6 +8799,121 @@ const RVI_GEO = {
 };
 const RVI_ANCHO_CORREO = 650;
 
+// ===================================================================
+// EL INFORME RVI COMO CUERPO DEL CORREO
+// -------------------------------------------------------------------
+// Mismas reglas que el de RVL: tablas, anchos en porcentaje, colores por
+// celda, nada de flex, grid ni SVG. Outlook dibuja con el motor de Word.
+//
+// RVI era el PEOR de los dos: medido el 21-oct sobre la captura de
+// Sergio, la imagen llegaba al 12% del ancho del panel. No porque fuera
+// más ancha —los dos salen a 1.300 px— sino porque es como tres veces
+// más alta, y lo que la encogía era el alto.
+//
+// Como texto el alto deja de importar: una tabla larga es scroll, no
+// letra de 3 px. Por eso aquí los bloques van en UNA columna a lo
+// ancho, sin apretar nada.
+// (Sergio, 21-oct)
+// ===================================================================
+function informeRviCorreoHTML(){
+  const F = '#0d0f14', C = '#151926', L = '#1b2232';
+  const TX = '#e5e7eb', GR = '#9aa3b8';
+
+  const porBloque = {};
+  _rviUniverso.forEach(u=>{ (porBloque[u.bloque] = porBloque[u.bloque] || []).push(u); });
+  const ordenBloques = [];
+  _rviUniverso.slice()
+    .sort((a,b)=> (a.columna - b.columna) || (a.orden_bloque - b.orden_bloque))
+    .forEach(u=>{
+      if(!ordenBloques.some(x=>x.bloque === u.bloque))
+        ordenBloques.push({ bloque:u.bloque, tipo:u.tipo });
+    });
+
+  const fecha = (_rviFecha ? new Date(_rviFecha + 'T12:00:00') : new Date())
+    .toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const spx = _rviDatos['SPX Index'] || {};
+
+  const tarjeta = (lab, n) => {
+    const d = _rviDatos[n] || {};
+    return `<td width="25%" bgcolor="${C}" style="padding:10px 12px;vertical-align:top;">
+      <div style="font-size:11.5px;color:${GR};">${lab}</div>
+      <div style="font-size:19px;font-weight:700;padding-top:2px;
+           color:${_rviColor(d.var_dia) || TX};">${_rviPct(d.var_dia)}</div></td>`;
+  };
+
+  const th = (t, al, w) => `<td width="${w}" style="padding:0 6px 7px;font-size:11px;
+      color:${GR};text-align:${al};letter-spacing:.03em;text-transform:uppercase;">${t}</td>`;
+
+  const tablaBloque = b => {
+    const filas = porBloque[b.bloque] || [];
+    if(!filas.length) return '';
+    const esIdx = b.tipo === 'INDICE';
+    const enc = esIdx
+      ? [['Índice','left','34%'],['Variación','right','20%'],['Last','right','23%'],['P/E','right','23%']]
+      : [['Nemo','left','17%'],['Variación','right','13%'],['Last','right','15%'],
+         ['MTD','right','11%'],['YTD','right','11%'],['Industry/Group','left','33%']];
+    const cel = (txt, al, color, bold) => `<td style="padding:5px 6px;font-size:13px;
+        text-align:${al};${color?`color:${color};`:''}${bold?'font-weight:700;':''}">${txt}</td>`;
+    const tds = filas.map((u,k)=>{
+      const d = _rviDatos[u.nemo] || {};
+      // Las filas alternas llevan su color EN LA CELDA: Outlook no aplica un
+      // fondo puesto en el <tr>, lo ignora y se pierde el rayado.
+      const bg = k % 2 ? ` bgcolor="${C}"` : '';
+      if(esIdx){
+        return `<tr${bg}>` + cel(u.etiqueta,'left',_RVI_TINTA,true) +
+               cel(_rviPct(d.var_dia),'right',_rviColor(d.var_dia),true) +
+               cel(_rviPx(d.last),'right') +
+               cel(d.pe==null?'—':Number(d.pe).toFixed(2).replace('.',','),'right') + '</tr>';
+      }
+      return `<tr${bg}>` +
+             cel(u.etiqueta,'left',_RVI_TINTA,true) +
+             cel(_rviPct(d.var_dia),'right',_rviColor(d.var_dia),true) +
+             cel(_rviPx(d.last),'right') +
+             cel(_rviPct(d.mtd),'right',_rviColor(d.mtd)) +
+             cel(_rviPct(d.ytd),'right',_rviColor(d.ytd)) +
+             `<td style="padding:5px 6px;font-size:12px;color:${GR};">${u.descripcion||''}</td></tr>`;
+    }).join('');
+    return `
+    <div style="font-size:14px;font-weight:700;color:#ffffff;margin:16px 0 6px;">${b.bloque}
+      <span style="font-size:12px;font-weight:400;color:${GR};"> · ${filas.length}</span></div>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${F}"
+           style="border-collapse:collapse;">
+      <tr bgcolor="${L}">${enc.map(e=>th(e[0],e[1],e[2])).join('')}</tr>
+      ${tds}
+    </table>`;
+  };
+
+  return `<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${F}"
+    style="border-collapse:collapse;background:${F};color:${TX};
+           font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
+  <tr><td style="padding:16px 18px;">
+
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+      <tr>
+        <td style="vertical-align:top;">
+          <div style="font-size:19px;font-weight:700;color:#ffffff;">Informe diario RVI</div>
+          <div style="font-size:12px;color:${GR};padding-top:2px;text-transform:capitalize;">${fecha}</div>
+        </td>
+        <td style="vertical-align:top;text-align:right;">
+          <div style="font-size:11px;color:${GR};letter-spacing:.08em;">S&amp;P 500</div>
+          <div style="font-size:30px;font-weight:700;color:#ffffff;line-height:1.1;">${_rviPx(spx.last)}</div>
+          <div style="font-size:15px;font-weight:700;color:${_rviColor(spx.var_dia) || TX};">${_rviPct(spx.var_dia)}</div>
+        </td>
+      </tr>
+    </table>
+
+    <table width="100%" cellpadding="0" cellspacing="6" border="0" style="margin-top:12px;">
+      <tr>${tarjeta('DOW JONES','INDU Index')}${tarjeta('S&amp;P 500','SPX Index')}${tarjeta('NASDAQ','CCMP Index')}${tarjeta('COLOMBIA','COLCAP Index')}</tr>
+    </table>
+
+    ${ordenBloques.map(tablaBloque).join('')}
+
+    <div style="font-size:11.5px;color:#6b7280;padding-top:16px;">
+      Credicorp Capital Colombia · Equity Sales</div>
+
+  </td></tr></table>`;
+}
+
 function informeRviHTML(geo){
   const g = geo || RVI_GEO.pantalla;
   const porBloque = {};
@@ -14029,7 +14144,22 @@ function verTextoBloomberg(){
 //
 // Se prioriza el PC: quien lo abra en el celular hace zoom.
 // =====================================================================
-function informeCompactoHTML(){
+// ===================================================================
+// LOS DATOS DEL INFORME RVL — una sola vez
+// -------------------------------------------------------------------
+// Esto vivia DENTRO de `informeCompactoHTML`. Se saco aparte el 21-oct
+// porque ahora hay DOS formas de mandar el informe: la imagen de
+// siempre y el cuerpo del correo en HTML. Copiar el calculo en la
+// segunda habria sido la forma de siempre de hacerse dano — dos
+// caminos para el mismo numero — y el dia que se corrija uno, el otro
+// sigue mintiendo. Paso exactamente eso el 29-sep con el lector del
+// COLCAP: el informe grande mostraba -0,80% y la imagen que iba a los
+// clientes mostraba +0,00% en verde.
+//
+// Aca NO se decide nada de presentacion: solo cifras y los tres
+// formateadores que las dos vistas comparten.
+// ===================================================================
+function _datosInformeRVL(){
   // Antes esto tenia su propio parser (`Number(v.replace(/,/g,''))`) que NO le
   // quitaba el '%'. Con "-0.80%" daba NaN, el `|| 0` lo volvia cero, y la
   // imagen del correo salia "+0.00%" EN VERDE mientras el informe grande
@@ -14070,6 +14200,216 @@ function informeCompactoHTML(){
   const bloques = mayoresBloques(3);
   const fecha   = new Date().toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   const pct = v => `<span style="color:${v>=0?'#22c55e':'#ef4444'};font-weight:700;">${v>=0?'+':''}${v.toFixed(2)}%</span>`;
+  return { colcap, colcapVar, usdcop, U, mm, cierres, stats, total, subasta,
+           volMGC, volETF, volCont, porVolTodo, contin, porVol, bloques, fecha, pct };
+}
+
+// ===================================================================
+// EL INFORME RVL COMO CUERPO DEL CORREO
+// -------------------------------------------------------------------
+// Por qué existe esto, que es la parte que importa:
+//
+// Hasta hoy el informe viajaba como una IMAGEN. Y `correo_informe.py` la
+// pegaba así: `<img src="cid:..." style="max-width:100%">`. Ese 100% no
+// es el ancho del panel de lectura — es el del cuerpo del mensaje, que
+// Outlook maneja en pulgadas y es mucho más angosto. Una imagen de
+// 1.300 px se encogía a menos de la mitad, y entre más alta, peor.
+// Medido el 21-oct sobre las capturas de Sergio: el informe de RVL
+// llegaba al 38% del ancho disponible y el de RVI al 12%.
+//
+// El 20-oct cambié el ANCHO buscando arreglarlo. Fue la variable
+// equivocada: los dos informes salen igual de anchos y se ven distinto,
+// o sea que lo que mandaba era el ALTO. Angostarlo lo volvió más largo
+// y lo empeoró.
+//
+// Un texto no se encoge. Por eso el cuerpo ahora es HTML de verdad.
+//
+// REGLAS DE ESTE HTML, que no son de gusto sino de lo que Outlook sabe
+// dibujar — usa el motor de Word, no un navegador:
+//   · TODO va en <table> con ancho en porcentaje. Nada de flex ni grid:
+//     los ignora y todo se apila en una columna.
+//   · Los colores van en `background` por celda, nunca en clases: no
+//     hay hoja de estilos, cada estilo va en su atributo.
+//   · Nada de SVG. Por eso las líneas chiquitas de alzas y bajas no
+//     están: quedan el nemo, el precio y la variación con su color.
+//   · El mapa del mercado son CELDAS con color de fondo, no una imagen.
+//     Así el correo no lleva ni un archivo y el mapa también se
+//     reacomoda en el celular.
+// (Sergio, 21-oct)
+// ===================================================================
+
+// Reparte las especies en filas de un mapa tipo treemap hecho con celdas.
+// No es el algoritmo del treemap de pantalla —ese corta en dos direcciones—
+// sino franjas horizontales, que es lo único que una tabla sabe hacer.
+function _mapaFilasCorreo(items, nFilas){
+  const vivos = items.filter(i=>i.valor > 0);
+  if(!vivos.length) return [];
+  const total = vivos.reduce((a,i)=>a+i.valor, 0);
+  const filas = [];
+  let fila = [], acum = 0;
+  const objetivo = total / nFilas;
+  vivos.forEach((it, i)=>{
+    fila.push(it); acum += it.valor;
+    const quedan = vivos.length - i - 1;
+    // Se cierra la franja cuando ya tiene su parte, pero nunca si al
+    // hacerlo dejaría alguna fila siguiente vacía.
+    if(filas.length < nFilas - 1 && acum >= objetivo && quedan >= (nFilas - filas.length - 1)){
+      filas.push({ items: fila, valor: acum });
+      fila = []; acum = 0;
+    }
+  });
+  if(fila.length) filas.push({ items: fila, valor: acum });
+  return filas.map(f=>({
+    alto: Math.max(26, Math.round(f.valor / total * 150)),
+    celdas: f.items.map(it=>({
+      ...it,
+      ancho: (it.valor / f.valor * 100).toFixed(2) + '%',
+    })),
+  }));
+}
+
+function _colorMapaCorreo(v){
+  const t = Math.max(-4, Math.min(4, v)) / 4;
+  if(Math.abs(v) < 0.05) return '#4a4a48';
+  if(t > 0) return `rgb(${Math.round(30 - 10*t)},${Math.round(110 + 70*t)},${Math.round(60 - 10*t)})`;
+  return `rgb(${Math.round(150 + 80*(-t))},${Math.round(60 - 25*(-t))},${Math.round(60 - 25*(-t))})`;
+}
+
+function informeRvlCorreoHTML(){
+  const { colcap, colcapVar, usdcop, U, mm, total, subasta,
+          volMGC, volETF, volCont, porVolTodo, porVol, bloques, fecha } = _datosInformeRVL();
+
+  const F = '#0d0f14', C = '#151926', L = '#1b2232';
+  const TX = '#e5e7eb', GR = '#9aa3b8', VE = '#4ade80', RO = '#f87171';
+  const pctTxt = v => `${v>=0?'+':''}${v.toFixed(2)}%`;
+  const colPct = v => v>=0 ? VE : RO;
+
+  const cifras = [
+    ['Volumen total',     total,   '100,0'],
+    ['Mercado continuo',  volCont, (volCont/total*100).toFixed(1)],
+    ['Subasta de cierre', subasta ? subasta.monto : 0,
+                          subasta ? (subasta.monto/total*100).toFixed(1) : '0,0'],
+    ['MGC',               volMGC,  (volMGC/total*100).toFixed(1)],
+    ['ETFs',              volETF,  (volETF/total*100).toFixed(1)],
+  ].filter(c=>c[1] > 0);
+
+  const celdaCifra = c => `<td width="${(100/cifras.length).toFixed(0)}%" bgcolor="${C}"
+      style="padding:10px 12px;vertical-align:top;">
+      <div style="font-size:10.5px;color:${GR};letter-spacing:.05em;text-transform:uppercase;">${c[0]}</div>
+      <div style="font-size:18px;font-weight:700;color:#ffffff;padding-top:3px;">${mm(c[1])}</div>
+      ${usdcop ? `<div style="font-size:11.5px;color:#86efac;">${U(c[1])}</div>` : ''}
+      <div style="font-size:11.5px;color:${GR};">${c[2]}% del día</div></td>`;
+
+  // El mapa: del DÍA COMPLETO, igual que la imagen — continuo, MGC y ETFs.
+  const mapa = _mapaFilasCorreo(
+    porVolTodo.slice(0, 18).map(d=>({ nemo:d.esp, valor:d.monto,
+                                      varPct: d.esIntradia ? 0 : d.varPct })), 3);
+
+  const conMov = porVol.filter(d=>d.trades >= 5 && !d.esIntradia);
+  const suben = conMov.slice().sort((a,b)=>b.varPct-a.varPct).slice(0,4);
+  const bajan = conMov.slice().sort((a,b)=>a.varPct-b.varPct).slice(0,4);
+  const vol = porVol.slice(0, 7);
+  const totVol = vol.reduce((a,d)=>a+d.monto, 0) || 1;
+
+  const filaAlza = d=>`<tr>
+    <td style="padding:4px 0;font-size:13px;font-weight:600;color:${TX};">${d.esp}</td>
+    <td style="padding:4px 0;font-size:13px;color:#c3cad9;text-align:right;">${fmtRate(d.ultimo)}</td>
+    <td style="padding:4px 0 4px 14px;font-size:13px;font-weight:700;text-align:right;
+        color:${colPct(d.varPct)};">${pctTxt(d.varPct)}</td></tr>`;
+
+  const filaVol = d=>{
+    const p = d.monto/totVol*100;
+    return `<tr>
+      <td style="padding:4px 0;font-size:13px;font-weight:600;color:${TX};width:110px;">${d.esp}</td>
+      <td style="padding:4px 8px;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${L}"
+               style="border-collapse:collapse;">
+          <tr><td bgcolor="#a855f7" width="${p.toFixed(1)}%" style="height:9px;font-size:1px;line-height:1px;">&nbsp;</td>
+              <td style="font-size:1px;line-height:1px;">&nbsp;</td></tr></table></td>
+      <td style="padding:4px 0;font-size:12.5px;color:${GR};text-align:right;width:52px;">${p.toFixed(1)}%</td>
+      <td style="padding:4px 0 4px 10px;font-size:13px;color:${TX};text-align:right;
+          white-space:nowrap;">${mm(d.monto)}</td></tr>`;
+  };
+
+  const thB = t=>`<td style="padding:7px 12px;font-size:11px;color:${GR};">${t}</td>`;
+  const thBd = t=>`<td style="padding:7px 12px;font-size:11px;color:${GR};text-align:right;">${t}</td>`;
+
+  return `<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${F}"
+    style="border-collapse:collapse;background:${F};color:${TX};
+           font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
+  <tr><td style="padding:16px 18px;">
+
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+      <tr>
+        <td style="vertical-align:top;">
+          <div style="font-size:19px;font-weight:700;color:#ffffff;">Informe diario de mercado</div>
+          <div style="font-size:12px;color:${GR};padding-top:2px;text-transform:capitalize;">${fecha}</div>
+        </td>
+        <td style="vertical-align:top;text-align:right;">
+          <div style="font-size:11px;color:${GR};letter-spacing:.08em;">COLCAP</div>
+          <div style="font-size:30px;font-weight:700;color:#ffffff;line-height:1.1;">${colcap ? colcap.toLocaleString('es-CO',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—'}</div>
+          <div style="font-size:15px;font-weight:700;color:${colPct(colcapVar)};">${pctTxt(colcapVar)}</div>
+        </td>
+      </tr>
+    </table>
+
+    <table width="100%" cellpadding="0" cellspacing="6" border="0" style="margin-top:12px;">
+      <tr>${cifras.map(celdaCifra).join('')}</tr>
+    </table>
+
+    <div style="font-size:11px;color:${GR};letter-spacing:.07em;text-transform:uppercase;
+        margin:16px 0 7px;">Mapa del mercado — tamaño por volumen, color por variación</div>
+    <table width="100%" cellpadding="0" cellspacing="2" border="0">
+      ${mapa.map(f=>`<tr>${f.celdas.map(m=>`
+        <td width="${m.ancho}" bgcolor="${_colorMapaCorreo(m.varPct)}"
+            style="height:${f.alto}px;text-align:center;vertical-align:middle;padding:4px 2px;">
+          <div style="font-size:12px;font-weight:700;color:#ffffff;line-height:1.2;">${m.nemo}</div>
+          <div style="font-size:11px;color:#e8f5e9;">${pctTxt(m.varPct)}</div></td>`).join('')}</tr>`).join('')}
+    </table>
+
+    <table width="100%" cellpadding="0" cellspacing="10" border="0" style="margin-top:10px;">
+      <tr>
+        <td width="50%" bgcolor="${C}" style="vertical-align:top;padding:12px 14px;">
+          <div style="font-size:11px;color:${GR};letter-spacing:.07em;text-transform:uppercase;
+              padding-bottom:7px;">Mayores alzas y bajas</div>
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+            ${suben.concat(bajan).map(filaAlza).join('')}
+          </table></td>
+        <td width="50%" bgcolor="${C}" style="vertical-align:top;padding:12px 14px;">
+          <div style="font-size:11px;color:${GR};letter-spacing:.07em;text-transform:uppercase;
+              padding-bottom:7px;">Dónde estuvo el volumen</div>
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+            ${vol.map(filaVol).join('')}
+          </table></td>
+      </tr>
+    </table>
+
+    ${bloques.length ? `
+    <div style="font-size:11px;color:${GR};letter-spacing:.07em;text-transform:uppercase;
+        margin:16px 0 7px;">Los ${bloques.length} mayores bloques</div>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${C}"
+           style="border-collapse:collapse;">
+      <tr bgcolor="${L}">${thB('Especie')}${thBd('Cantidad')}${thBd('Precio')}${thBd('Monto COP')}${usdcop?thBd('USD'):''}${thBd('Hora')}</tr>
+      ${bloques.map(b=>`<tr>
+        <td style="padding:8px 12px;font-size:13px;font-weight:600;color:${TX};border-top:1px solid ${L};">${b.esp}</td>
+        <td style="padding:8px 12px;font-size:13px;color:#c3cad9;text-align:right;border-top:1px solid ${L};">${fmtInt(b.qt)}</td>
+        <td style="padding:8px 12px;font-size:13px;color:#c3cad9;text-align:right;border-top:1px solid ${L};">${fmtRate(b.px)}</td>
+        <td style="padding:8px 12px;font-size:13px;font-weight:600;color:#ffffff;text-align:right;border-top:1px solid ${L};">${mm(b.monto)}</td>
+        ${usdcop?`<td style="padding:8px 12px;font-size:13px;color:#86efac;text-align:right;border-top:1px solid ${L};">${U(b.monto)}</td>`:''}
+        <td style="padding:8px 12px;font-size:13px;color:${GR};text-align:right;border-top:1px solid ${L};">${b.hora||''}</td>
+      </tr>`).join('')}
+    </table>` : ''}
+
+    <div style="font-size:11.5px;color:#6b7280;padding-top:14px;">
+      Credicorp Capital Colombia · Equity Sales</div>
+
+  </td></tr></table>`;
+}
+
+function informeCompactoHTML(){
+  const { colcap, colcapVar, usdcop, U, mm, cierres, stats, total, subasta,
+          volMGC, volETF, volCont, porVolTodo, contin, porVol, bloques, fecha, pct }
+        = _datosInformeRVL();
 
   // Un bloque por segmento: treemap + alzas/bajas + dónde estuvo el volumen.
   //
@@ -15035,21 +15375,30 @@ async function traerCierreBloomberg(btn){
   }
 }
 
+// Desde el 21-oct estos dos botones mandan el informe como HTML, no como
+// imagen. El cuerpo del correo pasa a ser el informe en vez de una foto del
+// informe, y deja de encogerse. Va en `datos.html`, no en `imagen`:
+// `correo_informe.py` usa el HTML si viene y se cae a la imagen si no, asi
+// que un runner viejo con el app nuevo avisa en vez de mandar algo raro.
+//
+// El boton "Copiar imagen" NO se toco: sigue dando la imagen de siempre. Si
+// el HTML se ve mal en algun Outlook, esa salida sigue ahi.
 async function correoInformeRVI(btn){
   if(!_rviListo()) return;
   try{
-    // La ANGOSTA, de 650 px: llega al correo 1:1 en vez de encogida a 0,49x.
-    const canvas = await _rviCompactoACanvas();
-    await pedirAlPC('CORREO_RVI', btn, canvas.toDataURL('image/png'), 90);
-  }catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
+    const html = informeRviCorreoHTML();
+    if(!html || html.length < 500) throw new Error('el informe salió vacío');
+    await pedirAlPC('CORREO_RVI', btn, null, 90, { html });
+  }catch(e){ alert('No se pudo armar el correo: ' + e.message); }
 }
 
 async function correoInformeRVL(btn){
   if(!informeCompleto()) return;
   try{
-    const canvas = await _compactoACanvas();
-    await pedirAlPC('CORREO_RVL', btn, canvas.toDataURL('image/png'), 90);
-  }catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
+    const html = informeRvlCorreoHTML();
+    if(!html || html.length < 500) throw new Error('el informe salió vacío');
+    await pedirAlPC('CORREO_RVL', btn, null, 90, { html });
+  }catch(e){ alert('No se pudo armar el correo: ' + e.message); }
 }
 function comercialDeCOR(nombreCli){
   const g = (typeof grupoDeOperacion === 'function')
