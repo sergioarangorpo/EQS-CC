@@ -18407,9 +18407,40 @@ function filasPlanillaCOP(){
   // SCOTIA, CITI_NY, GOLDMAN, HSBC_NY, MLI, PLURAL y demás no llevan reporte,
   // pero SÍ generan comisión y tienen que estar en la planilla. Se toman de
   // Fidessa Trades con su tarifa fija (Sergio, 15-sep).
-  const _yaReportados = new Set(ultimaVersionPorLinea(_reportesGenerados||[])
+  // UN CLIENTE ESCRITO DE DOS FORMAS ENTRABA DOS VECES.
+  // ---------------------------------------------------------------------
+  // CREDICORPFFMM es UN book con cuatro macrogrupos. El reporte se registra
+  // por MACROGRUPO ("CREDICORP CAPITAL FIDUCIARIA", "CRGS"...) y la orden de
+  // Fidessa trae el BOOK ("CREDICORPFFMM"). Como esta llave se arma con el
+  // nombre del cliente, las dos escrituras daban llaves distintas: la linea
+  // ya reportada no se reconocia y volvia a entrar por Fidessa.
+  // Resultado en la Planilla COP: PFAVAL salia DOS VECES —una con Fondo
+  // "AHORRO ESPECIAL 56" (la de verdad) y otra con Fondo "CREDICORPFFMM"—
+  // con las mismas 100.000 y +76.960 de comision doble (Sergio, 21-oct).
+  // En el modulo Reportes salia UNA sola vez, que es lo que lo delataba.
+  //
+  // Es el REVERSO EXACTO del defecto del 19-oct: alla la linea reportada se
+  // quedaba en PENDIENTE por la misma razon, dos escrituras del mismo cliente.
+  //
+  // El arreglo es ADITIVO: un reporte de FFMM deja SU llave y ADEMAS la del
+  // book. Nunca quita ninguna, asi que no puede tumbar una linea que antes
+  // entraba — solo puede dejar de contar dos veces la misma.
+  const _nombresFFMM = new Set();
+  try{
+    Object.values(CCFFMM_MACROGRUPOS).forEach(m=>{
+      if(m.fondo) _nombresFFMM.add(String(m.fondo).toUpperCase().trim());
+      _nombresFFMM.add(('CREDICORP CAPITAL ' + m.nombre).toUpperCase().trim());
+    });
+  }catch(e){}
+  const _yaReportados = new Set();
+  ultimaVersionPorLinea(_reportesGenerados||[])
     .filter(r=>r.modulo === 'RVL')
-    .map(r=>_dashClave(r.cliente) + '|' + String(r.especie||'').toUpperCase() + '|' + String(r.lado||'')));
+    .forEach(r=>{
+      const esp = String(r.especie||'').toUpperCase(), lado = String(r.lado||'');
+      _yaReportados.add(_dashClave(r.cliente) + '|' + esp + '|' + lado);
+      if(_nombresFFMM.has(String(r.cliente||'').toUpperCase().trim()))
+        _yaReportados.add(_dashClave('CREDICORPFFMM') + '|' + esp + '|' + lado);
+    });
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
     const t = _fidessaTradesRaw[oid];
     const cli = normalizarGrupo(t.grupo);
