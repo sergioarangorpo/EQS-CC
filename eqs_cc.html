@@ -27160,13 +27160,31 @@ function costoClienteRVI(cliente, calculado){
 }
 
 // ---- SEC fee ----
-// Solo ETFs y ADRs, y SOLO en ventas de instrumentos US. Reproduce exacto el
-// 5,48 del Trade Confirmation de IAU (265.954,50 x SEC_FEE_RATE).
+// Solo ETFs y ADRs, y SOLO en ventas. Reproduce exacto el 5,48 del Trade
+// Confirmation de IAU (265.954,50 x SEC_FEE_RATE).
+//
+// EL SEC FEE DEPENDE DE DONDE SE OPERA, NO DE DONDE ESTA CONSTITUIDO EL EMISOR.
+// ---------------------------------------------------------------------
+// Aqui decia `if(!/^US/i.test(isin)) return 0;`. La intencion era correcta —no
+// cobrarle el fee a un UCITS irlandes o luxemburgues, que no cotiza en EE.UU.
+// (Sergio, 02-sep)— pero la prueba estaba al reves: exigia que el ISIN FUERA
+// US en vez de excluir a los que no cotizan alla.
+//
+// El 21-oct se vio el costo: IFS (Intercorp Financial Services) cotiza en NYSE
+// pero esta constituida en Panama, asi que su ISIN es PAL2400671A3. La venta
+// de 25.000 acciones de Fiduashmore salio con SEC Fee en CERO y el Trade
+// Confirmation se le mando asi al cliente: faltaban USD 27,66.
+// Le pasa a TODO ADR de emisor no estadounidense, que es la mitad del libro.
+//
+// Ahora la regla es por exclusion: paga el fee todo ADR o ETF que se venda,
+// MENOS los UCITS europeos. Si manana entra un domicilio nuevo que tampoco
+// cotice en EE.UU., se agrega aqui y se ve por que.
+const SEC_FEE_SIN_US = /^(IE|LU)/i;   // UCITS europeos: no cotizan en EE.UU.
 function secFeeRVI(tipo, lado, gross, isin){
   const t = String(tipo||'').toUpperCase();
   if(t !== 'ETF' && t !== 'ADR') return 0;
   if(String(lado||'').toUpperCase() !== 'SELL') return 0;
-  if(!/^US/i.test(String(isin||''))) return 0;
+  if(SEC_FEE_SIN_US.test(String(isin||''))) return 0;
   return redondear(gross * SEC_FEE_RATE, 2);
 }
 
@@ -28898,7 +28916,12 @@ function guardarEdicionRVI(){
   h.price=nuevoPrice;
   h.tipo=nuevoTipo;
   h.gross=h.qty*nuevoPrice;
-  h.secFee=h.side==='Sell'?h.gross*SEC_FEE_RATE:0;
+  // UN SOLO CAMINO PARA EL SEC FEE. Aqui estaba escrito a mano
+  //     h.secFee = h.side==='Sell' ? h.gross*SEC_FEE_RATE : 0;
+  // o sea: sin mirar el tipo y sin mirar el ISIN. Era una TERCERA regla,
+  // distinta de `secFeeRVI` y de `calcularSecFee`, y le cobraba el fee a un
+  // UCITS en cuanto alguien abriera esta linea a editarla (Sergio, 21-oct).
+  h.secFee = secFeeRVI(h.tipo, h.side, h.gross, h.isin);
 
   if(costOverride&&parseNum(costOverride)>0){
     h.cost=parseNum(costOverride);
@@ -29963,7 +29986,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-21 19:50 UTC · v258';
+const BUILD_ID = '2026-10-21 20:15 UTC · v259';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
