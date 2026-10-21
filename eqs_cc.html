@@ -15768,15 +15768,56 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version, lot
   }
 
   // Una fila por folio y fracción, agrupando por folio + portafolio.
+  // EL PORTAFOLIO SE BUSCA EN LA FICHA Y, SI NO ESTA, EN EL MAESTRO DE
+  // DECEVALES — QUE ES DONDE DE VERDAD VIVE (Sergio, 21-oct).
+  // ---------------------------------------------------------------------
+  // Hasta hoy esto solo miraba `cfg.portafolios`, la lista de la ficha. Para
+  // dos clientes esa lista NO es donde viven los portafolios:
+  //   · PROTECCION tiene 3 en la ficha y opera contra 42 sub-cuentas, que
+  //     viven en PROTECCION_SUBCUENTAS.
+  //   · CREDICORP CAPITAL FIDUCIARIA ni siquiera es una llave de clientesDB:
+  //     es un MACROGRUPO. Su ficha sale vacia, sin un solo portafolio.
+  // En los dos casos `ports.find(...)` devolvia null y la linea se SALTABA EN
+  // SILENCIO. Resultado: a esos dos clientes NUNCA se les guardo una linea de
+  // COR —verificado contra `cor_lineas`, no hay una sola en ninguna fecha— y
+  // el archivo salia con "No se encontraron folios para esos clientes".
+  //
+  // El deceval, el Orion, el DV y el EF viven todos en `_maestroDeceval`, que
+  // es de donde la ficha los copia (ver `aplicarMaestroDecevales`). Si el
+  // portafolio no esta en la ficha, se le pregunta DIRECTO al maestro: misma
+  // fuente, un paso menos.
+  const _maestroPorNombre = {}, _maestroPorFondo = {};
+  try{
+    Object.values(_maestroDeceval||{}).forEach(m=>{
+      if(m.portafolio) _maestroPorNombre[norm(m.portafolio)] = m;
+      if(m.id_fondo)   _maestroPorFondo[norm(m.id_fondo)] = m;
+    });
+  }catch(e){}
+  const _portDelMaestro = nom => {
+    const m = _maestroPorNombre[norm(nom)] || _maestroPorFondo[norm(nom)];
+    if(!m || !String(m.deceval||'').trim()) return null;
+    return { nombre: m.portafolio || nom, deceval: String(m.deceval),
+             orion: m.codigo_orion || '', dv: m.dv || '',
+             especialFid: (m.ef != null ? m.ef : ''), nit: m.nit || '' };
+  };
+
   const porFolioPort = {};
+  const sinPortafolio = [];
   (_lineas||[]).forEach(f=>{
     const q = Number(f.cantidad) || 0;
     if(!q) return;
     const nomPort = f.portNombre || (f.portafolio && f.portafolio.nombre) || String(f.portafolio||'');
-    const port = ports.find(x=>norm(x.nombre) === norm(nomPort)) ||
-                 ports.find(x=>norm(x.nombre).includes(norm(nomPort)) ||
-                               norm(nomPort).includes(norm(x.nombre))) || null;
-    if(!port || !String(port.deceval||'').trim()) return;
+    const port = ports.find(x=>norm(x.nombre) === norm(nomPort) && String(x.deceval||'').trim()) ||
+                 ports.find(x=>String(x.deceval||'').trim() &&
+                               (norm(x.nombre).includes(norm(nomPort)) ||
+                                norm(nomPort).includes(norm(x.nombre)))) ||
+                 _portDelMaestro(nomPort);
+    if(!port || !String(port.deceval||'').trim()){
+      // NO SE SALTA EN SILENCIO. Una linea que no entra al COR es una linea
+      // que no se complementa en bolsa; tiene que verse.
+      sinPortafolio.push(nomPort || '(sin portafolio)');
+      return;
+    }
     const k = String(f.parentOrderId||'') + '|' + String(f.folio||f.id) + '|' + port.deceval;
     const a = porFolioPort[k] || (porFolioPort[k] = { f, port, cantidad:0, orden:f.parentOrderId||'' });
     a.cantidad += q;
@@ -15827,6 +15868,13 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version, lot
           [...new Set(faltan)].map(x=>'   ' + x).join('\n') +
           '\n\nSe puede reportar al cliente, pero el archivo del COR no se puede' +
           ' armar hasta tener ese dato.');
+  }
+  if(sinPortafolio.length){
+    alert('El COR de ' + nombreCli + ': no encontré el DECEVAL de ' +
+          [...new Set(sinPortafolio)].length + ' portafolio(s):\n\n' +
+          [...new Set(sinPortafolio)].map(x=>'   ' + x).join('\n') +
+          '\n\nEsas líneas NO van a entrar al archivo del COR. Agrégalos en ' +
+          'Ayudas → Maestros → Decevales y vuelve a generar el reporte.');
   }
   if(!filas.length) return 0;
 
