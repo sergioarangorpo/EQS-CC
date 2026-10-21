@@ -7009,9 +7009,13 @@ const clientesDB = {
   },
   'CREDIBOLSA': {
     // Client/Book CREDIBOLSA en Fidessa, account Credibolsa. Mismo esquema que
-    // MLI y CITI: orden VWAP/MOC + FX, reporte cruzado, sin trader. Es DISTINTO
-    // de 'CREDICORP CAPITAL BOLSA' (la mesa de Perú, que reporta su propio BO y
-    // desde acá no se toca) (Sergio, 23-sep).
+    // MLI y CITI: orden VWAP/MOC + FX, reporte cruzado, sin trader
+    // (Sergio, 23-sep).
+    // Es el UNICO grupo con este nombre desde el 21-oct: antes convivia con
+    // 'CREDICORP CAPITAL BOLSA', una ficha vacia que ademas se habia quedado
+    // con el book CREDIBOLSA. Sergio la mando borrar: "Debe ser CREDIBOLSA,
+    // grupo propio, llega por Account CREDIBOLSA, CLIENT/BOOK CREDIBOLSA en
+    // FIDESSA, la envio manual por mi bbg."
     // Tarifa 0,15% ALL IN (Sergio, 21-oct): el 0,15% es lo que paga el
     // cliente CON el IVA adentro, y nuestra comision es 0,15/1,19 = 0,126%.
     // Igual que MLI, CITI y BNP; lo unico distinto es la tasa.
@@ -7402,12 +7406,17 @@ function normalizarGrupo(g){ return ALIAS_GRUPO[g] || g; }
 // ---------------------------------------------------------------------
 // El Client/Book de Fidessa no siempre alcanza para saber de quien es la
 // orden. CSI lo comparten SEIS grupos, con tarifas de 0,05% a 0,20%:
-//   ASHMORE 0,05 · CREDICORP CAPITAL BOLSA 0,08 · IMPERA 0,09
-//   FALCOM 0,12  · MONEDA 0,15               · TORDESILHAS 0,20
+//   ASHMORE 0,05 · BNP AGENCY 0,10 · IMPERA 0,126
+//   FALCOM 0,10  · MONEDA 0,126    · TORDESILHAS 0,20
 // El 13-oct llego una orden de CSI por $2.021 MM sin Account. El app la
-// mando a Credicorp Capital Bolsa (0,08%) porque es a donde apunta
-// `normalizarGrupo('CSI')`; era FALCOM (0,12%). $808.400 de menos, en
-// silencio. Y si hubiera sido Tordesilhas, $2,4 MM.
+// mando a Credicorp Capital Bolsa (0,08%) porque es a donde apuntaba
+// `normalizarGrupo('CSI')`; era FALCOM. Plata de menos, en silencio.
+//
+// ARREGLADO EL 21-OCT: ese alias ya no existe. Lo que llega por CSI y no se
+// puede resolver por el Account se queda LLAMANDOSE CSI, con la ficha
+// 'CSI — sin asignar' y sin tarifa. Antes caia bajo un nombre que parecia un
+// cliente de verdad y se cobraba la tarifa de ese nombre: quedaba asignado a
+// alguien sin que nadie lo hubiera asignado. Ahora se ve que falta asignarlo.
 //
 // La lista es OPT-IN a proposito. SKANDIA tambien lo comparten tres
 // grupos, pero los tres cobran 0,08%, y resolverlos por el Account
@@ -7888,9 +7897,11 @@ function opcionesFondoFFMM(){
   return { propios, fondos };
 }
 
-// Las órdenes de CREDICORP CAPITAL BOLSA llegan bajo el mismo Client/Book que
-// AM y se distinguen por el Account. BOLSA es otro cliente, así que sus líneas
-// no deben salir al filtrar por AM (Sergio, 16-sep).
+// Las órdenes de la MESA llegan bajo el mismo Client/Book que el AM y se
+// distinguen por el Account, que dice BOLSA. No son del AM, así que sus
+// líneas no deben salir al filtrar por AM (Sergio, 16-sep).
+// OJO: esto SOLO las saca de la vista de AM. No las manda a ningún otro
+// grupo — se quedan con cliente CREDICORPFFMM y se ven en el panel general.
 function esCuentaBolsaFFMM(notes){
   return /\bBOLSA\b/i.test(String(notes||''));
 }
@@ -29789,7 +29800,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-21 17:35 UTC · v255';
+const BUILD_ID = '2026-10-21 18:20 UTC · v256';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
