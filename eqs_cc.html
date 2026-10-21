@@ -11776,7 +11776,47 @@ function agruparFoliosPorTcnLado(filas){
     const padres = rs.filter(r=>r.parentOrderId);
     const hijas  = rs.filter(r=>!r.parentOrderId).sort((a,b)=>(a.ord||0)-(b.ord||0));
     if(padres.length === 0){ huerfanos.push({k, filas: rs}); return; }
-    const padre = padres[0]; // >1 padre en el mismo (TCN,lado) no se vio nunca en datos reales
+
+    // VARIOS FOLIOS YA RESUELTOS EN EL MISMO TCN (Sergio, 21-oct).
+    // -------------------------------------------------------------------
+    // Aqui decia `const padre = padres[0]` con el comentario ">1 padre en el
+    // mismo (TCN,lado) no se vio nunca en datos reales". Ese dia llego.
+    //
+    // Sergio hizo un composite de CREDICORP CAPITAL FIDUCIARIA: 8 compras de
+    // PFDAVIGRP a ocho fondos distintos, TODAS en el mismo folio (TCN 606566),
+    // cruzadas contra Scotia. El archivo de folios trae:
+    //   · una fila de 10.800 — el AGREGADO del cruce, con un Parent Order ID
+    //     que NO es ninguna orden de Trades (es la referencia del booking);
+    //   · ocho patas (1.300, 6.400, 130, 800, 700, 260, 590, 620) que suman
+    //     exactamente esas 10.800, cada una con el nombre del fondo en Notes.
+    // El PASO 0.c le pone a cada pata el Parent Order ID de SU orden, asi que
+    // al llegar aqui habia OCHO padres. Se tomaba `padres[0]` —el agregado— y
+    // los otros siete DESAPARECIAN sin un aviso: el reporte quedaba sin siete
+    // de los ocho fondos.
+    //
+    // Un folio cuyo Parent Order ID ES una orden de verdad ya esta resuelto:
+    // es un folio DIRECTO de su dueno, no la pata de un composite. Y el
+    // agregado —un Parent Order ID que no existe en Trades, por la cantidad
+    // exacta de la suma de los otros— es doble conteo, igual que la pata de
+    // mercado de PROTECCION del PASO 0.a.
+    const _ordDe = r => (typeof _fidessaTradesRaw!=='undefined' && _fidessaTradesRaw)
+      ? _fidessaTradesRaw[String(r.parentOrderId)] : null;
+    const conOrden = padres.filter(_ordDe);
+    if(conOrden.length > 1){
+      const suma = conOrden.reduce((s,r)=>s + (Number(r.cantidad)||0), 0);
+      conOrden.forEach(p=>directos.push({k, padre:p}));
+      // Lo que sobra: el agregado se descarta SOLO si cuadra exacto con la
+      // suma. Si no cuadra, se deja y que lo delate el arqueo — preferimos un
+      // descuadre visible a una fila que desaparece.
+      const resto = rs.filter(r=>conOrden.indexOf(r) < 0).filter(r=>{
+        const esAgregado = !_ordDe(r) && (Number(r.cantidad)||0) === suma;
+        return !esAgregado;
+      });
+      if(resto.length) huerfanos.push({k, filas: resto});
+      return;
+    }
+
+    const padre = conOrden.length === 1 ? conOrden[0] : padres[0];
     if(hijas.length === 0){ directos.push({k, padre}); return; }
     // Un padre cuyo Parent Order ID SÍ corresponde a una orden real no puede
     // absorber hijas de OTRO cliente. Pasó el 05-ago a media jornada: en el TCN
@@ -12262,7 +12302,19 @@ function procesarFidessa(){
       if(typeof PROTECCION_SUBCUENTAS!=='undefined' && PROTECCION_SUBCUENTAS[n]) return;
       const esp = nemoCanonico(f.instrument,'fidessa');
       const lado = f.side==='B' ? 'Compra' : 'Venta';
-      const cand = ordenes.filter(o=> o.especie===esp && o.lado===lado && o.notes.startsWith(n));
+      // EL CALCE EXACTO MANDA SOBRE EL QUE EMPIEZA IGUAL.
+      // `startsWith` existe por HSBC, que trae el Notes TRUNCADO en el archivo
+      // de folios. Pero cuando el Notes de un fondo es el prefijo del de otro,
+      // `startsWith` devuelve DOS candidatos y, ante duda, no se asignaba.
+      // El 21-oct eso dejo colgado el composite de CREDICORP CAPITAL
+      // FIDUCIARIA: 'FI SMURFIT' calzaba tambien con 'FI SMURFIT II', asi que
+      // esa pata se quedo sin orden — y por quedarse sin orden se cayo el
+      // composite entero (ver `agruparFoliosPorTcnLado`).
+      // Primero se busca el que se llama IGUAL; solo si no hay ninguno se usa
+      // el prefijo. Para HSBC no cambia nada: su Notes truncado nunca es igual.
+      const mismos = ordenes.filter(o=> o.especie===esp && o.lado===lado && o.notes === n);
+      const cand = mismos.length ? mismos
+        : ordenes.filter(o=> o.especie===esp && o.lado===lado && o.notes.startsWith(n));
       if(cand.length===1){ f.parentOrderId = cand[0].oid; _casadosPorNotes++; }
     });
   }
@@ -18324,6 +18376,15 @@ function _fechaOpFX(o, campo, respaldo, faltan, queEs){
   return parseFechaLocal(respaldo || _hoyISO());
 }
 
+// LA MITAD DE LA COMISION DE RVI Y RFI ES DE OTRA MESA.
+// ---------------------------------------------------------------------
+// Regla de Sergio: "En RVI y RFI el 50% de la comision es de SAR y el 50%
+// de AAR (Andres Agudelo)". Andres esta en otra mesa, asi que a NUESTRA
+// planilla solo entra la mitad.
+// Va como constante con nombre y no como un 0.5 suelto en medio de una
+// cuenta: el dia que el reparto cambie se cambia aqui y se ve por que.
+const RVI_PARTE_EQS = 0.5;
+
 function filasPlanillaCOP(){
   const filas = [], faltan = [];
   const trm = _trmPlanilla();
@@ -18561,9 +18622,38 @@ function filasPlanillaCOP(){
       return;
     }
     const utilUSD = (Number(h.cost)||0) + margen - (Number(h.ccsi)||0);
+    // EL 50% ES DE AAR. Regla de Sergio: "En RVI y RFI el 50% de la comision
+    // es de SAR y el 50% de AAR (Andres Agudelo)", que esta en otra mesa.
+    // Hasta hoy entraba el 100% y Sergio lo corregia A MANO en cada planilla
+    // (Sergio, 21-oct: "vi el error que no partiste la comision al 50% en
+    // esos ADRs, salia el 100%, tuve que corregir a mano").
+    const comCOP = utilUSD * RVI_PARTE_EQS * trm;
+    // EL GIRO ES EL NET AMOUNT DE LA PLANILLA BO, NO UNA RESTA.
+    // Aqui el giro se calculaba `bruto - comision`, con el BRUTO EN DOLARES y
+    // la COMISION EN PESOS. Restarle 6,5 millones de pesos a 17 mil dolares
+    // daba los Giros Totales NEGATIVOS de los ADR (-6.456.735 y -4.097.250):
+    // no era una perdida, era una resta entre dos monedas.
+    //
+    // El numero de verdad ya existe y es el NET AMOUNT de la pata del CLIENTE
+    // en la Planilla BO. Se arma con la MISMA formula de `filasBODeCliente`
+    // para que los dos papeles digan lo mismo — y OJO con el lado: en el BO
+    // nuestra pata es la contraria a la del cliente, por eso un SELL del
+    // cliente es una COMPRA nuestra.
+    const _grossUSD = q * px;
+    const _secFee = Number(h.secFee) || 0;
+    const _esVentaCliente = String(h.side||'').toUpperCase() === 'SELL';
+    const netoBO = _esVentaCliente
+      ? _grossUSD - (Number(h.cost)||0) - _secFee     // nosotros COMPRAMOS
+      : _grossUSD + (Number(h.cost)||0) - _secFee;    // nosotros VENDEMOS
     agregar({ cliente:h.cliente, account:h.account, fondo:h.account,
-      nemo:h.symbol, lado:String(h.side||'').toUpperCase()==='SELL'?'Venta':'Compra',
-      cantidad:q, precio:px, bruto:q*px, comision:utilUSD*trm,
+      nemo:h.symbol, lado:_esVentaCliente?'Venta':'Compra',
+      cantidad:q, precio:px, bruto:_grossUSD, comision:comCOP,
+      // El giro queda en DOLARES, igual que la cantidad y el precio de esta
+      // misma fila. La comision es la unica en pesos, porque es la que
+      // alimenta el presupuesto.
+      netoReportado: netoBO,
+      // El porcentaje, con las dos puntas en pesos.
+      comisionPct: (_grossUSD * trm) ? comCOP / (_grossUSD * trm) : 0,
       mercado:(h.tipo==='ADR'?'ADR':'ETF'), iva:false,
       // Como FECHA, no como texto: del histórico llegaban "2026-09-17" y la
       // planilla las mostraba AAAA-MM-DD en vez de DD/MM/AAAA (Miguel, 18-sep).
