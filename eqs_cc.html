@@ -18376,7 +18376,17 @@ function filasPlanillaCOP(){
     filas.push({
       fondo: o.fondo || '', grupo: g.grupo, tipo: o.lado, nemo: o.nemo,
       cantidad: o.cantidad, precio: o.precio, bruto,
-      comision: com, comisionPct: bruto ? com / bruto : 0, iva, giro,
+      comision: com,
+      // EL PORCENTAJE TIENE QUE SIGNIFICAR LO MISMO EN TODAS LAS FILAS.
+      // En RVL y FX el bruto y la comision son los dos en pesos y dividir
+      // esta bien. En RVI el bruto esta en DOLARES y la comision en PESOS:
+      // dividir uno por otro daba numeros sin sentido —Porvenir en 40% y 69%,
+      // Skandia Seguros en 302%— que no eran una comision alta, eran una TRM
+      // disfrazada de porcentaje. Quien llama manda el porcentaje ya resuelto
+      // cuando las dos monedas no coinciden (Sergio, 21-oct).
+      comisionPct: o.comisionPct != null ? Number(o.comisionPct)
+                                         : (bruto ? com / bruto : 0),
+      iva, giro,
       // El FX lleva el trader de SU OPERACIÓN, que es lo que se ve en la
       // columna Trader de REGISTROS y lo que va en el reporte del cliente.
       // Si la operación no trae ninguno —una vieja, de antes— se usa el del
@@ -29863,7 +29873,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-21 18:40 UTC · v257';
+const BUILD_ID = '2026-10-21 19:50 UTC · v258';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
