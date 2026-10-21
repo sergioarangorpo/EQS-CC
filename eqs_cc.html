@@ -5715,8 +5715,22 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
   registrados.forEach(function(lado){
     lado.detalle.forEach(function(d){
       const gross = redondear(d.gross, 2);
+      // `cobro` es lo que PAGA el cliente y es lo que mueve el neto. No se
+      // toca: el neto tiene que seguir cuadrando con el MT VALUE y con el FX.
       const comision = redondear(d.gross * _tarifaCli.tasa, 2);
       const neto = redondear(lado.ladoAccion === 'Compra' ? gross + comision : gross - comision, 2);
+      // Y aqui SOLO se parte para mostrarlo. El IVA sale por RESTA, no por su
+      // propia multiplicacion: asi las dos celdas suman el cobro al centavo
+      // exacto. Redondear cada una por aparte deja diferencias de un peso que
+      // el cliente despues reclama.
+      // Solo tiene sentido partir cuando el cobro YA trae el IVA adentro
+      // (allIn). Si el IVA fuera por fuera, partirlo seria inventarse un
+      // descuento que el cliente no tiene.
+      let celdaComision = comision, celdaTax = _tarifaCli.etiqueta;
+      if(_tarifaCli.desglosa && _tarifaCli.allIn){
+        celdaComision = redondear(comision / 1.19, 2);
+        celdaTax = redondear(comision - celdaComision, 2);
+      }
       ws.getCell(r,1).value = _soloFecha(lado.tradeDate);
       ws.getCell(r,2).value = _soloFecha(lado.settleDate);
       ws.getCell(r,3).value = lado.ladoAccion === 'Compra' ? 'BUY' : 'SELL';
@@ -5725,8 +5739,8 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
       ws.getCell(r,6).value = d.qty;
       ws.getCell(r,7).value = redondear(d.precio, 2);
       ws.getCell(r,8).value = gross;
-      ws.getCell(r,9).value = comision;
-      ws.getCell(r,10).value = _tarifaCli.etiqueta;
+      ws.getCell(r,9).value = celdaComision;
+      ws.getCell(r,10).value = celdaTax;
       ws.getCell(r,11).value = neto;
       r++;
     });
@@ -5736,6 +5750,10 @@ async function generarExcelCruceMLI(clienteKey, registrados, trader){
     [1,2].forEach(function(c){ ws.getCell(rr,c).numFmt = 'yyyy-mm-dd'; });
     ws.getCell(rr,6).numFmt = '#,##0';
     [7,8,9,11].forEach(function(c){ ws.getCell(rr,c).numFmt = '#,##0.00'; });
+    // TAX RATE lleva formato de numero SOLO cuando trae un numero. Para MLI,
+    // CITI y BNP sigue siendo el texto 'ALL IN' y un numFmt ahi no haria nada
+    // util; ponerselo igual seria dejar una celda que parece numerica y no lo es.
+    if(typeof ws.getCell(rr,10).value === 'number') ws.getCell(rr,10).numFmt = '#,##0.00';
     for(let c=1;c<=11;c++){
       ws.getCell(rr,c).font = { name:'Calibri', size:11 };
       ws.getCell(rr,c).border = { bottom:{style:'hair', color:{argb:C.cardBorder}} };
@@ -10558,8 +10576,22 @@ const MLI_COMISION_ALL_IN = 0.001; // 0.1%
 // La `tasa` SIGUE siendo 0,0015 a propósito: es lo que el cliente paga y es
 // lo que mueve el FX. El 0,126% lo saca `desgloseComisionCliente` dividiendo
 // por 1,19. Escribir 0,00126 aquí haría que el FX cerrara 19% corto.
+//
+// `desglosa` (21-oct, Sergio): en la confirmacion del cliente, la columna
+// COMMISION lleva la comision REAL y TAX RATE el IVA REAL, los dos como
+// numeros. Sin esto, COMMISION llevaba el 0,15% entero y TAX RATE un texto.
+// Sergio: "es preferible poner el valor real de IVA y en comision la comision
+// real que poner ese texto para los clientes."
+// Importa mas de lo que parece: nuestra planilla guarda 0,126% + IVA, asi que
+// un archivo que diga 0,15% de comision y nada de IVA le estaria diciendo al
+// cliente algo distinto de lo que tenemos nosotros. Dos verdades para un mismo
+// numero, otra vez.
+// MLI, CITI y BNP NO lo llevan a proposito: su formato lo pidio el broker y
+// "las celdas de informacion y su contenido NO se tocan" (Sergio, 24-ago).
+// El NETO NO CAMBIA con esto: sigue siendo bruto +/- el 0,15% completo, que es
+// lo que se cierra en FX. Lo unico que cambia es como se muestra partido.
 const CRUCE_TARIFAS = {
-  CREDIBOLSA: { tasa: 0.0015, etiqueta: 'IVA incluido · comisión 0,126%', allIn: true },
+  CREDIBOLSA: { tasa: 0.0015, etiqueta: 'ALL IN', allIn: true, desglosa: true },
 };
 function tarifaCruce(clienteKey){
   const k = String(clienteKey||'').toUpperCase().trim();
@@ -11320,7 +11352,7 @@ function mostrarResumenCruceFX(){
     </div>`;
   document.getElementById('cruceFXBody').innerHTML = `
     <div class="field-note" style="margin-bottom:12px;">
-      Cliente <b>${nombreCliente}</b> · comisión <b>${(tarifaCruce(p.cliente).tasa*100).toFixed(2).replace('.',',')}% ${tarifaCruce(p.cliente).etiqueta}</b>. El neto COP de cada lado ya la incluye${/IVA/.test(tarifaCruce(p.cliente).etiqueta) ? ' (el IVA se factura aparte y NO entra al FX)' : ''}.
+      Cliente <b>${nombreCliente}</b> · comisión <b>${(tarifaCruce(p.cliente).tasa*100).toFixed(2).replace('.',',')}% ${tarifaCruce(p.cliente).etiqueta}</b>. El neto COP de cada lado ya la incluye${tarifaCruce(p.cliente).allIn ? '' : ' (el IVA se factura aparte y NO entra al FX)'}.
       Al continuar, cada lado se abre en la calculadora de FX para que metas la <b>tasa cliente</b> y la <b>tasa mercado</b>; la calculadora saca el USD (COP ÷ tasa) y la utilidad. Se registra <b>una operación FX por lado</b>.
     </div>
     ${selectorTrader}
