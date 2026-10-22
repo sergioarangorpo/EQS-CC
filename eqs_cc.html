@@ -26840,6 +26840,26 @@ function resolverPrecioNuestroRVI(clienteLinea, precioEscrito){
   const vacio = { precio:null, fuente:null, detalle:'', auto:false, candidatas:[] };
   if(!clienteLinea) return vacio;
 
+  // 0) UNA ORDEN CONTRA VARIOS BROKERS. Cuando están marcadas VARIAS líneas
+  //    nuestras y ninguna del cliente, nuestro precio de ejecución no es el de
+  //    una de ellas: es el PROMEDIO PONDERADO de todas. Sin esto, el paso 2 se
+  //    quedaba con el precio de la otra pata sola y el margen salía calculado
+  //    contra media ejecución (Sergio, 22-oct).
+  {
+    const todas = (typeof getFiltradas === 'function' ? getFiltradas() : [])
+      .filter(r => (typeof _rviMarcadas !== 'undefined' && _rviMarcadas.has(r.id)));
+    if(typeof _rviVariosBrokers === 'function' && _rviVariosBrokers(todas)){
+      const q = todas.reduce((a,r)=>a + (Number(r.qty)||0), 0);
+      if(q > 0){
+        const px = todas.reduce((a,r)=>a + (Number(r.qty)||0)*(Number(r.avgPr)||0), 0) / q;
+        const brks = [...new Set(todas.map(r=>String(r.broker||'').trim()).filter(Boolean))];
+        return { precio:px, fuente:'varias ejecuciones', auto:false, candidatas:[],
+                 detalle:`${todas.length} líneas · ${q.toLocaleString('es-CO')} acciones` +
+                         (brks.length ? ` · ${brks.join(', ')}` : '') };
+      }
+    }
+  }
+
   // 1) El vínculo que armó Sergio. Manda sobre todo lo demás.
   const v = precioNuestroVinculo(clienteLinea.id);
   if(v && v.precio){
@@ -27175,6 +27195,43 @@ function canalDeBroker(broker){
 let _modoRVI = { margen:'', costo:'', espejo:'' };
 let _rviMarcadas = new Set();
 
+// UNA ORDEN EJECUTADA CONTRA VARIOS BROKERS (Sergio, 22-oct).
+// ---------------------------------------------------------------------
+// La orden de Porvenir del 21-oct llego POR CHAT: no hay linea del cliente en
+// EMSX, solo NUESTRAS ejecuciones. Vinieron 2.700 y despues 800 mas, y Sergio
+// las consolido en una sola al cliente: "UPDATE B AIQ US 3,480 @ 64.0445".
+//
+// Con UNA linea nuestra marcada eso ya funcionaba: la app entiende que el
+// precio del cliente no esta en EMSX y lo deja en blanco para escribirlo. Con
+// DOS no, porque cuatro sitios distintos preguntaban `marcadas.length === 1`.
+// Miguel se topo con el aviso "hacen falta las dos patas", que es para otro
+// caso: ese es cuando hay linea del cliente Y nuestra.
+//
+// Esto es lo mismo que con una, sumando: la cantidad a repartir es la suma de
+// las marcadas y el precio al cliente es UNO solo, el que se le reporto.
+//
+// Vive aqui, en un solo sitio, porque lo preguntan cuatro funciones. Si cada
+// una lo decidiera por su cuenta serian cuatro definiciones de lo mismo.
+function _rviEsNuestra(r){ return /CREDICORP/i.test(String((r||{}).firm||'')); }
+
+// Las marcadas son UNA orden contra varios brokers si son varias, TODAS son
+// nuestras, y van en la misma direccion. Lo de la direccion no es un detalle:
+// marcar una compra y una venta y sumarlas seria netearlas.
+function _rviVariosBrokers(marcadas){
+  const m = marcadas || [];
+  if(m.length < 2) return false;
+  if(!m.every(_rviEsNuestra)) return false;
+  return new Set(m.map(r=>String(r.lado||''))).size === 1;
+}
+
+// Las marcadas que NO cuadran por direccion, para avisarlo con nombre propio.
+function _rviLadosMezclados(marcadas){
+  const m = marcadas || [];
+  if(m.length < 2 || !m.every(_rviEsNuestra)) return null;
+  const lados = [...new Set(m.map(r=>String(r.lado||'')))];
+  return lados.length > 1 ? lados : null;
+}
+
 function setModoRVI(grupo, valor){
   // Segundo clic sobre el mismo botón lo apaga (canal y espejo son opcionales).
   _modoRVI[grupo] = (_modoRVI[grupo] === valor && grupo === 'espejo') ? '' : valor;
@@ -27377,7 +27434,11 @@ function volcarLineaEnFormularioRVI(){
   // precio del cliente no existe en EMSX y hay que escribirlo (el all-in de
   // Porvenir por chat). Si la línea es del CLIENTE, su precio ya ES el del
   // cliente y pedirlo de nuevo solo agrega margen de error (Sergio, 31-ago).
-  if(_modoRVI.margen === 'con' && marcadas.length === 1 && esNuestra(cli)){
+  // Y lo mismo cuando son VARIAS lineas nuestras: es la misma orden ejecutada
+  // contra varios brokers, y el precio al cliente tampoco esta en EMSX
+  // (Sergio, 22-oct).
+  if(_modoRVI.margen === 'con' && esNuestra(cli) &&
+     (marcadas.length === 1 || _rviVariosBrokers(marcadas))){
     const p = document.getElementById('tc-price');
     if(p) p.value = '';
   }
@@ -27570,8 +27631,13 @@ function renderArqueoRVI(){
   // margen" con UNA sola línea lo escribe Sergio en el campo Price.
   const precioForm = Number(String((document.getElementById('tc-price')||{}).value||'').replace(/,/g,'')) || 0;
   const precioEjec = qEjec ? lineasEjec.reduce((a,r)=>a+(Number(r.qty)||0)*(Number(r.avgPr)||0),0)/qEjec : 0;
+  // Con VARIAS lineas nuestras el precio del cliente tampoco sale de EMSX: es
+  // UNO solo, el que se le reporto, y lo escribe Sergio. Sin esto se buscaba
+  // el promedio de las lineas "del cliente", que en una orden por chat no
+  // existen, y daba CERO (Sergio, 22-oct).
+  const _variosBrokers = _rviVariosBrokers(marcadas);
   const precioCli = _modoRVI.margen === 'sin' ? precioEjec
-                  : (marcadas.length === 1 ? precioForm
+                  : ((marcadas.length === 1 || _variosBrokers) ? precioForm
                   : (qCli ? cliente.reduce((a,r)=>a+(Number(r.qty)||0)*(Number(r.avgPr)||0),0)/qCli : 0));
 
   const avisos = [], oks = [];
@@ -27580,10 +27646,22 @@ function renderArqueoRVI(){
     if(precios.length > 1) avisos.push(`Sin margen pero hay ${precios.length} precios distintos. Revisa el modo.`);
     else oks.push(`${marcadas.length} línea(s) al mismo precio`);
   }else{
-    if(marcadas.length === 1){
+    const _ladosMez = _rviLadosMezclados(marcadas);
+    if(marcadas.length === 1 || _variosBrokers){
       if(!precioForm) avisos.push('Falta el PRECIO DEL CLIENTE: escríbelo en el campo Price del Trade Confirmation.');
       else if(Math.abs(precioForm - precioEjec) < 1e-9) avisos.push('El precio del cliente es igual al de ejecución: no habría margen.');
       else oks.push(`Margen de precio: ${fmtRateRVI(precioForm)} al cliente vs ${fmtRateRVI(precioEjec)} de ejecución`);
+      // Y cuando son varias, se dice CUÁNTO y contra CUÁNTOS brokers: es la
+      // cantidad que hay que repartir, y conviene verla antes de repartir.
+      if(_variosBrokers){
+        oks.push(`Una orden contra ${brokers.length || marcadas.length} broker(s): ` +
+                 `${fmtInt(qEjec)} acciones en ${marcadas.length} ejecuciones` +
+                 (canalTxt ? ` (${canalTxt})` : ''));
+      }
+    }else if(_ladosMez){
+      // Sumar una compra y una venta seria netearlas. Eso no es una orden.
+      avisos.push(`Hay líneas marcadas en direcciones distintas (${_ladosMez.join(' y ')}). ` +
+                  `Eso no es una sola orden: marca solo las de un lado.`);
     }else if(!cliente.length || !nuestras.length){
       avisos.push('Con margen y varias líneas hacen falta las dos patas: la del cliente y la nuestra (Originating Firm CREDICORP).');
     }else if(qCli !== qNos){
@@ -27814,7 +27892,11 @@ function seleccionarLinea(id){
     distribuciones.push({account:linea.account, qty:linea.qty});
   }
 
-  document.getElementById('res-qty-total').textContent = fmtInt(linea.qty);
+  // La cantidad a repartir sale de `getQtyTotal`, que es la misma que usan el
+  // arqueo y el botón de agregar. Aquí decía `linea.qty` y con varias líneas
+  // nuestras marcadas mostraba la de un solo broker mientras el arqueo de
+  // abajo contaba la suma: dos números para lo mismo (Sergio, 22-oct).
+  document.getElementById('res-qty-total').textContent = fmtInt(getQtyTotal());
   document.getElementById('error-dist').textContent = '';
 
   // Vínculo con nuestra ejecución de afuera (precio nuestro para el margen).
@@ -27881,6 +27963,16 @@ function onCambioCliente(){
 function getTotalDistribuido(){ return distribuciones.reduce((s,d)=>s+d.qty,0); }
 
 function getQtyTotal(){
+  // Con VARIAS lineas nuestras marcadas, lo que se reparte es la SUMA: es una
+  // sola orden del cliente ejecutada contra varios brokers. Devolver la de
+  // `lineaActiva` dejaba a repartir solo la cantidad de un broker — en lo de
+  // Porvenir habrian sido 2.700 de 3.480 (Sergio, 22-oct).
+  try{
+    const marcadas = (typeof getFiltradas === 'function')
+      ? getFiltradas().filter(r=>_rviMarcadas.has(r.id)) : [];
+    if(_rviVariosBrokers(marcadas))
+      return marcadas.reduce((a,r)=>a + (Number(r.qty)||0), 0);
+  }catch(e){}
   const linea = emsxData.find(r=>r.id===lineaActiva);
   return linea ? linea.qty : 0;
 }
