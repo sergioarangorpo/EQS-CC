@@ -7819,9 +7819,29 @@ async function generarExcelCCFFMM(macro, loteDet, fechaSlug){
 //     en la columna Fondo era el síntoma de haber perdido la traza.
 //   · si no resuelve, devuelve '' y quien llama decide. Un portafolio en
 //     blanco se ve; uno equivocado no.
+// El Account de Fidessa llega a veces con la basura de una codificación mal
+// leída: el 22-oct, "FI JORGE OTEROÂ " — un UTF-8 leído como Latin-1
+// deja una "Â" pegada delante del espacio duro. Se limpiaba el espacio duro y
+// se dejaba la Â, así que el nombre del fondo salía **"FI JORGE OTEROÂ" en el
+// archivo que recibe el cliente**. Y de paso no calzaba contra el maestro.
+//
+// UNA sola limpieza, para los dos caminos que leen el Account: el del Excel
+// (`_fondoFolioFFMM`) y el de la clasificación (`fondoDeFolioFFMM`).
+function limpiarAccountFidessa(v){
+  // Hay que quitar las DOS, y en cualquier orden: el lector del XLSX hace
+  // `.trim()` al cargar, y en JavaScript el espacio duro CUENTA como espacio,
+  // así que para cuando llega aquí el par ya puede venir partido y la Â queda
+  // sola al final. Limpiar solo el par no alcanzaba.
+  return String(v == null ? '' : v)
+    .replace(/Â? /g, ' ')    // el espacio duro, con o sin su Â
+    .replace(/Â(?=\s|$)/g, '')    // la Â suelta que quedó al recortar
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function _fondoFolioFFMM(f){
   const malos = new Set(['CREDICORPFFMM', 'CREDICORP CAPITAL AM', 'CC AM', '']);
-  const limpio = v => String(v || '').replace(/ /g, ' ').trim();
+  const limpio = limpiarAccountFidessa;
   const sirve  = v => v && !malos.has(limpio(v).toUpperCase());
 
   const porResolvedor = (typeof fondoDeFolioFFMM === 'function') ? fondoDeFolioFFMM(f) : '';
@@ -7850,12 +7870,14 @@ function fondoDeFolioFFMM(f){
   //    de Fidessa. Antes el freno seguía mirando el Account (que decía WOULD) y
   //    bloqueaba aunque la asignación ya estuviera hecha (Sergio, 05-sep).
   const asignado = fondoDeAsignacionFFMM(f);
-  if(asignado) return asignado;
+  if(asignado) return limpiarAccountFidessa(asignado);
   const manual = _fondoManualFFMM[_ffmmLlaveFondo(f)];
-  if(manual) return manual;
-  // 2) Si no hay asignación, el Account de Fidessa o EMSX.
-  return String(f.notes || f.portafolio || '').trim()
-      || String(((_fidessaTradesRaw||{})[String(f.parentOrderId)]||{}).notes || '').trim();
+  if(manual) return limpiarAccountFidessa(manual);
+  // 2) Si no hay asignación, el Account de Fidessa o EMSX. Siempre limpio: el
+  //    export trae espacios duros y restos de codificación. Ver
+  //    `limpiarAccountFidessa`.
+  return limpiarAccountFidessa(f.notes || f.portafolio)
+      || limpiarAccountFidessa(((_fidessaTradesRaw||{})[String(f.parentOrderId)]||{}).notes);
 }
 
 // El fondo que sale del reparto: se busca la orden del folio en el store de
@@ -7995,7 +8017,36 @@ function macrogrupoCCFFMM(notes){
   // Antes todo lo desconocido caía ahí por descarte, así que un "Would" —que
   // es un dato, pero no un fondo— se reportaba como Fiduciaria y el arqueo
   // decía que todo estaba bien (Sergio, 05-sep).
-  return fondoFiduciariaCCFFMM(t) ? 'FIDUCIARIA' : '';
+  if(fondoFiduciariaCCFFMM(t)) return 'FIDUCIARIA';
+  // ...o si el Account DECLARA un fondo con el prefijo de la fiduciaria,
+  // aunque el maestro de decevales todavía no lo tenga.
+  //
+  // El 22-oct la papeleta decía "FI SMURFIT II" —marcada, bien escrita, con su
+  // orden y su folio— y el freno la trataba igual que un "WOULD". Son dos
+  // cosas DISTINTAS y se arreglan distinto: un fondo que falta en la base se
+  // carga; una papeleta sin marcar se corrige en Fidessa. Darles la misma
+  // respuesta ('') obligaba a asignar a mano un fondo que ya estaba escrito.
+  //
+  // El nombre sale del Account, que es lo que la mesa escribió: no se inventa
+  // nada. Lo que falta —el NIT, el deceval— se avisa aparte.
+  if(CCFFMM_PREFIJO_FONDO.test(t)) return 'FIDUCIARIA';
+  return '';
+}
+
+// Los prefijos con los que la fiduciaria nombra sus fondos. Son los mismos que
+// `fondoFiduciariaCCFFMM` ya trata como ruido al comparar nombres: si una
+// palabra es ruido porque TODOS los fondos la llevan, entonces verla al
+// principio del Account es justamente la señal de que eso es un fondo.
+const CCFFMM_PREFIJO_FONDO = /^(FI|FIC|FG|FGI|FPV|FVP|FAP|FAPI|PA)[\s.\-]/i;
+
+// ¿Este Account es un fondo que el MAESTRO todavía no conoce? Sirve para
+// avisarlo sin frenar: el reporte sale con el nombre del Account, pero el NIT
+// y el deceval de ese fondo no existen hasta que el BO lo cargue.
+function ffmmFondoSinMaestro(notes){
+  const t = String(notes||'').trim().toUpperCase();
+  if(!t) return false;
+  if(/ACC(IONES)?\s+COLOMBIA/.test(t) || /ACC(IONES)?\s+GLOBALES/.test(t) || /^CRGS$/.test(t)) return false;
+  return !fondoFiduciariaCCFFMM(t) && CCFFMM_PREFIJO_FONDO.test(t);
 }
 
 // Busca el Account contra la lista real de fondos. El Account no llega idéntico
@@ -20300,6 +20351,21 @@ function renderPanelListo(filtrados){
         (ports.length ? `<div class="field-note" style="font-size:12px;">Portafolios: ${ports.join(' · ')}</div>` : '') +
         `</div>`;
     }
+    // Fondos que la mesa SÍ marcó en Fidessa y que el maestro de decevales
+    // todavía no tiene. No frena —el reporte sale con el nombre del Account,
+    // que es el dato bueno— pero se dice, porque de ese fondo no hay NIT ni
+    // deceval y eso se nota después, en el COR y en la Planilla COP.
+    // El símbolo es ⓘ a propósito: un ⚠ aquí pondría el panel en ámbar y
+    // diría "no está listo", y sí está listo (Sergio, 22-oct).
+    const _sinMaestro = [...new Set(foliosVista
+      .map(f=>String(fondoDeFolioFFMM(f)||'').trim())
+      .filter(n=>ffmmFondoSinMaestro(n)))];
+    if(_sinMaestro.length){
+      avisoMacro += `<div style="font-size:12px;color:var(--accent,#818cf8);margin-top:6px;">` +
+        `ⓘ ${_sinMaestro.length} fondo(s) marcados en Fidessa que NO están en el maestro de ` +
+        `decevales: <b>${_sinMaestro.join('</b> · <b>')}</b>. El reporte sale con ese nombre, ` +
+        `pero sin NIT ni deceval — pídele al BO que los cargue.</div>`;
+    }
   }
 
   const todoListo = faltantes.length === 0 && !/⚠/.test(avisoMacro);
@@ -30615,7 +30681,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-22 20:35 UTC · v267';
+const BUILD_ID = '2026-10-22 21:30 UTC · v268';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
