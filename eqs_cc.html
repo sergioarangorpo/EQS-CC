@@ -19432,13 +19432,36 @@ async function registrarLoteRVI(cliente, filas){
   // muestra la cantidad total y no una fila por portafolio.
   // UNA FILA POR PORTAFOLIO: es lo que se le envió al cliente y lo que hay que
   // poder revisar. Agruparlas en una sola escondía el reparto (Sergio, 31-ago).
+  // DOS EJECUCIONES AL MISMO PORTAFOLIO NO SE PUEDEN PISAR (Sergio, 22-oct).
+  // ---------------------------------------------------------------------
+  // Sergio opero una linea de Fiduashmore en dos partes: una contra CCSI y
+  // otra contra BTGH. Misma especie, mismo lado, mismo portafolio — y el
+  // identificador no mira el broker, asi que las dos daban
+  // `IFS|Sell#ASHMORE` y el deduplicador (`ultimaVersionPorLinea`) se quedaba
+  // con UNA. De 25.000 acciones sobrevivian 15.000: la Trade Confirmation le
+  // salia bien al cliente y NUESTRA planilla quedaba corta, que es el peor
+  // sentido del error — el papel del cliente cuadra y nadie lo nota.
+  //
+  // RVL ya tenia esto resuelto desde el 17-sep (Colfondos manda dos ordenes al
+  // mismo portafolio y las quiere reportadas por separado); a RVI nunca se le
+  // paso. Es el MISMO consecutivo, con el mismo separador.
+  //
+  // La PRIMERA ocurrencia conserva su identificador de siempre: lo reportado
+  // ayer y hoy no cambia de nombre. Solo la segunda en adelante lleva sufijo.
+  // Y el sufijo va al final, despues del portafolio, para que
+  // `vecesReportadaRVI` —que compara contra lo que hay antes del '#'— siga
+  // reconociendo la linea.
+  const _usadas = {};
   const lineas = filas.map(f=>{
     const esp = String(f.symbol || f.especie || '').toUpperCase();
     const lado = String(f.side || f.lado || '');
+    const base = esp + '|' + lado + (f.account ? '#' + f.account : '');
+    _usadas[base] = (_usadas[base] || 0) + 1;
+    const clave = _usadas[base] > 1 ? base + '·' + _usadas[base] : base;
     return {
       // Estable (no depende del id de EMSX) y con el portafolio, para que las
       // filas del reparto no se pisen entre sí.
-      parentOrderId: esp + '|' + lado + (f.account ? '#' + f.account : ''),
+      parentOrderId: clave,
       especie: esp, lado,
       cantidad: Number(f.qty != null ? f.qty : f.cantidad) || 0,
       precio: Number(f.price != null ? f.price : f.precio) || 0,
@@ -30147,7 +30170,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-21 21:20 UTC · v261';
+const BUILD_ID = '2026-10-22 16:35 UTC · v262';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
