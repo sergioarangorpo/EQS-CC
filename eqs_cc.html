@@ -17597,6 +17597,37 @@ function _emsxParsear(txt){
     return c;
   };
   const prim = partir(lineas[0]).map(c=>c.toLowerCase());
+  // LA CELDA DE PRECIO NO SIEMPRE ES UN PRECIO (Sergio, 22-oct).
+  // -------------------------------------------------------------------
+  // En el cuadro que manda el cliente, esa columna trae tres cosas muy
+  // distintas: un limite ("$ 35.300"), una instruccion de ejecucion ("VWAP",
+  // "MOC") o una orden PARTIDA ("50% 16.000 50% MOC").
+  //
+  // Antes se le pasaba todo a `parseLocaleNumber`, que borra lo que no sea
+  // digito, punto o menos. Entonces "50% 16.000 50% MOC" quedaba en
+  // "5016.00050" y se cargaba como LIMITE 5.016,0005 — sin un solo aviso.
+  // En la orden de Allianz del 22-oct eso le ponia limite 5.016 a una VENTA
+  // de PFGRUPOARG, que cotiza cerca de 16.000: se ejecuta de una contra lo
+  // que haya en punta. Y "50 % VWAP 50% MOC" salia como limite 5.050.
+  //
+  // La regla ahora: UN LIMITE ES UN NUMERO Y NADA MAS. Si la celda trae
+  // letras o un porcentaje, es una instruccion y el limite queda en CERO,
+  // que es lo que significa "sin limite". Mejor sin limite que con uno
+  // inventado.
+  const _emsxLimite = (txt)=>{
+    const crudo = String(txt == null ? '' : txt).trim();
+    if(!crudo) return { precio:0, instruccion:'', partida:false };
+    const s = crudo.replace(/[$\s]/g, '');
+    if(!s) return { precio:0, instruccion:'', partida:false };
+    // Un numero limpio —con separadores de miles o decimales— es un limite.
+    if(/^-?[\d.,]+$/.test(s)) return { precio: parseLocaleNumber(s), instruccion:'', partida:false };
+    // Con porcentaje es una orden PARTIDA: una parte con limite y otra al
+    // cierre. Eso son DOS ordenes y el cuadro no lo puede decir en una fila,
+    // asi que se marca para avisarlo por nombre.
+    if(/%/.test(s)) return { precio:0, instruccion:crudo, partida:true };
+    // Lo demas (VWAP, MOC, INLINE...) es una instruccion sin limite.
+    return { precio:0, instruccion:crudo, partida:false };
+  };
   const buscar = (...claves) => prim.findIndex(c => claves.some(k => c.includes(k)));
   const iN = buscar('nombre','especie','nemo','ticker','papel');
   const iQ = buscar('intencion','intención','cantidad','qty','nominales','acciones');
@@ -17607,15 +17638,17 @@ function _emsxParsear(txt){
 
   const filas = [], errores = [];
   lineas.slice(hayEncabezado ? 1 : 0).forEach((l, idx)=>{
+    // (ver _emsxLimite, abajo: la celda de precio NO siempre es un precio)
     const c = partir(l);
     const nemoCrudo = String(c[col.n]||'').trim().toUpperCase();
     if(!nemoCrudo) return;
     const qty = parseLocaleNumber(String(c[col.q]||'').replace(/[$\s]/g,''));
-    const px  = col.p >= 0 ? parseLocaleNumber(String(c[col.p]||'').replace(/[$\s]/g,'')) : 0;
+    const lim = _emsxLimite(col.p >= 0 ? c[col.p] : '');
     const lado = col.l >= 0 ? _emsxLado(c[col.l]) : null;
     const nemo = (typeof nemoCanonico === 'function') ? (nemoCanonico(nemoCrudo) || nemoCrudo) : nemoCrudo;
     const fila = { n: idx+1, nemoCrudo, nemo, qty: Math.abs(Number(qty)||0),
-                   precio: Number(px)||0, lado, bbg: tickerBloomberg(nemo) };
+                   precio: lim.precio, instruccion: lim.instruccion, partida: lim.partida,
+                   lado, bbg: tickerBloomberg(nemo) };
     if(!fila.qty)  errores.push(`Línea ${idx+1} (${nemoCrudo}): cantidad en cero o ilegible.`);
     if(!fila.lado) errores.push(`Línea ${idx+1} (${nemoCrudo}): no entendí el lado "${c[col.l]||''}".`);
     filas.push(fila);
@@ -17638,21 +17671,37 @@ function revisarOrdenesEMSX(){
 
   const problemas = errores.slice();
 
-  // Un papel con dos precios o dos lados NO se consolida: se avisa. Promediar
-  // un límite o escoger un lado por mayoría es inventar la orden.
-  const porNemo = {};
+  // UNA ORDEN, UN LIMITE. Dos limites distintos del mismo papel NO son un
+  // error: son DOS ORDENES, que es justo lo que la bolsa necesita. Antes esto
+  // bloqueaba el archivo entero y tocaba partir el cuadro a mano
+  // (Sergio, 22-oct: PFDAVIGRP venia a 35.300 y a 35.500).
+  //
+  // Lo que SI sigue bloqueando es el mismo papel con compra Y venta: ahi
+  // consolidar netearia dos fondos que van en direcciones contrarias, y
+  // mandarlas juntas al mismo book las cruzaria entre ellas.
+  const porNemo = {};        // solo para detectar lados cruzados
+  const porOrden = {};       // la unidad de verdad: nemo + lado + limite
   filas.forEach(f=>{
-    const a = porNemo[f.nemo] || (porNemo[f.nemo] = { nemo:f.nemo, bbg:f.bbg, qty:0, lineas:0,
-                                                      precios:new Set(), lados:new Set() });
-    a.qty += f.qty; a.lineas++;
-    if(f.precio) a.precios.add(f.precio);
-    if(f.lado)   a.lados.add(f.lado);
+    const a = porNemo[f.nemo] || (porNemo[f.nemo] = { nemo:f.nemo, lados:new Set() });
+    if(f.lado) a.lados.add(f.lado);
+    const k = f.nemo + '|' + (f.lado||'') + '|' + (f.precio || 0);
+    const o = porOrden[k] || (porOrden[k] = { nemo:f.nemo, bbg:f.bbg, qty:0, lineas:0,
+                                              precio:f.precio || 0, lado:f.lado,
+                                              instruccion:f.instruccion || '' });
+    o.qty += f.qty; o.lineas++;
+    if(!o.instruccion && f.instruccion) o.instruccion = f.instruccion;
   });
   Object.values(porNemo).forEach(a=>{
-    if(a.precios.size > 1)
-      problemas.push(`${a.nemo}: viene con ${a.precios.size} precios distintos (${[...a.precios].map(p=>fmtInt(p)).join(', ')}). No se puede consolidar el límite.`);
     if(a.lados.size > 1)
       problemas.push(`${a.nemo}: viene con compra Y venta en el mismo cuadro. Revísalo.`);
+  });
+  // Las ordenes PARTIDAS no se pueden cargar: media cantidad va con limite y
+  // la otra media al cierre. Se nombran una por una para que Sergio las parta.
+  const partidas = [...new Set(filas.filter(f=>f.partida)
+    .map(f=>`${f.nemo} (${f.lado === 'S' ? 'venta' : 'compra'}): "${f.instruccion}"`))];
+  partidas.forEach(p=>{
+    problemas.push(`${p} — es media orden con límite y media al cierre. ` +
+      `Son DOS órdenes: pártela en dos filas del cuadro, una con el límite y otra con MOC.`);
   });
 
   // Un nemo que no está en el maestro igual se carga, con " CB Equity", pero
@@ -17665,9 +17714,9 @@ function revisarOrdenesEMSX(){
     .map(f => f.nemo))];
 
   const salida = consolidar
-    ? Object.values(porNemo).map(a=>({
-        bbg:a.bbg, nemo:a.nemo, qty:a.qty, lineas:a.lineas,
-        precio:[...a.precios][0] || 0, lado:[...a.lados][0] || null }))
+    ? Object.values(porOrden).map(o=>({
+        bbg:o.bbg, nemo:o.nemo, qty:o.qty, lineas:o.lineas,
+        precio:o.precio, lado:o.lado }))
     : filas.map(f=>({ bbg:f.bbg, nemo:f.nemo, qty:f.qty, lineas:1, precio:f.precio, lado:f.lado }));
 
   const bloquea = problemas.length > 0;
