@@ -14095,13 +14095,41 @@ function _esUltimoHabilDelMes(iso){
   return _isoLocal(cur) === String(iso);
 }
 
+// SE PIDE LA FECHA QUE SE NECESITA, NO UNA VENTANA PARA BUSCAR ADENTRO.
+// ---------------------------------------------------------------------
+// Aqui habia UNA sola consulta:
+//     supaFetch('cierres_mercado', `fecha=lt.${hoy}&order=fecha.desc&limit=2000`)
+// y despues se filtraba en memoria. Pero PostgREST corta en 1000 filas aunque
+// se le pidan 2000, y lo hace EN SILENCIO — es el mismo tope que ya tenemos
+// anotado para `fidessa_folios`, y para el que existe `supaFetchTodo`.
+//
+// Con ~90 especies por dia, 1000 filas son ONCE dias habiles. El 22-oct eso
+// llegaba hasta el 7-oct y el cierre del 30-sep NO entraba, aunque estuviera
+// guardado. Sin ninguna fila del mes pasado, el MTD se caia a la tabla fija
+// del codigo —julio— y GRUPOSURA salia en +27,44% cuando iba en +1,51%.
+// En un informe que leen clientes (Sergio, 22-oct).
+//
+// Subir el limite solo mueve la fecha en que vuelve a pasar: la ventana
+// siempre son N dias, y a fin de mes el cierre del mes pasado se sale igual.
+// Se pide por FECHA: primero cual es la fecha que se busca, despues sus filas.
+async function _cierreDeFecha(fechaISO){
+  const filas = await supaFetchTodo('cierres_mercado', `fecha=eq.${fechaISO}`);
+  const m = {};
+  (filas||[]).forEach(f=>{ const v = Number(f.ultimo)||0; if(v > 0) m[f.nemo] = v; });
+  return m;
+}
+async function _ultimaFechaAntesDe(limiteISO){
+  const r = await supaFetch('cierres_mercado',
+    `fecha=lt.${limiteISO}&order=fecha.desc&limit=1&select=fecha`);
+  return (r && r.length) ? String(r[0].fecha) : null;
+}
+
 async function cargarCierreAnterior(){
   try{
-    const filas = await supaFetch('cierres_mercado', `fecha=lt.${_hoyISO()}&order=fecha.desc&limit=2000`);
-    if(!filas.length) return;
-    const ultima = filas[0].fecha;
-    _cierresAnteriores = {};
-    filas.filter(f=>f.fecha === ultima).forEach(f=>{ _cierresAnteriores[f.nemo] = Number(f.ultimo)||0; });
+    const fUlt = await _ultimaFechaAntesDe(_hoyISO());
+    if(!fUlt) return;
+    const ultima = fUlt;
+    _cierresAnteriores = await _cierreDeFecha(ultima);
     console.log('Informe diario: cierre anterior cargado ('+ultima+', '+Object.keys(_cierresAnteriores).length+' especies)');
 
     // ---- BASE DEL MTD ----
@@ -14111,14 +14139,13 @@ async function cargarCierreAnterior(){
     // 61.600, no contra los 54.960 de julio (Sergio, 03-sep).
     const hoy = new Date();
     const primeroDeMes = `${hoy.getFullYear()}-${String(hoy.getMonth()+1).padStart(2,'0')}-01`;
-    const delMesPasado = filas.filter(f=>String(f.fecha) < primeroDeMes);
-    if(delMesPasado.length){
-      const cierreMes = delMesPasado[0].fecha;    // vienen ordenadas desc
+    // La fecha del cierre del mes pasado se PIDE; no se busca dentro de una
+    // ventana de 1000 filas que puede no llegar hasta alla (ver arriba).
+    const cierreMes = await _ultimaFechaAntesDe(primeroDeMes);
+    if(cierreMes){
+      const mapa = await _cierreDeFecha(cierreMes);
       let n = 0;
-      delMesPasado.filter(f=>f.fecha === cierreMes).forEach(f=>{
-        const v = Number(f.ultimo) || 0;
-        if(v > 0){ _CIERRE_MTD[f.nemo] = v; n++; }
-      });
+      Object.keys(mapa).forEach(nemo=>{ _CIERRE_MTD[nemo] = mapa[nemo]; n++; });
       // Se guarda contra QUÉ FECHA se está midiendo, para mostrarlo en el
       // informe: si un mes no se carga el cierre del último día hábil, el MTD
       // sale medido contra otro día y no habría cómo notarlo (Sergio, 04-sep).
@@ -14574,14 +14601,17 @@ function informeRvlCorreoHTML(){
   // 14, no 18: con mas, la ultima franja se parte en astillas de 2 px donde
   // no cabe ni el nemotecnico. El mapa es para el golpe de vista; el detalle
   // completo esta abajo, en el resumen del continuo.
-  // 640 px: el ancho util de un correo en Outlook con el panel de lectura
-  // abierto. Se dibuja en pixeles fijos porque el motor de Word no sabe
-  // repartir porcentajes dentro de tablas anidadas sin desalinearlas.
-  const ANCHO_CORREO = 640;
+  // ANCHO_CORREO ya NO es el ancho con el que se dibuja —los anchos van en
+  // porcentaje y los pone Outlook— sino el ancho con el que se CALCULAN LAS
+  // FORMAS. El squarified busca que las cajas tiendan a cuadrado para un
+  // rectangulo de ancho x alto, asi que este numero debe parecerse al ancho
+  // real del panel de lectura: con 640 las cajas salian calculadas para un
+  // correo angosto y despues se estiraban al ancho de verdad (Sergio, 22-oct).
+  const ANCHO_CORREO = 980;
   const mapa = _treemapCorreoHTML(
     porVolTodo.slice(0, 14).map(d=>({ nemo:d.esp, valor:d.monto,
                                       varPct: d.esIntradia ? 0 : d.varPct })),
-    ANCHO_CORREO, 190);
+    ANCHO_CORREO, 240);
 
   const filaAlza = d=>`<tr>
     <td style="padding:4px 0;font-size:13px;font-weight:600;color:${TX};">${d.esp}</td>
@@ -14628,7 +14658,7 @@ function informeRvlCorreoHTML(){
     const mapaSeg = _treemapCorreoHTML(
       orden.slice(0, 12).map(d=>({ nemo:d.esp, valor:d.monto,
                                    varPct: d.esIntradia ? 0 : d.varPct })),
-      ANCHO_CORREO, 130);
+      ANCHO_CORREO, 150);
     return `
     <div style="font-size:14px;font-weight:700;color:#ffffff;margin:18px 0 2px;">${titulo}</div>
     <div style="font-size:12px;color:${GR};margin-bottom:8px;">${mm(totSeg)} COP${
