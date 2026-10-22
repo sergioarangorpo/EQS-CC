@@ -14431,9 +14431,9 @@ function _treemapCorreoHTML(items, W, H){
     const cabe = w >= 20 && h > 12;
     const pct = w > 54 && h > 34;
     const sg = it.varPct > 0 ? '+' : '';
-    return `<table width="${Math.round(w)}" height="${Math.round(h)}" cellpadding="0" cellspacing="0"
+    return `<table width="100%" height="${Math.round(h)}" cellpadding="0" cellspacing="0"
         border="0" bgcolor="${col}" style="background-color:${col};border-collapse:collapse;
-        width:${Math.round(w)}px;height:${Math.round(h)}px;">
+        width:100%;height:${Math.round(h)}px;">
       <tr><td align="center" valign="middle" height="${Math.round(h)}"
           style="height:${Math.round(h)}px;overflow:hidden;">${
         cabe ? `<div style="font-family:Arial,sans-serif;font-size:${fuente.toFixed(0)}px;
@@ -14443,18 +14443,37 @@ function _treemapCorreoHTML(items, W, H){
       }</td></tr></table>`;
   };
 
-  // La franja: las cajas apiladas a lo largo de ella.
+  // EL ANCHO VA EN PORCENTAJE; EL ALTO, EN PIXELES (Sergio, 22-oct).
+  // -------------------------------------------------------------------
+  // La primera version ponia TODO en pixeles fijos, con 640 de ancho. En el
+  // Outlook de Sergio el panel de lectura es mucho mas ancho que eso, asi que
+  // el mapa quedaba en un tercio del correo y el resto en negro.
+  //
+  // Los anchos pasan a porcentaje, que es lo que ya usa el resto del correo
+  // —las cifras de arriba y las barras de volumen llenan bien—, y el alto se
+  // queda en pixeles porque un alto en porcentaje no significa nada sin un
+  // contenedor de alto fijo, que en un correo no existe.
+  //
+  // Cada porcentaje es RELATIVO A SU CELDA PADRE, no al mapa entero: en cada
+  // nivel se divide por el ancho que le queda a ese nivel. Calcularlos todos
+  // contra el ancho total los desalinearia a medida que se anida.
+  const p = (parte, todo)=> (todo > 0 ? (parte/todo*100) : 100).toFixed(3) + '%';
+
+  // La franja: las cajas apiladas a lo largo de ella. Ocupa el 100% de la
+  // celda que le toco; el reparto de adentro va en porcentaje de esa celda.
   const franjaHTML = (f)=>{
     if(f.vertical){
-      // Vertical: ancho = grosor, las cajas se apilan hacia abajo.
-      return `<table width="${Math.round(f.grosor)}" cellpadding="0" cellspacing="0" border="0"
-          style="border-collapse:collapse;width:${Math.round(f.grosor)}px;">${
+      // Vertical: las cajas se apilan hacia abajo, cada una con SU alto.
+      return `<table width="100%" cellpadding="0" cellspacing="0" border="0"
+          style="border-collapse:collapse;width:100%;">${
         f.items.map(x=>`<tr><td>${caja(x.it, f.grosor, x.ext)}</td></tr>`).join('')
       }</table>`;
     }
-    // Horizontal: alto = grosor, las cajas se ponen una al lado de otra.
-    return `<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr>${
-      f.items.map(x=>`<td>${caja(x.it, x.ext, f.grosor)}</td>`).join('')
+    // Horizontal: todas con el mismo alto, repartidas a lo ancho.
+    return `<table width="100%" cellpadding="0" cellspacing="0" border="0"
+        style="border-collapse:collapse;width:100%;"><tr>${
+      f.items.map(x=>`<td width="${p(x.ext, f.w)}" style="width:${p(x.ext, f.w)};">${
+        caja(x.it, x.ext, f.grosor)}</td>`).join('')
     }</tr></table>`;
   };
 
@@ -14466,12 +14485,16 @@ function _treemapCorreoHTML(items, W, H){
     if(ultima) return franjaHTML(f);
     if(f.vertical){
       const resto = w - f.grosor;
-      return `<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
-        <tr><td valign="top">${franjaHTML(f)}</td>
-            <td valign="top">${pintar(idx+1, resto, h)}</td></tr></table>`;
+      const a1 = p(f.grosor, w), a2 = p(resto, w);
+      return `<table width="100%" cellpadding="0" cellspacing="0" border="0"
+          style="border-collapse:collapse;width:100%;">
+        <tr><td width="${a1}" valign="top" style="width:${a1};">${franjaHTML(f)}</td>
+            <td width="${a2}" valign="top" style="width:${a2};">${pintar(idx+1, resto, h)}</td>
+        </tr></table>`;
     }
     const resto = h - f.grosor;
-    return `<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+    return `<table width="100%" cellpadding="0" cellspacing="0" border="0"
+        style="border-collapse:collapse;width:100%;">
       <tr><td valign="top">${franjaHTML(f)}</td></tr>
       <tr><td valign="top">${pintar(idx+1, w, resto)}</td></tr></table>`;
   };
