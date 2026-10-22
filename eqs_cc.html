@@ -26875,6 +26875,30 @@ function resolverPrecioNuestroRVI(clienteLinea, precioEscrito){
     return { precio:Number(marcadas[0].avgPr), fuente:'línea marcada', auto:false,
              candidatas:[], detalle:`${marcadas[0].especie} ${marcadas[0].hora||''}` };
   }
+  // VARIAS lineas nuestras marcadas: la orden del cliente se lleno contra
+  // varios brokers y nuestro precio es el PROMEDIO PONDERADO de todas
+  // (Sergio, 22-oct).
+  //
+  // Aqui solo se aceptaba UNA. Con dos marcadas se caia al paso 3 —que busca
+  // una linea con la CANTIDAD EXACTA del cliente— y como ninguna pata sola
+  // tiene esa cantidad, terminaba en "ninguna calza en cantidad exacta, usa
+  // Vincular". El dia de FIDUASHMORE eran 148.200 contra BTGH y 1.800 contra
+  // CCSI para una orden de 150.000: ninguna de las dos calza, pero JUNTAS son
+  // exactamente la orden.
+  //
+  // Se exige que sumen lo del cliente: si no suman, no son esta orden y hay
+  // que mirarlo, no promediarlo.
+  if(marcadas.length > 1){
+    const q = marcadas.reduce((a,r)=>a + (Number(r.qty)||0), 0);
+    const qCli = Number(clienteLinea.qty) || 0;
+    if(q > 0 && qCli > 0 && q === qCli){
+      const px = marcadas.reduce((a,r)=>a + (Number(r.qty)||0)*(Number(r.avgPr)||0), 0) / q;
+      const brks = [...new Set(marcadas.map(r=>String(r.broker||'').trim()).filter(Boolean))];
+      return { precio:px, fuente:'varias líneas marcadas', auto:false, candidatas:[],
+               detalle:`${marcadas.length} ejecuciones · ${q.toLocaleString('es-CO')} acciones` +
+                       (brks.length ? ` · ${brks.join(', ')}` : '') };
+    }
+  }
 
   // 3) UNA sola línea nuestra que calce en especie, lado y CANTIDAD EXACTA.
   //    La cantidad exacta es lo que la hace inequívoca: el 30-sep había otra
@@ -27750,9 +27774,28 @@ function renderArqueoRVI(){
     ? 0 : costoClienteRVI(refCli.firm, comCliCalc);
   if(_sinCliente) avisos.push('Falta elegir el CLIENTE arriba: sin él no se puede ' +
                               'calcular su comisión ni la utilidad.');
-  // CCSI nos cobra a nosotros, y también con mínimo de USD 20.
-  const comNosCalc = comisionContraparteRVI(brokers[0]||'', refCli.tipo, qEjec, grossNos, isin);
-  const comNos = comNosCalc > 0 ? redondear(Math.max(comNosCalc, RVI_MINIMO_USD), 2) : 0;
+  // LO QUE NOS COBRAN SE CALCULA PATA POR PATA (Sergio, 22-oct).
+  // -------------------------------------------------------------------
+  // Aqui decia `comisionContraparteRVI(brokers[0], ..., qEjec, ...)`: UN
+  // broker —el primero— aplicado a TODA la cantidad ejecutada. Cuando la
+  // orden se llena contra varios, cada uno cobra lo suyo y con su propia
+  // regla, incluido el minimo de USD 20 que es POR PATA.
+  //
+  // El 22-oct, FIDUASHMORE: 148.200 contra BTGH y 1.800 contra CCSI.
+  //   con el broker[0]:  150.000 x 0,003            = USD 450,00
+  //   pata por pata:     148.200 x 0,003 = 444,60
+  //                      1.800 x 0,003 = 5,40 -> minimo 20,00
+  //                                              total = USD 464,60
+  // Catorce dolares y sesenta que saliamos debiendo sin verlo.
+  const _comDePata = r => {
+    const c = comisionContraparteRVI(String(r.broker||''), refCli.tipo,
+                Number(r.qty)||0, (Number(r.qty)||0)*(Number(r.avgPr)||0), isin);
+    return c > 0 ? Math.max(c, RVI_MINIMO_USD) : 0;   // el minimo es por pata
+  };
+  const comNosCalc = lineasEjec.reduce((a,r)=>
+    a + comisionContraparteRVI(String(r.broker||''), refCli.tipo,
+          Number(r.qty)||0, (Number(r.qty)||0)*(Number(r.avgPr)||0), isin), 0);
+  const comNos = redondear(lineasEjec.reduce((a,r)=>a + _comDePata(r), 0), 2);
   const secFee = secFeeRVI(refCli.tipo, refCli.lado, grossCli, isin);
   // MARGEN: siempre a favor nuestro cuando el precio del cliente nos beneficia.
   //   COMPRA del cliente  -> compramos barato y le vendemos más caro: (cli - ejec)
@@ -27773,7 +27816,21 @@ function renderArqueoRVI(){
     oks.push(`Costo al cliente USD ${fmtRateRVI(comCli)} — aplica el mínimo de USD ${RVI_MINIMO_USD} (por tarifa daría ${fmtRateRVI(comCliCalc)})`);
   }
   if(comNos > comNosCalc && comNosCalc > 0){
-    oks.push(`${brokers[0]} nos cobra USD ${fmtRateRVI(comNos)} — también con mínimo de USD ${RVI_MINIMO_USD}`);
+    // Con varias patas se dice CUÁL llegó al mínimo: sin eso el número sube
+    // y no hay forma de saber por qué.
+    const _alMinimo = lineasEjec.filter(r=>{
+      const c = comisionContraparteRVI(String(r.broker||''), refCli.tipo,
+                  Number(r.qty)||0, (Number(r.qty)||0)*(Number(r.avgPr)||0), isin);
+      return c > 0 && c < RVI_MINIMO_USD;
+    }).map(r=>`${r.broker} (${fmtInt(r.qty)})`);
+    oks.push(`Nos cobran USD ${fmtRateRVI(comNos)}` +
+      (_alMinimo.length
+        ? ` — ${_alMinimo.join(', ')} ${_alMinimo.length>1?'llegan':'llega'} al mínimo de USD ${RVI_MINIMO_USD}`
+        : ` — con mínimo de USD ${RVI_MINIMO_USD}`));
+  }
+  if(lineasEjec.length > 1){
+    const porPata = lineasEjec.map(r=>`${r.broker||'—'} ${fmtInt(r.qty)} → USD ${fmtRateRVI(_comDePata(r))}`);
+    oks.push(`Comisión del broker, pata por pata: ${porPata.join(' · ')}`);
   }
 
   const listo = avisos.length === 0;
@@ -30376,7 +30433,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-22 20:05 UTC · v266';
+const BUILD_ID = '2026-10-22 20:35 UTC · v267';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
