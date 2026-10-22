@@ -17695,14 +17695,20 @@ function revisarOrdenesEMSX(){
     if(a.lados.size > 1)
       problemas.push(`${a.nemo}: viene con compra Y venta en el mismo cuadro. Revísalo.`);
   });
-  // Las ordenes PARTIDAS no se pueden cargar: media cantidad va con limite y
-  // la otra media al cierre. Se nombran una por una para que Sergio las parta.
+  // LAS INSTRUCCIONES AMBIGUAS NO FRENAN: VAN A MERCADO Y SE AVISAN.
+  // -------------------------------------------------------------------
+  // Un "50% 16.000 50% MOC" son dos ordenes y el cuadro no lo puede decir en
+  // una fila. La primera version de esto BLOQUEABA el archivo entero hasta
+  // partirlas a mano, y Sergio lo corrigio (22-oct):
+  //   "en las demas que traigan instruccion ambigua cargalas a mercado y yo
+  //    me encargo de lanzarlas como corresponda, al final yo siempre reviso".
+  //
+  // Asi que entran COMPLETAS y SIN LIMITE —a mercado— y el aviso dice cuales
+  // son para que el las lance como toca. Lo que NO puede pasar, y por eso se
+  // arreglo esta manana, es que salgan con un limite inventado: ahi el error
+  // es invisible. Sin limite se ve; con limite falso, no.
   const partidas = [...new Set(filas.filter(f=>f.partida)
     .map(f=>`${f.nemo} (${f.lado === 'S' ? 'venta' : 'compra'}): "${f.instruccion}"`))];
-  partidas.forEach(p=>{
-    problemas.push(`${p} — es media orden con límite y media al cierre. ` +
-      `Son DOS órdenes: pártela en dos filas del cuadro, una con el límite y otra con MOC.`);
-  });
 
   // Un nemo que no está en el maestro igual se carga, con " CB Equity", pero
   // se avisa FUERTE: si está mal escrito, la línea rebota en EMSX.
@@ -17726,6 +17732,12 @@ function revisarOrdenesEMSX(){
       h += `<div class="field-note" style="color:var(--acc,#f59e0b);margin-bottom:6px;">
         ⚠ No están en el maestro de especies: <b>${desconocidos.join(', ')}</b>.
         Se cargan como "<code>${desconocidos[0]} CB Equity</code>", que puede no ser el ticker real.</div>`;
+    }
+    if(partidas.length){
+      h += `<div class="field-note" style="color:var(--acc,#f59e0b);margin-bottom:6px;">
+        ⚠ <b>Van A MERCADO, sin límite</b> — la instrucción no cabe en una sola orden:<br>
+        ${partidas.join('<br>')}<br>
+        <span style="opacity:.8;">Entran completas. Lánzalas como corresponda desde EMSX.</span></div>`;
     }
     if(problemas.length){
       h += `<div class="field-note" style="color:var(--sell,#ef4444);">
