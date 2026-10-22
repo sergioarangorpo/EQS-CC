@@ -7851,7 +7851,7 @@ function fondoDeFolioFFMM(f){
   //    bloqueaba aunque la asignación ya estuviera hecha (Sergio, 05-sep).
   const asignado = fondoDeAsignacionFFMM(f);
   if(asignado) return asignado;
-  const manual = _fondoManualFFMM[String(f.parentOrderId)];
+  const manual = _fondoManualFFMM[_ffmmLlaveFondo(f)];
   if(manual) return manual;
   // 2) Si no hay asignación, el Account de Fidessa o EMSX.
   return String(f.notes || f.portafolio || '').trim()
@@ -7886,9 +7886,14 @@ let _fondoManualFFMM = {};
 // Todos los fondos que se pueden elegir: los tres macrogrupos propios primero
 // y después los de la fiduciaria, sacados del maestro de decevales.
 // Asigna el fondo a una orden sin marca y repinta.
-function asignarFondoFFMM(parentOrderId, fondo){
-  if(fondo) _fondoManualFFMM[String(parentOrderId)] = fondo;
-  else delete _fondoManualFFMM[String(parentOrderId)];
+// `llave` es lo que devuelve `_ffmmLlaveFondo`: la orden padre, o 'FOLIO:<tcn>'
+// cuando el folio no tiene orden. Una llave vacía no se guarda: escribir en
+// `_fondoManualFFMM['']` se lo aplicaría a cualquier folio sin llave.
+function asignarFondoFFMM(llave, fondo){
+  const k = String(llave||'').trim();
+  if(!k || k === 'undefined' || k === 'null') return;
+  if(fondo) _fondoManualFFMM[k] = fondo;
+  else delete _fondoManualFFMM[k];
   if(typeof renderFolios === 'function') renderFolios();
 }
 
@@ -7928,6 +7933,52 @@ function esLineaBolsaFFMM(f){
   if(esCuentaBolsaFFMM(f && (f.notes || f.portafolio))) return true;
   const t = (_fidessaTradesRaw||{})[String(f && f.parentOrderId)];
   return !!(t && esCuentaBolsaFFMM(t.notes));
+}
+
+// La LLAVE con la que se le asigna un fondo A MANO a una línea.
+//
+// Normalmente es la ORDEN PADRE: todos los folios de una orden son del mismo
+// fondo, así que se elige una vez y vale para los que sean. Pero un folio
+// HUÉRFANO no tiene orden, y `String(undefined)` daba la llave literal
+// 'undefined': TODOS los huérfanos del día la compartían, así que asignarle el
+// fondo a uno se lo asignaba a todos — y con muralla china de por medio eso no
+// es un detalle. Sin orden, la llave es el FOLIO (Sergio, 22-oct).
+function _ffmmLlaveFondo(f){
+  const oid = String((f && f.parentOrderId) || '').trim();
+  if(oid && oid !== 'undefined' && oid !== 'null') return oid;
+  const tcn = String((f && f.folio) || '').trim();
+  return tcn ? 'FOLIO:' + tcn : '';
+}
+
+// POR QUÉ una línea no tiene macrogrupo, en palabras. El freno decía "revísalo
+// en Fidessa" sin decir QUÉ revisar: si la orden no trae Account, si el folio
+// no tiene orden, o si el Account dice algo que no es un fondo. Son tres cosas
+// distintas y se arreglan distinto (Sergio, 22-oct).
+function _ffmmMotivoSinMarca(f){
+  const oid = String((f && f.parentOrderId) || '').trim();
+  const hayOrden = !!(oid && oid !== 'undefined' && oid !== 'null' &&
+                      (typeof _fidessaTradesRaw !== 'undefined') &&
+                      (_fidessaTradesRaw||{})[oid]);
+  const cuenta = String(fondoDeFolioFFMM(f) || '').trim();
+  if(cuenta) return `el Account dice "${cuenta}" y no corresponde a ningún fondo de CC AM / Fiduciaria`;
+  if(hayOrden) return `la orden ${oid} viene SIN Account en Fidessa`;
+  return 'el folio no quedó enlazado a ninguna orden, así que no hay Account de dónde leer el fondo';
+}
+
+// UNA sola lectura de "qué folios tienen macrogrupo y cuáles no", para el panel
+// y para el freno. Antes cada uno la hacía por su cuenta y sobre conjuntos
+// distintos —el panel sobre los folios a la vista, el freno sobre los
+// SELECCIONADOS—, así que el panel podía decir "Macrogrupo detectado" en verde
+// y el botón frenar igual, sin contradicción visible (Sergio, 22-oct).
+function _ffmmClasificar(lista){
+  const porMacro = {}, sinMarca = [];
+  (lista||[]).forEach(f=>{
+    const notes = fondoDeFolioFFMM(f);
+    const k = macrogrupoCCFFMM(notes);
+    if(!k){ sinMarca.push(f); return; }
+    (porMacro[k] = porMacro[k] || []).push({ ...f, notes });
+  });
+  return { porMacro, sinMarca };
 }
 
 function macrogrupoCCFFMM(notes){
@@ -16174,8 +16225,23 @@ function filasBODeCliente(cliente){
   // ---- NUESTRA pata contra el broker ----
   // Con ESPEJO se parte igual que el cliente; sin espejo va consolidada por
   // especie, que es como la ejecutamos afuera.
+  //
+  // CON VARIOS BROKERS manda lo EJECUTADO. Una orden puede llenarse contra más
+  // de uno —Fiduashmore, 22-oct: BTGH 148.200 y CCSI 1.800 para una línea de
+  // cliente de 150.000— y el registro guardaba UN solo broker, el de la primera
+  // línea marcada. Las 150.000 salían como una sola pata a nombre de CCSI: el
+  // BO no veía a quién había que pagarle, la tarifa era la equivocada para
+  // 148.200 acciones, y el mínimo de USD 20 se aplicaba una vez en vez de una
+  // por pata. Las patas vienen guardadas con la operación.
   const porBroker = {};
+  const _porLote = new Map();        // un lote = una ejecución, no una por alloc
   ops.forEach(h=>{
+    const _pt = Array.isArray(h.patas) ? h.patas.filter(p=>Number(p.qty) > 0) : [];
+    if(_pt.length > 1){
+      const lote = String(h.loteId || h.emsxId || h.id);
+      if(!_porLote.has(lote)) _porLote.set(lote, { h, patas:_pt });
+      return;                        // esta operación la arma el bloque de patas
+    }
     const brk = String(h.broker||'').toUpperCase() || 'CCSI';
     // La clave incluye el PRECIO DE EJECUCIÓN y el lado: si en el día hay dos
     // ejecuciones de la misma especie a precios distintos —VWO a 59,5741 y a
@@ -16228,6 +16294,29 @@ function filasBODeCliente(cliente){
       'SD': a.settleDate instanceof Date ? a.settleDate : new Date(a.settleDate || Date.now()),
       'VLR/NM': a.qty, 'PL': a.px,
       'GROSS AMOUNT': gross, 'COST': cost, 'SEC FEE': secFee, 'NET AMOUNT': neto,
+    });
+  });
+
+  // ---- Una fila POR PATA cuando la orden se ejecutó contra varios brokers ----
+  // Cada broker con SU cantidad, SU precio y SU comisión —mínimo incluido, que
+  // es por pata (ver `comisionPataRVI`, el mismo que muestra el panel de RVI).
+  _porLote.forEach(({h, patas})=>{
+    const lado = String(h.side||'').toUpperCase() === 'SELL' ? 'VENTA' : 'COMPRA';
+    patas.forEach(p=>{
+      const q = Number(p.qty)||0, px = Number(p.px)||0;
+      const gross = redondear(q * px, 4);
+      const cost = redondear(comisionPataRVI(p.broker, h.tipo, q, px, h.isin), 4);
+      const secFee = redondear(secFeeRVI(h.tipo, h.side, gross, h.isin), 4);
+      const neto = lado === 'VENTA' ? redondear(gross - cost - secFee, 4)
+                                    : redondear(gross + cost + secFee, 4);
+      const brk = String(p.broker||'').toUpperCase() || 'CCSI';
+      filas.push({
+        'TIPO OP': tipoOpBO(h.isin), 'CLIENTE': brk, 'PORTFOLIO': brk,
+        'NEMO': h.symbol || '', 'ISIN': h.isin || '', 'PP B/S': lado,
+        'TD': fmtF(h.tradeDate), 'SD': fmtF(h.settleDate),
+        'VLR/NM': q, 'PL': px,
+        'GROSS AMOUNT': gross, 'COST': cost, 'SEC FEE': secFee, 'NET AMOUNT': neto,
+      });
     });
   });
   return filas;
@@ -20138,51 +20227,62 @@ function renderPanelListo(filtrados){
   // generar por muralla china.
   let avisoMacro = '';
   if(cfg.formatoReporte === 'credicorpffmm'){
+    // La MISMA lectura que usa el freno al generar. Ver `_ffmmClasificar`.
+    const _cl = _ffmmClasificar(foliosVista);
     const cuenta = {};
-    let sinMarca = 0;
-    foliosVista.forEach(f=>{
-      const notes = fondoDeFolioFFMM(f);
-      const k = macrogrupoCCFFMM(notes);
-      if(!k){ sinMarca++; return; }
-      cuenta[k] = cuenta[k] || { n:0, ports:new Set() };
-      cuenta[k].n++;
-      if(k === 'FIDUCIARIA') cuenta[k].ports.add(notes);
+    Object.keys(_cl.porMacro).forEach(k=>{
+      cuenta[k] = { n: _cl.porMacro[k].length, ports: new Set() };
+      if(k === 'FIDUCIARIA') _cl.porMacro[k].forEach(f=>cuenta[k].ports.add(f.notes));
     });
+    const sinMarca = _cl.sinMarca.length;
     const claves = Object.keys(cuenta);
     if(sinMarca){
       // Se puede asignar el fondo AQUÍ, sin volver a Fidessa a corregir la
       // papeleta: el trade ya está hecho y hay que reportarlo (Sergio, 05-sep).
-      const ordsSin = [...new Set(folios.filter(f=>!macrogrupoCCFFMM(fondoDeFolioFFMM(f)))
-        .map(f=>String(f.parentOrderId)))];
+      // Se agrupa por LLAVE, no por parentOrderId a secas: los folios sin orden
+      // van uno por uno y no comparten la llave 'undefined' (ver
+      // `_ffmmLlaveFondo`). Y el nombre y la cantidad salen de los FOLIOS, que
+      // es el dato que sí existe: sacarlos de la orden dejaba la fila sin
+      // especie justo en el caso en que no hay orden (Sergio, 22-oct).
+      const grupos = new Map();
+      _cl.sinMarca.forEach(f=>{
+        const llave = _ffmmLlaveFondo(f);
+        if(!llave) return;
+        const g = grupos.get(llave) ||
+          { llave, esp:new Set(), lado:f.lado||'', q:0, folios:[], motivo:_ffmmMotivoSinMarca(f) };
+        g.esp.add(f.especie); g.q += Number(f.cantidad)||0; g.folios.push(f.folio);
+        grupos.set(llave, g);
+      });
       const op = opcionesFondoFFMM();
       avisoMacro = `
         <div style="background:rgba(245,158,11,.10);border-left:3px solid var(--amber,#f59e0b);
                     border-radius:6px;padding:10px 14px;">
           <div style="font-size:12.5px;color:var(--amber,#f59e0b);font-weight:700;">
-            ⚠ ${sinMarca} folio(s) sin marca de fondo en el Account</div>
+            ⚠ ${sinMarca} folio(s) sin fondo identificado</div>
           <div class="field-note" style="font-size:11.5px;margin:4px 0 8px;">
-            El Account de Fidessa/EMSX no corresponde a ningún portafolio de
-            CREDICORP CAPITAL AM. Asigna el fondo aquí para poder reportar.</div>
-          ${ordsSin.map(oid=>{
-            const t = (_fidessaTradesRaw||{})[oid] || {};
-            const esp = nemoCanonico(t.security,'fidessa') || '';
-            const q = (foliosFidessa||[]).filter(f=>String(f.parentOrderId)===oid)
-                        .reduce((a,f)=>a+f.cantidad,0);
-            const sel = _fondoManualFFMM[oid] || '';
-            return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;font-size:12px;">
-              <span style="min-width:190px;">
-                <b>${esp}</b> ${t.lado||''} · ${fmtInt(q)}
-                <span class="field-note" style="font-size:10px;"> ${oid}</span></span>
-              <select onchange="asignarFondoFFMM('${oid}', this.value)"
-                      style="flex:1;max-width:420px;font-size:12px;padding:3px 8px;">
-                <option value="">— elige el fondo —</option>
-                <optgroup label="Macrogrupos propios">
-                  ${op.propios.map(o=>`<option value="${o.valor}"${sel===o.valor?' selected':''}>${o.etiqueta}</option>`).join('')}
-                </optgroup>
-                <optgroup label="Fondos de la fiduciaria">
-                  ${op.fondos.map(o=>`<option value="${String(o.valor).replace(/"/g,'&quot;')}"${sel===o.valor?' selected':''}>${o.etiqueta}</option>`).join('')}
-                </optgroup>
-              </select>
+            Asigna el fondo aquí para poder reportar. Queda guardado en el registro.</div>
+          ${[...grupos.values()].map(g=>{
+            const sel = _fondoManualFFMM[g.llave] || '';
+            const esp = [...g.esp].join(', ');
+            const ref = g.llave.indexOf('FOLIO:') === 0
+              ? 'folio ' + g.folios.join(', ') : g.llave;
+            return `<div style="margin-bottom:8px;font-size:12px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <span style="min-width:190px;">
+                  <b>${esp}</b> ${g.lado} · ${fmtInt(g.q)}
+                  <span class="field-note" style="font-size:10px;"> ${ref}</span></span>
+                <select onchange="asignarFondoFFMM('${String(g.llave).replace(/'/g,'&#39;')}', this.value)"
+                        style="flex:1;max-width:420px;font-size:12px;padding:3px 8px;">
+                  <option value="">— elige el fondo —</option>
+                  <optgroup label="Macrogrupos propios">
+                    ${op.propios.map(o=>`<option value="${o.valor}"${sel===o.valor?' selected':''}>${o.etiqueta}</option>`).join('')}
+                  </optgroup>
+                  <optgroup label="Fondos de la fiduciaria">
+                    ${op.fondos.map(o=>`<option value="${String(o.valor).replace(/"/g,'&quot;')}"${sel===o.valor?' selected':''}>${o.etiqueta}</option>`).join('')}
+                  </optgroup>
+                </select>
+              </div>
+              <div class="field-note" style="font-size:10.5px;margin-left:2px;">↳ ${g.motivo}</div>
             </div>`;
           }).join('')}
         </div>`;
@@ -23916,19 +24016,17 @@ async function generarReporte(){
   } else if(formato === 'credicorpffmm'){
     // Cada línea trae su macrogrupo en el Notes. Si hay mezcla se FRENA: por
     // muralla china no pueden ir en el mismo archivo (Sergio, 24-ago).
-    const porMacro = {};
-    const sinMarca = [];
-    seleccionados.forEach(f=>{
-      const notes = fondoDeFolioFFMM(f);
-      const k = macrogrupoCCFFMM(notes);
-      if(!k){ sinMarca.push(f.especie + ' folio ' + f.folio); return; }
-      (porMacro[k] = porMacro[k] || []).push({ ...f, notes });
-    });
+    // La MISMA lectura que muestra el panel. Ver `_ffmmClasificar`.
+    const { porMacro, sinMarca } = _ffmmClasificar(seleccionados);
     if(sinMarca.length){
-      alert('No se generó el reporte: hay folio(s) SIN marca de macrogrupo en el Account.\n\n' +
-            [...new Set(sinMarca)].slice(0,10).join('\n') +
-            (sinMarca.length>10 ? `\n… y ${sinMarca.length-10} más` : '') +
-            '\n\nSin esa marca no se sabe a qué macrogrupo pertenecen. Revísalo en Fidessa.');
+      // El freno dice POR QUÉ, folio por folio. "Revísalo en Fidessa" no
+      // alcanzaba: no se sabía si faltaba el Account, si el folio no tenía
+      // orden, o si el Account decía algo que no es un fondo (Sergio, 22-oct).
+      alert('No se generó el reporte: hay folio(s) sin fondo identificado.\n\n' +
+            sinMarca.slice(0,8).map(f=>
+              `· ${f.especie} folio ${f.folio}\n    ${_ffmmMotivoSinMarca(f)}`).join('\n\n') +
+            (sinMarca.length>8 ? `\n\n… y ${sinMarca.length-8} más` : '') +
+            '\n\nAsígnales el fondo en el aviso naranja del panel y vuelve a generar.');
       return;
     }
     // Con varios macrogrupos se generan VARIOS ARCHIVOS, uno por macrogrupo.
@@ -27537,6 +27635,44 @@ function costoClienteRVI(cliente, calculado){
   return redondear(Math.max(v, RVI_MINIMO_USD), 2);
 }
 
+// ---- NUESTRAS patas de ejecución ----
+// Una orden puede llenarse contra VARIOS brokers. El 22-oct, Fiduashmore:
+// BTGH 148.200 y CCSI 1.800 para una línea de cliente de 150.000.
+//
+// Las tres cosas que dependen de eso —el panel, lo que se guarda y la planilla
+// del BO— tienen que leerlo IGUAL, así que viven aquí y en ningún otro lado.
+
+// Cuáles de las líneas marcadas son NUESTRA ejecución: las que llevan
+// Originating Firm CREDICORP. Si no hay ninguna, la orden se ejecutó directo a
+// nombre del cliente —el caso de Porvenir— y la propia línea hace de las dos.
+function _rviLineasEjec(marcadas){
+  const nuestras = (marcadas||[]).filter(r => /CREDICORP/i.test(String((r||{}).firm||'')));
+  return nuestras.length ? nuestras : (marcadas||[]);
+}
+
+// La comisión que nos cobra el broker POR UNA PATA.
+// El mínimo de USD 20 es POR PATA: lo cobra cada broker por SU ejecución, no
+// el conjunto. Antes se tomaba `brokers[0]` y se le aplicaba su tarifa a la
+// cantidad entera: las 1.800 de CCSI no llegaban al mínimo y nadie lo veía.
+function comisionPataRVI(broker, tipo, qty, px, isin){
+  const q = Number(qty) || 0;
+  const c = comisionContraparteRVI(String(broker||''), tipo, q, q * (Number(px)||0), isin);
+  return c > 0 ? Math.max(c, RVI_MINIMO_USD) : 0;
+}
+
+// Las patas tal como se guardan con la operación, para que la planilla del BO
+// pueda abrirlas en una fila cada una.
+function _rviPatasEjecutadas(){
+  const marcadas = (typeof getFiltradas === 'function' ? getFiltradas() : [])
+    .filter(r => (typeof _rviMarcadas !== 'undefined') && _rviMarcadas.has(r.id));
+  return _rviLineasEjec(marcadas).map(r=>({
+    emsxId: r.id,
+    broker: String(r.broker||'').toUpperCase().trim(),
+    qty: Number(r.qty)||0,
+    px: Number(r.avgPr)||0,
+  })).filter(p=>p.qty > 0);
+}
+
 // ---- SEC fee ----
 // Solo ETFs y ADRs, y SOLO en ventas. Reproduce exacto el 5,48 del Trade
 // Confirmation de IAU (265.954,50 x SEC_FEE_RATE).
@@ -27643,7 +27779,7 @@ function renderArqueoRVI(){
   const qCli = q(cliente), qNos = q(nuestras);
   // Si no hay línea marcada como nuestra, la única marcada hace de las dos:
   // se ejecutó directamente contra el mercado a nombre del cliente.
-  const lineasEjec = nuestras.length ? nuestras : marcadas;
+  const lineasEjec = _rviLineasEjec(marcadas);
   const qEjec = q(lineasEjec);
 
   // El canal sale del broker de NUESTRA línea contra el mercado.
@@ -27787,11 +27923,9 @@ function renderArqueoRVI(){
   //                      1.800 x 0,003 = 5,40 -> minimo 20,00
   //                                              total = USD 464,60
   // Catorce dolares y sesenta que saliamos debiendo sin verlo.
-  const _comDePata = r => {
-    const c = comisionContraparteRVI(String(r.broker||''), refCli.tipo,
-                Number(r.qty)||0, (Number(r.qty)||0)*(Number(r.avgPr)||0), isin);
-    return c > 0 ? Math.max(c, RVI_MINIMO_USD) : 0;   // el minimo es por pata
-  };
+  // UN solo cálculo de la comisión por pata, compartido con la planilla del BO:
+  // los dos tienen que decir el mismo número. Ver `comisionPataRVI`.
+  const _comDePata = r => comisionPataRVI(r.broker, refCli.tipo, r.qty, r.avgPr, isin);
   const comNosCalc = lineasEjec.reduce((a,r)=>
     a + comisionContraparteRVI(String(r.broker||''), refCli.tipo,
           Number(r.qty)||0, (Number(r.qty)||0)*(Number(r.avgPr)||0), isin), 0);
@@ -28573,6 +28707,10 @@ function generarTC(){
   const _pxUsado  = (c.precioUsado != null) ? c.precioUsado : price;
   const _pctPact  = c.pctPactado;
   const _dosDec   = usaDosDecimalesRVI(clienteKey) || usaDosDecimalesRVI(db.nombre);
+  // NUESTRAS patas de ejecución, una por línea marcada. Se leen UNA vez y
+  // quedan guardadas en cada fila del histórico: son la materia prima de la
+  // planilla del BO, que las abre en una fila por broker.
+  const _patasLote = (typeof _rviPatasEjecutadas === 'function') ? _rviPatasEjecutadas() : [];
 
   distribuciones.forEach(d=>{
     const grossAcc  = d.qty * _pxUsado;
@@ -28596,6 +28734,15 @@ function generarTC(){
     // las tarifas de CCSI, así que una RFQE con BTGU salía con valor en el
     // histórico aunque el arqueo dijera cero (Sergio, 08-sep).
     const ccsiAcc = (()=>{
+      // Con VARIAS patas la comisión es la SUMA pata por pata —cada broker con
+      // su tarifa y su propio mínimo—, repartida entre los accounts a prorrata
+      // de la cantidad. Es el mismo número que muestra el panel. Con una sola
+      // pata se deja el camino de siempre, intacto.
+      if(_patasLote.length > 1){
+        const tot = _patasLote.reduce((a,p)=>
+          a + comisionPataRVI(p.broker, tipo, p.qty, p.px, isin), 0);
+        return qty > 0 ? redondear(tot * (d.qty / qty), 4) : 0;
+      }
       const _ln = emsxData.find(r=>r.id===lineaActiva) || {};
       const brk = String(_ln.broker||'').toUpperCase();
       // Si el campo de comisión del broker está en cero, manda ese cero.
@@ -28621,6 +28768,17 @@ function generarTC(){
       // Datos de NUESTRA pata, para la planilla del BO. `lineaActiva` es el id;
       // la línea en sí se busca aquí porque `linea` se declara más abajo.
       broker: ((emsxData.find(r=>r.id===lineaActiva))||{}).broker || '',
+      // NUESTRAS patas: una por broker contra el que se ejecutó. `broker` de
+      // arriba sigue siendo el de la primera línea y no se toca —lo leen el
+      // dashboard y la vista del histórico—, pero la planilla del BO usa esto
+      // cuando hay más de una: antes las 150.000 de Fiduashmore salían como
+      // una sola pata a nombre de CCSI, cuando 148.200 fueron contra BTGH
+      // (Sergio, 22-oct).
+      patas: _patasLote,
+      // Todas las filas de UN registro comparten lote: las patas son de la
+      // ejecución, no de cada allocation, y sin esta llave se repetirían una
+      // vez por account distribuido.
+      loteId: tcId,
       precioNuestro: precioNuestroBO,
       // El modo con el que se registró: el espejo decide si nuestra pata se
       // parte igual que la del cliente o va consolidada.
@@ -28695,7 +28853,7 @@ function toggleTodosHist(cb){
 // duplicados, así que se puede llamar en cada guardado.
 async function guardarHistoricoRVI(){
   if(!historial.length) return;
-  const filas = historial.map(h=>({
+  const _fila = h=>({
     id: String(h.id), fecha: _hoyISO(), hora: h.hora || '',
     cliente: h.cliente || '', account: h.account || '', side: h.side || '',
     symbol: h.symbol || '', isin: h.isin || '',
@@ -28708,8 +28866,26 @@ async function guardarHistoricoRVI(){
     broker: h.broker || '', precio_nuestro: Number(h.precioNuestro)||0,
     espejo: !!h.espejo, com_broker_unit: Number(h.comBrokerUnit)||0,
     creado_por: 'SAR',
-  }));
-  await guardarEnLotesSupabase('rvi_historico', filas);
+  });
+  // Las patas de ejecución necesitan su propia columna:
+  //    alter table rvi_historico add column if not exists patas   jsonb;
+  //    alter table rvi_historico add column if not exists lote_id text;
+  // Si la tabla todavía no las tiene, se reintenta SIN ellas en vez de perder
+  // el lote entero. En la sesión las patas ya están en memoria y la planilla
+  // sale igual; lo que se pierde es recuperarlas después de un refresco.
+  // No se recuerda el fallo entre llamadas a propósito: un corte de red daría
+  // el mismo error y dejaría de guardarlas el resto del día sin motivo.
+  const ok = await guardarEnLotesSupabase('rvi_historico', historial.map(h=>({
+    ..._fila(h),
+    patas: (Array.isArray(h.patas) && h.patas.length) ? h.patas : null,
+    lote_id: h.loteId != null ? String(h.loteId) : null,
+  })));
+  if(ok) return;
+  console.warn('Se reintenta el histórico de RVI sin las columnas patas/lote_id. ' +
+    'Si el error de arriba dice que no existen, córrelas en Supabase:\n' +
+    '  alter table rvi_historico add column if not exists patas jsonb;\n' +
+    '  alter table rvi_historico add column if not exists lote_id text;');
+  await guardarEnLotesSupabase('rvi_historico', historial.map(_fila));
 }
 
 // Recupera el histórico del día al abrir la app, para que un refresco no borre
@@ -28739,6 +28915,12 @@ async function cargarHistoricoRVI(){
         net: Number(f.net), ccsi: Number(f.ccsi), tipo: f.tipo,
         emsxId: f.emsx_id, tradeDate: f.trade_date, settleDate: f.settle_date,
         broker: f.broker,
+        // Las patas de ejecución, si la tabla ya tiene la columna. Sin ellas
+        // la planilla del BO vuelve a sacar una sola pata, que es como venía
+        // funcionando: no se rompe nada, se pierde el detalle.
+        patas: Array.isArray(f.patas) ? f.patas
+             : (()=>{ try{ return f.patas ? JSON.parse(f.patas) : undefined; }catch(e){ return undefined; } })(),
+        loteId: f.lote_id != null ? f.lote_id : undefined,
         // Nuestro precio de ejecución. Las operaciones guardadas antes del
         // 08-sep quedaron con el MISMO precio del cliente, así que el margen
         // salía en cero y el dashboard mostraba solo la comisión. Si la línea
