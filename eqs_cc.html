@@ -15901,6 +15901,29 @@ function comercialDeCOR(nombreCli){
 // en un solo deceval (Sergio, 23-sep).
 //
 // LA REGLA: archivo COR = reporte al cliente, cada uno en su formato.
+// El ESPECIAL FIDUCIARIO que de verdad se le manda a la bolsa.
+//
+// Cuando el Orión del portafolio no es un NIT, el campo que viaja es el EF. Si
+// va vacío la bolsa acepta la línea, pero el nombre de la papeleta sale mal a
+// veces, casi al azar (Sergio, 23-oct) — por eso el app avisa cuando falta.
+//
+// Pero hay portafolios que van sin EF A PROPÓSITO: los 82 de CC FIDUCIARIA.
+// Esa decisión se graba EN LA TABLA, no en el código, escribiendo NO APLICA en
+// la columna `ef`. Así el que abra la fila dentro de seis meses ve que fue una
+// decisión y no un olvido, y se puede cambiar sin tocar el HTML.
+//
+// La marca es para NOSOTROS: a la bolsa le sigue yendo el campo vacío. Mandar
+// el texto "NO APLICA" en una papeleta sería peor que el problema original.
+// OJO con lo que entra aquí: cada forma que se acepte es un EF real que se
+// podría estar borrando. "NA" a secas estaba en la lista y se quitó — los EF
+// son códigos cortos ('255', 'FBF', 'PPI') y un "NA" legítimo es posible.
+// La barra de "N/A" es obligatoria justamente por eso.
+const COR_EF_NO_APLICA = /^(NO\s*APLICA|N\s*\/\s*A|NINGUNO|SIN\s*EF)$/i;
+function efParaCOR(ef){
+  const v = String(ef == null ? '' : ef).trim();
+  return COR_EF_NO_APLICA.test(v) ? '' : v;
+}
+
 async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version, loteOps){
   if(!clienteLlevaCOR(claveCli)) return 0;
   const cfg = getClienteDB(claveCli) || {};
@@ -15949,6 +15972,8 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version, lot
     });
   }catch(e){}
   const _portDelMaestro = nom => {
+    // nota: `especialFid` sale tal cual del maestro, marca incluida. Quien la
+    // interpreta es `efParaCOR`, en un solo sitio.
     const m = _maestroPorNombre[norm(nom)] || _maestroPorFondo[norm(nom)];
     if(!m || !String(m.deceval||'').trim()) return null;
     return { nombre: m.portafolio || nom, deceval: String(m.deceval),
@@ -15980,6 +16005,7 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version, lot
 
   const filas = [];
   const faltan = [];
+  const sinEF = [];
   const _com = comercialDeCOR(nombreCli);
   let n = 0;
   Object.values(porFolioPort).forEach(a=>{
@@ -15993,13 +16019,24 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version, lot
     n++;
     const orion = String(port.orion||'');
     const esNit = orion.replace(/\D/g,'').length === 9;
+    // Cuando el Orión NO es un NIT, el campo que viaja a bolsa es el ESPECIAL
+    // FIDUCIARIO. Si va vacío la bolsa acepta la línea, pero **el nombre de la
+    // papeleta sale mal a veces, casi al azar** (Sergio, 23-oct). Así que se
+    // avisa — sin frenar, porque frenar dejaría fuera 89 portafolios y un
+    // bloqueo de ese tamaño se aprende a saltar.
+    // Los marcados NO APLICA no se cuentan: ahí la decisión ya está tomada.
+    if(!esNit && !String(port.especialFid||'').trim()){
+      sinEF.push(`${port.nombre} (deceval ${port.deceval||'—'})`);
+    }
     const pct = Number(f.comisionPct) || 0;
     filas.push({
       clave: `${hoy}|${nombreCli}|${a.orden}|${f.folio||f.id}|${port.deceval}`,
       fecha: hoy, modulo, cliente: nombreCli, parent_order_id: a.orden,
       col_cliente: orion,
       dv_cliente: esNit ? (port.dv || '') : '',
-      especial_fiduciario: esNit ? '' : (port.especialFid || ''),
+      // El EF se MANDA siempre vacío si está marcado "NO APLICA": la marca es
+      // para nosotros, no para la bolsa. Ver `efParaCOR`.
+      especial_fiduciario: esNit ? '' : efParaCOR(port.especialFid),
       nemotecnico: f.especie,
       folio: String(folioCOR(f.folio, f.especie, f.fechaReg)),
       cantidad_fraccion: a.cantidad,
@@ -16047,6 +16084,17 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version, lot
     await cargarCorLineas();
     console.log(`COR: ${filas.length} línea(s) guardadas para ${nombreCli}`);
   }catch(e){ console.warn('No se pudieron guardar las líneas del COR:', e.message); }
+
+  // AVISO, no freno — y DESPUÉS de guardar, porque dice que se guardó.
+  if(sinEF.length){
+    alert('El COR de ' + nombreCli + ' quedó guardado, pero ' +
+          [...new Set(sinEF)].length + ' portafolio(s) van SIN especial fiduciario:\n\n' +
+          [...new Set(sinEF)].map(x=>'   ' + x).join('\n') +
+          '\n\nLa bolsa acepta el campo vacío, pero el NOMBRE DE LA PAPELETA ' +
+          'puede salir mal.\nPídele el EF al BO y cárgalo en Ayudas → Maestros → ' +
+          'Decevales.\n\nSi ese portafolio va sin EF a propósito, escríbele ' +
+          'NO APLICA en el campo y el aviso deja de salir.');
+  }
   return filas.length;
 }
 
