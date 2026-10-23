@@ -25224,11 +25224,35 @@ function revisarComisiones(cliente, folios){
 // (Sergio, 01-sep).
 // Guarda las líneas del COR junto con el registro del reporte. Se llama con el
 // DETALLE (los folios), que es lo que va al cliente (Sergio, 18-sep).
-async function registrarLoteRVLConCOR(cliente, loteOps, version, loteDet){
+// `corDetalle` son LAS LÍNEAS QUE DE VERDAD RECIBIÓ EL CLIENTE.
+//
+// EL COR NO SE CONSTRUYE, SE REFORMATEA (Sergio, 23-oct).
+// ---------------------------------------------------------------------
+// La premisa está escrita desde el 18-sep en `crear_cor_lineas.sql`: "lo que
+// se le reporta al cliente y lo que se sube a bolsa son lo mismo por
+// construcción". Pero el guardado del COR volvía a repartir los folios cuando
+// recibía `loteOps`, y ese segundo reparto podía salir distinto al que vio el
+// cliente — o perder líneas por el camino.
+//
+// El 22-oct, con PROTECCIÓN: el reporte al cliente salió con 417 líneas y
+// 4.002.993 acciones; al COR llegaron 256 y 183.718. Y de las que sí llegaron,
+// 36 traían la cantidad repartida distinto entre sub-cuentas (52 acciones
+// movidas entre OBL-RIESGO y VOL-BCOLO). Dos papeles, dos verdades.
+//
+// Ahora el que reporta dice QUÉ le mandó al cliente y eso es lo que va al COR,
+// sin tocarlo. `loteOps` solo se sigue pasando donde el reporte del cliente SÍ
+// reparte —COLFONDOS—, porque ahí los dos caminos usan la misma función con
+// las mismas entradas y dan idéntico.
+async function registrarLoteRVLConCOR(cliente, loteOps, version, loteDet, corDetalle){
   const nuevas = await registrarLoteRVL(cliente, loteOps, version);
   try{
     if(typeof guardarCorLineasDeReporte === 'function'){
-      await guardarCorLineasDeReporte('RVL', cliente, loteDet || [], version, loteOps);
+      // Con `corDetalle` el COR escribe ESO y nada más. Sin él, el camino de
+      // siempre (COLFONDOS), cuyo reporte al cliente ya reparte con la misma
+      // función y las mismas entradas.
+      await guardarCorLineasDeReporte('RVL', cliente,
+        corDetalle || loteDet || [], version,
+        corDetalle ? undefined : loteOps);
     }
   }catch(e){ console.warn('COR:', e.message); }
   return nuevas;
