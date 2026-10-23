@@ -19118,6 +19118,51 @@ function filasPlanillaCOP(){
       liquidacion: _fechaReal(h.tradeDate), cumplimiento: _fechaReal(h.settleDate) });
   });
 
+  // ---- RFI: la utilidad, pasada a pesos ----
+  // RFI entraba a la Planilla BO pero NO a la Planilla COP: Sergio lo venía
+  // sumando por fuera, en el Excel. En 2026 eso fueron $178.469.732 que el
+  // app no veía — y el día que el módulo de Ejecución Presupuestal lea de
+  // aquí, esa plata faltaría sin que nada lo dijera (Sergio, 23-oct).
+  //
+  // Mismo molde que RVI, porque es el mismo negocio: el ingreso es el MARGEN,
+  // viene en dólares, se pasa a pesos con la TRM y **el 50% es de AAR**. Se
+  // usa la misma constante `RVI_PARTE_EQS`, no un 0,5 escrito otra vez: la
+  // regla es una sola y tiene que vivir en un solo sitio.
+  //
+  // SOLO LO VERIFICADO, igual que la Planilla BO. Un negocio sin verificar no
+  // es un ingreso todavía, y que los dos papeles lean lo mismo es justamente
+  // lo que evita que digan cosas distintas.
+  if(typeof negociosRFI === 'function'){
+    negociosRFI().forEach(n=>{
+      if(typeof rfiEstaVerificado === 'function' && !rfiEstaVerificado(n)) return;
+      const utilUSD = Number(n.utilidad) || 0;
+      if(!utilUSD) return;
+      if(!trm){ faltan.push(`${n.cliente || '—'} ${n.security || ''} (RFI) — falta la TRM para pasar la utilidad a pesos`); return; }
+      // Nominal y precio salen de las VENTAS al cliente, que es la pata que
+      // nos interesa. El nominal del blotter viene en MILES (Miguel, 18-sep).
+      const nominal = (n.ventas||[]).reduce((a,f)=>a + (Number(f.amount)||0)*1000, 0);
+      const principal = (n.ventas||[]).reduce((a,f)=>a + (Number(f.principal)||0), 0);
+      const neto = (n.ventas||[]).reduce((a,f)=>a + (Number(f.total)||0), 0);
+      if(!nominal || !principal){
+        faltan.push(`${n.cliente || '—'} ${n.security || ''} (RFI) — el negocio no tiene ventas al cliente`);
+        return;
+      }
+      // El precio de un bono es % del par: principal sobre nominal, por cien.
+      const precio = principal / nominal * 100;
+      const comCOP = utilUSD * RVI_PARTE_EQS * trm;
+      agregar({ cliente:n.cliente, account:'', fondo:n.cliente,
+        nemo:n.security, lado:'Venta',
+        cantidad:nominal, precio, bruto:principal, comision:comCOP,
+        // El giro queda en DÓLARES, igual que la cantidad y el precio de esta
+        // fila. La comisión es la única en pesos, porque es la que alimenta
+        // el presupuesto. Mismo criterio que RVI.
+        netoReportado: neto,
+        comisionPct: (principal * trm) ? comCOP / (principal * trm) : 0,
+        mercado:'RFI', iva:false,
+        liquidacion:_fechaReal(n.fechaOp), cumplimiento:_fechaReal(n.settle) });
+    });
+  }
+
   // ---- FX ----
   (operaciones||[]).forEach(o=>{
     if(o.fecha && String(o.fecha).slice(0,10) !== hoy) return;
@@ -19158,6 +19203,85 @@ function filasPlanillaCOP(){
   });
 
   return { filas, faltan: [...new Set(faltan)] };
+}
+
+// =====================================================================
+// LA ACUMULACIÓN ANUAL
+// ---------------------------------------------------------------------
+// Hasta hoy la Planilla COP se armaba en memoria, salía en Excel y se perdía.
+// Esto la guarda, día a día, en `planilla_cop`. Es la materia prima del
+// módulo de Ejecución Presupuestal (pendiente 13).
+//
+// LAS MISMAS 16 COLUMNAS de la hoja que alimenta el Power BI, sin inventar ni
+// quitar ninguna. La PRODUCCIÓN es `comision`, SIN IVA — verificado el 23-oct
+// contra la hoja PRESUPUESTO AÑO 2026: los 45 de 45 grupos calzan contra
+// `Comisión $` y ninguno contra comisión+IVA.
+//
+// Reenviar la planilla el mismo día REEMPLAZA lo guardado de ese día: primero
+// se borra la fecha y después se escribe. Si no, un reenvío duplicaría la
+// producción del día y el acumulado del año quedaría inflado sin que se vea.
+//
+// NUNCA tumba la descarga: esto corre DESPUÉS de entregar el archivo y
+// cualquier falla se avisa, pero el Excel ya salió (Sergio, 23-oct).
+async function guardarPlanillaCOP(filas, fechaISO){
+  const fecha = fechaISO || _hoyISO();
+  // Las fechas van en ISO LOCAL (`_isoLocal`), que es el día del CALENDARIO.
+  // `toISOString()` devuelve el día en UTC, y los dos no siempre coinciden:
+  // en Bogotá (UTC-5) un Date a las 20:00 ya es el día siguiente en UTC, así
+  // que una liquidación del 23 generada al cierre se guardaría como 24.
+  // `_isoLocal` da el mismo día sea la hora que sea y esté donde esté el PC.
+  const d2iso = v => {
+    if(!v) return null;
+    if(typeof v.getFullYear === 'function') return _isoLocal(v);
+    const s = String(v);
+    return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0,10) : null;
+  };
+  // CERO NO ES NULL. `Number(null)` da 0 y `Number('')` también: sin este
+  // freno, una comisión que no se sabe se guardaba como una comisión de cero,
+  // y el acumulado del año salía corto sin que nada lo dijera. "No cobró" es
+  // un 0 que entra; "no sé" es un null que se queda afuera.
+  const num = v => {
+    if(v == null || v === '') return null;
+    const n = Number(v);
+    return isFinite(n) ? n : null;
+  };
+  const cuerpo = (filas||[]).map(f=>({
+    fecha,
+    fondo: f.fondo || '', grupo: f.grupo || '', tipo: f.tipo || '', nemo: f.nemo || '',
+    cantidad: num(f.cantidad), precio: num(f.precio), bruto: num(f.bruto),
+    comision: num(f.comision), comision_pct: num(f.comisionPct),
+    iva: num(f.iva), giro: num(f.giro),
+    trader: f.trader || '', mercado: f.mercado || '', categoria: f.categoria || '',
+    liquidacion: d2iso(f.liquidacion), cumplimiento: d2iso(f.cumplimiento),
+    generado_por: (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
+  }));
+  // Una fila sin comisión no entra: sería producción en cero disfrazada de
+  // producción. El generador ya las frena antes, esto es el segundo candado.
+  const sinCom = cuerpo.filter(r => r.comision == null);
+  const buenas = cuerpo.filter(r => r.comision != null);
+  if(!buenas.length) return { ok:false, guardadas:0, sinCom:sinCom.length,
+                              mensaje:'No había ninguna fila con comisión.' };
+  try{
+    const h = { apikey:SUPA_KEY, Authorization:`Bearer ${SUPA_KEY}` };
+    const del = await fetch(`${SUPA_URL}/rest/v1/planilla_cop?fecha=eq.${fecha}`,
+                            { method:'DELETE', headers:h });
+    if(!del.ok) throw new Error(`no se pudo limpiar el día (HTTP ${del.status})`);
+    const ok = await guardarEnLotesSupabase('planilla_cop', buenas);
+    if(!ok) throw new Error('alguno de los lotes no se guardó — revisa la consola (F12)');
+    // SE VERIFICA CONTRA LA BASE, no contra lo que creemos haber mandado.
+    // Un lote a medias deja el día incompleto y el acumulado del año corto,
+    // y eso no se nota hasta que alguien compara con el Excel.
+    const r = await fetch(
+      `${SUPA_URL}/rest/v1/planilla_cop?fecha=eq.${fecha}&select=id`,
+      { headers: { ...h, Prefer:'count=exact', Range:'0-0' } });
+    const cr = String(r.headers.get('content-range')||'');
+    const n = Number(cr.split('/')[1]);
+    if(isFinite(n) && n !== buenas.length)
+      throw new Error(`quedaron ${n} filas y se mandaron ${buenas.length}`);
+    return { ok:true, guardadas:buenas.length, sinCom:sinCom.length };
+  }catch(e){
+    return { ok:false, guardadas:0, sinCom:sinCom.length, mensaje:e.message };
+  }
 }
 
 async function descargarPlanillaCOP(){
@@ -19222,9 +19346,18 @@ async function descargarPlanillaCOP(){
   await entregarArchivoInterno(`PLANILLA_COP_${slug}.xlsx`, buf);
 
   const totCom = filas.reduce((t,f)=>t+f.comision, 0);
+  // El archivo YA SALIÓ. Esto solo acumula; si falla, se dice y punto.
+  const g = await guardarPlanillaCOP(filas);
   est.innerHTML = `<div style="background:rgba(34,197,94,.10);border-left:3px solid var(--buy,#22c55e);
     border-radius:6px;padding:10px 14px;font-size:12px;color:var(--buy,#22c55e);">
-    ✓ ${filas.length} operación(es) · comisión total ${fmtMoney(totCom)}</div>`;
+    ✓ ${filas.length} operación(es) · comisión total ${fmtMoney(totCom)}` +
+    (g.ok ? `<div class="field-note" style="font-size:11.5px;color:var(--buy,#22c55e);opacity:.85;">
+               ↳ ${g.guardadas} fila(s) guardadas en la acumulación anual</div>`
+          : `<div style="font-size:11.5px;color:var(--amber,#f59e0b);margin-top:4px;">
+               ⚠ El Excel salió bien, pero <b>la acumulación anual no se guardó</b>:
+               ${g.mensaje || 'sin detalle'}.<br>
+               Vuelve a generar la planilla cuando se resuelva — reenviarla no duplica nada.</div>`) +
+    `</div>`;
 }
 
 function renderDashPendientes(){
@@ -30729,7 +30862,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-23 13:50 UTC · v269';
+const BUILD_ID = '2026-10-23 16:25 UTC · v270';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
