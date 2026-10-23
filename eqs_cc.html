@@ -31008,6 +31008,47 @@ let _ejecMensual = [];      // vista ejecucion_mensual
 let _ejecDiaria  = [];      // vista ejecucion_diaria
 let _ejecCargado = false;
 
+// EL ALIAS VIVE EN LA TABLA, NO AQUÍ
+// ----------------------------------
+// `maestro_grupos.alias` guarda los otros nombres con que llega el mismo
+// cliente, separados por '|', y el reporte al cliente ya los resuelve. El
+// módulo comparaba el nombre EXACTO contra el maestro, así que un nombre que
+// el resto del app sabe traducir aparecía aquí como producción huérfana y se
+// caía de todos los totales.
+//
+// Lo encontró Sergio el 23-oct con la carga del año puesta: CREDICORP CAPITAL
+// BOLSA, que es CREDIBOLSA, salía como un grupo sin presupuesto.
+//
+// Se resuelve UNA vez, al cargar, y no en los seis sitios que leen el nombre:
+// un solo camino por número.
+function _presuAliasMapa(){
+  const m = {};
+  // Primero TODOS los nombres propios: el nombre de un grupo nunca puede
+  // quedar apuntando a otro porque alguien lo puso de alias por error.
+  (_maestroGrupos||[]).forEach(g=>{
+    const canon = String(g.grupo==null?'':g.grupo).trim();
+    if(canon) m[canon.toUpperCase()] = canon;
+  });
+  (_maestroGrupos||[]).forEach(g=>{
+    const canon = String(g.grupo==null?'':g.grupo).trim();
+    if(!canon) return;
+    String(g.alias==null?'':g.alias).split('|').forEach(a=>{
+      const k = String(a==null?'':a).trim().toUpperCase();
+      if(k && !m[k]) m[k] = canon;
+    });
+  });
+  return m;
+}
+
+function _presuCanonizar(filas){
+  const m = _presuAliasMapa();
+  (filas||[]).forEach(r=>{
+    const k = String(r.grupo==null?'':r.grupo).trim().toUpperCase();
+    if(m[k] && m[k] !== r.grupo) r.grupo = m[k];
+  });
+  return filas;
+}
+
 async function cargarPresupuesto(forzar){
   const est = document.getElementById('presuEstado');
   if(_ejecCargado && !forzar){ renderPresupuesto(); return; }
@@ -31019,6 +31060,9 @@ async function cargarPresupuesto(forzar){
     const traer = (typeof supaFetchTodo === 'function') ? supaFetchTodo : supaFetch;
     _ejecMensual = await traer('ejecucion_mensual', 'order=anio.asc,mes.asc') || [];
     _ejecDiaria  = await traer('ejecucion_diaria',  'order=dia.asc') || [];
+    // Los alias se resuelven aquí, una vez. `ejecucion_diaria` no agrupa por
+    // grupo, así que no hace falta.
+    _presuCanonizar(_ejecMensual);
     _ejecCargado = true;
     if(est) est.textContent = `${_ejecMensual.length} fila(s) mensuales · ${_ejecDiaria.length} día(s)`;
   }catch(e){
@@ -31561,7 +31605,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-23 21:40 UTC · v273';
+const BUILD_ID = '2026-10-23 20:45 UTC · v274';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
