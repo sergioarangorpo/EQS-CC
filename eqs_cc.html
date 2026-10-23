@@ -100,6 +100,37 @@
   .rvi-alloc-col .panel{margin-bottom:14px;}
   @media(max-width:1180px){ .rvi-alloc-trio{grid-template-columns:1fr;} }
 
+  /* ---------- CONTROLES: EL TEMA OSCURO POR DEFECTO ----------
+     Hasta el 23-oct cada bloque estilaba sus propios `select` e `input`
+     (.field, .tb-field, .tablaMaestro, .hist-filtros...). Todo control que
+     naciera FUERA de esos contenedores salia BLANCO, con el desplegable del
+     sistema: paso en Research RVL/RVI y volvio a pasar en Ejecucion
+     Presupuestal. Dos sitios distintos, el mismo origen — el tema no estaba
+     en la base, estaba repetido en cada rama.
+     Esta regla lo pone en la base. Las de los contenedores siguen existiendo
+     y ganan por especificidad, asi que nada de lo que hoy se ve bien cambia;
+     lo unico que cambia es lo que hoy sale blanco. */
+  select, input[type=text], input[type=number], input[type=date],
+  input[type=search], input[type=time], textarea{
+    background:var(--bg-3,#11151f);
+    border:1px solid var(--border-strong,#2b3345);
+    border-radius:6px;
+    color:var(--text-0,#e7ecf5);
+    font-family:var(--sans);
+    font-size:12.5px;
+    padding:6px 8px;
+  }
+  /* El desplegable ABIERTO lo pinta el sistema operativo: sin esto, en
+     Windows las opciones salen blancas aunque la caja este oscura. */
+  select option, select optgroup{
+    background:var(--bg-2,#161b26);
+    color:var(--text-0,#e7ecf5);
+  }
+  select:focus, input:focus, textarea:focus{
+    outline:none; border-color:var(--accent,#818cf8);
+  }
+  select:disabled, input:disabled{ opacity:.55; }
+
   .section-label{
     font-size:11px;font-weight:600;color:var(--text-1);
     text-transform:uppercase;letter-spacing:.6px;margin:0 0 10px;
@@ -31241,6 +31272,29 @@ function renderPresupuesto(){
       ⚠ No hay maestro de grupos: sin presupuesto no hay con qué comparar.</div>`;
     return;
   }
+  // SIN ACUMULACION NO HAY PANTALLA, HAY UNA PARED DE CEROS.
+  // El modulo lee de `planilla_cop`, que se llena cuando se genera la
+  // Planilla COP. Antes de la primera, todo da 0 y la pantalla se ve rota
+  // cuando en realidad esta vacia. Son dos cosas distintas y hay que
+  // decirlo (Sergio, 23-oct).
+  if(!(_ejecMensual||[]).length){
+    cont.innerHTML = `
+      <div style="background:rgba(129,140,248,.10);border-left:3px solid var(--accent,#818cf8);
+                  border-radius:8px;padding:16px 18px;">
+        <div style="font-size:14px;font-weight:700;color:var(--accent,#818cf8);">
+          Todavía no hay nada acumulado</div>
+        <div class="field-note" style="font-size:12.5px;margin-top:6px;line-height:1.6;">
+          Este módulo lee de <b>planilla_cop</b>, que se llena sola cada vez que generas
+          la <b>Planilla COP</b> (desde el build v270).<br>
+          Genera una y vuelve: el día queda guardado y a partir de ahí el año se va armando solo.
+          <br><br>
+          Si quieres ver <b>2026 completo desde enero</b>, hay que cargar una vez el histórico
+          del Excel que alimenta el Power BI — son 26.483 filas. Pídemelo y te paso el SQL.
+        </div>
+      </div>`;
+    return;
+  }
+
   const c = _presuCorte();
   const cumpl = c.presuAcum > 0 ? c.produccion / c.presuAcum * 100 : 0;
   const delPres = c.presuAnual > 0 ? c.produccion / c.presuAnual * 100 : 0;
@@ -31353,6 +31407,13 @@ function renderPresupuesto(){
     <div class="field-note" style="font-size:11.5px;margin:-6px 0 12px;">Corte: <b>${_esc(etiquetaCorte)}</b>
       · ${c.grupos.length} grupo(s) · IVA facturado $${_mm(c.iva)} <i>(no es ingreso)</i></div>
 
+    ${c.produccion === 0 ? `<div style="background:rgba(129,140,248,.10);
+        border-left:3px solid var(--accent,#818cf8);border-radius:6px;padding:9px 13px;
+        font-size:12px;color:var(--accent,#818cf8);margin-bottom:12px;">
+        Este corte no tiene producción. Hay ${(_ejecMensual||[]).length} fila(s) acumuladas en total,
+        así que el dato existe — lo que no hay es nada que calce con
+        <b>${_esc(etiquetaCorte)}</b>. Prueba con <b>✕ Limpiar</b>.</div>` : ''}
+
     ${_totalHuerfano > 0 ? `<div style="background:rgba(245,158,11,.10);
         border-left:3px solid var(--amber,#f59e0b);border-radius:6px;padding:9px 13px;
         font-size:12px;color:var(--amber,#f59e0b);margin-bottom:12px;">
@@ -31405,6 +31466,7 @@ function renderPresupuesto(){
       </div>
     </div>
 
+    ${c.produccion > 0 ? `
     <div style="display:flex;gap:14px;flex-wrap:wrap;">
       <div style="flex:1;min-width:320px;">
         ${_bloque('Los que van adelante', _svgBarrasH(arriba.map(x=>({
@@ -31416,9 +31478,15 @@ function renderPresupuesto(){
             etiqueta:x.grupo, valor:Math.abs(x.brecha), texto:'−$'+_mm(Math.abs(x.brecha)), color:_PC.rojo }))),
           'Lo que falta para ponerse al día. Es donde está la plata por buscar.')}
       </div>
-    </div>
+    </div>` : `
+    <div class="card" style="padding:12px 14px;margin-bottom:14px;">
+      <div style="font-size:12.5px;font-weight:700;opacity:.75;">Adelante y atrás</div>
+      <div class="field-note" style="font-size:12px;margin-top:4px;">
+        En este corte no hay producción, así que todos los grupos saldrían con la brecha
+        completa. Eso no dice nada — se muestra cuando haya algo con qué comparar.</div>
+    </div>`}
 
-    ${_bloque('Grupo por grupo', `
+    ${_bloque('Grupo por grupo — ejecución del presupuesto al corte', `
       <div style="max-height:460px;overflow:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
         <thead><tr style="position:sticky;top:0;background:var(--bg-2,#161b26);">
@@ -31493,7 +31561,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-23 19:05 UTC · v272';
+const BUILD_ID = '2026-10-23 21:40 UTC · v273';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
