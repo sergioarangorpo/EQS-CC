@@ -24148,7 +24148,11 @@ async function generarReporte(){
       medio: window._porvMedio || 'BBL',
     });
     window._sufijoReporte = '';
-    const nuevas = await registrarLoteRVLConCOR(cliente, loteOps, version, loteDet);
+    // Al COR va LO QUE VIO EL CLIENTE: si hubo reparto, `loteDetPorv`.
+    // Antes al COR le llegaba `loteDet` —el lote SIN repartir— y encima lo
+    // volvía a repartir: dos desvíos sobre el mismo papel (Sergio, 23-oct).
+    const nuevas = await registrarLoteRVLConCOR(cliente, loteOps, version, loteDet,
+      hayReparto ? loteDetPorv : loteDet);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'CREDICORPCAPITAL-PORVENIR + Archivo plano');
     renderFidessaTradesPanel();
   } else if(formato === 'horz'){
@@ -24342,7 +24346,9 @@ async function generarReporte(){
     window._sufijoReporte = sufijoVersion(version);
     await generarReporteSkandia(cliente, loteDetSk || loteDet);
     window._sufijoReporte = '';
-    const nuevas = await registrarLoteRVLConCOR(cliente, loteOps, version, loteDet);
+    // Al COR va LO QUE VIO EL CLIENTE: `loteDetSk` cuando hubo reparto.
+    const nuevas = await registrarLoteRVLConCOR(cliente, loteOps, version, loteDet,
+      loteDetSk || loteDet);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos Operaciones + BO');
     renderFidessaTradesPanel();
   } else if(formato === 'colfondos'){
@@ -24432,7 +24438,8 @@ async function generarReporte(){
     // sin fondo, registrar dejaria la linea en REPORTADO y al cliente sin su
     // archivo — el error que mas cuesta (Sergio, 19-oct).
     if(!salio) return;
-    const nuevas = await registrarLoteRVLConCOR(cliente, loteOps, version, loteDet);
+    // BTG AM no reparte: al COR van las mismas líneas del archivo del cliente.
+    const nuevas = await registrarLoteRVLConCOR(cliente, loteOps, version, loteDet, loteDet);
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivo de operaciones');
     renderFidessaTradesPanel();
   } else if(formato === 'andes_fxequity'){
@@ -24644,7 +24651,9 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
     // ANDES es extranjero pero SÍ complementa: está en COR_EXTRANJEROS_SI
     // (Sergio, 22-sep).
     if(typeof guardarCorLineasDeReporte === 'function'){
-      await guardarCorLineasDeReporte('RVL', cliente, _lineasAndes, version, _opsAndesArr);
+      // ANDES es un cliente único: no hay fracciones ni nada que repartir
+      // (Sergio, 23-oct). Al COR van sus líneas tal cual.
+      await guardarCorLineasDeReporte('RVL', cliente, _lineasAndes, version);
     }
     const nuevasRVL = await registrarLoteRVL(cliente, _opsAndesArr, version);
     let nuevasFX = 0;
@@ -24812,7 +24821,10 @@ function mostrarAprobacionProteccion(cliente, loteDet){
     // existe en esta función y al usarla reventaba antes de registrar, así que
     // el archivo salía pero PROTECCIÓN no quedaba reportada (Sergio, 24-sep).
     if(typeof guardarCorLineasDeReporte === 'function'){
-      try{ await guardarCorLineasDeReporte('RVL', cliente, loteDet, version, _loteOpsProt); }
+      // SIN `_loteOpsProt`: el COR escribe las MISMAS líneas que el archivo del
+      // cliente. Cada folio ya trae su sub-cuenta en el Notes; repartirlo otra
+      // vez movía acciones entre sub-cuentas y perdía líneas (Sergio, 23-oct).
+      try{ await guardarCorLineasDeReporte('RVL', cliente, loteDet, version); }
       catch(e){ console.warn('COR de PROTECCIÓN:', e.message); }
     }
     const nuevas = await registrarLoteRVL(cliente, _loteOpsProt, version);
@@ -30886,7 +30898,7 @@ async function rshCargarSuper(btn){
   return r;
 }
 
-const BUILD_ID = '2026-10-23 16:25 UTC · v270';
+const BUILD_ID = '2026-10-23 17:50 UTC · v271';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
