@@ -17619,10 +17619,16 @@ function renderDashboard(){
   const el = document.getElementById('dashHora');
   if(el) el.textContent = new Date().toLocaleString('es-CO',{dateStyle:'long', timeStyle:'short'});
 
+  // LA MONEDA VA PEGADA AL NÚMERO. Antes los dos salían con un '$' pelado
+  // —'$58.437 MM' de pesos y '$53.856.165' de dólares— y la única pista era
+  // una etiqueta chiquita en la esquina de la tarjeta. Dos monedas con el
+  // mismo símbolo, en tarjetas vecinas, obligan a traducir mentalmente cuál
+  // es cuál cada vez (Sergio, 26-oct).
   const mm = (v, moneda) => {
-    if(!v) return moneda === 'USD' ? '$0' : '$0';
-    if(moneda === 'USD') return '$' + v.toLocaleString('es-CO',{maximumFractionDigits:0});
-    return '$' + (v/1e6).toLocaleString('es-CO',{maximumFractionDigits: (v/1e6)<10?1:0}) + ' MM';
+    const usd = moneda === 'USD';
+    if(!v) return usd ? 'US$0' : '$0';
+    return usd ? 'US$' + v.toLocaleString('es-CO',{maximumFractionDigits:0})
+               : '$' + (v/1e6).toLocaleString('es-CO',{maximumFractionDigits: (v/1e6)<10?1:0}) + ' MM';
   };
 
   // ---- Tarjetas por mercado ----
@@ -17756,8 +17762,10 @@ function renderDashBarras(M){
       const i = filas.indexOf(f);
       const pct = Math.abs(f.valor) / (maxPorMoneda[f.moneda]||1) * 100;
       const share = Math.abs(f.valor) / (totPorMoneda[f.moneda]||1) * 100;
+      // US$ para los dólares, $ para los pesos: en una lista mezclada el
+      // símbolo tiene que decir la moneda solo (Sergio, 26-oct).
       const txt = f.moneda === 'USD'
-        ? '$' + f.valor.toLocaleString('es-CO',{maximumFractionDigits:0})
+        ? 'US$' + f.valor.toLocaleString('es-CO',{maximumFractionDigits:0})
         : '$' + (f.valor/1e6).toLocaleString('es-CO',{maximumFractionDigits:1}) + ' MM';
       return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;">
         <span style="width:170px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
@@ -17820,7 +17828,7 @@ function renderDashTotales(M, campo, destino){
   });
 
   const fmt = (v, moneda) => moneda === 'USD'
-    ? '$' + v.toLocaleString('es-CO',{maximumFractionDigits:0})
+    ? 'US$' + v.toLocaleString('es-CO',{maximumFractionDigits:0})
     : (Math.abs(v) >= 1e6
         ? '$' + (v/1e6).toLocaleString('es-CO',{maximumFractionDigits:1}) + ' MM'
         : '$' + v.toLocaleString('es-CO',{maximumFractionDigits:0}));
@@ -19502,13 +19510,25 @@ function _copArqueo(filas){
              nota:'acciones + ETF + ADR' });
   out.push({ mercado:'FX', moneda:'COP', dash:(M.FX||{}).com || 0,
              plan: sum({ test:x => x.mercado === 'FX' }) });
+  // RVI y RFI el dashboard los muestra en DÓLARES —es la utilidad del
+  // negocio— y la planilla en pesos y ya repartida al 50% con AAR. Antes
+  // devolvía la planilla a dólares, y eso dejaba una tabla donde un lado
+  // decía US$36.399 y el otro US$0: dos monedas distintas en la misma
+  // columna no se comparan solas. Sergio, 26-oct: *"para el arqueo sí tengo
+  // que ver las ops de RVI y RFI en COP, es la forma de comparar"*.
+  //
+  // Así que ahora TODO el arqueo va en pesos, y el que se convierte es el
+  // dashboard: utilidad USD × TRM × nuestra parte. Sin TRM no se convierte
+  // nada y se dice; inventar una tasa sería peor que no comparar.
   ['RVI','RFI'].forEach(k=>{
-    const planCOP = sum({ test:x => x.mercado === k });
-    out.push({ mercado:k, moneda:'USD', dash:(M[k]||{}).com || 0,
-               plan: (trm && parte) ? planCOP / trm / parte : null,
-               planCOP,
-               nota: trm ? `la planilla va en pesos y al ${Math.round(parte*100)}%; aquí vuelve a dólares`
-                         : 'sin TRM no se puede comparar' });
+    const utilUSD = (M[k]||{}).com || 0;
+    out.push({ mercado:k, moneda:'COP',
+               dash: trm ? utilUSD * trm * parte : null,
+               plan: sum({ test:x => x.mercado === k }),
+               usd: utilUSD,
+               nota: trm
+                 ? `utilidad US$${Math.round(utilUSD).toLocaleString('es-CO')} × TRM ${trm.toLocaleString('es-CO')} × ${Math.round(parte*100)}% nuestro`
+                 : 'sin TRM no se puede pasar a pesos' });
   });
   return out;
 }
@@ -19614,7 +19634,7 @@ function renderPlanillaCOPPrevia(){
 
       ${arqueo ? `<div style="margin:12px 0;">
         <div style="font-size:12.5px;font-weight:700;opacity:.8;margin-bottom:5px;">
-          Arqueo contra el dashboard</div>
+          Arqueo contra el dashboard <span class="field-note" style="font-weight:400;">· todo en pesos</span></div>
         <table style="width:100%;border-collapse:collapse;font-size:12px;">
           <thead><tr style="opacity:.7;">
             <th style="text-align:left;padding:3px 6px;">Mercado</th>
@@ -19624,18 +19644,16 @@ function renderPlanillaCOPPrevia(){
             <th style="text-align:left;padding:3px 6px;"></th>
           </tr></thead>
           <tbody>${arqueo.map(a=>{
-            const hay = a.plan != null;
+            const hay = a.dash != null && a.plan != null;
             const d = hay ? a.plan - a.dash : null;
             const grande = hay && Math.abs(d) > Math.max(1, Math.abs(a.dash) * 0.01);
-            const f = v => a.moneda === 'USD'
-              ? 'US$' + Math.round(v).toLocaleString('es-CO') : mmm(v);
             return `<tr style="border-top:1px solid var(--border,#232938);">
               <td style="padding:3px 6px;font-weight:600;">${a.mercado}</td>
-              <td style="padding:3px 6px;text-align:right;">${f(a.dash)}</td>
-              <td style="padding:3px 6px;text-align:right;">${hay ? f(a.plan) : '—'}</td>
+              <td style="padding:3px 6px;text-align:right;">${a.dash == null ? '—' : mmm(a.dash)}</td>
+              <td style="padding:3px 6px;text-align:right;">${mmm(a.plan)}</td>
               <td style="padding:3px 6px;text-align:right;font-weight:600;
                   color:${!hay ? 'inherit' : (grande ? 'var(--amber,#f59e0b)' : 'var(--buy,#22c55e)')};">
-                ${hay ? (d>=0?'+':'−') + f(Math.abs(d)).replace('-','') : '—'}</td>
+                ${hay ? (d>=0?'+':'−') + mmm(Math.abs(d)) : '—'}</td>
               <td style="padding:3px 6px;" class="field-note">${a.nota ? esc(a.nota) : ''}</td>
             </tr>`;}).join('')}</tbody>
         </table>
@@ -32496,7 +32514,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-26 20:15 UTC · v277';
+const BUILD_ID = '2026-10-26 21:00 UTC · v278';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
