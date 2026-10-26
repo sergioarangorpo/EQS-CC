@@ -976,7 +976,7 @@
                           background:var(--bg-2,#161b26);color:var(--text-1,#e5e7eb);
                           border:1px solid var(--border,#232938);border-radius:6px;"
                    title="Se toma del informe diario; edítalo si necesitas otro">
-            <button class="btn small purple" onclick="descargarPlanillaCOP()">📥 Planilla COP</button>
+            <button class="btn small purple" onclick="abrirPlanillaCOP()">📋 Planilla COP</button>
           </div>
         </div>
         <div id="planillaEstado" style="margin-top:10px;"></div>
@@ -3025,6 +3025,37 @@
       </div>
 
       <div id="presuCuerpo"></div>
+
+      <!-- ============ UN DÍA EN DETALLE ============
+           Es el único camino para tocar un día que NO es hoy. El botón de la
+           Planilla COP y todo lo que cuelga de EMSX y Outlook son del día de
+           trading actual, a propósito; cuando hay que reparar un día pasado
+           —como el 23-oct, que quedó con 5 filas de FX— la única salida era
+           un SQL hecho a mano. Esto lo vuelve parte del app (Sergio, 26-oct).
+      -->
+      <div class="card" style="padding:12px 14px;margin-top:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;
+                    gap:10px;flex-wrap:wrap;cursor:pointer;" onclick="togglePresuDia()">
+          <div style="font-size:13px;font-weight:800;">Un día en detalle
+            <span class="field-note" style="font-weight:400;">· ver, reparar o corregir un día pasado</span></div>
+          <span id="presuDiaFlecha" class="field-note" style="font-size:16px;">▾</span>
+        </div>
+        <div id="presuDiaPanel" style="display:none;margin-top:12px;">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+            <div><label class="field-note">Día</label>
+              <input type="date" id="presuDiaFecha" style="min-width:150px;"></div>
+            <button class="btn small purple" onclick="verDiaPlanilla()">Ver el día</button>
+            <div style="flex:1;min-width:260px;">
+              <label class="field-note">Reparar desde un archivo</label>
+              <input type="file" id="presuDiaArchivo" accept=".xlsx"
+                     onchange="leerArchivoDiaPlanilla(this)"
+                     style="font-size:12px;width:100%;"
+                     title="El PLANILLA_COP_AAAAMMDD.xlsx que ya genera el app. La fecha sale del nombre del archivo.">
+            </div>
+          </div>
+          <div id="presuDiaCuerpo" style="margin-top:12px;"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -19372,9 +19403,39 @@ async function guardarPlanillaCOP(filas, fechaISO){
   }
 }
 
-async function descargarPlanillaCOP(){
+// ===================================================================
+// LA PLANILLA COP — MIRAR, APROBAR, Y DESPUÉS GUARDAR
+// -------------------------------------------------------------------
+// Hasta el 26-oct el botón hacía las tres cosas de un golpe: armaba la
+// planilla, escribía el .xlsx en la carpeta compartida y la guardaba en
+// Supabase. Nadie veía nada antes de que pasara.
+//
+// Eso tenía dos costos que se vieron el mismo día:
+//   · Una planilla incompleta salía igual de verde que una completa. La del
+//     23-oct trajo 5 filas de FX y ninguna de acciones, y el archivo ya estaba
+//     en la carpeta antes de que alguien lo mirara.
+//   · Los frenos BLOQUEABAN: si faltaba un dato no se generaba nada. Un
+//     bloqueo de ese tamaño se aprende a saltar.
+//
+// Ahora el botón abre una VISUAL. Sergio mira, y si está bien aprueba; si no,
+// se va al módulo que tiene el error, lo corrige y le da Recalcular sin tener
+// que empezar de cero. El Excel es su propio botón y sale cuando él quiere.
+//
+// Los frenos AVISAN, no bloquean (Sergio, 26-oct). Pero quedan arriba, en
+// ámbar, con la cuenta y la lista — y el registro guarda que se aprobó con N
+// operaciones por fuera.
+// ===================================================================
+
+// Lo que se está mirando ahora. Vive fuera para que los botones de abajo
+// trabajen sobre LA MISMA lista que se pintó: si cada botón volviera a armar
+// la planilla, podría aprobar algo distinto de lo que se vio.
+let _copPrevia = null;
+
+async function abrirPlanillaCOP(){
   const est = document.getElementById('planillaEstado');
-  if(!_maestroGrupos.length) await cargarMaestroGrupos();
+  if(!est) return;
+  est.innerHTML = `<div class="field-note" style="font-size:12px;">armando la planilla…</div>`;
+  if(!_maestroGrupos.length && typeof cargarMaestroGrupos === 'function') await cargarMaestroGrupos();
   if(!_maestroGrupos.length){
     est.innerHTML = `<div style="background:rgba(245,158,11,.10);border-left:3px solid var(--amber,#f59e0b);
       border-radius:6px;padding:10px 14px;font-size:12px;color:var(--amber,#f59e0b);">
@@ -19382,24 +19443,278 @@ async function descargarPlanillaCOP(){
     return;
   }
   const { filas, faltan } = filasPlanillaCOP();
+  const fecha = _hoyISO();
+  // Lo que el día YA tiene guardado. Es el control que faltó el 23-oct: sin
+  // esto, aprobar una planilla corta borra una buena y nadie se entera.
+  const yaHay = await _copDiaGuardado(fecha);
+  _copPrevia = { filas, faltan, fecha, yaHay, aprobada:false, descargada:false };
+  renderPlanillaCOPPrevia();
+}
+// El nombre viejo sigue existiendo: lo llamaba el botón y puede estar en
+// cualquier atajo. Abre la visual, que es lo que ahora significa.
+async function descargarPlanillaCOP(){ return abrirPlanillaCOP(); }
 
-  // FRENO: con datos incompletos no se genera nada.
-  if(faltan.length){
-    est.innerHTML = `<div style="background:rgba(245,158,11,.10);border-left:3px solid var(--amber,#f59e0b);
-      border-radius:6px;padding:10px 14px;font-size:12px;">
-      <b style="color:var(--amber,#f59e0b);">No se generó la planilla.</b>
-      Falta información en ${faltan.length} operación(es):
-      <ul style="margin:6px 0 0 16px;padding:0;">${faltan.slice(0,12).map(f=>`<li>${f}</li>`).join('')}</ul>
-      ${faltan.length>12 ? `<div style="opacity:.7;margin-top:4px;">… y ${faltan.length-12} más</div>` : ''}
+// Cuántas filas y cuánta comisión tiene ya ese día en la base.
+// Si la consulta falla NO se inventa un cero: se devuelve null y la pantalla
+// dice que no pudo mirar. Un cero inventado aquí haría desaparecer el aviso.
+async function _copDiaGuardado(fecha){
+  try{
+    const h = { apikey:SUPA_KEY, Authorization:`Bearer ${SUPA_KEY}` };
+    const r = await fetch(`${SUPA_URL}/rest/v1/planilla_cop?fecha=eq.${fecha}&select=comision,generado_por`,
+                          { headers:h });
+    if(!r.ok) return null;
+    const d = await r.json();
+    if(!Array.isArray(d)) return null;
+    return {
+      filas: d.length,
+      comision: d.reduce((a,x)=>a + (Number(x.comision)||0), 0),
+      origenes: [...new Set(d.map(x=>x.generado_por || '(sin marca)'))],
+    };
+  }catch(e){ return null; }
+}
+
+// EL ARQUEO CONTRA EL DASHBOARD
+// -----------------------------
+// El dashboard y la planilla salen de la misma data pero por caminos
+// distintos, así que compararlos es el único control de verdad que tenemos:
+// sus dos lados NO salen del mismo lugar.
+//
+// RVL y FX van en pesos en los dos lados y se comparan directo. RVI y RFI el
+// dashboard los muestra en DÓLARES (la utilidad) y la planilla en pesos y ya
+// repartida al 50% con AAR, así que la planilla se devuelve a dólares para
+// poder compararla. Si no hay TRM no se compara: se dice.
+//
+// Una diferencia NO es necesariamente un error. En los clientes que se
+// reportan la planilla usa la comisión del ARCHIVO DEL CLIENTE —con su marca
+// de bloque o pantalla y sus overrides por especie— y el dashboard usa la
+// tarifa base. Lo que importa es que la diferencia se vea y tenga explicación.
+function _copArqueo(filas){
+  const M = (typeof _dashDatos === 'function') ? _dashDatos() : null;
+  if(!M) return null;
+  const trm = (typeof _trmPlanilla === 'function') ? Number(_trmPlanilla()) || 0 : 0;
+  const parte = (typeof RVI_PARTE_EQS !== 'undefined') ? RVI_PARTE_EQS : 0.5;
+  const sum = f => filas.filter(f.test).reduce((a,x)=>a + (Number(x.comision)||0), 0);
+  const out = [];
+  // RVL: la planilla reparte acciones, ETF y ADR; el dashboard los junta todos
+  // bajo RVL.
+  out.push({ mercado:'RVL', moneda:'COP', dash:(M.RVL||{}).com || 0,
+             plan: sum({ test:x => ['ACCIONES','ETF','ADR'].indexOf(x.mercado) >= 0 }),
+             nota:'acciones + ETF + ADR' });
+  out.push({ mercado:'FX', moneda:'COP', dash:(M.FX||{}).com || 0,
+             plan: sum({ test:x => x.mercado === 'FX' }) });
+  ['RVI','RFI'].forEach(k=>{
+    const planCOP = sum({ test:x => x.mercado === k });
+    out.push({ mercado:k, moneda:'USD', dash:(M[k]||{}).com || 0,
+               plan: (trm && parte) ? planCOP / trm / parte : null,
+               planCOP,
+               nota: trm ? `la planilla va en pesos y al ${Math.round(parte*100)}%; aquí vuelve a dólares`
+                         : 'sin TRM no se puede comparar' });
+  });
+  return out;
+}
+
+function renderPlanillaCOPPrevia(){
+  const est = document.getElementById('planillaEstado');
+  if(!est || !_copPrevia) return;
+  const { filas, faltan, fecha, yaHay } = _copPrevia;
+  const n = filas.length;
+  const com = filas.reduce((a,f)=>a + (Number(f.comision)||0), 0);
+  const iva = filas.reduce((a,f)=>a + (Number(f.iva)||0), 0);
+  const ops = n;
+  // El MISMO formateador del módulo de Ejecución Presupuestal. Si cada
+  // pantalla redondeara a su manera, el mismo número se vería distinto en dos
+  // sitios y tocaría traducir mentalmente cuál es cuál.
+  const mmm = v => '$' + ((typeof _mm === 'function')
+    ? _mm(v)
+    : Math.round(Number(v)||0).toLocaleString('es-CO'));
+
+  const porMerc = {}, porTrader = {}, porGrupo = {};
+  filas.forEach(f=>{
+    porMerc[f.mercado||'—']  = (porMerc[f.mercado||'—']||0)  + (Number(f.comision)||0);
+    porTrader[f.trader||'—'] = (porTrader[f.trader||'—']||0) + (Number(f.comision)||0);
+    porGrupo[f.grupo||'—']   = (porGrupo[f.grupo||'—']||0)   + (Number(f.comision)||0);
+  });
+  const arqueo = _copArqueo(filas);
+  const esc = (typeof _esc === 'function') ? _esc : (t=>String(t==null?'':t));
+
+  // EL AVISO QUE FALTÓ EL 23-OCT. Si el día ya tiene guardado bastante más de
+  // lo que trae esta planilla, aprobar se lo lleva por delante. El umbral es
+  // la mitad de la producción o la mitad de las filas, lo que salte primero.
+  let avisoPisa = '';
+  if(yaHay && yaHay.filas > 0){
+    const menosPlata = com < yaHay.comision * 0.5;
+    const menosFilas = n   < yaHay.filas    * 0.5;
+    avisoPisa = `<div style="background:rgba(${menosPlata||menosFilas ? '239,68,68' : '129,140,248'},.10);
+        border-left:3px solid ${menosPlata||menosFilas ? 'var(--sell,#ef4444)' : 'var(--accent,#818cf8)'};
+        border-radius:6px;padding:9px 13px;font-size:12px;margin-bottom:10px;
+        color:${menosPlata||menosFilas ? 'var(--sell,#ef4444)' : 'var(--accent,#818cf8)'};">
+        ${menosPlata||menosFilas ? '⚠ <b>Esta planilla trae MENOS de lo que el día ya tiene guardado.</b>' :
+                                   'El día ya está guardado y aprobar lo reemplaza.'}
+        <div style="margin-top:3px;">
+          guardado: <b>${yaHay.filas}</b> fila(s) por <b>${mmm(yaHay.comision)}</b>
+          <span style="opacity:.7;">(${yaHay.origenes.join(', ')})</span>
+          &nbsp;·&nbsp; esta planilla: <b>${n}</b> fila(s) por <b>${mmm(com)}</b></div>
+        ${menosPlata||menosFilas ? `<div class="field-note" style="font-size:11px;margin-top:3px;
+            color:var(--sell,#ef4444);">Mira si falta cargar algo antes de aprobar. Aprobar borra el día completo y deja solo esta planilla.</div>` : ''}
       </div>`;
-    return;
+  } else if(yaHay === null){
+    avisoPisa = `<div class="field-note" style="font-size:11.5px;margin-bottom:10px;">
+      No se pudo consultar si el día ya estaba guardado. Aprobar igual funciona,
+      pero sin ese control.</div>`;
   }
-  if(!filas.length){
-    est.innerHTML = `<div class="field-note" style="font-size:12px;">Todavía no hay operaciones hoy.</div>`;
-    return;
-  }
-  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
 
+  const tarj = (tit, val, pie, color) => `
+    <div class="card" style="padding:11px 14px;min-width:150px;flex:1;">
+      <div class="field-note" style="font-size:10.5px;letter-spacing:.4px;">${tit}</div>
+      <div style="font-size:21px;font-weight:800;margin-top:3px;${color?`color:${color};`:''}">${val}</div>
+      ${pie ? `<div class="field-note" style="font-size:11px;">${pie}</div>` : ''}
+    </div>`;
+
+  const barra = (obj, color) => {
+    const e = Object.entries(obj).sort((a,b)=>b[1]-a[1]);
+    const max = Math.max(...e.map(x=>Math.abs(x[1])), 1);
+    return e.map(([k,v])=>`
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:3px;">
+        <div style="width:150px;text-align:right;opacity:.8;">${esc(k)}</div>
+        <div style="flex:1;background:rgba(255,255,255,.06);border-radius:3px;height:14px;">
+          <div style="width:${Math.max(2,Math.abs(v)/max*100)}%;height:100%;border-radius:3px;
+                      background:${color};opacity:.85;"></div></div>
+        <div style="width:95px;font-weight:600;">${mmm(v)}</div>
+      </div>`).join('');
+  };
+
+  est.innerHTML = `
+    <div class="card" style="padding:14px 16px;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div style="font-size:14px;font-weight:800;">Planilla COP · ${fecha}</div>
+        <div class="field-note" style="font-size:11px;">Míralo antes de aprobar. Nada se ha guardado todavía.</div>
+      </div>
+
+      ${faltan.length ? `<div style="background:rgba(245,158,11,.12);
+          border-left:3px solid var(--amber,#f59e0b);border-radius:6px;padding:9px 13px;
+          font-size:12px;color:var(--amber,#f59e0b);margin:10px 0;">
+          ⚠ <b>${faltan.length} operación(es) NO entraron en esta planilla.</b>
+          <ul style="margin:5px 0 0 16px;padding:0;">
+            ${faltan.slice(0,12).map(f=>`<li>${esc(f)}</li>`).join('')}</ul>
+          ${faltan.length>12 ? `<div style="opacity:.75;margin-top:3px;">… y ${faltan.length-12} más</div>` : ''}
+          <div class="field-note" style="font-size:11px;margin-top:4px;color:var(--amber,#f59e0b);">
+            Puedes aprobar igual, pero esa comisión se queda por fuera del día.
+            Si se puede resolver, arréglalo en su módulo y dale <b>Recalcular</b>.</div>
+        </div>` : ''}
+
+      ${avisoPisa}
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0;">
+        ${tarj('OPERACIONES', ops.toLocaleString('es-CO'), `${Object.keys(porGrupo).length} grupo(s)`)}
+        ${tarj('COMISIÓN', mmm(com), 'sin IVA — es la producción', 'var(--buy,#22c55e)')}
+        ${tarj('IVA', mmm(iva), 'facturado, no es ingreso')}
+        ${tarj('SE QUEDAN FUERA', String(faltan.length), faltan.length ? 'míralas arriba' : 'ninguna',
+               faltan.length ? 'var(--amber,#f59e0b)' : '')}
+      </div>
+
+      ${arqueo ? `<div style="margin:12px 0;">
+        <div style="font-size:12.5px;font-weight:700;opacity:.8;margin-bottom:5px;">
+          Arqueo contra el dashboard</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead><tr style="opacity:.7;">
+            <th style="text-align:left;padding:3px 6px;">Mercado</th>
+            <th style="text-align:right;padding:3px 6px;">Dashboard</th>
+            <th style="text-align:right;padding:3px 6px;">Planilla</th>
+            <th style="text-align:right;padding:3px 6px;">Diferencia</th>
+            <th style="text-align:left;padding:3px 6px;"></th>
+          </tr></thead>
+          <tbody>${arqueo.map(a=>{
+            const hay = a.plan != null;
+            const d = hay ? a.plan - a.dash : null;
+            const grande = hay && Math.abs(d) > Math.max(1, Math.abs(a.dash) * 0.01);
+            const f = v => a.moneda === 'USD'
+              ? 'US$' + Math.round(v).toLocaleString('es-CO') : mmm(v);
+            return `<tr style="border-top:1px solid var(--border,#232938);">
+              <td style="padding:3px 6px;font-weight:600;">${a.mercado}</td>
+              <td style="padding:3px 6px;text-align:right;">${f(a.dash)}</td>
+              <td style="padding:3px 6px;text-align:right;">${hay ? f(a.plan) : '—'}</td>
+              <td style="padding:3px 6px;text-align:right;font-weight:600;
+                  color:${!hay ? 'inherit' : (grande ? 'var(--amber,#f59e0b)' : 'var(--buy,#22c55e)')};">
+                ${hay ? (d>=0?'+':'−') + f(Math.abs(d)).replace('-','') : '—'}</td>
+              <td style="padding:3px 6px;" class="field-note">${a.nota ? esc(a.nota) : ''}</td>
+            </tr>`;}).join('')}</tbody>
+        </table>
+        <div class="field-note" style="font-size:11px;margin-top:4px;">
+          Una diferencia no es por fuerza un error: en los clientes que se reportan la planilla usa
+          la comisión del archivo del cliente —con su marca de bloque o pantalla— y el dashboard usa
+          la tarifa base.</div>
+      </div>` : ''}
+
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0;">
+        <div style="flex:1;min-width:280px;">
+          <div style="font-size:12.5px;font-weight:700;opacity:.8;margin-bottom:5px;">Por mercado</div>
+          ${barra(porMerc, 'var(--accent,#818cf8)')}
+          <div style="font-size:12.5px;font-weight:700;opacity:.8;margin:10px 0 5px;">Por trader</div>
+          ${barra(porTrader, 'var(--buy,#22c55e)')}
+        </div>
+        <div style="flex:1;min-width:280px;">
+          <div style="font-size:12.5px;font-weight:700;opacity:.8;margin-bottom:5px;">
+            Por grupo <span class="field-note">(${Object.keys(porGrupo).length})</span></div>
+          <div style="max-height:220px;overflow:auto;">${barra(porGrupo, 'var(--accent,#818cf8)')}</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+                  border-top:1px solid var(--border,#232938);padding-top:11px;">
+        <button class="btn small purple" onclick="aprobarPlanillaCOP()"
+                ${_copPrevia.aprobada ? 'disabled' : ''}>
+          ${_copPrevia.aprobada ? '✓ Aprobada' : '✓ Aprobar y guardar'}</button>
+        <button class="btn small" onclick="descargarExcelPlanillaCOP()">📥 Descargar Excel</button>
+        <button class="btn small" onclick="abrirPlanillaCOP()">↻ Recalcular</button>
+        <button class="btn small" onclick="cerrarPlanillaCOP()">✕ Cerrar</button>
+        <div id="copResultado" class="field-note" style="font-size:11.5px;flex:1;min-width:200px;"></div>
+      </div>
+    </div>`;
+}
+
+function cerrarPlanillaCOP(){
+  _copPrevia = null;
+  const est = document.getElementById('planillaEstado');
+  if(est) est.innerHTML = '';
+}
+
+// GUARDAR. El Excel ya no sale de aquí: es su propio botón, para que nada
+// caiga en la carpeta compartida antes de que alguien lo mire.
+async function aprobarPlanillaCOP(){
+  if(!_copPrevia || !_copPrevia.filas.length) return;
+  const res = document.getElementById('copResultado');
+  if(res) res.innerHTML = 'guardando…';
+  const g = await guardarPlanillaCOP(_copPrevia.filas, _copPrevia.fecha);
+  if(g.ok){
+    _copPrevia.aprobada = true;
+    // Queda escrito que se aprobó con operaciones por fuera. Un día aprobado
+    // con frenos y uno limpio no pueden verse igual después.
+    const conFrenos = _copPrevia.faltan.length;
+    if(res) res.innerHTML = `<span style="color:var(--buy,#22c55e);">✓ ${g.guardadas} fila(s) guardadas</span>` +
+      (conFrenos ? ` <span style="color:var(--amber,#f59e0b);">· aprobada con ${conFrenos} operación(es) por fuera</span>` : '');
+    try{ console.log(`Planilla COP ${_copPrevia.fecha}: aprobada por ${typeof USUARIO!=='undefined'?USUARIO:'?'}` +
+                     ` · ${g.guardadas} filas · ${conFrenos} frenos`); }catch(e){}
+    _copPrevia.yaHay = await _copDiaGuardado(_copPrevia.fecha);
+    renderPlanillaCOPPrevia();
+    const r2 = document.getElementById('copResultado');
+    if(r2) r2.innerHTML = `<span style="color:var(--buy,#22c55e);">✓ guardada</span>` +
+      (conFrenos ? ` <span style="color:var(--amber,#f59e0b);">· con ${conFrenos} por fuera</span>` : '');
+  }else{
+    if(res) res.innerHTML = `<span style="color:var(--amber,#f59e0b);">⚠ no se guardó: ${g.mensaje || 'sin detalle'}</span>`;
+  }
+}
+
+// EL EXCEL. Sale de `_copPrevia.filas`, que es exactamente lo que se pintó:
+// si volviera a armar la planilla podría bajar algo distinto de lo aprobado.
+async function descargarExcelPlanillaCOP(){
+  if(!_copPrevia || !_copPrevia.filas.length) return;
+  const res = document.getElementById('copResultado');
+  if(typeof ExcelJS === 'undefined'){
+    if(res) res.innerHTML = '<span style="color:var(--amber,#f59e0b);">No se pudo cargar ExcelJS.</span>';
+    return;
+  }
+  if(res) res.innerHTML = 'armando el Excel…';
+  const filas = _copPrevia.filas;
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Planilla COP');
   const H = ['Fondo','Grupo','Tipo','Nemo','Cantidad','Precio','Valor Bruto','Comisión $',
@@ -19427,25 +19742,14 @@ async function descargarPlanillaCOP(){
     ['O','P'].forEach(c=>{ ws.getCell(`${c}${r}`).numFmt = 'dd/mm/yyyy'; });
     r++;
   });
-
-  const d = new Date();
-  const slug = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  // EL NOMBRE LLEVA LA FECHA DE LA PLANILLA, no la de hoy. Es lo que deja que
+  // el sub-módulo de Ejecución Presupuestal sepa a qué día pertenece el
+  // archivo sin tener que preguntarle a nadie.
+  const slug = String(_copPrevia.fecha).replace(/-/g, '');
   const buf = await wb.xlsx.writeBuffer();
   await entregarArchivoInterno(`PLANILLA_COP_${slug}.xlsx`, buf);
-
-  const totCom = filas.reduce((t,f)=>t+f.comision, 0);
-  // El archivo YA SALIÓ. Esto solo acumula; si falla, se dice y punto.
-  const g = await guardarPlanillaCOP(filas);
-  est.innerHTML = `<div style="background:rgba(34,197,94,.10);border-left:3px solid var(--buy,#22c55e);
-    border-radius:6px;padding:10px 14px;font-size:12px;color:var(--buy,#22c55e);">
-    ✓ ${filas.length} operación(es) · comisión total ${fmtMoney(totCom)}` +
-    (g.ok ? `<div class="field-note" style="font-size:11.5px;color:var(--buy,#22c55e);opacity:.85;">
-               ↳ ${g.guardadas} fila(s) guardadas en la acumulación anual</div>`
-          : `<div style="font-size:11.5px;color:var(--amber,#f59e0b);margin-top:4px;">
-               ⚠ El Excel salió bien, pero <b>la acumulación anual no se guardó</b>:
-               ${g.mensaje || 'sin detalle'}.<br>
-               Vuelve a generar la planilla cuando se resuelva — reenviarla no duplica nada.</div>`) +
-    `</div>`;
+  _copPrevia.descargada = true;
+  if(res) res.innerHTML = `<span style="color:var(--buy,#22c55e);">✓ PLANILLA_COP_${slug}.xlsx</span>`;
 }
 
 function renderDashPendientes(){
@@ -31798,6 +32102,351 @@ function renderPresupuesto(){
   `;
 }
 
+
+// ===================================================================
+// UN DÍA EN DETALLE — ver, reparar y corregir un día que ya pasó
+// -------------------------------------------------------------------
+// El botón de la Planilla COP es del día de hoy a propósito: EMSX, Outlook y
+// todas las conexiones son del día de trading actual (Sergio, 26-oct). Pero
+// entonces un día pasado solo se podía reparar con un SQL hecho a mano, y eso
+// no escala: el 23-oct quedó con 5 filas de FX porque el Excel alimentador
+// estaba a medias cuando se cargó el histórico.
+//
+// Esto hace tres cosas y ninguna más:
+//   1. VER un día: las filas que hay guardadas, con sus totales.
+//   2. REPARAR un día desde el `PLANILLA_COP_AAAAMMDD.xlsx` que el app ya
+//      genera. La fecha sale DEL NOMBRE DEL ARCHIVO, no del PC — así se puede
+//      cargar el 23 estando a 26 sin tocarle la fecha a la máquina.
+//   3. CORREGIR una línea a mano, dejando escrito quién y qué.
+//
+// LO QUE NO HACE: borrar un día. Reemplazar sí, borrar no.
+// ===================================================================
+
+let _presuDia = null;         // { fecha, filas, cargando }
+let _presuDiaArchivo = null;  // { fecha, filas, nombre }
+let _presuDiaNota = null;     // ¿existe la columna `nota`? null = sin averiguar
+
+function togglePresuDia(){
+  const p = document.getElementById('presuDiaPanel');
+  const f = document.getElementById('presuDiaFlecha');
+  if(!p) return;
+  const abierto = p.style.display !== 'none';
+  p.style.display = abierto ? 'none' : 'block';
+  if(f) f.textContent = abierto ? '▾' : '▴';
+  if(!abierto){
+    const i = document.getElementById('presuDiaFecha');
+    if(i && !i.value) i.value = (typeof _hoyISO === 'function') ? _hoyISO() : '';
+  }
+}
+
+async function verDiaPlanilla(fechaForzada){
+  const cont = document.getElementById('presuDiaCuerpo');
+  const inp  = document.getElementById('presuDiaFecha');
+  const fecha = fechaForzada || (inp && inp.value);
+  if(!cont) return;
+  if(!fecha){ cont.innerHTML = '<div class="field-note">Escoge un día.</div>'; return; }
+  if(inp && fechaForzada) inp.value = fechaForzada;
+  cont.innerHTML = '<div class="field-note">leyendo…</div>';
+  try{
+    const h = { apikey:SUPA_KEY, Authorization:`Bearer ${SUPA_KEY}` };
+    // `supaFetchTodo` pagina: un día con 350 filas cabe, pero el tope de
+    // PostgREST no avisa cuando corta y ya nos costó tres veces.
+    const traer = (typeof supaFetchTodo === 'function') ? supaFetchTodo : null;
+    const filas = traer
+      ? await traer('planilla_cop', `fecha=eq.${fecha}&order=grupo.asc,nemo.asc`)
+      : await (await fetch(`${SUPA_URL}/rest/v1/planilla_cop?fecha=eq.${fecha}&order=grupo.asc`,
+                           { headers:h })).json();
+    _presuDia = { fecha, filas: filas || [] };
+    renderDiaPlanilla();
+  }catch(e){
+    cont.innerHTML = `<div style="color:var(--sell,#ef4444);font-size:12px;">
+      No se pudo leer el día: ${_esc(e.message)}</div>`;
+  }
+}
+
+// ¿Existe la columna `nota`? Las correcciones a mano se guardan ahí. Si no
+// existe, el app NO escribe a medias: lo dice y manda a correr el SQL.
+async function _diaHayNota(){
+  if(_presuDiaNota !== null) return _presuDiaNota;
+  try{
+    const h = { apikey:SUPA_KEY, Authorization:`Bearer ${SUPA_KEY}` };
+    const r = await fetch(`${SUPA_URL}/rest/v1/planilla_cop?select=nota&limit=1`, { headers:h });
+    _presuDiaNota = r.ok;
+  }catch(e){ _presuDiaNota = false; }
+  return _presuDiaNota;
+}
+
+function _diaTotales(filas){
+  return {
+    n: filas.length,
+    com: filas.reduce((a,f)=>a + (Number(f.comision)||0), 0),
+    iva: filas.reduce((a,f)=>a + (Number(f.iva)||0), 0),
+    grupos: new Set(filas.map(f=>f.grupo)).size,
+    origenes: [...new Set(filas.map(f=>f.generado_por || '(sin marca)'))],
+  };
+}
+
+function renderDiaPlanilla(){
+  const cont = document.getElementById('presuDiaCuerpo');
+  if(!cont || !_presuDia) return;
+  const { fecha, filas } = _presuDia;
+  const t = _diaTotales(filas);
+  const mm = v => '$' + ((typeof _mm === 'function') ? _mm(v)
+                        : Math.round(Number(v)||0).toLocaleString('es-CO'));
+  const esc = (typeof _esc === 'function') ? _esc : (x=>String(x==null?'':x));
+
+  if(!filas.length){
+    cont.innerHTML = `<div style="background:rgba(129,140,248,.10);
+      border-left:3px solid var(--accent,#818cf8);border-radius:6px;padding:10px 14px;font-size:12px;">
+      <b>El ${esc(fecha)} no tiene nada guardado.</b>
+      <div class="field-note" style="font-size:11.5px;margin-top:3px;">
+        Si ese día sí se operó, carga su <b>PLANILLA_COP_${String(fecha).replace(/-/g,'')}.xlsx</b>
+        con el selector de arriba.</div></div>
+      ${_presuDiaArchivo ? _diaBloqueArchivo() : ''}`;
+    return;
+  }
+
+  cont.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+      <div class="card" style="padding:10px 13px;flex:1;min-width:130px;">
+        <div class="field-note" style="font-size:10.5px;">FILAS</div>
+        <div style="font-size:19px;font-weight:800;">${t.n.toLocaleString('es-CO')}</div>
+        <div class="field-note" style="font-size:11px;">${t.grupos} grupo(s)</div></div>
+      <div class="card" style="padding:10px 13px;flex:1;min-width:130px;">
+        <div class="field-note" style="font-size:10.5px;">COMISIÓN</div>
+        <div style="font-size:19px;font-weight:800;color:var(--buy,#22c55e);">${mm(t.com)}</div>
+        <div class="field-note" style="font-size:11px;">sin IVA</div></div>
+      <div class="card" style="padding:10px 13px;flex:1;min-width:130px;">
+        <div class="field-note" style="font-size:10.5px;">IVA</div>
+        <div style="font-size:19px;font-weight:800;">${mm(t.iva)}</div></div>
+      <div class="card" style="padding:10px 13px;flex:1;min-width:150px;">
+        <div class="field-note" style="font-size:10.5px;">LO GENERÓ</div>
+        <div style="font-size:15px;font-weight:700;margin-top:4px;">${esc(t.origenes.join(', '))}</div></div>
+    </div>
+
+    ${_presuDiaArchivo ? _diaBloqueArchivo() : ''}
+
+    <div style="max-height:420px;overflow:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:11.5px;">
+      <thead><tr style="position:sticky;top:0;background:var(--bg-2,#161b26);">
+        <th style="text-align:left;padding:4px 6px;">Grupo</th>
+        <th style="text-align:left;padding:4px 6px;">Fondo</th>
+        <th style="text-align:left;padding:4px 6px;">Nemo</th>
+        <th style="text-align:center;padding:4px 6px;">Tipo</th>
+        <th style="text-align:right;padding:4px 6px;">Cantidad</th>
+        <th style="text-align:right;padding:4px 6px;">Precio</th>
+        <th style="text-align:right;padding:4px 6px;">Comisión</th>
+        <th style="text-align:right;padding:4px 6px;">IVA</th>
+        <th style="text-align:center;padding:4px 6px;">Mercado</th>
+        <th style="text-align:center;padding:4px 6px;"></th>
+      </tr></thead>
+      <tbody>${filas.map(f=>`
+        <tr style="border-top:1px solid var(--border,#232938);${f.nota?'background:rgba(245,158,11,.07);':''}">
+          <td style="padding:3px 6px;">${esc(f.grupo)}</td>
+          <td style="padding:3px 6px;opacity:.75;">${esc(f.fondo)}</td>
+          <td style="padding:3px 6px;">${esc(f.nemo)}</td>
+          <td style="padding:3px 6px;text-align:center;">${esc(f.tipo)}</td>
+          <td style="padding:3px 6px;text-align:right;">${_diaNum(f.cantidad)}</td>
+          <td style="padding:3px 6px;text-align:right;">${_diaNum(f.precio)}</td>
+          <td style="padding:3px 6px;text-align:right;font-weight:600;cursor:pointer;"
+              onclick="corregirCampoDia(${f.id},'comision')"
+              title="Clic para corregir">${_diaNum(f.comision)}</td>
+          <td style="padding:3px 6px;text-align:right;cursor:pointer;"
+              onclick="corregirCampoDia(${f.id},'iva')"
+              title="Clic para corregir">${_diaNum(f.iva)}</td>
+          <td style="padding:3px 6px;text-align:center;">${esc(f.mercado)}</td>
+          <td style="padding:3px 6px;text-align:center;">${f.nota
+            ? `<span title="${esc(f.nota)}" style="color:var(--amber,#f59e0b);">✎</span>` : ''}</td>
+        </tr>`).join('')}</tbody>
+    </table></div>
+    <div class="field-note" style="font-size:11px;margin-top:5px;">
+      Clic en una comisión o en un IVA para corregirlo. Queda escrito quién lo cambió y de qué a qué;
+      la fila se marca con <span style="color:var(--amber,#f59e0b);">✎</span> y el texto sale al pasar
+      el mouse. <b>Un número corregido a mano ya no sale del archivo del cliente</b> — se sabrá por qué
+      dentro de seis meses.</div>`;
+}
+const _diaNum = v => v == null ? '<span style="opacity:.4;">—</span>'
+  : Number(v).toLocaleString('es-CO',{maximumFractionDigits:2});
+
+// CORREGIR UNA LÍNEA. No se toca nada hasta que exista la columna `nota`: una
+// corrección sin rastro es peor que no poder corregir.
+async function corregirCampoDia(id, campo){
+  if(!_presuDia) return;
+  const f = _presuDia.filas.find(x=>String(x.id) === String(id));
+  if(!f) return;
+  if(!(await _diaHayNota())){
+    alert('Para corregir a mano falta la columna `nota` en planilla_cop.\n\n' +
+          'Corre el SQL `agregar_nota_planilla_cop.sql` y vuelve. Sin esa columna ' +
+          'el cambio quedaría sin rastro, y eso es peor que no poder corregirlo.');
+    return;
+  }
+  const antes = f[campo];
+  const txt = prompt(`${f.grupo} · ${f.nemo} · ${campo}\n\nValor actual: ${antes}\n\nNuevo valor:`,
+                     antes == null ? '' : String(antes));
+  if(txt === null) return;
+  const limpio = String(txt).trim();
+  // CERO NO ES NULL: vacío deja el campo en null ("no sé"), y un 0 escrito
+  // entra como cero de verdad.
+  let nuevo = null;
+  if(limpio !== ''){
+    nuevo = Number(limpio.replace(/\./g,'').replace(',','.'));
+    if(!isFinite(nuevo)){ alert('Eso no es un número.'); return; }
+  }
+  if(campo === 'comision' && nuevo == null){
+    alert('La comisión no puede quedar vacía: es la producción del día.');
+    return;
+  }
+  const quien = (typeof USUARIO !== 'undefined') ? USUARIO : '?';
+  const cuando = (typeof _hoyISO === 'function') ? _hoyISO() : '';
+  const nota = `${f.nota ? f.nota + ' | ' : ''}${campo} ${antes} → ${nuevo} (${quien}, ${cuando})`;
+  try{
+    const h = { apikey:SUPA_KEY, Authorization:`Bearer ${SUPA_KEY}`,
+                'Content-Type':'application/json', Prefer:'return=representation' };
+    const r = await fetch(`${SUPA_URL}/rest/v1/planilla_cop?id=eq.${encodeURIComponent(id)}`,
+      { method:'PATCH', headers:h, body: JSON.stringify({ [campo]: nuevo, nota }) });
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    f[campo] = nuevo; f.nota = nota;
+    renderDiaPlanilla();
+    if(typeof cargarPresupuesto === 'function') cargarPresupuesto(true);
+  }catch(e){
+    alert('No se pudo guardar la corrección: ' + e.message);
+  }
+}
+
+// ---------------------------------------------------------------------
+// REPARAR UN DÍA DESDE SU ARCHIVO
+// La fecha sale del NOMBRE: PLANILLA_COP_20261023.xlsx -> 2026-10-23. Es lo
+// que permite cargar el 23 estando a 26 sin tocarle la fecha al PC.
+// ---------------------------------------------------------------------
+function _fechaDeNombre(nombre){
+  const m = String(nombre||'').match(/(\d{4})(\d{2})(\d{2})/);
+  if(!m) return null;
+  const f = `${m[1]}-${m[2]}-${m[3]}`;
+  return isNaN(new Date(f + 'T12:00:00').getTime()) ? null : f;
+}
+
+async function leerArchivoDiaPlanilla(input){
+  const cont = document.getElementById('presuDiaCuerpo');
+  const file = input && input.files && input.files[0];
+  if(!file || !cont) return;
+  const fecha = _fechaDeNombre(file.name);
+  if(!fecha){
+    cont.innerHTML = `<div style="color:var(--sell,#ef4444);font-size:12px;">
+      No pude sacar la fecha del nombre <b>${_esc(file.name)}</b>.
+      Tiene que ser como <b>PLANILLA_COP_20261023.xlsx</b>.</div>`;
+    return;
+  }
+  if(typeof ExcelJS === 'undefined'){
+    cont.innerHTML = '<div style="color:var(--sell,#ef4444);font-size:12px;">No se pudo cargar ExcelJS.</div>';
+    return;
+  }
+  cont.innerHTML = '<div class="field-note">leyendo el archivo…</div>';
+  try{
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await file.arrayBuffer());
+    const ws = wb.worksheets[0];
+    const filas = [];
+    const malas = [];
+    const val = c => { const v = c && c.value; return (v && v.result !== undefined) ? v.result : v; };
+    const num = v => { if(v == null || v === '') return null;
+                       const n = Number(v); return isFinite(n) ? n : null; };
+    const fec = v => { if(!v) return null;
+                       if(v instanceof Date) return _isoLocal(v);
+                       const s = String(v); return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0,10) : null; };
+    ws.eachRow((row, i)=>{
+      if(i === 1) return;                       // encabezado
+      const g = String(val(row.getCell(3)) || '').trim();
+      const com = num(val(row.getCell(9)));
+      // UNA FILA EN BLANCO Y UNA FILA MALA NO SON LO MISMO. Antes bastaba con
+      // que faltaran grupo y comisión para saltarla en silencio, y una fila
+      // con fondo, especie y cantidad —pero sin grupo— se colaba como si no
+      // existiera. Vacía es vacía SOLO si no hay nada en ninguna celda.
+      const vacia = [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]
+        .every(c => { const v = val(row.getCell(c)); return v == null || String(v).trim() === ''; });
+      if(vacia) return;
+      if(!g || com == null){ malas.push(i); return; }
+      filas.push({
+        fecha, fondo:String(val(row.getCell(2))||''), grupo:g,
+        tipo:String(val(row.getCell(4))||''), nemo:String(val(row.getCell(5))||''),
+        cantidad:num(val(row.getCell(6))), precio:num(val(row.getCell(7))),
+        bruto:num(val(row.getCell(8))), comision:com,
+        comision_pct:num(val(row.getCell(10))), iva:num(val(row.getCell(11))),
+        giro:num(val(row.getCell(12))), trader:String(val(row.getCell(13))||''),
+        mercado:String(val(row.getCell(14))||''),
+        liquidacion:fec(val(row.getCell(15))), cumplimiento:fec(val(row.getCell(16))),
+        categoria:String(val(row.getCell(17))||''),
+        generado_por:(typeof USUARIO !== 'undefined' ? USUARIO : 'SAR') + ' (archivo)',
+      });
+    });
+    _presuDiaArchivo = { fecha, filas, nombre:file.name, malas };
+    await verDiaPlanilla(fecha);               // repinta el día Y el bloque del archivo
+  }catch(e){
+    cont.innerHTML = `<div style="color:var(--sell,#ef4444);font-size:12px;">
+      No se pudo leer el archivo: ${_esc(e.message)}</div>`;
+  }
+}
+
+function _diaBloqueArchivo(){
+  const a = _presuDiaArchivo;
+  if(!a) return '';
+  const esc = (typeof _esc === 'function') ? _esc : (x=>String(x==null?'':x));
+  const mm = v => '$' + ((typeof _mm === 'function') ? _mm(v)
+                        : Math.round(Number(v)||0).toLocaleString('es-CO'));
+  const t = _diaTotales(a.filas);
+  const hay = _presuDia && _presuDia.fecha === a.fecha ? _diaTotales(_presuDia.filas) : { n:0, com:0 };
+  // El mismo umbral de la Planilla COP: la mitad de la plata o la mitad de las
+  // filas, lo que salte primero. Si no, un archivo a medias se lleva un día
+  // bueno por delante — que es justo lo que pasó el 23-oct.
+  const menos = hay.n > 0 && (t.com < hay.com * 0.5 || t.n < hay.n * 0.5);
+  return `
+    <div style="background:rgba(${menos?'239,68,68':'34,197,94'},.10);
+        border-left:3px solid ${menos?'var(--sell,#ef4444)':'var(--buy,#22c55e)'};
+        border-radius:6px;padding:10px 13px;font-size:12px;margin-bottom:10px;">
+      <b>${esc(a.nombre)}</b> → día <b>${esc(a.fecha)}</b>
+      <div style="margin-top:4px;">
+        el archivo trae <b>${t.n}</b> fila(s) por <b>${mm(t.com)}</b>${
+        hay.n ? ` &nbsp;·&nbsp; el día tiene hoy <b>${hay.n}</b> por <b>${mm(hay.com)}</b>` : ''}</div>
+      ${a.malas && a.malas.length ? `<div style="color:var(--amber,#f59e0b);margin-top:3px;">
+        ⚠ ${a.malas.length} fila(s) del archivo sin grupo o sin comisión: no entran.</div>` : ''}
+      ${menos ? `<div style="color:var(--sell,#ef4444);margin-top:3px;">
+        ⚠ <b>El archivo trae MENOS de lo que el día ya tiene.</b> Reemplazar borra el día completo y deja solo esto.</div>` : ''}
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <button class="btn small purple" onclick="reemplazarDiaPlanilla()">
+          ${hay.n ? 'Reemplazar el día' : 'Cargar el día'}</button>
+        <button class="btn small" onclick="_presuDiaArchivo=null;renderDiaPlanilla();">✕ Descartar</button>
+        <span id="presuDiaRes" class="field-note" style="font-size:11.5px;"></span>
+      </div>
+    </div>`;
+}
+
+async function reemplazarDiaPlanilla(){
+  const a = _presuDiaArchivo;
+  const res = document.getElementById('presuDiaRes');
+  if(!a || !a.filas.length) return;
+  if(res) res.textContent = 'guardando…';
+  try{
+    const h = { apikey:SUPA_KEY, Authorization:`Bearer ${SUPA_KEY}` };
+    const del = await fetch(`${SUPA_URL}/rest/v1/planilla_cop?fecha=eq.${a.fecha}`,
+                            { method:'DELETE', headers:h });
+    if(!del.ok) throw new Error(`no se pudo limpiar el día (HTTP ${del.status})`);
+    const ok = await guardarEnLotesSupabase('planilla_cop', a.filas);
+    if(!ok) throw new Error('alguno de los lotes no se guardó — revisa la consola (F12)');
+    // SE CUENTA CONTRA LA BASE, no contra lo que creemos haber mandado.
+    const r = await fetch(`${SUPA_URL}/rest/v1/planilla_cop?fecha=eq.${a.fecha}&select=id`,
+                          { headers:{ ...h, Prefer:'count=exact', Range:'0-0' } });
+    const n = Number(String(r.headers.get('content-range')||'').split('/')[1]);
+    if(isFinite(n) && n !== a.filas.length)
+      throw new Error(`quedaron ${n} filas y se mandaron ${a.filas.length}`);
+    _presuDiaArchivo = null;
+    await verDiaPlanilla(a.fecha);
+    if(typeof cargarPresupuesto === 'function') cargarPresupuesto(true);
+    const r2 = document.getElementById('presuDiaRes');
+    if(r2) r2.innerHTML = `<span style="color:var(--buy,#22c55e);">✓ ${a.filas.length} fila(s) guardadas</span>`;
+  }catch(e){
+    if(res) res.innerHTML = `<span style="color:var(--sell,#ef4444);">⚠ ${_esc(e.message)}</span>`;
+  }
+}
+
 // ---------------------------------------------------------------------
 // El Excel: lo mismo que se ve, para mandar a jefaturas.
 // ---------------------------------------------------------------------
@@ -31847,7 +32496,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-26 18:30 UTC · v276';
+const BUILD_ID = '2026-10-26 20:15 UTC · v277';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
