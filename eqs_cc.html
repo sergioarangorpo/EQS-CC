@@ -31128,6 +31128,103 @@ function _diasHastaFinDeMes(anio, mes){
   return Math.floor((fin - ini) / 86400000) + 1;
 }
 
+// Días corridos de UN mes y días que tiene. Un mes cerrado va completo; el mes
+// en curso va por el día de hoy; un mes que no ha llegado va en cero.
+function _diasDelMes(anio, mes){
+  const total = new Date(anio, mes, 0).getDate();
+  const hoy = new Date();
+  if(anio < hoy.getFullYear()) return { corridos: total, total };
+  if(anio > hoy.getFullYear()) return { corridos: 0, total };
+  if(mes < hoy.getMonth() + 1)  return { corridos: total, total };
+  if(mes > hoy.getMonth() + 1)  return { corridos: 0, total };
+  return { corridos: Math.min(hoy.getDate(), total), total };
+}
+
+// El peso de un mes en la curva. Sin curva para ese año, un doceavo — y el
+// panel ya avisa cuando la curva no suma 100.
+function _presuPesoMes(anio, mes){
+  const c = PRESUPUESTO_CURVA[anio];
+  const v = c && c[mes - 1];
+  return (v == null || !isFinite(v)) ? 100 / 12 : Number(v);
+}
+
+// QUÉ FRACCIÓN DEL PRESUPUESTO ANUAL APLICA EN ESTE CORTE
+// -------------------------------------------------------
+// Esto es lo que arregla el error que vio Sergio el 26-oct: con el mes en
+// Octubre, la producción salía filtrada a octubre pero el presupuesto seguía
+// siendo el acumulado de enero a octubre. Dividir uno entre otro daba 8,3%,
+// que no significa nada.
+//
+// Y va POR LA CURVA, no repartiendo el año en 365 días iguales. Las dos
+// razones: es la misma base del Power BI, y es la misma con la que se calcula
+// la remuneración — enero a junio pesa 45,09% en la curva y 49,59% repartido
+// en días. Si el app dijera una cosa y la nómina otra, el app estaría
+// mintiendo justo en el número que más importa. La referencia lineal, que es
+// la que Sergio mira a diario, se sigue mostrando al lado.
+//
+// Devuelve DOS factores: lo que va corrido y el período completo.
+function _presuFactores(anio, mes){
+  if(mes){
+    const d = _diasDelMes(anio, mes);
+    const peso = _presuPesoMes(anio, mes) / 100;
+    return {
+      aCorte:  peso * (d.total ? d.corridos / d.total : 0),
+      periodo: peso,
+      dias: d.corridos, diasPeriodo: d.total,
+    };
+  }
+  return {
+    aCorte: _presuCurvaAlDia(anio, _diasCorridos(anio)), periodo: 1,
+    dias: _diasCorridos(anio), diasPeriodo: _diasDelAnio(anio),
+  };
+}
+
+// Qué fracción del año lleva la curva al día N. Dentro del mes se interpola
+// por días. Lo usan el factor del corte y la línea punteada del gráfico: la
+// misma cuenta en los dos sitios.
+function _presuCurvaAlDia(anio, dia){
+  let ac = 0;
+  for(let m = 1; m <= 12; m++){
+    const fin   = _diasHastaFinDeMes(anio, m);
+    const total = new Date(anio, m, 0).getDate();
+    const ini   = fin - total;
+    const peso  = _presuPesoMes(anio, m) / 100;
+    if(dia >= fin){ ac += peso; continue; }
+    if(dia <= ini) break;
+    ac += peso * (dia - ini) / total;
+    break;
+  }
+  return ac;
+}
+
+// EL ORDEN DE LA TABLA GRUPO POR GRUPO
+// ------------------------------------
+// Vive fuera del render porque tiene que sobrevivir a cada repintado. Por
+// defecto ordena por brecha descendente, que es como salía antes.
+let _presuOrden = { col: 'brecha', dir: -1 };
+function presuOrdenar(col){
+  if(_presuOrden.col === col) _presuOrden.dir = -_presuOrden.dir;
+  // Los textos arrancan A→Z y los números de mayor a menor, que es lo que uno
+  // espera al hacer el primer clic.
+  else _presuOrden = { col, dir: (col === 'grupo' || col === 'trader' || col === 'categoria') ? 1 : -1 };
+  renderPresupuesto();
+}
+function _presuAplicarOrden(filas){
+  const { col, dir } = _presuOrden;
+  return filas.slice().sort((a,b)=>{
+    const x = a[col], y = b[col];
+    if(typeof x === 'number' && typeof y === 'number') return (x - y) * dir;
+    return String(x==null?'':x).localeCompare(String(y==null?'':y), 'es') * dir;
+  });
+}
+function _presuTH(col, texto, alin){
+  const act = _presuOrden.col === col;
+  return `<th style="text-align:${alin||'right'};padding:5px 8px;cursor:pointer;user-select:none;` +
+    `${act ? 'color:var(--accent,#818cf8);' : ''}" onclick="presuOrdenar('${col}')"` +
+    ` title="Ordenar por ${_esc(String(texto).replace(/<[^>]*>/g,''))}">${texto}` +
+    `<span style="opacity:${act ? 1 : .25};font-size:10px;"> ${act ? (_presuOrden.dir > 0 ? '▲' : '▼') : '▾'}</span></th>`;
+}
+
 // ---------------------------------------------------------------------
 // El corte: qué grupos entran y qué filas de ejecución se suman.
 // ---------------------------------------------------------------------
@@ -31159,13 +31256,35 @@ function _presuCorte(){
 
   const presuAnual = grupos.reduce((a,g)=>a + (Number(g.presupuesto)||0), 0);
   const presuMesaAnual = (_maestroGrupos||[]).reduce((a,g)=>a + (Number(g.presupuesto)||0), 0);
-  const dias = mes ? _diasHastaFinDeMes(anio, mes) : _diasCorridos(anio);
-  const presuAcum = presuAnual * dias / _diasDelAnio(anio);
+
+  // El presupuesto se mueve con los filtros. Trader, categoría y grupo filtran
+  // `grupos`, así que el presupuesto los sigue solo. El MES lo hace `f`.
+  const f = _presuFactores(anio, mes);
+  const diasAnio = _diasDelAnio(anio);
+  const presuACorte   = presuAnual * f.aCorte;    // lo que iba que ir hoy
+  const presuPeriodo  = presuAnual * f.periodo;   // el mes completo, o el año
+  // La referencia lineal: anual ÷ días del año × días. Es la que Sergio mira
+  // a diario; se muestra al lado, no se usa para el cumplimiento.
+  const presuLineal         = presuAnual * f.dias / diasAnio;
+  const presuLinealPeriodo  = presuAnual * f.diasPeriodo / diasAnio;
+
+  // EL MERCADO NO TIENE PRESUPUESTO DETRÁS. `maestro_grupos` guarda grupo,
+  // trader, categoría y presupuesto — no mercado. Con el filtro de mercado
+  // puesto, la producción baja y el presupuesto no puede bajar con ella.
+  // Repartirlo por la mezcla histórica sería inventarse el dato, así que se
+  // deja el total y se dice en pantalla (Sergio, 26-oct).
+  const sinPresuMercado = !!fM;
 
   const sum = (arr, c) => arr.reduce((a,r)=>a + (Number(r[c])||0), 0);
   return {
-    anio, mes, fT, fC, fM, fG, grupos, filas, delAnio, mesa, dias,
-    presuAnual, presuMesaAnual, presuAcum,
+    anio, mes, fT, fC, fM, fG, grupos, filas, delAnio, mesa,
+    dias: f.dias, diasPeriodo: f.diasPeriodo, diasAnio,
+    factorACorte: f.aCorte, factorPeriodo: f.periodo,
+    pesoMes: mes ? _presuPesoMes(anio, mes) : 100,
+    presuAnual, presuMesaAnual,
+    presuACorte, presuPeriodo, presuLineal, presuLinealPeriodo,
+    presuAcum: presuACorte,          // el nombre viejo, para no romper nada
+    sinPresuMercado,
     produccion: sum(filas, 'comision'),
     iva: sum(filas, 'iva'),
     operaciones: sum(filas, 'operaciones'),
@@ -31193,10 +31312,15 @@ function _svgBarrasH(datos, opc){
   opc = opc || {};
   const d = (datos||[]).filter(x=>isFinite(x.valor));
   if(!d.length) return '<div class="field-note" style="padding:8px;">Sin datos.</div>';
-  const max = Math.max(...d.map(x=>Math.abs(x.valor)), 1);
+  const max = Math.max(...d.map(x=>Math.abs(x.valor)), opc.ref || 0, 1);
   const alto = 26, H = d.length * alto + 8, W = 1000, xEtq = 210, xVal = 110;
   const anchoBarra = W - xEtq - xVal - 16;
+  // `opc.ref` pinta una línea de referencia —el 100% de cumplimiento— para que
+  // la barra se lea sola sin tener que comparar números (Sergio, 26-oct).
+  const refX = opc.ref ? xEtq + opc.ref/max*anchoBarra : 0;
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${Math.max(H,40)}px;" preserveAspectRatio="none">` +
+    (opc.ref ? `<line x1="${refX}" y1="2" x2="${refX}" y2="${H-4}" stroke="${_PC.texto}"
+        stroke-width="1.5" stroke-dasharray="4 3" opacity=".6"/>` : '') +
     d.map((x,i)=>{
       const y = i*alto + 4, w = Math.max(2, Math.abs(x.valor)/max*anchoBarra);
       const col = x.color || (x.valor < 0 ? _PC.rojo : _PC.lila);
@@ -31251,11 +31375,22 @@ function _svgDiaria(serie, presuAnual, anio){
   const linea = pts.map(p=>`${xDe(p.dia).toFixed(1)},${yDe(p.acum).toFixed(1)}`).join(' ');
   const area = `0,${H-mBot} ` + linea + ` ${xDe(pts[pts.length-1].dia).toFixed(1)},${H-mBot}`;
   const ultimo = pts[pts.length-1];
-  const metaHoy = presuAnual * ultimo.dia / diasAnio;
+  // DOS referencias, porque son dos convenciones que conviven:
+  //  · la CURVA, que es la que manda y la que usa el BI y la remuneración;
+  //  · la LINEAL, anual ÷ días, que es la que Sergio mira a diario.
+  // Se pintan las dos para no tener que escoger a ciegas (Sergio, 26-oct).
+  const metaHoy = presuAnual * _presuCurvaAlDia(anio, ultimo.dia);
+  let ac = 0;
+  const ptsCurva = ['0,' + yDe(0).toFixed(1)].concat(MESES_CORTOS.map((_,i)=>{
+    ac += _presuPesoMes(anio, i+1) / 100;
+    return xDe(_diasHastaFinDeMes(anio, i+1)).toFixed(1) + ',' + yDe(presuAnual*ac).toFixed(1);
+  })).join(' ');
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;">` +
     `<polygon points="${area}" fill="${_PC.lila}" opacity=".14"/>` +
     `<line x1="0" y1="${yDe(0)}" x2="${xDe(diasAnio)}" y2="${yDe(presuAnual)}" ` +
-      `stroke="${_PC.gris}" stroke-width="2" stroke-dasharray="5,4"/>` +
+      `stroke="${_PC.gris}" stroke-width="1.5" stroke-dasharray="3,4" opacity=".7"/>` +
+    `<polyline points="${ptsCurva}" fill="none" stroke="${_PC.ambar}" ` +
+      `stroke-width="2" stroke-dasharray="6,4" opacity=".85"/>` +
     `<polyline points="${linea}" fill="none" stroke="${_PC.lila}" stroke-width="2.2"/>` +
     `<circle cx="${xDe(ultimo.dia)}" cy="${yDe(ultimo.acum)}" r="4" ` +
       `fill="${ultimo.acum >= metaHoy ? _PC.verde : _PC.ambar}"/>` +
@@ -31340,12 +31475,18 @@ function renderPresupuesto(){
   }
 
   const c = _presuCorte();
-  const cumpl = c.presuAcum > 0 ? c.produccion / c.presuAcum * 100 : 0;
+  // DOS cumplimientos, porque son dos preguntas distintas (Sergio, 26-oct):
+  // contra lo que iba que ir a hoy, y contra el período completo.
+  const cumpl      = c.presuACorte  > 0 ? c.produccion / c.presuACorte  * 100 : 0;
+  const cumplTotal = c.presuPeriodo > 0 ? c.produccion / c.presuPeriodo * 100 : 0;
   const delPres = c.presuAnual > 0 ? c.produccion / c.presuAnual * 100 : 0;
   const particip = c.produccionMesa > 0 ? c.produccion / c.produccionMesa * 100 : 0;
-  const brecha = c.produccion - c.presuAcum;
-  const diasAnio = _diasDelAnio(c.anio);
-  const proyeccion = c.dias > 0 ? c.produccion / c.dias * diasAnio : 0;
+  const brecha = c.produccion - c.presuACorte;
+  const diasAnio = c.diasAnio;
+  // La proyección es del PERÍODO del corte: con un mes puesto, al cierre de
+  // ese mes; sin mes, al cierre del año.
+  const proyeccion = c.dias > 0 ? c.produccion / c.dias * c.diasPeriodo : 0;
+  const nombrePeriodo = c.mes ? MESES_CORTOS[c.mes-1] : 'año';
 
   const sum = (arr, k, v) => {
     const m = {};
@@ -31362,6 +31503,26 @@ function renderPresupuesto(){
     porCategoria[i.categoria||'—'] = (porCategoria[i.categoria||'—']||0) + porGrupo[g];
   });
   const porMercado = sum(c.filas, 'mercado', 'comision');
+
+  // EL PRESUPUESTO DEL CORTE, REPARTIDO POR TRADER Y POR CATEGORÍA.
+  // Sin esto solo se veía cuánto produjo cada uno, no cómo va contra lo suyo
+  // — que es lo que Sergio sí podía leer en la tabla y no en los gráficos.
+  const presuTrader = {}, presuCategoria = {};
+  c.grupos.forEach(g=>{
+    const p = (Number(g.presupuesto)||0) * c.factorACorte;
+    const t = g.trader || '—', k = g.categoria || '—';
+    presuTrader[t]    = (presuTrader[t]||0) + p;
+    presuCategoria[k] = (presuCategoria[k]||0) + p;
+  });
+  // Un grupo con presupuesto y sin producción tiene que salir en CERO, no
+  // desaparecer: las llaves salen del presupuesto, no de la producción.
+  const barrasCumpl = (prod, presu) => Object.keys(presu).map(k=>{
+    const b = presu[k] || 0, v = b > 0 ? (prod[k]||0)/b*100 : 0;
+    return { etiqueta:k, valor:v, texto:_pct(v),
+             color: v >= 100 ? _PC.verde : (v >= 80 ? _PC.ambar : _PC.rojo) };
+  }).sort((a,b)=>b.valor - a.valor);
+  const notaCumpl = 'La punteada es el 100%. Producción ÷ presupuesto ' +
+    (c.mes ? 'de ' + nombrePeriodo + ' a hoy.' : 'acumulado del año.');
 
   // --- Curva mensual ---
   const curva = PRESUPUESTO_CURVA[c.anio] || new Array(12).fill(100/12);
@@ -31393,13 +31554,18 @@ function renderPresupuesto(){
   });
 
   // --- Ranking por brecha en PESOS ---
+  // El MISMO factor del corte, grupo por grupo: un solo camino por número.
+  // Antes era `pAnual * c.dias / diasAnio`, o sea el año corrido, y con el
+  // filtro de mes cada grupo salía igual de mal que el total.
   const brechas = c.grupos.map(g=>{
     const prod = porGrupo[g.grupo] || 0;
     const pAnual = Number(g.presupuesto)||0;
-    const pAcum = pAnual * c.dias / diasAnio;
+    const pAcum    = pAnual * c.factorACorte;
+    const pPeriodo = pAnual * c.factorPeriodo;
     return { grupo:g.grupo, trader:g.trader, categoria:g.categoria,
-             prod, pAnual, pAcum, brecha: prod - pAcum,
+             prod, pAnual, pAcum, pPeriodo, brecha: prod - pAcum,
              cumpl: pAcum > 0 ? prod/pAcum*100 : 0,
+             cumplTotal: pPeriodo > 0 ? prod/pPeriodo*100 : 0,
              delPres: pAnual > 0 ? prod/pAnual*100 : 0 };
   }).sort((a,b)=>b.brecha - a.brecha);
   const arriba = brechas.filter(x=>x.brecha > 0).slice(0, 8);
@@ -31437,19 +31603,42 @@ function renderPresupuesto(){
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
       ${_tarjeta('PRODUCCIÓN', '$' + _mm(c.produccion),
         `${c.operaciones.toLocaleString('es-CO')} operación(es) · comisión sin IVA`, _PC.verde)}
-      ${_tarjeta('PRESUPUESTO ACUMULADO', '$' + _mm(c.presuAcum),
-        `${c.dias} de ${diasAnio} días · anual $${_mm(c.presuAnual)}`)}
+      ${_tarjeta(c.mes ? 'PRESUPUESTO A HOY' : 'PRESUPUESTO ACUMULADO', '$' + _mm(c.presuACorte),
+        `${c.dias} de ${c.diasPeriodo} días ${c.mes ? 'de ' + nombrePeriodo : 'del año'} · ` +
+        `lineal $${_mm(c.presuLineal)}`)}
+      ${_tarjeta(c.mes ? 'PRESUPUESTO DE ' + nombrePeriodo.toUpperCase() : 'PRESUPUESTO DEL AÑO',
+        '$' + _mm(c.presuPeriodo),
+        c.mes ? `${_pct(c.pesoMes)} del año por la curva · lineal daría $${_mm(c.presuLinealPeriodo)}`
+              : `${c.grupos.length} grupo(s) del maestro`)}
       ${_tarjeta('% CUMPLIMIENTO', _pct(cumpl),
         (brecha >= 0 ? '+' : '−') + '$' + _mm(Math.abs(brecha)) + ' contra lo que iba', colorCumpl)}
-      ${_tarjeta('% DEL PRESUPUESTO', _pct(delPres), 'del año completo')}
+      ${_tarjeta(c.mes ? '% DE ' + nombrePeriodo.toUpperCase() + ' COMPLETO' : '% DEL AÑO COMPLETO',
+        _pct(cumplTotal),
+        c.mes ? `faltan $${_mm(Math.max(0, c.presuPeriodo - c.produccion))} para cerrar ${nombrePeriodo}`
+              : 'del presupuesto del año',
+        cumplTotal >= 100 ? _PC.verde : _PC.azul)}
+      ${c.mes ? _tarjeta('% DEL AÑO', _pct(delPres), 'sobre el presupuesto anual') : ''}
       ${_tarjeta('PARTICIPACIÓN', _pct(particip),
         'de $' + _mm(c.produccionMesa) + ' de la mesa', _PC.lila)}
       ${_tarjeta('PROYECCIÓN AL CIERRE', '$' + _mm(proyeccion),
-        'al ritmo de hoy' + (c.presuAnual > 0 ? ` · ${_pct(proyeccion/c.presuAnual*100)} del año` : ''),
-        proyeccion >= c.presuAnual ? _PC.verde : _PC.ambar)}
+        `al ritmo de hoy, cierre de ${nombrePeriodo}` +
+        (c.presuPeriodo > 0 ? ` · ${_pct(proyeccion/c.presuPeriodo*100)}` : ''),
+        proyeccion >= c.presuPeriodo ? _PC.verde : _PC.ambar)}
     </div>
     <div class="field-note" style="font-size:11.5px;margin:-6px 0 12px;">Corte: <b>${_esc(etiquetaCorte)}</b>
-      · ${c.grupos.length} grupo(s) · IVA facturado $${_mm(c.iva)} <i>(no es ingreso)</i></div>
+      · ${c.grupos.length} grupo(s) · presupuesto anual del corte <b>$${_mm(c.presuAnual)}</b>
+      · IVA facturado $${_mm(c.iva)} <i>(no es ingreso)</i></div>
+
+    ${c.sinPresuMercado ? `<div style="background:rgba(245,158,11,.10);
+        border-left:3px solid var(--amber,#f59e0b);border-radius:6px;padding:9px 13px;
+        font-size:12px;color:var(--amber,#f59e0b);margin-bottom:12px;">
+        ⚠ <b>No hay presupuesto por mercado.</b> El maestro de grupos guarda grupo, trader,
+        categoría y presupuesto — no mercado. La producción de arriba sí está filtrada a
+        <b>${_esc(c.fM)}</b>, pero el presupuesto es el <b>total</b> de los ${c.grupos.length}
+        grupo(s) del corte, sin filtrar.
+        <div class="field-note" style="font-size:11px;margin-top:3px;">
+          O sea: el cumplimiento y la proyección de esta pantalla NO son comparables mientras
+          el filtro de mercado esté puesto. Las cifras en pesos sí.</div></div>` : ''}
 
     ${c.produccion === 0 ? `<div style="background:rgba(129,140,248,.10);
         border-left:3px solid var(--accent,#818cf8);border-radius:6px;padding:9px 13px;
@@ -31479,13 +31668,18 @@ function renderPresupuesto(){
                                flex-direction:column;align-items:center;justify-content:center;">
         <div style="font-size:12.5px;font-weight:700;opacity:.75;margin-bottom:4px;">Cumplimiento</div>
         ${_svgMedidor(cumpl)}
-        <div class="field-note" style="font-size:11px;text-align:center;">producción ÷ presupuesto acumulado</div>
+        <div class="field-note" style="font-size:11px;text-align:center;">
+          producción ÷ presupuesto ${c.mes ? 'de ' + nombrePeriodo + ' a hoy' : 'acumulado del año'}<br>
+          <span style="opacity:.8;">contra ${c.mes ? nombrePeriodo + ' completo' : 'el año completo'}:
+          <b style="color:${cumplTotal >= 100 ? _PC.verde : _PC.azul};">${_pct(cumplTotal)}</b></span></div>
       </div>
       <div class="card" style="padding:12px 14px;flex:1;min-width:360px;">
         <div style="font-size:12.5px;font-weight:700;opacity:.75;margin-bottom:8px;">
           Acumulado del año contra el presupuesto${hayFiltroGrupo ? ' <span class="field-note">(la curva diaria es de toda la mesa)</span>' : ''}</div>
         ${_svgDiaria(serieDiaria, hayFiltroGrupo ? c.presuMesaAnual : c.presuAnual, c.anio)}
-        <div class="field-note" style="font-size:11px;">La punteada es el presupuesto repartido en ${diasAnio} días.</div>
+        <div class="field-note" style="font-size:11px;">
+          <span style="color:${_PC.ambar};">— — </span> la curva del presupuesto (la que manda) ·
+          <span style="opacity:.7;">· · ·</span> el anual repartido en ${diasAnio} días iguales.</div>
       </div>
     </div>
 
@@ -31495,14 +31689,24 @@ function renderPresupuesto(){
 
     <div style="display:flex;gap:14px;flex-wrap:wrap;">
       <div style="flex:1;min-width:320px;">
-        ${_bloque('Por trader', _svgBarrasH(Object.entries(porTrader).sort((a,b)=>b[1]-a[1])
+        ${_bloque('Por trader — producción', _svgBarrasH(Object.entries(porTrader).sort((a,b)=>b[1]-a[1])
             .map(([k,v])=>({etiqueta:k, valor:v, texto:'$'+_mm(v)}))))}
-        ${_bloque('Por categoría', _svgBarrasH(Object.entries(porCategoria).sort((a,b)=>b[1]-a[1])
+        ${_bloque('Por trader — cumplimiento',
+          _svgBarrasH(barrasCumpl(porTrader, presuTrader), {ref:100}), notaCumpl)}
+        ${_bloque('Por categoría — producción', _svgBarrasH(Object.entries(porCategoria).sort((a,b)=>b[1]-a[1])
             .map(([k,v])=>({etiqueta:k, valor:v, texto:'$'+_mm(v)}))))}
+        ${_bloque('Por categoría — cumplimiento',
+          _svgBarrasH(barrasCumpl(porCategoria, presuCategoria), {ref:100}), notaCumpl)}
       </div>
       <div style="flex:1;min-width:320px;">
-        ${_bloque('Por mercado', _svgBarrasH(Object.entries(porMercado).sort((a,b)=>b[1]-a[1])
-            .map(([k,v])=>({etiqueta:k, valor:v, texto:'$'+_mm(v), color:_PC.azul}))))}
+        ${_bloque('Por mercado — producción', _svgBarrasH(Object.entries(porMercado).sort((a,b)=>b[1]-a[1])
+            .map(([k,v])=>({etiqueta:k, valor:v, texto:'$'+_mm(v), color:_PC.azul}))),
+          'No hay cumplimiento por mercado: el maestro de grupos no guarda presupuesto por mercado.')}
+        ${_bloque('Por grupo — cumplimiento <span class="field-note">(los 12 de mayor presupuesto)</span>',
+          _svgBarrasH(brechas.slice().sort((a,b)=>b.pAnual - a.pAnual).slice(0,12)
+            .map(x=>({etiqueta:x.grupo, valor:x.cumpl, texto:_pct(x.cumpl),
+                      color: x.cumpl >= 100 ? _PC.verde : (x.cumpl >= 80 ? _PC.ambar : _PC.rojo)}))
+            .sort((a,b)=>b.valor - a.valor), {ref:100}), notaCumpl)}
         ${_bloque('Concentración',
           `<div style="font-size:26px;font-weight:800;color:${conc > 70 ? _PC.ambar : 'inherit'};">${_pct(conc)}</div>`,
           `Los 5 grupos más grandes aportan $${_mm(top5)} de $${_mm(c.produccion)}. ` +
@@ -31534,43 +31738,47 @@ function renderPresupuesto(){
       <div style="max-height:460px;overflow:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
         <thead><tr style="position:sticky;top:0;background:var(--bg-2,#161b26);">
-          <th style="text-align:left;padding:5px 8px;">Grupo</th>
-          <th style="text-align:center;padding:5px 8px;">Trader</th>
-          <th style="text-align:left;padding:5px 8px;">Categoría</th>
-          <th style="text-align:right;padding:5px 8px;">Presupuesto año</th>
-          <th style="text-align:right;padding:5px 8px;">Acumulado</th>
-          <th style="text-align:right;padding:5px 8px;">Producción</th>
-          <th style="text-align:right;padding:5px 8px;">Brecha</th>
-          <th style="text-align:right;padding:5px 8px;">% Cumpl.</th>
-          <th style="text-align:right;padding:5px 8px;">% del año</th>
+          ${_presuTH('grupo', 'Grupo', 'left')}
+          ${_presuTH('trader', 'Trader', 'center')}
+          ${_presuTH('categoria', 'Categoría', 'left')}
+          ${_presuTH('pAnual', 'Presup. año')}
+          ${c.mes ? _presuTH('pPeriodo', 'Presup. ' + nombrePeriodo) : ''}
+          ${_presuTH('pAcum', 'A hoy')}
+          ${_presuTH('prod', 'Producción')}
+          ${_presuTH('brecha', 'Brecha')}
+          ${_presuTH('cumpl', '% a hoy')}
+          ${_presuTH('cumplTotal', c.mes ? '% ' + nombrePeriodo : '% del año')}
         </tr></thead>
-        <tbody>${brechas.map(x=>`
+        <tbody>${_presuAplicarOrden(brechas).map(x=>`
           <tr style="border-top:1px solid var(--border,#232938);">
             <td style="padding:4px 8px;">${_esc(x.grupo)}</td>
             <td style="padding:4px 8px;text-align:center;">${_esc(x.trader||'—')}</td>
             <td style="padding:4px 8px;">${_esc(x.categoria||'—')}</td>
-            <td style="padding:4px 8px;text-align:right;">$${_mm(x.pAnual)}</td>
+            <td style="padding:4px 8px;text-align:right;opacity:.7;">$${_mm(x.pAnual)}</td>
+            ${c.mes ? `<td style="padding:4px 8px;text-align:right;">$${_mm(x.pPeriodo)}</td>` : ''}
             <td style="padding:4px 8px;text-align:right;opacity:.7;">$${_mm(x.pAcum)}</td>
             <td style="padding:4px 8px;text-align:right;font-weight:600;">$${_mm(x.prod)}</td>
             <td style="padding:4px 8px;text-align:right;color:${x.brecha>=0?_PC.verde:_PC.rojo};">
               ${x.brecha>=0?'+':'−'}$${_mm(Math.abs(x.brecha))}</td>
             <td style="padding:4px 8px;text-align:right;color:${x.cumpl>=100?_PC.verde:(x.cumpl>=80?_PC.ambar:_PC.rojo)};
                 font-weight:600;">${_pct(x.cumpl)}</td>
-            <td style="padding:4px 8px;text-align:right;opacity:.75;">${_pct(x.delPres)}</td>
+            <td style="padding:4px 8px;text-align:right;opacity:.75;">${_pct(x.cumplTotal)}</td>
           </tr>`).join('')}
         </tbody>
         <tfoot><tr style="border-top:2px solid var(--border,#232938);font-weight:700;">
           <td style="padding:6px 8px;" colspan="3">TOTAL · ${c.grupos.length} grupo(s)</td>
           <td style="padding:6px 8px;text-align:right;">$${_mm(c.presuAnual)}</td>
-          <td style="padding:6px 8px;text-align:right;">$${_mm(c.presuAcum)}</td>
+          ${c.mes ? `<td style="padding:6px 8px;text-align:right;">$${_mm(c.presuPeriodo)}</td>` : ''}
+          <td style="padding:6px 8px;text-align:right;">$${_mm(c.presuACorte)}</td>
           <td style="padding:6px 8px;text-align:right;">$${_mm(c.produccion)}</td>
           <td style="padding:6px 8px;text-align:right;color:${brecha>=0?_PC.verde:_PC.rojo};">
             ${brecha>=0?'+':'−'}$${_mm(Math.abs(brecha))}</td>
           <td style="padding:6px 8px;text-align:right;color:${colorCumpl};">${_pct(cumpl)}</td>
-          <td style="padding:6px 8px;text-align:right;">${_pct(delPres)}</td>
+          <td style="padding:6px 8px;text-align:right;">${_pct(cumplTotal)}</td>
         </tr></tfoot>
       </table></div>`,
-      'Un grupo sin producción aparece con brecha negativa completa: no está perdido, es que no ha operado.')}
+      'Clic en cualquier encabezado para ordenar. Un grupo sin producción aparece con ' +
+      'brecha negativa completa: no está perdido, es que no ha operado.')}
   `;
 }
 
@@ -31580,32 +31788,50 @@ function renderPresupuesto(){
 async function descargarEjecucionXLSX(){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
   const c = _presuCorte();
-  const diasAnio = _diasDelAnio(c.anio);
   const porGrupo = {};
   c.filas.forEach(r=>{ porGrupo[r.grupo] = (porGrupo[r.grupo]||0) + (Number(r.comision)||0); });
+  const periodo = c.mes ? MESES_CORTOS[c.mes-1] : 'año';
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Ejecución');
-  const H = ['Grupo','Trader','Categoría','Presupuesto año','Presupuesto acumulado',
-             'Producción','Brecha','% Cumplimiento','% del presupuesto'];
-  [30,10,16,18,20,18,16,15,16].forEach((w,i)=>{ ws.getColumn(i+1).width = w; });
+  // El Excel usa los MISMOS factores de la pantalla. Si aquí se volviera a
+  // calcular por días, el archivo que va a jefaturas diría otra cosa que el
+  // módulo (Sergio, 26-oct).
+  const H = ['Grupo','Trader','Categoría','Presupuesto año',
+             `Presupuesto ${periodo}`, 'Presupuesto a hoy',
+             'Producción','Brecha','% a hoy', `% ${periodo} completo`];
+  [30,10,16,18,20,20,18,16,13,18].forEach((w,i)=>{ ws.getColumn(i+1).width = w; });
   H.forEach((h,i)=>{ const cel = ws.getCell(1,i+1); cel.value = h; cel.font = { bold:true }; });
   let r = 2;
   c.grupos.slice().sort((a,b)=>String(a.grupo).localeCompare(String(b.grupo))).forEach(g=>{
     const prod = porGrupo[g.grupo] || 0;
     const pAnual = Number(g.presupuesto)||0;
-    const pAcum = pAnual * c.dias / diasAnio;
-    [g.grupo, g.trader||'', g.categoria||'', pAnual, pAcum, prod, prod - pAcum,
-     pAcum>0?prod/pAcum:0, pAnual>0?prod/pAnual:0].forEach((v,i)=>{ ws.getCell(r,i+1).value = v; });
-    ['D','E','F','G'].forEach(col=>{ ws.getCell(`${col}${r}`).numFmt = '"$"#,##0'; });
-    ['H','I'].forEach(col=>{ ws.getCell(`${col}${r}`).numFmt = '0.0%'; });
+    const pPeriodo = pAnual * c.factorPeriodo;
+    const pAcum    = pAnual * c.factorACorte;
+    [g.grupo, g.trader||'', g.categoria||'', pAnual, pPeriodo, pAcum, prod, prod - pAcum,
+     pAcum>0?prod/pAcum:0, pPeriodo>0?prod/pPeriodo:0].forEach((v,i)=>{ ws.getCell(r,i+1).value = v; });
+    ['D','E','F','G','H'].forEach(col=>{ ws.getCell(`${col}${r}`).numFmt = '"$"#,##0'; });
+    ['I','J'].forEach(col=>{ ws.getCell(`${col}${r}`).numFmt = '0.0%'; });
     r++;
   });
+  // El corte queda escrito en el archivo: un Excel sin el filtro que lo
+  // produjo es un Excel que alguien va a leer como si fuera el total.
+  r++;
+  ws.getCell(r,1).value = 'Corte';
+  ws.getCell(r,2).value = [c.mes ? periodo + ' ' + c.anio : 'Año ' + c.anio,
+    c.fT && 'trader ' + c.fT, c.fC, c.fM && 'mercado ' + c.fM, c.fG].filter(Boolean).join(' · ');
+  ws.getCell(r,1).font = { bold:true };
+  if(c.sinPresuMercado){
+    ws.getCell(r+1,1).value = 'Ojo';
+    ws.getCell(r+1,2).value = 'Con filtro de mercado la producción está filtrada pero el '
+      + 'presupuesto es el total: el maestro de grupos no guarda presupuesto por mercado.';
+    ws.getCell(r+1,1).font = { bold:true };
+  }
   ws.views = [{ state:'frozen', ySplit:1 }];
   const slug = `${c.anio}${c.mes ? String(c.mes).padStart(2,'0') : ''}`;
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-23 20:45 UTC · v274';
+const BUILD_ID = '2026-10-26 16:10 UTC · v275';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
