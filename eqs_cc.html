@@ -3460,6 +3460,36 @@ function parseFechaLocal(str){
   return new Date(y, m - 1, d);
 }
 
+// UNA FECHA QUE VA A UNA CELDA DE EXCEL NO ES UNA FECHA PARA CALCULAR
+// ---------------------------------------------------------------------
+// ExcelJS serializa en UTC. `new Date(2026,9,26)` es medianoche en Bogotá y
+// queda GUARDADA como las 05:00 del 26. El `numFmt dd/mm/yyyy` lo tapa en
+// pantalla, pero el valor que lee cualquier otra herramienta —o el cargue de
+// la bolsa, o quien abra el archivo con Python— trae la hora pegada.
+//
+// El código ya intentaba quitarla con `new Date(y, m, d)`, que es justo lo
+// que NO funciona: ese es el problema, no la solución. Lo que sirve es
+// `Date.UTC`, que deja el serial en punto.
+//
+// `parseFechaLocal` se queda como está: para SUMAR días y comparar fechas,
+// la medianoche local es la correcta. Son dos trabajos distintos y ahora
+// tienen dos funciones distintas (Sergio, 27-oct).
+function _fechaExcel(v){
+  if(v == null || v === '') return null;
+  let d = v;
+  // `instanceof Date` dice NO a una fecha que venga de otro contexto —otra
+  // ventana, un iframe, lo que devuelve una librería— y entonces la fecha se
+  // iba por la rama de texto y salía intacta, con su hora. `toString.call` es
+  // la forma que funciona venga de donde venga.
+  if(Object.prototype.toString.call(d) !== '[object Date]'){
+    const s = String(v).slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(s)) return v;      // no es una fecha: va tal cual
+    d = parseFechaLocal(s);
+  }
+  if(isNaN(d.getTime())) return null;
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+}
+
 function sumarDiasHabiles(fecha, dias, pais){
   let d = new Date(fecha);
   let added = 0;
@@ -16158,18 +16188,35 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version, lot
       generado_por: (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
     });
   });
-  if(faltan.length){
-    alert('No se guardaron las líneas del COR: falta el CÓDIGO ORIÓN de:\n\n' +
-          [...new Set(faltan)].map(x=>'   ' + x).join('\n') +
-          '\n\nSe puede reportar al cliente, pero el archivo del COR no se puede' +
-          ' armar hasta tener ese dato.');
-  }
-  if(sinPortafolio.length){
-    alert('El COR de ' + nombreCli + ': no encontré el DECEVAL de ' +
-          [...new Set(sinPortafolio)].length + ' portafolio(s):\n\n' +
-          [...new Set(sinPortafolio)].map(x=>'   ' + x).join('\n') +
-          '\n\nEsas líneas NO van a entrar al archivo del COR. Agrégalos en ' +
-          'Ayudas → Maestros → Decevales y vuelve a generar el reporte.');
+  // O ESTÁ COMPLETO O NO HAY ARCHIVO
+  // --------------------------------
+  // Hasta hoy el aviso de arriba decía "No se guardaron las líneas del COR" y
+  // acto seguido el código GUARDABA las que sí habían resuelto. El mensaje
+  // decía una cosa y el código hacía otra, y lo que quedaba era un COR a
+  // medias con pinta de COR completo.
+  //
+  // Sergio, 27-oct: *"el archivo sencillamente no puede salir, debemos tener
+  // toda la data para poder generar"*. El COR es complementación en bolsa: un
+  // archivo corto no es un archivo con menos líneas, es una complementación
+  // mal hecha.
+  //
+  // El reporte al cliente NO se toca: ese sí sale, y los dos no son
+  // excluyentes. Lo que no sale es el COR.
+  const _falla = [];
+  if(sinPortafolio.length)
+    _falla.push('Sin DECEVAL en el maestro:\n' +
+                [...new Set(sinPortafolio)].map(x=>'      · ' + x).join('\n'));
+  if(faltan.length)
+    _falla.push('Sin CÓDIGO ORIÓN:\n' +
+                [...new Set(faltan)].map(x=>'      · ' + x).join('\n'));
+  if(_falla.length){
+    alert('EL COR DE ' + nombreCli + ' NO SE GUARDÓ.\n\n' + _falla.join('\n\n') +
+          '\n\nNo se guardó NADA: un COR a medias es una complementación mal hecha.\n' +
+          'Complétalo en Ayudas → Maestros → Decevales y vuelve a generar el reporte.\n\n' +
+          'El reporte al cliente sí salió y es válido — son cosas distintas.');
+    console.warn(`COR ${nombreCli}: no se guardó nada. ` +
+                 `${sinPortafolio.length} sin deceval, ${faltan.length} sin Orión.`);
+    return 0;
   }
   if(!filas.length) return 0;
 
@@ -16221,7 +16268,7 @@ function filasCORGuardadas(modulo, cliente){
       Fraccion: Number(x.fraccion) || 0,
       deceval: x.deceval || '',
       medioverificable: 5,
-      fechaFoliio: x.fecha_folio ? parseFechaLocal(x.fecha_folio) : new Date(),
+      fechaFoliio: _fechaExcel(x.fecha_folio || new Date()),
       usuariocomercial: x.usuariocomercial || 'SARANGO',
       idorioncomercial: x.idorioncomercial || 'SAR',
       nombreordenante: x.nombreordenante || '',
@@ -19748,8 +19795,10 @@ async function descargarExcelPlanillaCOP(){
                      String(a.grupo).localeCompare(String(b.grupo)) ||
                      String(a.nemo).localeCompare(String(b.nemo)));
   filas.forEach(f=>{
+    // Las dos fechas pasan por `_fechaExcel`: si no, salen con 05:00 pegadas.
     [f.fondo, f.grupo, f.tipo, f.nemo, f.cantidad, f.precio, f.bruto, f.comision,
-     f.comisionPct, f.iva, f.giro, f.trader, f.mercado, f.liquidacion, f.cumplimiento, f.categoria]
+     f.comisionPct, f.iva, f.giro, f.trader, f.mercado,
+     _fechaExcel(f.liquidacion), _fechaExcel(f.cumplimiento), f.categoria]
       .forEach((v,i)=>{ ws.getCell(r, i+2).value = v; });
     ws.getCell(r,6).numFmt = '#,##0';
     ['G','H','I','K','L'].forEach(c=>{ ws.getCell(`${c}${r}`).numFmt = '#,##0.00'; });
@@ -23999,10 +24048,34 @@ async function _generarUnMacroFFMM(macro, lote, cliente, fechaReg){
     a.bruto += q * px;
     a.comMonto += q * px * 0.001;
   });
+  // EL COR ES UN ESPEJO DEL REPORTE, TAMBIEN EN EL FONDO Y EN LA COMISION
+  // ---------------------------------------------------------------------
+  // El reporte resuelve el fondo con `cfgMacro.fondo || _fondoFolioFFMM(f)`
+  // desde el 01-oct, porque el folio de la BVC NO trae Account: lo tiene la
+  // orden padre de Fidessa. El COR se quedo leyendo `f.portNombre ||
+  // f.portafolio`, que el folio tampoco trae, asi que las doce lineas de
+  // FIDUCIARIA del 26-oct cayeron al mismo valor y resolvieron al MISMO
+  // deceval y al MISMO Orion. FAP BEMA, FI UDEM, FVP ACC COL, FG SANYO, FI
+  // JORGE OTERO, FI SMURFIT, FI MERANI y FI HOMI se perdieron, y sin un solo
+  // aviso: el maestro SI encontro una fila para ese nombre, solo que la
+  // equivocada (Miguel, 27-oct).
+  //
+  // FIDUCIARIA es el unico macrogrupo con `fondo: null` —"el fondo es el
+  // portafolio de cada linea"—, por eso es el unico que se rompia.
+  //
+  // Ahora el fondo se resuelve UNA vez, aqui, con el MISMO resolvedor del
+  // reporte, y viaja con la linea. Y la comision va con el: los folios de
+  // FFMM no traen `comisionPct` y el COR guardaba 0,0000 en las doce filas,
+  // cuando la tarifa es 0,1% SIEMPRE (la misma que escribe el reporte).
+  const _loteCOR = (lote||[]).map(f => ({
+    ...f,
+    portNombre: cfgMacro.fondo || _fondoFolioFFMM(f),
+    comisionPct: (Number(f.comisionPct) || 0) || 0.001,
+  }));
   // Un COR por MACROGRUPO: son cuatro clientes distintos y la muralla china
   // aplica igual que al reporte (Sergio, 22-sep).
   if(typeof guardarCorLineasDeReporte === 'function'){
-    await guardarCorLineasDeReporte('RVL', _nombreReporte, lote, version);
+    await guardarCorLineasDeReporte('RVL', _nombreReporte, _loteCOR, version);
   }
   // EL IVA VIAJA CON LA LINEA (ver ivaDeLineaRVL). El archivo de CREDICORP
   // FFMM lo muestra —columna IVA, `com * 0.19`— y el registro lo tiraba, asi
@@ -32514,7 +32587,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-26 21:00 UTC · v278';
+const BUILD_ID = '2026-10-27 13:10 UTC · v279';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
