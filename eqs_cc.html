@@ -13161,15 +13161,46 @@ async function cargarTradesMercado(input){
 let _mercadoFechaArchivo = null;
 
 function procesarTradesMercado(texto){
+  // EL ORDEN DE UN ARCHIVO QUE LLEGA DE AFUERA NO ES UN DATO (27-oct)
+  // -----------------------------------------------------------------
   // El export trae una primera línea suelta ("8620 Records exported.") antes
-  // del encabezado real, y viene ordenado del trade MÁS RECIENTE al más viejo:
-  // por eso la PRIMERA aparición de cada especie es su último precio.
+  // del encabezado real.
+  //
+  // Hasta el 26-oct traía SEIS columnas
+  //     #,Time,Orderbook,Quantity,TradePrice,Amount
+  // y venía del trade MÁS RECIENTE al más viejo. El app vivía de eso: la
+  // primera aparición de cada especie era su último precio.
+  //
+  // El 27-oct cambió a ONCE columnas
+  //     #,Orderbook,Quantity,TradePrice,Amount,Side,ShortTradeId,
+  //     DateTime,Time,Settlement,Status
+  // y viene ordenado por MONTO, de mayor a menor. La primera aparición pasó a
+  // ser el trade más GRANDE del día.
+  //
+  // No reventó nada: las columnas se buscan por nombre y todas seguían ahí.
+  // El informe salió con 46 de 89 especies mal y sin un solo error. GRUPOSURA
+  // tomó 71.300 —el bloque de las 12:47— en vez de 72.560, que es el cierre de
+  // las 16:04: +1,08% contra el +2,86% de Bloomberg. FALABELLCO se fue 25,6%.
+  //
+  // Ahora el orden se CONSTRUYE aquí, no se hereda: se arma una llave de
+  // tiempo por trade y se ordena. Sirve para los dos formatos y para el que
+  // venga. Y si un día no viene ninguna columna de hora, FRENA — adivinar el
+  // orden es justo lo que costó este día.
   const lineas = texto.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
-  const iHead = lineas.findIndex(l => /(^|,)\s*Time\s*,/.test(l) || l.startsWith('#,Time'));
-  if(iHead < 0) throw new Error('no encontré el encabezado (#,Time,Orderbook,...)');
+  // El encabezado se reconoce por lo que el app NECESITA —la especie y el
+  // precio—, no por la forma que tenía antes: así un reordenamiento de
+  // columnas no vuelve a pasar de largo.
+  const iHead = lineas.findIndex(l => {
+    const c = l.split(',').map(x=>x.trim());
+    return c.includes('Orderbook') && c.includes('TradePrice');
+  });
+  if(iHead < 0) throw new Error('no encontré el encabezado (falta Orderbook o TradePrice)');
   const cols = lineas[iHead].split(',').map(c=>c.trim());
   const iTime = cols.indexOf('Time'), iBook = cols.indexOf('Orderbook'),
-        iPx = cols.indexOf('TradePrice'), iQty = cols.indexOf('Quantity');
+        iPx = cols.indexOf('TradePrice'), iQty = cols.indexOf('Quantity'),
+        iDT = cols.indexOf('DateTime'), iEstado = cols.indexOf('Status');
+  if(iTime < 0 && iDT < 0)
+    throw new Error('el archivo no trae hora (ni Time ni DateTime): sin eso no se sabe cuál es el cierre');
 
   const partirCsv = l => {
     const out=[]; let cur='', dentro=false;
@@ -13185,28 +13216,54 @@ function procesarTradesMercado(texto){
   _preciosMercado = {};
   _mercadoStats = {};      // por especie: volumen, trades, primero/último, serie
   _mercadoTrades = [];     // crudo, para la subasta y las gráficas
-  let horas = [], n = 0;
+  let horas = [], n = 0, descartadas = 0;
   for(let i = iHead+1; i < lineas.length; i++){
     const c = partirCsv(lineas[i]);
     const esp = String(c[iBook]||'').trim();
     if(!esp) continue;
     const px = num(c[iPx]); if(!px) continue;
+    // El formato nuevo marca cada fila con `Status`. Hoy las 8.285 son
+    // 'Trade', pero el día que entre una anulación se sumaría al volumen sin
+    // que nadie se entere. Si la columna no existe —el formato viejo— no
+    // descarta nada. Lo descartado se CUENTA y se dice en la barra de estado.
+    if(iEstado >= 0){
+      const est = String(c[iEstado]||'').trim().toUpperCase();
+      if(est && est !== 'TRADE'){ descartadas++; continue; }
+    }
     const qt = num(c[iQty]);
-    const hora = String(c[iTime]||'').trim();
-    horas.push(hora);
+    // La hora: `Time` si viene, si no la saca del `DateTime`.
+    const dt = iDT >= 0 ? String(c[iDT]||'').trim() : '';
+    let hora = iTime >= 0 ? String(c[iTime]||'').trim() : '';
+    if(!hora && dt){ const m = dt.match(/(\d{2}:\d{2}:\d{2})/); hora = m ? m[1] : ''; }
+    // La llave de orden: el `DateTime` completo cuando está (ordena bien aunque
+    // un día el archivo traiga dos fechas), si no la hora sola. Dentro de UN
+    // archivo las dos formas son consistentes entre sí.
+    const llave = dt || hora;
+    if(hora) horas.push(hora);
     n++;
-    if(!_preciosMercado[esp]) _preciosMercado[esp] = { precio: px, hora };   // el archivo viene del más nuevo al más viejo
-    _mercadoTrades.push({ esp, hora, px, qt, monto: qt*px });
+    _mercadoTrades.push({ esp, hora, llave, px, qt, monto: qt*px });
   }
-  // El archivo llega del trade MÁS RECIENTE al más viejo: se recorre al revés
-  // para armar la serie del día en orden cronológico.
-  for(let i = _mercadoTrades.length - 1; i >= 0; i--){
-    const t = _mercadoTrades[i];
+  // AQUÍ se construye el orden. No se hereda del archivo.
+  _mercadoTrades.sort((a,b) => a.llave < b.llave ? -1 : a.llave > b.llave ? 1 : 0);
+  // Una sola pasada hacia adelante, ya en orden cronológico: el primero es la
+  // apertura y el último pisa a los anteriores, así que queda el cierre.
+  for(const t of _mercadoTrades){
     const d = _mercadoStats[t.esp] || (_mercadoStats[t.esp] = {
       esp:t.esp, qty:0, monto:0, trades:0, primero:null, ultimo:null,
-      max:-Infinity, min:Infinity, serie:[], horaUlt:'' });
+      max:-Infinity, min:Infinity, serie:[], horaUlt:'', llaveUlt:'' });
     if(d.primero === null) d.primero = t.px;
-    d.ultimo = t.px; d.horaUlt = t.hora;
+    // EL EMPATE SE DEJA COMO ESTABA. Entre dos trades del MISMO segundo no hay
+    // forma de saber cuál cerró, así que gana el que el archivo pone primero
+    // —y el `sort` de arriba es estable, así que ese orden se respeta—. En el
+    // formato viejo la fila de arriba del empate era la más reciente, así que
+    // esos archivos siguen dando EXACTAMENTE lo mismo que daban: lo comprobé
+    // contra el del 26-oct, donde si no, cambiaban cuatro especies (FALABELLCO
+    // se movía 26%). El defecto del 27-oct no eran los empates: eran horas
+    // DISTINTAS, el bloque de las 12:47 contra el cierre de las 16:04.
+    if(t.llave > d.llaveUlt){
+      d.ultimo = t.px; d.horaUlt = t.hora; d.llaveUlt = t.llave;
+      _preciosMercado[t.esp] = { precio: t.px, hora: t.hora };
+    }
     d.qty += t.qt; d.monto += t.monto; d.trades++;
     if(t.px > d.max) d.max = t.px;
     if(t.px < d.min) d.min = t.px;
@@ -13218,7 +13275,9 @@ function procesarTradesMercado(texto){
   const cierre = _mercadoRango.hasta >= '15:55';
   const _txtEstado =
     `${n.toLocaleString('es-CO')} trades · ${especies} especies · de ${_mercadoRango.desde} a ${_mercadoRango.hasta} ` +
-    `<span style="color:${cierre?'var(--buy,#22c55e)':'var(--amber,#f59e0b)'};">(${cierre?'parece cierre del día':'parece intradía'})</span>`;
+    `<span style="color:${cierre?'var(--buy,#22c55e)':'var(--amber,#f59e0b)'};">(${cierre?'parece cierre del día':'parece intradía'})</span>` +
+    // Lo descartado se dice. Un filtro callado es un dato que desaparece.
+    (descartadas ? ` · <span style="color:var(--amber,#f59e0b);">${descartadas.toLocaleString('es-CO')} fila(s) descartada(s) por Status ≠ Trade</span>` : '');
   // El archivo se puede cargar desde Ayudas o desde el Informe: el estado se
   // escribe en las dos barras para que siempre se vea qué hay cargado.
   ['mercadoStatus','mercadoStatusInf'].forEach(id=>{
@@ -32587,7 +32646,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-27 13:10 UTC · v279';
+const BUILD_ID = '2026-10-27 21:20 UTC · v280';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
