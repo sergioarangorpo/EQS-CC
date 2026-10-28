@@ -19023,6 +19023,28 @@ function grupoDeOperacion(cliente, account, deceval){
   if(pg && pg.grupo){
     const g = _maestroGrupos.find(x=>lim(x.grupo) === lim(pg.grupo));
     if(g) return g;
+    // EL ALIAS TAMBIÉN VALE AQUÍ (28-oct)
+    // -----------------------------------
+    // Este paso buscaba SOLO por nombre exacto y se rendía. Los pasos 1 y 2 sí
+    // miran los alias, así que el mismo nombre se traducía por un camino y no
+    // por el otro.
+    //
+    // El caso: METLIFE operó RVI y la Planilla COP lo sacó con
+    // "el grupo no está en el presupuesto (falta trader)". El deceval 304 dice
+    // `grupo: METLIFE` y el presupuesto lo tiene como `METLIFE COLOMBIA`. Dos
+    // nombres para un cliente, y el traductor existía (Sergio, 28-oct).
+    //
+    // Solo puede MEJORAR lo que hoy pasa: si el nombre exacto cuadra, no
+    // cambia nada; y si no cuadra, hoy la operación se rechaza con aviso. Lo
+    // único que hace es convertir un rechazo en un grupo resuelto.
+    const _porAlias = _maestroGrupos.filter(x =>
+      String(x.alias||'').split('|').filter(Boolean)
+        .some(al => !al.includes('#') && lim(al) === lim(pg.grupo)));
+    // Si DOS grupos reclaman el mismo alias, no se adivina: se deja como
+    // estaba y que el aviso suene. Un dato inventado es peor que uno ausente
+    // —y hay alias compartidos de verdad, como CSI entre MONEDA, FALCOM,
+    // ASHMORE, TORDESILHAS e IMPERA.
+    if(_porAlias.length === 1) return _porAlias[0];
     // El portafolio sabe su grupo aunque no esté en el presupuesto.
     return { grupo: pg.grupo, trader: '', categoria: pg.categoria || '' };
   }
@@ -32959,7 +32981,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-28 16:20 UTC · v283';
+const BUILD_ID = '2026-10-28 21:25 UTC · v284';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
