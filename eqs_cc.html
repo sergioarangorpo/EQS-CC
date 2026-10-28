@@ -7060,9 +7060,26 @@ const clientesDB = {
   },
   'PORVENIR': {
     nombre: 'PORVENIR',
-    // El portafolio llega en el Instruction de la orden (ej. "CESANTIAS"), así
-    // que no hay reparto manual salvo que Sergio quiera partir una línea.
-    formatoReporte: 'porvenir', reparteManual: false,
+    // EL REPARTO ES OPCIONAL (28-oct)
+    // -------------------------------
+    // El portafolio llega en el Instruction de la orden (ej. "CESANTIAS"), y
+    // un día normal con eso basta. Pero el 27-oct la orden la dio Juan Esteban
+    // Amaris por correo, Sergio la marcó como "Voluntarias" y el alloc iba a
+    // TRES portafolios: Diversificado Básico 370.000, Diversificada Dinámica
+    // 185.400 y Diversificada Extrema 200.000.
+    //
+    // Con `reparteManual: false` el panel de asignación ni siquiera se muestra
+    // —`if(!cfg.reparteManual){ wrap.style.display='none'; return; }`— así que
+    // no había por dónde repartir, y el reporte salió con UNA línea.
+    //
+    // El generador ya sabía partir: `_loteDetPorv` reparte cada folio entre
+    // los portafolios de `_allocPorOrden`. Lo que faltaba era poder llenarlo.
+    //
+    // `repartoOpcional` es lo que hace que esto no rompa el día normal: si
+    // NADIE asignó nada, el Instruction manda, como siempre. El reparto solo
+    // hace falta cuando una orden va a varios portafolios — puede ser uno,
+    // tres o los que sean (Sergio: *"lo importante es poderlo repartir"*).
+    formatoReporte: 'porvenir', reparteManual: true, repartoOpcional: true,
     // Se llenan más abajo con los 39 de PARAMETROS: PORVENIR_PORTAFOLIOS se
     // declara después de esta tabla, así que aquí todavía no existe.
     portafolios: [],
@@ -20870,9 +20887,17 @@ function actualizarBotonGenerar(){
     const ordenes = getOrdenesConAlloc();
     const completas = ordenes.filter(o=>o.completa);
     const sobrepasadas = ordenes.filter(o=>o.sumaAsignada > o.qtyOrden);
+    // EL REPARTO PUEDE SER OPCIONAL (28-oct). Porvenir trae el portafolio en
+    // el Instruction de la orden, así que un día normal NADIE asigna nada y
+    // eso está bien: el reparto solo hace falta cuando una orden va a varios
+    // portafolios. Si no se asignó nada, no hay nada que completar — pedirlo
+    // sería inventar un requisito que hoy no existe.
+    const nadaAsignado = !ordenes.some(o => (Number(o.sumaAsignada)||0) > 0);
     // Habilita si hay ≥1 orden completa y ninguna sobre-asignada. Las órdenes a
     // medias no bloquean (Sergio puede enviar el parcial de las completas).
-    asignacionOk = completas.length>0 && sobrepasadas.length===0;
+    asignacionOk = (cfg.repartoOpcional && nadaAsignado)
+      ? true
+      : (completas.length>0 && sobrepasadas.length===0);
   } else if(!esAutoGen && cliente){
     const filtrados = getFiltrados();
     const totalSel = foliosParaReportar().reduce((s,f)=>s+f.cantidad,0);
@@ -32919,7 +32944,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-28 14:05 UTC · v281';
+const BUILD_ID = '2026-10-28 15:55 UTC · v282';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
