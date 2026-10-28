@@ -27650,9 +27650,18 @@ const clientesRVI = {
   },
   SURAMERICANA: {
     nombre:'SEGUROS DE VIDA SURAMERICANA SA',
-    taxId:'800.131.884',
+    // EL TAX ID DEL TRADE CONFIRMATION ES EL DE CREDICORP, no el del cliente
+    // (Sergio, 18-sep, confirmado para Sura el 28-oct). Antes estaba el NIT de
+    // Suramericana, 800.131.884.
+    taxId:'860.068.182-5',
     comETF:0.01, comUCIT:0.10/100, comADR:0.01,
-    portafolios:['SURAMERICANA VIDA'],
+    // Tenía UN portafolio, 'SURAMERICANA VIDA', que no existe en ninguna otra
+    // parte del app. Los de verdad son los de la ficha de RVL —Seguros de
+    // Vida, Generales, Riesgos Laborales y los dos fondos de empleados— y se
+    // copian abajo, con el mismo bloque que ya lo hace para Colfondos,
+    // Protección y los Skandia. Se deja la lista vacía a propósito: si el
+    // copiado no corriera, un nombre inventado sería peor que ninguno.
+    portafolios:[],
   },
   BBVA: {
     nombre:'BBVA ASSET MANAGEMENT SA SF',
@@ -30050,6 +30059,12 @@ if(typeof clientesRVI !== 'undefined' && clientesRVI.PORVENIR){
     SKANDIA: 'SKANDIA',
     SKANDIA_SEGUROS: 'SKANDIA SEGUROS',
     AVAL_FIDUCIARIA: 'AVAL FIDUCIARIA',
+    // SURAMERICANA nunca entró a esta lista y por eso en RVI tenía un solo
+    // portafolio inventado mientras en RVL tenía cinco de verdad: Seguros de
+    // Vida (217), Generales (130), Riesgos Laborales (253) y los dos fondos de
+    // empleados (194 y 914). Es el mismo recorte que esto arregla para los
+    // demás (Sergio, 28-oct).
+    SURAMERICANA: 'SURAMERICANA',
   };
   Object.keys(equivalencias).forEach(kRvi=>{
     if(typeof clientesRVI === 'undefined' || !clientesRVI[kRvi]) return;
@@ -32944,7 +32959,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-28 15:55 UTC · v282';
+const BUILD_ID = '2026-10-28 16:20 UTC · v283';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
