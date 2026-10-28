@@ -3056,6 +3056,34 @@
           <div id="presuDiaCuerpo" style="margin-top:12px;"></div>
         </div>
       </div>
+
+      <!-- ============ LA CURVA MENSUAL ============
+           Los doce pesos vivían escritos en el HTML. De esta curva sale el
+           factor del semestre del modelo de remuneración (1S 45,09% / 2S
+           54,91% en 2026), así que es un número que mueve la nómina: no
+           puede estar en el código. Ahora vive en `presupuesto_curva`
+           (Sergio, 28-oct).
+      -->
+      <div class="card" style="padding:12px 14px;margin-top:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;
+                    gap:10px;flex-wrap:wrap;cursor:pointer;" onclick="togglePresuCurva()">
+          <div style="font-size:13px;font-weight:800;">La curva mensual
+            <span class="field-note" style="font-weight:400;">· cuánto pesa cada mes del presupuesto anual</span></div>
+          <span id="presuCurvaFlecha" class="field-note" style="font-size:16px;">▾</span>
+        </div>
+        <div id="presuCurvaPanel" style="display:none;margin-top:12px;">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+            <div><label class="field-note">Año</label>
+              <select id="presuCurvaAnio" onchange="renderPresuCurva()" style="min-width:110px;"></select></div>
+            <button class="btn small" onclick="cuadrarPresuCurva()"
+                    title="Reparte la diferencia entre los meses que NO tocaste, en proporción a lo que ya tienen.">⚖ Cuadrar el resto</button>
+            <button class="btn small" onclick="renderPresuCurva(true)"
+                    title="Vuelve a lo que está guardado y olvida los cambios sin guardar.">↺ Deshacer</button>
+            <button class="btn small purple" id="presuCurvaGuardar" onclick="guardarPresuCurva()">Guardar la curva</button>
+          </div>
+          <div id="presuCurvaCuerpo" style="margin-top:12px;"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -11825,6 +11853,9 @@ const _CONFLICTO_POR_TABLA = {
   rvi_historico: 'id',
   festivos: 'fecha,pais',
   maestro_deceval: 'deceval',
+  // La curva se guarda entera, los doce meses de un año. La llave es el par,
+  // así que volver a guardar el mismo año PISA y no duplica.
+  presupuesto_curva: 'anio,mes',
 };
 async function guardarEnLotesSupabase(tabla, filas, tamanoLote=200){
   const conflicto = _CONFLICTO_POR_TABLA[tabla] || '';
@@ -19609,11 +19640,24 @@ function _copArqueo(filas){
   const parte = (typeof RVI_PARTE_EQS !== 'undefined') ? RVI_PARTE_EQS : 0.5;
   const sum = f => filas.filter(f.test).reduce((a,x)=>a + (Number(x.comision)||0), 0);
   const out = [];
-  // RVL: la planilla reparte acciones, ETF y ADR; el dashboard los junta todos
-  // bajo RVL.
+  // EL BALDE ESTABA MAL, NO LA CLASIFICACIÓN (28-oct)
+  // -------------------------------------------------
+  // La planilla NUNCA escribe `mercado:'RVI'`. Las operaciones de RVI entran
+  // con el tipo del INSTRUMENTO —`ETF` o `ADR`— porque eso es lo que son. El
+  // arqueo preguntaba por `mercado === 'RVI'`, que no empata con nada nunca,
+  // y de paso metía esas filas en el balde de RVL junto con las acciones.
+  //
+  // Por eso el arqueo del 26-oct salió con RVL +$56,7 M y RVI −$57,0 M,
+  // iguales y de signo contrario: era la MISMA línea de COLFONDOS contada en
+  // el balde equivocado. Sergio, 28-oct: *"es un trade normal de RVI donde el
+  // instrumento es un ETF"*. El trade estaba bien; el arqueo estaba mal.
+  //
+  // Ahora RVL compara solo contra ACCIONES, y RVI contra ETF + ADR, que es de
+  // donde salen. Si algún día la planilla llegara a escribir 'RVI', también
+  // entra: el test lo incluye para no volver a depender de una sola palabra.
   out.push({ mercado:'RVL', moneda:'COP', dash:(M.RVL||{}).com || 0,
-             plan: sum({ test:x => ['ACCIONES','ETF','ADR'].indexOf(x.mercado) >= 0 }),
-             nota:'acciones + ETF + ADR' });
+             plan: sum({ test:x => x.mercado === 'ACCIONES' }),
+             nota:'solo acciones · el ETF y el ADR de RVI van abajo' });
   out.push({ mercado:'FX', moneda:'COP', dash:(M.FX||{}).com || 0,
              plan: sum({ test:x => x.mercado === 'FX' }) });
   // RVI y RFI el dashboard los muestra en DÓLARES —es la utilidad del
@@ -19626,11 +19670,15 @@ function _copArqueo(filas){
   // Así que ahora TODO el arqueo va en pesos, y el que se convierte es el
   // dashboard: utilidad USD × TRM × nuestra parte. Sin TRM no se convierte
   // nada y se dice; inventar una tasa sería peor que no comparar.
+  // RVI se arma con los tipos de instrumento con que la planilla lo escribe;
+  // RFI sí tiene su propia palabra.
+  const _MERC_DE = { RVI: ['RVI','ETF','ADR'], RFI: ['RFI'] };
   ['RVI','RFI'].forEach(k=>{
     const utilUSD = (M[k]||{}).com || 0;
+    const _acepta = _MERC_DE[k];
     out.push({ mercado:k, moneda:'COP',
                dash: trm ? utilUSD * trm * parte : null,
-               plan: sum({ test:x => x.mercado === k }),
+               plan: sum({ test:x => _acepta.indexOf(x.mercado) >= 0 }),
                usd: utilUSD,
                nota: trm
                  ? `utilidad US$${Math.round(utilUSD).toLocaleString('es-CO')} × TRM ${trm.toLocaleString('es-CO')} × ${Math.round(parte*100)}% nuestro`
@@ -31469,9 +31517,53 @@ async function rshCargarSuper(btn){
 // OJO: esto es SEMILLA, no la verdad. El día que la mesa cambie la curva hay
 // que moverla a una tabla editable, igual que `maestro_grupos` — el dato vive
 // en la tabla, no en el HTML. Mientras tanto, el panel avisa si no suma 100.
+// LA CURVA VIVE EN LA TABLA; ESTO ES LA SEMILLA (28-oct)
+// -------------------------------------------------------
+// Estos doce números eran la única curva que existía. Ahora viven en
+// `presupuesto_curva` y esto queda como RESPALDO: si la tabla no se puede
+// leer —sin red, permisos, lo que sea— el módulo sigue andando con 2026 en
+// vez de caerse a doceavos y mostrar un presupuesto que nadie reconoce.
+//
+// Importa más de lo que parece: de esta curva sale el FACTOR DEL SEMESTRE
+// del modelo de remuneración (1S = 45,09%, 2S = 54,91%), y ese factor decide
+// el cumplimiento, el payout y la bolsa. Un número que mueve la nómina no
+// puede estar escrito en el código.
 const PRESUPUESTO_CURVA = {
   2026: [8.33, 7.49, 6.15, 6.96, 9.00, 7.16, 11.64, 9.63, 11.37, 7.51, 7.58, 7.18],
 };
+
+// Lo que llega de `presupuesto_curva`, por año: { 2026:[...12], 2027:[...12] }.
+let _presuCurvaTabla = {};
+let _presuCurvaDe = 'semilla';     // 'tabla' o 'semilla' — se dice en pantalla
+
+async function cargarPresupuestoCurva(){
+  try{
+    const filas = await supaFetch('presupuesto_curva', 'order=anio.asc,mes.asc&limit=600') || [];
+    const m = {};
+    filas.forEach(f=>{
+      const a = Number(f.anio), k = Number(f.mes);
+      if(!a || !(k >= 1 && k <= 12)) return;
+      (m[a] || (m[a] = new Array(12).fill(null)))[k-1] = Number(f.peso);
+    });
+    // Un año a medias no sirve: o están los doce meses o se usa la semilla.
+    Object.keys(m).forEach(a=>{ if(m[a].some(v=>v == null || !isFinite(v))) delete m[a]; });
+    _presuCurvaTabla = m;
+    _presuCurvaDe = Object.keys(m).length ? 'tabla' : 'semilla';
+  }catch(e){
+    // Falla suave: se sigue con la semilla. Nunca al cargar.
+    _presuCurvaTabla = {}; _presuCurvaDe = 'semilla';
+    console.warn('presupuesto_curva:', e.message);
+  }
+}
+
+// La curva de un año: primero la tabla, después la semilla, y si no hay
+// ninguna, null — el que pregunta decide qué hacer, y el panel lo dice.
+function _curvaDelAnio(anio){
+  const t = _presuCurvaTabla[Number(anio)];
+  if(t && t.length === 12) return t;
+  const s = PRESUPUESTO_CURVA[Number(anio)];
+  return (s && s.length === 12) ? s : null;
+}
 const MESES_CORTOS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 
 let _ejecMensual = [];      // vista ejecucion_mensual
@@ -31525,6 +31617,9 @@ async function cargarPresupuesto(forzar){
   if(est) est.textContent = 'cargando…';
   try{
     if(!_maestroGrupos.length && typeof cargarMaestroGrupos === 'function') await cargarMaestroGrupos();
+    // La curva vive en la tabla desde el 28-oct. Falla suave: si no se puede
+    // leer se sigue con la semilla del HTML y el panel lo dice.
+    await cargarPresupuestoCurva();
     // `supaFetchTodo` pagina: la vista diaria ya pasa de 1.000 filas y el tope
     // de PostgREST no avisa cuando corta (nos costó el MTD del 22-oct).
     const traer = (typeof supaFetchTodo === 'function') ? supaFetchTodo : supaFetch;
@@ -31613,7 +31708,7 @@ function _diasDelMes(anio, mes){
 // El peso de un mes en la curva. Sin curva para ese año, un doceavo — y el
 // panel ya avisa cuando la curva no suma 100.
 function _presuPesoMes(anio, mes){
-  const c = PRESUPUESTO_CURVA[anio];
+  const c = _curvaDelAnio(anio);
   const v = c && c[mes - 1];
   return (v == null || !isFinite(v)) ? 100 / 12 : Number(v);
 }
@@ -31995,7 +32090,7 @@ function renderPresupuesto(){
     (c.mes ? 'de ' + nombrePeriodo + ' a hoy.' : 'acumulado del año.');
 
   // --- Curva mensual ---
-  const curva = PRESUPUESTO_CURVA[c.anio] || new Array(12).fill(100/12);
+  const curva = _curvaDelAnio(c.anio) || new Array(12).fill(100/12);
   const sumaCurva = curva.reduce((a,b)=>a+b, 0);
   const porMes = {};
   c.delAnio.forEach(r=>{ porMes[Number(r.mes)] = (porMes[Number(r.mes)]||0) + (Number(r.comision)||0); });
@@ -32275,6 +32370,184 @@ function renderPresupuesto(){
 let _presuDia = null;         // { fecha, filas, cargando }
 let _presuDiaArchivo = null;  // { fecha, filas, nombre }
 let _presuDiaNota = null;     // ¿existe la columna `nota`? null = sin averiguar
+
+// ======================================================================
+// LA CURVA MENSUAL — editable, y obligada a sumar 100
+// ======================================================================
+// Sergio, 28-oct: *"botón cuadrar el resto proporcional cuando cambie algún
+// mes, ojo, es importante que pueda cambiar varios meses al mismo tiempo"*.
+//
+// Por eso el cuadre NO se dispara solo al escribir: se marcan los meses que
+// uno toca —pueden ser varios— y el botón reparte la diferencia entre los
+// que NO se tocaron, en proporción a lo que ya tenían. Si el cuadre se
+// disparara en cada tecla, el segundo mes que escribes pisaría lo que acabas
+// de poner en el primero.
+//
+// Y no deja guardar si no suma 100: una curva que no suma 100 no reparte un
+// presupuesto, lo inventa.
+let _curvaEdit = null;        // { anio, pesos:[12], tocados:Set }
+
+function togglePresuCurva(){
+  const p = document.getElementById('presuCurvaPanel');
+  const f = document.getElementById('presuCurvaFlecha');
+  if(!p) return;
+  const abierto = p.style.display !== 'none';
+  p.style.display = abierto ? 'none' : 'block';
+  if(f) f.textContent = abierto ? '▾' : '▴';
+  if(!abierto) _poblarPresuCurvaAnios();
+}
+
+function _poblarPresuCurvaAnios(){
+  const sel = document.getElementById('presuCurvaAnio');
+  if(!sel) return;
+  const hoy = new Date().getFullYear();
+  const anios = [...new Set([
+    ...Object.keys(_presuCurvaTabla).map(Number),
+    ...Object.keys(PRESUPUESTO_CURVA).map(Number),
+    hoy, hoy + 1,
+  ])].filter(a=>a > 2000).sort((a,b)=>a-b);
+  const antes = sel.value;
+  sel.innerHTML = anios.map(a=>`<option value="${a}">${a}</option>`).join('');
+  sel.value = (antes && anios.indexOf(Number(antes)) >= 0) ? antes : String(hoy);
+  renderPresuCurva(true);
+}
+
+// `desdeLaBase` tira lo que haya sin guardar y vuelve a lo guardado.
+function renderPresuCurva(desdeLaBase){
+  const sel  = document.getElementById('presuCurvaAnio');
+  const cont = document.getElementById('presuCurvaCuerpo');
+  if(!sel || !cont) return;
+  const anio = Number(sel.value) || new Date().getFullYear();
+  if(desdeLaBase || !_curvaEdit || _curvaEdit.anio !== anio){
+    const base = _curvaDelAnio(anio);
+    _curvaEdit = {
+      anio,
+      // Sin curva para ese año se arranca plana: es un punto de partida
+      // honesto, no un dato. El cartel de abajo dice de dónde salió.
+      pesos: base ? base.map(Number) : new Array(12).fill(100/12),
+      nueva: !base,
+      tocados: new Set(),
+    };
+  }
+  const p = _curvaEdit.pesos;
+  const suma = p.reduce((a,b)=>a + (Number(b)||0), 0);
+  const dif  = 100 - suma;
+  const cuadra = Math.abs(dif) < 5e-6;
+  const n6 = v => (Math.round(Number(v)*1e6)/1e6).toFixed(6).replace(/0+$/,'').replace(/\.$/,'');
+  const f1 = (Number(p.slice(0,6).reduce((a,b)=>a+(Number(b)||0),0))).toFixed(2);
+  const f2 = (Number(p.slice(6).reduce((a,b)=>a+(Number(b)||0),0))).toFixed(2);
+
+  const celdas = p.map((v,i)=>`
+    <div style="min-width:92px;">
+      <label class="field-note">${MESES_CORTOS[i]}${_curvaEdit.tocados.has(i)?' <span style="color:var(--purple,#a78bfa);">·</span>':''}</label>
+      <input type="number" step="0.000001" min="0" value="${n6(v)}"
+             onchange="tocarPresuCurva(${i}, this.value)"
+             style="width:92px;text-align:right;${_curvaEdit.tocados.has(i)?'border-color:var(--purple,#a78bfa);':''}">
+    </div>`).join('');
+
+  const origen = _curvaEdit.nueva
+    ? '<span style="color:var(--amber,#f59e0b);">año sin curva guardada · arranca plana, revísala antes de guardar</span>'
+    : (_presuCurvaTabla[anio] ? 'guardada en <code>presupuesto_curva</code>'
+                              : '<span style="color:var(--amber,#f59e0b);">viene de la semilla del HTML, todavía no está en la tabla</span>');
+
+  cont.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">${celdas}</div>
+    <div style="margin-top:12px;display:flex;gap:18px;flex-wrap:wrap;align-items:center;font-size:12px;">
+      <div><span class="field-note">suma</span>
+        <b style="color:${cuadra?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};">${suma.toFixed(6)}%</b></div>
+      <div><span class="field-note">falta</span>
+        <b style="color:${cuadra?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};">${dif>=0?'+':''}${dif.toFixed(6)}</b></div>
+      <div><span class="field-note">1er semestre</span> <b>${f1}%</b></div>
+      <div><span class="field-note">2do semestre</span> <b>${f2}%</b></div>
+      <div><span class="field-note">tocados</span> <b>${_curvaEdit.tocados.size}</b> de 12</div>
+    </div>
+    <div class="field-note" style="margin-top:8px;">
+      ${origen}. El factor del semestre sale de aquí y es el que usa el modelo de remuneración.
+      ${cuadra ? '' : '<b style="color:var(--sell,#ef4444);">No suma 100: no se puede guardar.</b> Usa “Cuadrar el resto” o ajusta a mano.'}
+    </div>`;
+
+  const b = document.getElementById('presuCurvaGuardar');
+  if(b){ b.disabled = !cuadra; b.style.opacity = cuadra ? '1' : '0.45';
+         b.style.cursor = cuadra ? 'pointer' : 'not-allowed'; }
+}
+
+function tocarPresuCurva(i, valor){
+  if(!_curvaEdit) return;
+  const v = Number(String(valor).replace(',', '.'));
+  _curvaEdit.pesos[i] = isFinite(v) && v >= 0 ? v : 0;
+  _curvaEdit.tocados.add(i);          // se acumulan: puede tocar varios y después cuadrar
+  renderPresuCurva();
+}
+
+// Reparte la diferencia entre los meses NO tocados, en proporción a lo que ya
+// tienen. Si no quedan meses sin tocar, no hay dónde repartir y se dice.
+function cuadrarPresuCurva(){
+  if(!_curvaEdit) return;
+  const p = _curvaEdit.pesos;
+  const libres = [];
+  for(let i = 0; i < 12; i++) if(!_curvaEdit.tocados.has(i)) libres.push(i);
+  if(!libres.length){
+    alert('Tocaste los doce meses, así que no queda ninguno para absorber la diferencia.\n\n' +
+          'Suelta alguno con “Deshacer” o ajústalos a mano hasta que sumen 100.');
+    return;
+  }
+  const suma = p.reduce((a,b)=>a + (Number(b)||0), 0);
+  const dif  = 100 - suma;
+  if(Math.abs(dif) < 5e-6){ renderPresuCurva(); return; }
+  const base = libres.reduce((a,i)=>a + (Number(p[i])||0), 0);
+  if(base > 0){
+    // Proporcional a lo que ya tenían.
+    libres.forEach(i=>{ p[i] = Math.max(0, Number(p[i]) + dif * (Number(p[i]) / base)); });
+  }else{
+    // Todos los libres en cero: repartir por partes iguales es lo único
+    // honesto; proporcional a cero no existe.
+    libres.forEach(i=>{ p[i] = Math.max(0, dif / libres.length); });
+  }
+  // El redondeo no puede dejar la suma en 99,999999: el ÚLTIMO libre absorbe
+  // lo que falte, igual que diciembre en la semilla de 2027.
+  const resto = 100 - p.reduce((a,b)=>a + (Number(b)||0), 0);
+  const ult = libres[libres.length - 1];
+  p[ult] = Math.max(0, Number(p[ult]) + resto);
+  renderPresuCurva();
+}
+
+async function guardarPresuCurva(){
+  if(!_curvaEdit) return;
+  const { anio, pesos } = _curvaEdit;
+  const suma = pesos.reduce((a,b)=>a + (Number(b)||0), 0);
+  if(Math.abs(100 - suma) >= 5e-6){
+    alert(`La curva de ${anio} suma ${suma.toFixed(6)}% y tiene que sumar 100.\n\n` +
+          'Una curva que no suma 100 no reparte el presupuesto: lo inventa.');
+    return;
+  }
+  const b = document.getElementById('presuCurvaGuardar');
+  const antes = b ? b.textContent : '';
+  if(b){ b.disabled = true; b.textContent = 'guardando…'; }
+  try{
+    const filas = pesos.map((v,i)=>({
+      anio, mes: i+1, peso: Math.round(Number(v)*1e6)/1e6,
+      actualizado_en: new Date().toISOString(),
+      actualizado_por: (typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
+    }));
+    await guardarEnLotesSupabase('presupuesto_curva', filas);
+    // Se vuelve a LEER de la base: que el app muestre lo que quedó guardado y
+    // no lo que yo creo que guardé.
+    await cargarPresupuestoCurva();
+    const quedo = _presuCurvaTabla[anio];
+    if(!quedo){ alert('No se pudo confirmar la curva contra la base. Revisa los permisos de `presupuesto_curva`.'); }
+    else{
+      const s = quedo.reduce((a,c)=>a+Number(c),0);
+      if(Math.abs(100 - s) >= 5e-6) alert(`Quedó guardada pero suma ${s.toFixed(6)}%. Revísala.`);
+    }
+    _curvaEdit = null;
+    renderPresuCurva(true);
+    renderPresupuesto();
+  }catch(e){
+    alert('No se pudo guardar la curva: ' + e.message);
+  }finally{
+    if(b){ b.disabled = false; b.textContent = antes || 'Guardar la curva'; }
+  }
+}
 
 function togglePresuDia(){
   const p = document.getElementById('presuDiaPanel');
@@ -32646,7 +32919,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-27 21:20 UTC · v280';
+const BUILD_ID = '2026-10-28 14:05 UTC · v281';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
