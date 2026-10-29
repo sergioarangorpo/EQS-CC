@@ -28591,6 +28591,23 @@ function comisionPataRVI(broker, tipo, qty, px, isin){
 
 // Las patas tal como se guardan con la operación, para que la planilla del BO
 // pueda abrirlas en una fila cada una.
+// EL BROKER CONTRA EL QUE OPERAMOS NOSOTROS (Sergio, 29-oct)
+// ----------------------------------------------------------
+// Tres sitios distintos hacían `emsxData.find(r => r.id === lineaActiva).broker`
+// para decidir si el broker cobra. Esa es la línea DEL CLIENTE, y viene con
+// broker CCSI aunque hayamos ejecutado contra un market maker: una RFQE contra
+// VIRT salía con el mínimo de USD 20 encima y PROTECCIÓN apareció en el
+// dashboard con utilidad de US$ -12.
+//
+// Una sola definición para los tres. Si no hay pata nuestra, la línea activa
+// SÍ es la nuestra: se ejecutó contra el mercado a nombre del cliente.
+function _rviBrokerNuestro(){
+  const patas = (typeof _rviPatasEjecutadas === 'function') ? _rviPatasEjecutadas() : [];
+  if(patas.length) return patas[0].broker || '';
+  return String(((typeof emsxData !== 'undefined'
+    ? emsxData.find(r => r.id === lineaActiva) : null) || {}).broker || '');
+}
+
 function _rviPatasEjecutadas(){
   const marcadas = (typeof getFiltradas === 'function' ? getFiltradas() : [])
     .filter(r => (typeof _rviMarcadas !== 'undefined') && _rviMarcadas.has(r.id));
@@ -29332,8 +29349,9 @@ function calcularRVI(){
     comCCSI: _comTotalUSD != null ? (_comTotalUSD / qty)
                                   : parseNum(document.getElementById('tc-com-ccsi').value),
     // El broker decide si hay comisión: CCSI/BTGH/TFSC cobran, los market
-    // makers (RFQE) van con cero.
-    broker: (emsxData.find(r=>r.id===lineaActiva)||{}).broker || '',
+    // makers (RFQE) van con cero. Sale de NUESTRA pata, no de la línea del
+    // cliente — ver `_rviBrokerNuestro` (Sergio, 29-oct).
+    broker: _rviBrokerNuestro(),
     // Nuestro precio de ejecución: el del vínculo si lo hay; si no, el AVGPR de
     // la propia línea de EMSX. Sin este segundo caso el margen salía en $0.00
     // aunque el arqueo de arriba sí lo calculara — pasa siempre que se marca
@@ -29630,8 +29648,9 @@ function generarTC(){
   const c          = calcularComisiones(clienteKey, tipo, qty, price, {
     comCCSI: parseNum(document.getElementById('tc-com-ccsi').value),
     // El broker decide si hay comisión: CCSI/BTGH/TFSC cobran, los market
-    // makers (RFQE) van con cero.
-    broker: (emsxData.find(r=>r.id===lineaActiva)||{}).broker || '',
+    // makers (RFQE) van con cero. Sale de NUESTRA pata, no de la línea del
+    // cliente — ver `_rviBrokerNuestro` (Sergio, 29-oct).
+    broker: _rviBrokerNuestro(),
     precioNuestro: vincPrecio,
     // LAS MISMAS DOS QUE EL PANEL. Sin esto el guardado volvía a la tarifa del
     // maestro y al precio crudo: la pantalla decía 0,07% y 5,94 y el histórico
@@ -29702,8 +29721,20 @@ function generarTC(){
           a + comisionPataRVI(p.broker, tipo, p.qty, p.px, isin), 0);
         return qty > 0 ? redondear(tot * (d.qty / qty), 4) : 0;
       }
-      const _ln = emsxData.find(r=>r.id===lineaActiva) || {};
-      const brk = String(_ln.broker||'').toUpperCase();
+      // EL BROKER SALE DE NUESTRA PATA, NO DE LA LÍNEA DEL CLIENTE
+      // (Sergio, 29-oct). Aquí decía `emsxData.find(r => r.id === lineaActiva)`,
+      // que es la línea DEL CLIENTE — y esa viene con broker CCSI aunque
+      // hayamos ejecutado contra un market maker. Con `brk` en CCSI el freno de
+      // abajo no devolvía cero y se guardaba el mínimo de USD 20 de una pata
+      // que no cobra: PROTECCIÓN quedó con utilidad de US$ -12 en el dashboard
+      // cuando lo real era la comisión del cliente y nada más.
+      //
+      // `_patasLote` ya son NUESTRAS patas (`_rviPatasEjecutadas`), la misma
+      // fuente que usa el camino de varias patas de arriba. Si no hay ninguna,
+      // se cae a la línea activa: ahí sí es nuestra, porque se ejecutó contra
+      // el mercado a nombre del cliente.
+      const brk = String((_patasLote.length ? _patasLote[0].broker
+                   : (emsxData.find(r=>r.id===lineaActiva)||{}).broker) || '').toUpperCase();
       // Si el campo de comisión del broker está en cero, manda ese cero.
       const escrito = parseNum((document.getElementById('tc-com-ccsi')||{}).value);
       if(brk && !RVI_BROKERS_CON_COSTO.some(x=>brk.includes(x))) return 0;
@@ -30525,7 +30556,17 @@ function guardarEdicionRVI(){
       ? h.gross*(db?.comUCIT||0.004) : h.qty*(db?.comETF||0.004);
   }
   h.net=h.side==='Sell'?h.gross-h.cost-h.secFee:h.gross+h.cost;
-  h.ccsi=Math.max(nuevoTipo==='UCIT'?h.gross*CCSI.comUCIT:h.qty*CCSI.comETF,CCSI.minUSD);
+  // LA COMISIÓN DEL BROKER, POR EL MISMO CAMINO QUE TODO LO DEMÁS
+  // (Sergio, 29-oct). Aquí estaba escrita a mano con las tarifas de CCSI y el
+  // mínimo de USD 20 SIEMPRE, sin mirar `h.broker`. Era el tercer sitio con el
+  // mismo defecto: abrir a editar una operación contra un market maker le
+  // volvía a poner los 20 dólares que no existen.
+  //
+  // `comisionPataRVI` es la misma función del arqueo y de la planilla del BO:
+  // devuelve 0 para los market makers y aplica el mínimo solo a quien cobra.
+  // OJO, esto también corrige el ADR: la línea vieja usaba `comETF` (0,003)
+  // para todo lo que no fuera UCITS, y un ADR se cobra a 0,005.
+  h.ccsi = comisionPataRVI(h.broker, nuevoTipo, h.qty, nuevoPrice, h.isin);
 
   renderHistorial();
   cerrarEdicionRVI();
@@ -33011,7 +33052,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-29 18:50 UTC · v285';
+const BUILD_ID = '2026-10-29 19:20 UTC · v286';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
