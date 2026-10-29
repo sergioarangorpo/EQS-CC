@@ -29505,9 +29505,39 @@ function generarTC(){
   // el COST de nuestra pata en la planilla del BO, y no se puede deducir del
   // tipo porque ADR y ETF tienen tarifas distintas.
   {
+    // DE QUÉ PATA SALE EL BROKER (Sergio, 29-oct)
+    // -------------------------------------------
+    // Aquí decía `emsxData.find(r => r.id === lineaActiva)`: el broker de la
+    // línea DEL CLIENTE. Y la línea del cliente viene con broker CCSI aunque
+    // nosotros hayamos ejecutado contra otro — está dicho tal cual más arriba,
+    // en el vínculo de ejecución. Resultado: operar contra un market maker
+    // (VIRT, BTGU, TFSR), que no cobra nada, frenaba el guardado pidiendo una
+    // comisión que no existe, y no había cómo pasar el freno porque exige un
+    // valor MAYOR que cero.
+    //
+    // Lo que nos cobran se mira en NUESTRAS patas, en este orden:
+    //   1. las vinculadas a esta línea de cliente (`_rviVinculos`)
+    //   2. si no hay vínculo, las marcadas con firm CREDICORP
+    //   3. si tampoco, la propia línea: se ejecutó contra el mercado a nombre
+    //      del cliente, así que su broker sí es el nuestro
+    // Es la MISMA fuente que usa el arqueo para calcular pata por pata, así que
+    // el freno y el número ya no pueden decir cosas distintas.
     const _ln = emsxData.find(r=>r.id===lineaActiva);
-    const _brk = String((_ln||{}).broker||'').toUpperCase();
-    const _cobra = _brk && RVI_BROKERS_CON_COSTO.some(x=>_brk.includes(x));
+    const _vinc = (_rviVinculos[lineaActiva] || [])
+      .map(id => emsxData.find(x => x.id === id)).filter(Boolean);
+    const _marc = (typeof getFiltradas === 'function' && typeof _rviMarcadas !== 'undefined')
+      ? getFiltradas().filter(r => _rviMarcadas.has(r.id)) : [];
+    const _patas = _vinc.length ? _vinc
+                 : (_marc.length && typeof _rviLineasEjec === 'function')
+                     ? _rviLineasEjec(_marc)
+                     : (_ln ? [_ln] : []);
+    // Si varias patas cobran, se nombran todas: con un solo nombre el aviso
+    // manda a corregir un campo y deja la otra sin mirar.
+    const _cobradores = [...new Set(_patas
+      .map(r => String((r||{}).broker||'').toUpperCase())
+      .filter(b => b && RVI_BROKERS_CON_COSTO.some(x => b.includes(x))))];
+    const _cobra = _cobradores.length > 0;
+    const _brk = _cobradores.join(' / ');
     const _el = document.getElementById('tc-com-ccsi');
     const _val = _el ? String(_el.value||'').trim() : '';
     // Vale cualquiera de los dos campos: la tarifa unitaria o el MONTO TOTAL en
@@ -32981,7 +33011,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-28 21:25 UTC · v284';
+const BUILD_ID = '2026-10-29 18:50 UTC · v285';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
