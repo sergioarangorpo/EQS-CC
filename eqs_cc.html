@@ -3008,8 +3008,12 @@
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
           <div><label class="field-note">Año</label>
             <select id="presuAnio" onchange="renderPresupuesto()" style="min-width:96px;"></select></div>
-          <div><label class="field-note">Mes</label>
-            <select id="presuMes" onchange="renderPresupuesto()" style="min-width:140px;"></select></div>
+          <!-- Un solo control de período. Dos (mes + semestre) se pueden
+               contradecir —"marzo" y "2S" al tiempo no quieren decir nada— y
+               el id se deja en `presuMes` para no romper nada que lo lea. -->
+          <div><label class="field-note">Período</label>
+            <select id="presuMes" onchange="renderPresupuesto()" style="min-width:150px;"
+              title="El semestre es el corte contra el que se paga la remuneración"></select></div>
           <div><label class="field-note">Trader</label>
             <select id="presuTrader" onchange="renderPresupuesto()" style="min-width:110px;"></select></div>
           <div><label class="field-note">Categoría</label>
@@ -31810,7 +31814,13 @@ function poblarFiltrosPresupuesto(){
     if(antes && [...el.options].some(o=>o.value === antes)) el.value = antes;
   };
   llenar('presuAnio', anios.map(a=>({v:a, t:a})), '');
-  llenar('presuMes', MESES_CORTOS.map((m,i)=>({v:i+1, t:m})), 'Todo el año');
+  // El selector de período: año, semestre o mes suelto. Los dos semestres van
+  // de primeros porque son el corte que importa — contra el semestre es que se
+  // paga la remuneración (Sergio, 29-oct).
+  llenar('presuMes',
+    [{v:'S1', t:'1S · ene–jun'}, {v:'S2', t:'2S · jul–dic'}]
+      .concat(MESES_CORTOS.map((m,i)=>({v:i+1, t:m}))),
+    'Todo el año');
   llenar('presuTrader', [...new Set(_maestroGrupos.map(g=>g.trader).filter(Boolean))].sort()
           .map(t=>({v:t, t})), 'Todos');
   llenar('presuCategoria', [...new Set(_maestroGrupos.map(g=>g.categoria).filter(Boolean))].sort()
@@ -31885,20 +31895,53 @@ function _presuPesoMes(anio, mes){
 // la que Sergio mira a diario, se sigue mostrando al lado.
 //
 // Devuelve DOS factores: lo que va corrido y el período completo.
-function _presuFactores(anio, mes){
-  if(mes){
-    const d = _diasDelMes(anio, mes);
-    const peso = _presuPesoMes(anio, mes) / 100;
-    return {
-      aCorte:  peso * (d.total ? d.corridos / d.total : 0),
-      periodo: peso,
-      dias: d.corridos, diasPeriodo: d.total,
-    };
+// EL PERÍODO, COMO RANGO DE MESES (Sergio, 29-oct)
+// ------------------------------------------------
+// "Selector semestral, recuerda que contra eso nos pagan, por eso es
+// importante ver cómo vamos en el semestre."
+//
+// El módulo sabía mirar UN mes o TODO el año. El semestre no es ninguno de los
+// dos, y es justamente el corte del que depende la remuneración: la bolsa sale
+// del cumplimiento del SEMESTRE, no del año ni del mes.
+//
+// En vez de un segundo control que se pueda contradecir con el de mes —"marzo"
+// y "2S" al tiempo no quieren decir nada—, el mismo selector pasa a ser de
+// PERÍODO: año, 1S, 2S, o un mes suelto. Todo se resuelve como un rango de
+// meses, y el mes suelto no es más que el rango [m, m].
+function _presuRango(){
+  const v = String(_presuVal('presuMes') || '');
+  if(v === 'S1') return { desde:1, hasta:6,  sem:1, esAnio:false, etiqueta:'1S' };
+  if(v === 'S2') return { desde:7, hasta:12, sem:2, esAnio:false, etiqueta:'2S' };
+  const m = Number(v) || 0;
+  if(m >= 1 && m <= 12)
+    return { desde:m, hasta:m, mes:m, esAnio:false, etiqueta: MESES_CORTOS[m-1] };
+  return { desde:1, hasta:12, esAnio:true, etiqueta:'año' };
+}
+
+// Los factores del período, sumando mes por mes sobre la curva.
+//
+// OJO, esto NO cambia lo que ya salía: para el año completo da exactamente lo
+// mismo que `_presuCurvaAlDia(anio, _diasCorridos(anio))`, porque sumar
+// peso×(corridos/total) de los doce meses es la misma cuenta que esa función
+// hace recorriéndolos. Y para un mes suelto el rango [m,m] reproduce la rama
+// vieja al dígito. Está medido en `t_presu_semestre.js`.
+function _presuFactores(anio, rango){
+  // Compatibilidad: si llega un número, es el mes suelto de siempre.
+  if(typeof rango === 'number') rango = rango
+    ? { desde:rango, hasta:rango, mes:rango, esAnio:false }
+    : { desde:1, hasta:12, esAnio:true };
+  rango = rango || { desde:1, hasta:12, esAnio:true };
+
+  let aCorte = 0, periodo = 0, dias = 0, diasPeriodo = 0;
+  for(let m = rango.desde; m <= rango.hasta; m++){
+    const d = _diasDelMes(anio, m);
+    const peso = _presuPesoMes(anio, m) / 100;
+    aCorte      += peso * (d.total ? d.corridos / d.total : 0);
+    periodo     += peso;
+    dias        += d.corridos;
+    diasPeriodo += d.total;
   }
-  return {
-    aCorte: _presuCurvaAlDia(anio, _diasCorridos(anio)), periodo: 1,
-    dias: _diasCorridos(anio), diasPeriodo: _diasDelAnio(anio),
-  };
+  return { aCorte, periodo, dias, diasPeriodo };
 }
 
 // Qué fracción del año lleva la curva al día N. Dentro del mes se interpola
@@ -31952,7 +31995,11 @@ function _presuTH(col, texto, alin){
 // ---------------------------------------------------------------------
 function _presuCorte(){
   const anio = Number(_presuVal('presuAnio')) || new Date().getFullYear();
-  const mes  = Number(_presuVal('presuMes')) || 0;
+  // El período puede ser el año, un semestre o un mes. `mes` sigue siendo el
+  // mes suelto —0 cuando no lo hay— porque medio módulo lo lee así; lo que
+  // manda para filtrar y para los factores es el RANGO.
+  const rango = _presuRango();
+  const mes   = rango.mes || 0;
   const fT = _presuVal('presuTrader'), fC = _presuVal('presuCategoria');
   const fM = _presuVal('presuMercado'), fG = _presuVal('presuGrupo');
 
@@ -31964,7 +32011,7 @@ function _presuCorte(){
 
   const filas = (_ejecMensual||[]).filter(r=>
     Number(r.anio) === anio &&
-    (!mes || Number(r.mes) === mes) &&
+    (Number(r.mes) >= rango.desde && Number(r.mes) <= rango.hasta) &&
     (!fM || r.mercado === fM) &&
     nombres.has(r.grupo));
 
@@ -31980,8 +32027,8 @@ function _presuCorte(){
   const presuMesaAnual = (_maestroGrupos||[]).reduce((a,g)=>a + (Number(g.presupuesto)||0), 0);
 
   // El presupuesto se mueve con los filtros. Trader, categoría y grupo filtran
-  // `grupos`, así que el presupuesto los sigue solo. El MES lo hace `f`.
-  const f = _presuFactores(anio, mes);
+  // `grupos`, así que el presupuesto los sigue solo. El PERÍODO lo hace `f`.
+  const f = _presuFactores(anio, rango);
   const diasAnio = _diasDelAnio(anio);
   const presuACorte   = presuAnual * f.aCorte;    // lo que iba que ir hoy
   const presuPeriodo  = presuAnual * f.periodo;   // el mes completo, o el año
@@ -32000,9 +32047,16 @@ function _presuCorte(){
   const sum = (arr, c) => arr.reduce((a,r)=>a + (Number(r[c])||0), 0);
   return {
     anio, mes, fT, fC, fM, fG, grupos, filas, delAnio, mesa,
+    // El período, para que la pantalla no tenga que deducirlo del mes.
+    // `esAnio` es lo que antes se preguntaba como `!c.mes`, y `etiqueta` es
+    // lo que antes era `nombrePeriodo`.
+    rango, esAnio: !!rango.esAnio, sem: rango.sem || 0, etiqueta: rango.etiqueta,
+    desde: rango.desde, hasta: rango.hasta,
     dias: f.dias, diasPeriodo: f.diasPeriodo, diasAnio,
     factorACorte: f.aCorte, factorPeriodo: f.periodo,
-    pesoMes: mes ? _presuPesoMes(anio, mes) : 100,
+    // Cuánto pesa el período dentro del año, según la curva. Para el año
+    // completo son los 100% de siempre; para el 1S, lo que sumen enero a junio.
+    pesoMes: rango.esAnio ? 100 : f.periodo * 100,
     presuAnual, presuMesaAnual,
     presuACorte, presuPeriodo, presuLineal, presuLinealPeriodo,
     presuAcum: presuACorte,          // el nombre viejo, para no romper nada
@@ -32071,9 +32125,14 @@ function _svgMensual(meses){
     d.map((x,i)=>{
       const x0 = mIzq + i*ancho + ancho/2;
       const yP = yDe(x.presupuesto), yC = yDe(x.produccion);
-      return `<rect x="${x0-bw-2}" y="${yP}" width="${bw}" height="${H-mBot-yP}" rx="2" fill="${_PC.gris}"/>` +
+      // Los meses que NO entran en el período seleccionado se atenúan en vez
+      // de desaparecer: el año sigue viéndose completo, pero se distingue de
+      // un vistazo qué está contando el resto de la pantalla (Sergio, 29-oct).
+      const op = x.fuera ? .22 : 1;
+      return `<g opacity="${op}">` +
+        `<rect x="${x0-bw-2}" y="${yP}" width="${bw}" height="${H-mBot-yP}" rx="2" fill="${_PC.gris}"/>` +
         `<rect x="${x0+2}" y="${yC}" width="${bw}" height="${H-mBot-yC}" rx="2" fill="${x.produccion>=x.presupuesto?_PC.verde:_PC.ambar}" opacity=".9"/>` +
-        `<text x="${x0}" y="${H-8}" text-anchor="middle" font-size="11" fill="${_PC.texto}">${x.etiqueta}</text>`;
+        `<text x="${x0}" y="${H-8}" text-anchor="middle" font-size="11" fill="${_PC.texto}">${x.etiqueta}</text></g>`;
     }).join('') +
     `<polyline points="${puntos}" fill="none" stroke="${_PC.azul}" stroke-width="2" opacity=".9"/>` +
     d.map((x,i)=>{
@@ -32084,41 +32143,60 @@ function _svgMensual(meses){
 }
 
 // Curva diaria acumulada contra la recta del presupuesto.
-function _svgDiaria(serie, presuAnual, anio){
-  const d = serie || [];
+//
+// EL RANGO (Sergio, 29-oct): "recuerda que contra eso nos pagan, por eso es
+// importante ver cómo vamos en el semestre". Con el 1S puesto, esta curva tiene
+// que arrancar en enero y terminar en junio, acumulando DESDE CERO y midiendo
+// contra el presupuesto del SEMESTRE — no contra el del año, que haría ver
+// cualquier semestre como la mitad de malo de lo que es.
+//
+// Sin `rango`, o con el año completo, da exactamente lo de siempre: el rango
+// [1,12] hace que `diaIni` sea 1 y `span` los días del año, con lo que todas
+// las cuentas de abajo se reducen a las que ya había. Está medido.
+function _svgDiaria(serie, presuAnual, anio, rango){
+  const R = (rango && !rango.esAnio) ? rango : { desde:1, hasta:12 };
+  const diaIni = R.desde > 1 ? _diasHastaFinDeMes(anio, R.desde - 1) + 1 : 1;
+  const diaFin = _diasHastaFinDeMes(anio, R.hasta);
+  const span = Math.max(1, diaFin - diaIni + 1);
+  const d = (serie || []).filter(x => x.dia >= diaIni && x.dia <= diaFin);
   if(!d.length) return '<div class="field-note" style="padding:8px;">Sin datos.</div>';
   const W = 1000, H = 220, mTop = 14, mBot = 24;
-  const diasAnio = _diasDelAnio(anio);
   let acum = 0;
   const pts = d.map(x=>{ acum += x.valor; return { dia:x.dia, acum }; });
-  const max = Math.max(acum, presuAnual * (pts[pts.length-1].dia/diasAnio), 1);
-  const xDe = dia => (dia/diasAnio) * W;
+  // Lo que pesa el rango de la curva, de su primer mes hasta `m`.
+  const pesoHasta = m => { let a = 0; for(let k = R.desde; k <= m; k++) a += _presuPesoMes(anio, k)/100; return a; };
+  const presuRango = presuAnual * pesoHasta(R.hasta);
+  const xDe = dia => ((dia - diaIni + 1) / span) * W;
+  const max = Math.max(acum, presuRango * ((pts[pts.length-1].dia - diaIni + 1)/span), 1);
   const yDe = v => mTop + (1 - v/max) * (H - mTop - mBot);
   const linea = pts.map(p=>`${xDe(p.dia).toFixed(1)},${yDe(p.acum).toFixed(1)}`).join(' ');
   const area = `0,${H-mBot} ` + linea + ` ${xDe(pts[pts.length-1].dia).toFixed(1)},${H-mBot}`;
   const ultimo = pts[pts.length-1];
   // DOS referencias, porque son dos convenciones que conviven:
   //  · la CURVA, que es la que manda y la que usa el BI y la remuneración;
-  //  · la LINEAL, anual ÷ días, que es la que Sergio mira a diario.
+  //  · la LINEAL, presupuesto del rango ÷ días, que es la que Sergio mira a
+  //    diario.
   // Se pintan las dos para no tener que escoger a ciegas (Sergio, 26-oct).
-  const metaHoy = presuAnual * _presuCurvaAlDia(anio, ultimo.dia);
-  let ac = 0;
-  const ptsCurva = ['0,' + yDe(0).toFixed(1)].concat(MESES_CORTOS.map((_,i)=>{
-    ac += _presuPesoMes(anio, i+1) / 100;
-    return xDe(_diasHastaFinDeMes(anio, i+1)).toFixed(1) + ',' + yDe(presuAnual*ac).toFixed(1);
-  })).join(' ');
+  // La curva se mide DESDE el arranque del rango: en el 2S, lo acumulado hasta
+  // junio no cuenta.
+  const base = R.desde > 1 ? _presuCurvaAlDia(anio, diaIni - 1) : 0;
+  const metaHoy = presuAnual * (_presuCurvaAlDia(anio, ultimo.dia) - base);
+  const ptsCurva = ['0,' + yDe(0).toFixed(1)].concat(
+    Array.from({length: R.hasta - R.desde + 1}, (_, i) => R.desde + i).map(m=>
+      xDe(_diasHastaFinDeMes(anio, m)).toFixed(1) + ',' + yDe(presuAnual*pesoHasta(m)).toFixed(1)
+    )).join(' ');
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;">` +
     `<polygon points="${area}" fill="${_PC.lila}" opacity=".14"/>` +
-    `<line x1="0" y1="${yDe(0)}" x2="${xDe(diasAnio)}" y2="${yDe(presuAnual)}" ` +
+    `<line x1="0" y1="${yDe(0)}" x2="${xDe(diaFin)}" y2="${yDe(presuRango)}" ` +
       `stroke="${_PC.gris}" stroke-width="1.5" stroke-dasharray="3,4" opacity=".7"/>` +
     `<polyline points="${ptsCurva}" fill="none" stroke="${_PC.ambar}" ` +
       `stroke-width="2" stroke-dasharray="6,4" opacity=".85"/>` +
     `<polyline points="${linea}" fill="none" stroke="${_PC.lila}" stroke-width="2.2"/>` +
     `<circle cx="${xDe(ultimo.dia)}" cy="${yDe(ultimo.acum)}" r="4" ` +
       `fill="${ultimo.acum >= metaHoy ? _PC.verde : _PC.ambar}"/>` +
-    MESES_CORTOS.map((m,i)=>{
-      const dia = _diasHastaFinDeMes(anio, i+1) - new Date(anio,i+1,0).getDate()/2;
-      return `<text x="${xDe(dia).toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="10.5" fill="${_PC.texto}">${m}</text>`;
+    Array.from({length: R.hasta - R.desde + 1}, (_, i) => R.desde + i).map(m=>{
+      const dia = _diasHastaFinDeMes(anio, m) - new Date(anio,m,0).getDate()/2;
+      return `<text x="${xDe(dia).toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="10.5" fill="${_PC.texto}">${MESES_CORTOS[m-1]}</text>`;
     }).join('') + '</svg>';
 }
 
@@ -32155,9 +32233,21 @@ function _tarjeta(titulo, valor, pie, color){
     ${pie ? `<div class="field-note" style="font-size:11px;">${pie}</div>` : ''}
   </div>`;
 }
-const _bloque = (titulo, cuerpo, pie) => `
+// EL SUBTÍTULO VA APARTE, NO METIDO EN EL TÍTULO (Sergio, 29-oct)
+// ---------------------------------------------------------------
+// El título se escapa con `_esc`, y está bien: un grupo que se llame con un
+// `<` no puede romper la pantalla. El problema era que un bloque le pasaba
+// HTML adentro —`'Por grupo — cumplimiento <span class="field-note">(los 12
+// de mayor presupuesto)</span>'`— y salía impreso tal cual, etiquetas
+// incluidas.
+//
+// La salida no es quitar el escape, es darle al subtítulo su propio
+// parámetro: así el título sigue escapándose y el subtítulo lo pone el
+// componente, no quien lo llama.
+const _bloque = (titulo, cuerpo, pie, sub) => `
   <div class="card" style="padding:12px 14px;margin-bottom:14px;">
-    <div style="font-size:12.5px;font-weight:700;opacity:.75;margin-bottom:8px;">${_esc(titulo)}</div>
+    <div style="font-size:12.5px;font-weight:700;opacity:.75;margin-bottom:8px;">${_esc(titulo)}${
+      sub ? ` <span class="field-note" style="font-weight:500;">${_esc(sub)}</span>` : ''}</div>
     ${cuerpo}
     ${pie ? `<div class="field-note" style="font-size:11px;margin-top:6px;">${pie}</div>` : ''}
   </div>`;
@@ -32208,7 +32298,12 @@ function renderPresupuesto(){
   // La proyección es del PERÍODO del corte: con un mes puesto, al cierre de
   // ese mes; sin mes, al cierre del año.
   const proyeccion = c.dias > 0 ? c.produccion / c.dias * c.diasPeriodo : 0;
-  const nombrePeriodo = c.mes ? MESES_CORTOS[c.mes-1] : 'año';
+  // El nombre del período: 'año', '1S', '2S' o el mes. Lo arma `_presuRango`
+  // y aquí solo se lee, para que la pantalla y el Excel digan lo mismo.
+  const nombrePeriodo = c.etiqueta || 'año';
+  // `c.mes` ya no alcanza para preguntar "¿hay período?": un semestre no es
+  // un mes y tampoco es el año. La pregunta correcta es `!c.esAnio`.
+  const esParcial = !c.esAnio;
 
   const sum = (arr, k, v) => {
     const m = {};
@@ -32244,7 +32339,7 @@ function renderPresupuesto(){
              color: v >= 100 ? _PC.verde : (v >= 80 ? _PC.ambar : _PC.rojo) };
   }).sort((a,b)=>b.valor - a.valor);
   const notaCumpl = 'La punteada es el 100%. Producción ÷ presupuesto ' +
-    (c.mes ? 'de ' + nombrePeriodo + ' a hoy.' : 'acumulado del año.');
+    (esParcial ? 'de ' + nombrePeriodo + ' a hoy.' : 'acumulado del año.');
 
   // --- Curva mensual ---
   const curva = _curvaDelAnio(c.anio) || new Array(12).fill(100/12);
@@ -32255,6 +32350,9 @@ function renderPresupuesto(){
     etiqueta:m, mes:i+1,
     produccion: porMes[i+1] || 0,
     presupuesto: c.presuAnual * (curva[i]||0) / 100,
+    // Fuera del período: se pinta atenuado. El gráfico sigue mostrando los doce
+    // meses —el contexto del año importa— pero marca cuáles está contando.
+    fuera: (i+1) < c.desde || (i+1) > c.hasta,
   }));
 
   // --- Serie diaria del corte ---
@@ -32308,7 +32406,7 @@ function renderPresupuesto(){
   const _huerfanas = {};
   (_ejecMensual||[]).forEach(r=>{
     if(Number(r.anio) !== c.anio) return;
-    if(c.mes && Number(r.mes) !== c.mes) return;
+    if(Number(r.mes) < c.desde || Number(r.mes) > c.hasta) return;
     if(c.fM && r.mercado !== c.fM) return;
     if(_conPresupuesto.has(r.grupo)) return;
     _huerfanas[r.grupo] = (_huerfanas[r.grupo]||0) + (Number(r.comision)||0);
@@ -32317,7 +32415,7 @@ function renderPresupuesto(){
 
   const colorCumpl = cumpl >= 100 ? _PC.verde : (cumpl >= 80 ? _PC.ambar : _PC.rojo);
   const etiquetaCorte = [
-    c.mes ? MESES_CORTOS[c.mes-1] + ' ' + c.anio : 'Año ' + c.anio,
+    esParcial ? nombrePeriodo + ' ' + c.anio : 'Año ' + c.anio,
     c.fT && 'trader ' + c.fT, c.fC, c.fM, c.fG,
   ].filter(Boolean).join(' · ');
 
@@ -32325,21 +32423,21 @@ function renderPresupuesto(){
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
       ${_tarjeta('PRODUCCIÓN', '$' + _mm(c.produccion),
         `${c.operaciones.toLocaleString('es-CO')} operación(es) · comisión sin IVA`, _PC.verde)}
-      ${_tarjeta(c.mes ? 'PRESUPUESTO A HOY' : 'PRESUPUESTO ACUMULADO', '$' + _mm(c.presuACorte),
-        `${c.dias} de ${c.diasPeriodo} días ${c.mes ? 'de ' + nombrePeriodo : 'del año'} · ` +
+      ${_tarjeta(esParcial ? 'PRESUPUESTO A HOY' : 'PRESUPUESTO ACUMULADO', '$' + _mm(c.presuACorte),
+        `${c.dias} de ${c.diasPeriodo} días ${esParcial ? 'de ' + nombrePeriodo : 'del año'} · ` +
         `lineal $${_mm(c.presuLineal)}`)}
-      ${_tarjeta(c.mes ? 'PRESUPUESTO DE ' + nombrePeriodo.toUpperCase() : 'PRESUPUESTO DEL AÑO',
+      ${_tarjeta(esParcial ? 'PRESUPUESTO DE ' + nombrePeriodo.toUpperCase() : 'PRESUPUESTO DEL AÑO',
         '$' + _mm(c.presuPeriodo),
-        c.mes ? `${_pct(c.pesoMes)} del año por la curva · lineal daría $${_mm(c.presuLinealPeriodo)}`
+        esParcial ? `${_pct(c.pesoMes)} del año por la curva · lineal daría $${_mm(c.presuLinealPeriodo)}`
               : `${c.grupos.length} grupo(s) del maestro`)}
       ${_tarjeta('% CUMPLIMIENTO', _pct(cumpl),
         (brecha >= 0 ? '+' : '−') + '$' + _mm(Math.abs(brecha)) + ' contra lo que iba', colorCumpl)}
-      ${_tarjeta(c.mes ? '% DE ' + nombrePeriodo.toUpperCase() + ' COMPLETO' : '% DEL AÑO COMPLETO',
+      ${_tarjeta(esParcial ? '% DE ' + nombrePeriodo.toUpperCase() + ' COMPLETO' : '% DEL AÑO COMPLETO',
         _pct(cumplTotal),
-        c.mes ? `faltan $${_mm(Math.max(0, c.presuPeriodo - c.produccion))} para cerrar ${nombrePeriodo}`
+        esParcial ? `faltan $${_mm(Math.max(0, c.presuPeriodo - c.produccion))} para cerrar ${nombrePeriodo}`
               : 'del presupuesto del año',
         cumplTotal >= 100 ? _PC.verde : _PC.azul)}
-      ${c.mes ? _tarjeta('% DEL AÑO', _pct(delPres), 'sobre el presupuesto anual') : ''}
+      ${esParcial ? _tarjeta('% DEL AÑO', _pct(delPres), 'sobre el presupuesto anual') : ''}
       ${_tarjeta('PARTICIPACIÓN', _pct(particip),
         'de $' + _mm(c.produccionMesa) + ' de la mesa', _PC.lila)}
       ${_tarjeta('PROYECCIÓN AL CIERRE', '$' + _mm(proyeccion),
@@ -32391,23 +32489,27 @@ function renderPresupuesto(){
         <div style="font-size:12.5px;font-weight:700;opacity:.75;margin-bottom:4px;">Cumplimiento</div>
         ${_svgMedidor(cumpl)}
         <div class="field-note" style="font-size:11px;text-align:center;">
-          producción ÷ presupuesto ${c.mes ? 'de ' + nombrePeriodo + ' a hoy' : 'acumulado del año'}<br>
-          <span style="opacity:.8;">contra ${c.mes ? nombrePeriodo + ' completo' : 'el año completo'}:
+          producción ÷ presupuesto ${esParcial ? 'de ' + nombrePeriodo + ' a hoy' : 'acumulado del año'}<br>
+          <span style="opacity:.8;">contra ${esParcial ? nombrePeriodo + ' completo' : 'el año completo'}:
           <b style="color:${cumplTotal >= 100 ? _PC.verde : _PC.azul};">${_pct(cumplTotal)}</b></span></div>
       </div>
       <div class="card" style="padding:12px 14px;flex:1;min-width:360px;">
         <div style="font-size:12.5px;font-weight:700;opacity:.75;margin-bottom:8px;">
-          Acumulado del año contra el presupuesto${hayFiltroGrupo ? ' <span class="field-note">(la curva diaria es de toda la mesa)</span>' : ''}</div>
-        ${_svgDiaria(serieDiaria, hayFiltroGrupo ? c.presuMesaAnual : c.presuAnual, c.anio)}
+          Acumulado ${esParcial ? 'de ' + nombrePeriodo : 'del año'} contra el presupuesto${hayFiltroGrupo ? ' <span class="field-note">(la curva diaria es de toda la mesa)</span>' : ''}</div>
+        ${_svgDiaria(serieDiaria, hayFiltroGrupo ? c.presuMesaAnual : c.presuAnual, c.anio, c.rango)}
         <div class="field-note" style="font-size:11px;">
           <span style="color:${_PC.ambar};">— — </span> la curva del presupuesto (la que manda) ·
-          <span style="opacity:.7;">· · ·</span> el anual repartido en ${diasAnio} días iguales.</div>
+          <span style="opacity:.7;">· · ·</span> ${esParcial
+            ? `el presupuesto de ${nombrePeriodo} repartido en sus ${c.diasPeriodo} días iguales`
+            : `el anual repartido en ${diasAnio} días iguales`}.</div>
       </div>
     </div>
 
     ${_bloque('Producción contra presupuesto, mes a mes',
       _svgMensual(meses),
-      'Barra gris: presupuesto del mes · barra de color: producción · línea azul: % de cumplimiento (tope 200%).')}
+      'Barra gris: presupuesto del mes · barra de color: producción · línea azul: % de cumplimiento (tope 200%).' +
+      (esParcial ? ` Los meses fuera de <b>${_esc(nombrePeriodo)}</b> van atenuados: se ven, pero no entran en los totales de arriba.` : ''),
+      esParcial ? 'el año completo, con ' + nombrePeriodo + ' resaltado' : '')}
 
     <div style="display:flex;gap:14px;flex-wrap:wrap;">
       <div style="flex:1;min-width:320px;">
@@ -32424,11 +32526,12 @@ function renderPresupuesto(){
         ${_bloque('Por mercado — producción', _svgBarrasH(Object.entries(porMercado).sort((a,b)=>b[1]-a[1])
             .map(([k,v])=>({etiqueta:k, valor:v, texto:'$'+_mm(v), color:_PC.azul}))),
           'No hay cumplimiento por mercado: el maestro de grupos no guarda presupuesto por mercado.')}
-        ${_bloque('Por grupo — cumplimiento <span class="field-note">(los 12 de mayor presupuesto)</span>',
+        ${_bloque('Por grupo — cumplimiento',
           _svgBarrasH(brechas.slice().sort((a,b)=>b.pAnual - a.pAnual).slice(0,12)
             .map(x=>({etiqueta:x.grupo, valor:x.cumpl, texto:_pct(x.cumpl),
                       color: x.cumpl >= 100 ? _PC.verde : (x.cumpl >= 80 ? _PC.ambar : _PC.rojo)}))
-            .sort((a,b)=>b.valor - a.valor), {ref:100}), notaCumpl)}
+            .sort((a,b)=>b.valor - a.valor), {ref:100}), notaCumpl,
+          '(los 12 de mayor presupuesto)')}
         ${_bloque('Concentración',
           `<div style="font-size:26px;font-weight:800;color:${conc > 70 ? _PC.ambar : 'inherit'};">${_pct(conc)}</div>`,
           `Los 5 grupos más grandes aportan $${_mm(top5)} de $${_mm(c.produccion)}. ` +
@@ -32464,12 +32567,12 @@ function renderPresupuesto(){
           ${_presuTH('trader', 'Trader', 'center')}
           ${_presuTH('categoria', 'Categoría', 'left')}
           ${_presuTH('pAnual', 'Presup. año')}
-          ${c.mes ? _presuTH('pPeriodo', 'Presup. ' + nombrePeriodo) : ''}
+          ${esParcial ? _presuTH('pPeriodo', 'Presup. ' + nombrePeriodo) : ''}
           ${_presuTH('pAcum', 'A hoy')}
           ${_presuTH('prod', 'Producción')}
           ${_presuTH('brecha', 'Brecha')}
           ${_presuTH('cumpl', '% a hoy')}
-          ${_presuTH('cumplTotal', c.mes ? '% ' + nombrePeriodo : '% del año')}
+          ${_presuTH('cumplTotal', esParcial ? '% ' + nombrePeriodo : '% del año')}
         </tr></thead>
         <tbody>${_presuAplicarOrden(brechas).map(x=>`
           <tr style="border-top:1px solid var(--border,#232938);">
@@ -32477,7 +32580,7 @@ function renderPresupuesto(){
             <td style="padding:4px 8px;text-align:center;">${_esc(x.trader||'—')}</td>
             <td style="padding:4px 8px;">${_esc(x.categoria||'—')}</td>
             <td style="padding:4px 8px;text-align:right;opacity:.7;">$${_mm(x.pAnual)}</td>
-            ${c.mes ? `<td style="padding:4px 8px;text-align:right;">$${_mm(x.pPeriodo)}</td>` : ''}
+            ${esParcial ? `<td style="padding:4px 8px;text-align:right;">$${_mm(x.pPeriodo)}</td>` : ''}
             <td style="padding:4px 8px;text-align:right;opacity:.7;">$${_mm(x.pAcum)}</td>
             <td style="padding:4px 8px;text-align:right;font-weight:600;">$${_mm(x.prod)}</td>
             <td style="padding:4px 8px;text-align:right;color:${x.brecha>=0?_PC.verde:_PC.rojo};">
@@ -32490,7 +32593,7 @@ function renderPresupuesto(){
         <tfoot><tr style="border-top:2px solid var(--border,#232938);font-weight:700;">
           <td style="padding:6px 8px;" colspan="3">TOTAL · ${c.grupos.length} grupo(s)</td>
           <td style="padding:6px 8px;text-align:right;">$${_mm(c.presuAnual)}</td>
-          ${c.mes ? `<td style="padding:6px 8px;text-align:right;">$${_mm(c.presuPeriodo)}</td>` : ''}
+          ${esParcial ? `<td style="padding:6px 8px;text-align:right;">$${_mm(c.presuPeriodo)}</td>` : ''}
           <td style="padding:6px 8px;text-align:right;">$${_mm(c.presuACorte)}</td>
           <td style="padding:6px 8px;text-align:right;">$${_mm(c.produccion)}</td>
           <td style="padding:6px 8px;text-align:right;color:${brecha>=0?_PC.verde:_PC.rojo};">
@@ -33035,7 +33138,7 @@ async function descargarEjecucionXLSX(){
   const c = _presuCorte();
   const porGrupo = {};
   c.filas.forEach(r=>{ porGrupo[r.grupo] = (porGrupo[r.grupo]||0) + (Number(r.comision)||0); });
-  const periodo = c.mes ? MESES_CORTOS[c.mes-1] : 'año';
+  const periodo = c.etiqueta || 'año';
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Ejecución');
   // El Excel usa los MISMOS factores de la pantalla. Si aquí se volviera a
@@ -33062,7 +33165,7 @@ async function descargarEjecucionXLSX(){
   // produjo es un Excel que alguien va a leer como si fuera el total.
   r++;
   ws.getCell(r,1).value = 'Corte';
-  ws.getCell(r,2).value = [c.mes ? periodo + ' ' + c.anio : 'Año ' + c.anio,
+  ws.getCell(r,2).value = [!c.esAnio ? periodo + ' ' + c.anio : 'Año ' + c.anio,
     c.fT && 'trader ' + c.fT, c.fC, c.fM && 'mercado ' + c.fM, c.fG].filter(Boolean).join(' · ');
   ws.getCell(r,1).font = { bold:true };
   if(c.sinPresuMercado){
@@ -33072,11 +33175,11 @@ async function descargarEjecucionXLSX(){
     ws.getCell(r+1,1).font = { bold:true };
   }
   ws.views = [{ state:'frozen', ySplit:1 }];
-  const slug = `${c.anio}${c.mes ? String(c.mes).padStart(2,'0') : ''}`;
+  const slug = `${c.anio}${c.mes ? String(c.mes).padStart(2,'0') : (c.sem ? 'S'+c.sem : '')}`;
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-29 19:45 UTC · v287';
+const BUILD_ID = '2026-10-29 20:30 UTC · v288';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
