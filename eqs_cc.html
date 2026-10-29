@@ -16598,7 +16598,26 @@ function filasBODeCliente(cliente){
       if(!_porLote.has(lote)) _porLote.set(lote, { h, patas:_pt });
       return;                        // esta operación la arma el bloque de patas
     }
-    const brk = String(h.broker||'').toUpperCase() || 'CCSI';
+    // DE DÓNDE SALE EL BROKER DE NUESTRA PATA (Sergio, 29-oct)
+    // --------------------------------------------------------
+    // Aquí decía `h.broker || 'CCSI'`. Dos problemas, y los dos costaron plata:
+    //   · `h.broker` se guardaba con el broker de la línea DEL CLIENTE, que es
+    //     CCSI aunque hayamos ejecutado contra un market maker.
+    //   · y si venía vacío, el `|| 'CCSI'` lo daba por sentado.
+    // De esta pata sale el NET AMOUNT con el que el dashboard calcula la
+    // utilidad, así que una RFQE contra VIRT cargaba el mínimo de USD 20 que no
+    // existe: PROTECCIÓN apareció en US$ -12.
+    //
+    // Con UNA sola pata guardada, esa pata manda: trae el broker de verdad,
+    // guardado por `_rviPatasEjecutadas`. Esto además arregla las operaciones
+    // que YA están guardadas —el dato bueno siempre estuvo ahí, nadie lo
+    // leía—, sin tener que volver a generarlas.
+    //
+    // El `|| 'CCSI'` se queda SOLO como último recurso, para los registros
+    // viejos que se guardaron antes de que existiera el campo: quitarlo les
+    // pondría el costo del broker en cero y cambiaría historia ya cuadrada.
+    const brk = String((_pt.length === 1 ? _pt[0].broker : '') || h.broker || '')
+                  .toUpperCase() || 'CCSI';
     // La clave incluye el PRECIO DE EJECUCIÓN y el lado: si en el día hay dos
     // ejecuciones de la misma especie a precios distintos —VWO a 59,5741 y a
     // 59,45 el 16-sep— fusionarlas en una sola pata valora unas al precio de
@@ -29755,9 +29774,14 @@ function generarTC(){
       // después por qué esta operación no siguió el maestro.
       comPctPactada: _pctPact,
       ccsi:ccsiAcc, tradeDate, settleDate, tipo,
-      // Datos de NUESTRA pata, para la planilla del BO. `lineaActiva` es el id;
-      // la línea en sí se busca aquí porque `linea` se declara más abajo.
-      broker: ((emsxData.find(r=>r.id===lineaActiva))||{}).broker || '',
+      // Datos de NUESTRA pata, para la planilla del BO.
+      // Aquí decía `emsxData.find(r => r.id === lineaActiva).broker`, que es la
+      // línea DEL CLIENTE y viene con CCSI. Este campo es el que lee
+      // `filasBODeCliente` para decidir si el broker cobra, y de esa pata sale
+      // la utilidad del dashboard: por eso PROTECCIÓN salía en US$ -12 contra
+      // un market maker. Es el MISMO defecto que el del freno y el del `ccsi`,
+      // en el cuarto sitio (Sergio, 29-oct).
+      broker: _rviBrokerNuestro(),
       // NUESTRAS patas: una por broker contra el que se ejecutó. `broker` de
       // arriba sigue siendo el de la primera línea y no se toca —lo leen el
       // dashboard y la vista del histórico—, pero la planilla del BO usa esto
@@ -33052,7 +33076,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-29 19:20 UTC · v286';
+const BUILD_ID = '2026-10-29 19:45 UTC · v287';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
