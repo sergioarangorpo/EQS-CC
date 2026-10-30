@@ -10710,22 +10710,43 @@ function asignarGrupoOrden(oid, grupo){
   if(typeof renderModuloReportes === 'function') renderModuloReportes();
 }
 
-// Se guarda para que no se pierda al recargar, pero es best-effort: si la
-// tabla no existe, la asignacion vale para la sesion y se avisa en consola.
+// Se guarda para que no se pierda al recargar.
+//
+// QUITAR UNA ASIGNACIÓN ES BORRARLA (Sergio, 30-oct)
+// --------------------------------------------------
+// Aquí, al dejar el selector en vacío, se hacía un POST con `grupo: ''`. Con
+// `merge-duplicates` eso no borra: deja la fila viva con el grupo en blanco.
+// Funcionaba de casualidad —`cargarAsignacionOrdenes` ignora las vacías— pero
+// la tabla se iba llenando de filas muertas y, lo que importa, "quitar" no
+// quitaba nada. Vaciar el selector ahora hace DELETE.
+//
+// Y si no se puede guardar, se AVISA EN PANTALLA. Antes solo iba a la consola:
+// la asignación valía para la sesión, se perdía al recargar, y nadie se
+// enteraba hasta que el aviso volvía a salir.
 async function guardarAsignacionOrden(oid, grupo){
+  const g = String(grupo || '').trim();
+  const h = { 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
+              'Content-Type':'application/json' };
   try{
-    const r = await fetch(`${SUPA_URL}/rest/v1/asignacion_ordenes?on_conflict=parent_order_id`, {
-      method:'POST',
-      headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
-                'Content-Type':'application/json', 'Prefer':'resolution=merge-duplicates' },
-      body: JSON.stringify([{ parent_order_id:String(oid), grupo:String(grupo||''),
-        usuario:(typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
-        asignado_en:new Date().toISOString() }]),
-    });
+    const r = g
+      ? await fetch(`${SUPA_URL}/rest/v1/asignacion_ordenes?on_conflict=parent_order_id`, {
+          method:'POST',
+          headers:{ ...h, 'Prefer':'resolution=merge-duplicates' },
+          body: JSON.stringify([{ parent_order_id:String(oid), grupo:g,
+            usuario:(typeof USUARIO !== 'undefined' ? USUARIO : 'SAR'),
+            asignado_en:new Date().toISOString() }]),
+        })
+      : await fetch(`${SUPA_URL}/rest/v1/asignacion_ordenes?parent_order_id=eq.${encodeURIComponent(String(oid))}`,
+                    { method:'DELETE', headers:h });
     if(!r.ok) throw new Error('HTTP ' + r.status);
   }catch(e){
     console.warn('No se pudo guardar la asignación (¿falta crear_asignacion_ordenes.sql?). ' +
                  'Vale para esta sesión:', e.message);
+    if(typeof avisoFalla === 'function')
+      avisoFalla('La asignación no se guardó',
+        `Vale para <b>esta sesión</b>, pero se pierde al recargar la página.<br><br>` +
+        `Motivo: ${e.message}. Si dice 404, falta correr ` +
+        `<code>crear_asignacion_ordenes.sql</code>.`);
   }
 }
 
@@ -33210,7 +33231,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-30 15:05 UTC · v289';
+const BUILD_ID = '2026-10-30 15:25 UTC · v290';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -33229,6 +33250,31 @@ if(typeof cargarMaestros === 'function') cargarMaestros();
 if(typeof poblarNemosFlujo === 'function') poblarNemosFlujo();
 if(typeof cargarFlujosDia === 'function') cargarFlujosDia();
 if(typeof cargarMaestroGrupos === 'function') cargarMaestroGrupos();
+// LA ASIGNACIÓN A MANO, AL ARRANCAR (Sergio, 30-oct)
+// ---------------------------------------------------
+// `cargarAsignacionOrdenes` existía desde el 14-oct y NO LA LLAMABA NADIE. O
+// sea: la asignación se guardaba en Supabase y no se leía nunca. Crear la
+// tabla sola no habría arreglado nada — el dato habría quedado ahí, correcto
+// y sin que el app lo mirara.
+//
+// Se re-resuelve después de cargar: si el archivo de Fidessa ya estaba en
+// pantalla cuando llegó la respuesta, la asignación quedaría en memoria y la
+// tabla seguiría mostrando el grupo sin resolver. Es una carrera real, porque
+// el archivo lo abre una persona y puede hacerlo antes de que Supabase conteste.
+if(typeof cargarAsignacionOrdenes === 'function')
+  cargarAsignacionOrdenes().then(()=>{
+    try{
+      if(typeof _fidessaTradesRaw === 'undefined' || !_fidessaTradesRaw) return;
+      const oids = Object.keys(_fidessaTradesRaw);
+      if(!oids.length) return;
+      oids.forEach(oid=>{
+        const t = _fidessaTradesRaw[oid];
+        if(t) t.grupo = grupoDeTrade(t.book || '', t.notes, oid);
+      });
+      if(typeof renderFidessaTradesPanel === 'function') renderFidessaTradesPanel();
+      if(typeof renderModuloReportes === 'function') renderModuloReportes();
+    }catch(e){ console.warn('re-resolver tras cargar asignaciones:', e.message); }
+  });
 if(typeof cargarVerificadosRFI === 'function') cargarVerificadosRFI();
 if(typeof cargarBlotterRFIDesdeSupabase === 'function') cargarBlotterRFIDesdeSupabase();
 // La TRM de la planilla arranca con la del informe diario; se puede editar.
