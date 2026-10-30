@@ -8052,17 +8052,36 @@ function limpiarAccountFidessa(v){
     .trim();
 }
 
-function _fondoFolioFFMM(f){
-  const malos = new Set(['CREDICORPFFMM', 'CREDICORP CAPITAL AM', 'CC AM', '']);
-  const limpio = limpiarAccountFidessa;
-  const sirve  = v => v && !malos.has(limpio(v).toUpperCase());
+// UN NOMBRE DE LIBRO NO ES UN FONDO — y la regla vive en UN solo sitio
+// ---------------------------------------------------------------------
+// `CREDICORPFFMM` es el libro bajo el que conviven los cuatro macrogrupos, no
+// el portafolio de nadie. Eso ya estaba dicho arriba, pero estaba IMPLEMENTADO
+// solo en `_fondoFolioFFMM` —el camino del Excel— y no en `fondoDeFolioFFMM`,
+// que es el de la clasificación y el freno.
+//
+// El 30-oct eso frenó un reporte de CC AM que estaba completo: los folios de
+// VOOCO y IUITCO traían `CREDICORPFFMM` en su propio Account, y la orden padre
+// traía el fondo de verdad —`FI SMURFIT II` y `AHORRO ESP 39`— en el Notes.
+// `fondoDeFolioFFMM` devolvía el nombre del libro y se daba por satisfecha,
+// porque `a || b` con `a` no vacío nunca mira `b`. El freno rechazaba una
+// operación que el generador del Excel sí habría resuelto.
+//
+// Ahora las dos preguntan lo mismo. Si un día cambia la lista de libros, cambia
+// en un solo lugar.
+const _FFMM_NO_ES_FONDO = new Set(['CREDICORPFFMM', 'CREDICORP CAPITAL AM', 'CC AM', '']);
+function _ffmmEsNombreDeFondo(v){
+  const s = limpiarAccountFidessa(v).toUpperCase();
+  return !!s && !_FFMM_NO_ES_FONDO.has(s);
+}
 
+function _fondoFolioFFMM(f){
+  const limpio = limpiarAccountFidessa;
   const porResolvedor = (typeof fondoDeFolioFFMM === 'function') ? fondoDeFolioFFMM(f) : '';
-  if(sirve(porResolvedor)) return limpio(porResolvedor);
+  if(_ffmmEsNombreDeFondo(porResolvedor)) return limpio(porResolvedor);
 
   // Último recurso: el Account de la orden padre tal cual está en Fidessa.
   const t = (_fidessaTradesRaw || {})[String(f.parentOrderId)] || {};
-  return sirve(t.notes) ? limpio(t.notes) : '';
+  return _ffmmEsNombreDeFondo(t.notes) ? limpio(t.notes) : '';
 }
 
 const CCFFMM_MACROGRUPOS = {
@@ -8089,8 +8108,21 @@ function fondoDeFolioFFMM(f){
   // 2) Si no hay asignación, el Account de Fidessa o EMSX. Siempre limpio: el
   //    export trae espacios duros y restos de codificación. Ver
   //    `limpiarAccountFidessa`.
-  return limpiarAccountFidessa(f.notes || f.portafolio)
-      || limpiarAccountFidessa(((_fidessaTradesRaw||{})[String(f.parentOrderId)]||{}).notes);
+  //
+  //    OJO CON EL `||` (Sergio, 30-oct). Aquí decía:
+  //        limpiarAccountFidessa(f.notes || f.portafolio) || ...la orden padre
+  //    y `a || b` con `a` no vacío NUNCA mira `b`. Cuando el folio traía
+  //    `CREDICORPFFMM` —el nombre del LIBRO— se devolvía eso y no se llegaba
+  //    nunca a la orden padre, que es donde estaba el fondo de verdad.
+  //    Hay que preguntar si el valor NOMBRA UN FONDO, no si está lleno.
+  const propio = f.notes || f.portafolio;
+  if(_ffmmEsNombreDeFondo(propio)) return limpiarAccountFidessa(propio);
+  const padre = ((_fidessaTradesRaw||{})[String(f.parentOrderId)]||{}).notes;
+  if(_ffmmEsNombreDeFondo(padre)) return limpiarAccountFidessa(padre);
+  // Si lo único que hay es el nombre del libro, se devuelve igual —no sirve
+  // como fondo, pero el aviso necesita poder decir QUÉ decía el Account. Un
+  // freno que no dice por qué obliga a adivinar.
+  return limpiarAccountFidessa(propio) || limpiarAccountFidessa(padre);
 }
 
 // El fondo que sale del reparto: se busca la orden del folio en el store de
@@ -33354,7 +33386,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-30 16:40 UTC · v291';
+const BUILD_ID = '2026-10-30 19:40 UTC · v292';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
