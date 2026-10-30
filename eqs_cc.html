@@ -32159,39 +32159,152 @@ function _svgBarrasH(datos, opc){
 }
 
 // Barras agrupadas (producción vs presupuesto) con línea de cumplimiento.
+// LA ESCALA DEL EJE: un número redondo, no el máximo crudo (Sergio, 30-oct)
+// -------------------------------------------------------------------------
+// "a esa gráfica le faltan ejes con valores para intuir números". Un eje que
+// termine en 1.347 M no ayuda a intuir nada; uno que termine en 1.500 M con
+// marcas cada 500 sí. Se sube al siguiente 1 / 2 / 2,5 / 5 × 10^n.
+function _escalaEje(max, cuantas){
+  const n = Math.max(Number(max) || 0, 1);
+  const objetivo = n / (cuantas || 4);
+  const mag = Math.pow(10, Math.floor(Math.log10(objetivo)));
+  const paso = [1, 2, 2.5, 5, 10].map(k => k * mag).find(p => p >= objetivo) || 10 * mag;
+  const tope = Math.ceil(n / paso) * paso;
+  const marcas = [];
+  for(let v = 0; v <= tope + 1e-9; v += paso) marcas.push(v);
+  return { tope, paso, marcas };
+}
+
 function _svgMensual(meses){
   const d = meses || [];
   if(!d.length) return '<div class="field-note" style="padding:8px;">Sin datos.</div>';
-  const W = 1000, H = 260, mIzq = 8, mDer = 8, mTop = 16, mBot = 26;
-  const max = Math.max(...d.map(x=>Math.max(x.produccion, x.presupuesto)), 1);
+  // Márgenes de verdad: hay que dejarle lugar a los dos ejes. El izquierdo son
+  // pesos; el derecho, el % de cumplimiento de la línea azul. Antes los dos
+  // márgenes eran de 8px porque no había nada que escribir.
+  const W = 1000, H = 300, mIzq = 74, mDer = 48, mTop = 18, mBot = 28;
+  const crudo = Math.max(...d.map(x=>Math.max(x.produccion, x.presupuesto)), 1);
+  const E = _escalaEje(crudo, 4);
   const ancho = (W - mIzq - mDer) / d.length;
   const bw = Math.max(5, ancho*0.3);
-  const yDe = v => mTop + (1 - v/max) * (H - mTop - mBot);
-  const puntos = d.map((x,i)=>{
-    const cx = mIzq + i*ancho + ancho/2;
-    const cum = x.presupuesto > 0 ? Math.min(x.produccion/x.presupuesto, 2) : 0;
-    return `${cx},${mTop + (1 - cum/2) * (H - mTop - mBot)}`;
-  }).join(' ');
+  const yDe = v => mTop + (1 - v/E.tope) * (H - mTop - mBot);
+  // El eje derecho va de 0 a 200%, que es el tope al que la línea se recorta.
+  const yPct = p => mTop + (1 - Math.min(p,2)/2) * (H - mTop - mBot);
+  const cumplDe = x => x.presupuesto > 0 ? x.produccion/x.presupuesto : 0;
+  const puntos = d.map((x,i)=>
+    `${(mIzq + i*ancho + ancho/2).toFixed(1)},${yPct(cumplDe(x)).toFixed(1)}`).join(' ');
+
+  // Rejilla + eje de pesos.
+  const rejilla = E.marcas.map(v=>{
+    const y = yDe(v).toFixed(1);
+    return `<line x1="${mIzq}" y1="${y}" x2="${W-mDer}" y2="${y}" stroke="${_PC.gris}" ` +
+           `stroke-width="1"${v > 0 ? ' stroke-dasharray="2,4"' : ''}/>` +
+           `<text x="${mIzq-8}" y="${(Number(y)+3.5).toFixed(1)}" text-anchor="end" ` +
+           `font-size="10.5" fill="${_PC.texto}">${v === 0 ? '0' : '$'+_mm(v)}</text>`;
+  }).join('');
+  // Eje derecho: el 100% marcado, que es la línea que importa.
+  const ejePct = [0, 0.5, 1, 1.5, 2].map(p=>{
+    const y = yPct(p).toFixed(1);
+    return (p === 1
+      ? `<line x1="${mIzq}" y1="${y}" x2="${W-mDer}" y2="${y}" stroke="${_PC.azul}" ` +
+        `stroke-width="1" stroke-dasharray="5,4" opacity=".45"/>` : '') +
+      `<text x="${W-mDer+7}" y="${(Number(y)+3.5).toFixed(1)}" text-anchor="start" ` +
+      `font-size="10" fill="${p === 1 ? _PC.azul : _PC.texto}" ` +
+      `opacity="${p === 1 ? 1 : .6}">${(p*100).toFixed(0)}%</text>`;
+  }).join('');
+
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;">` +
-    `<line x1="${mIzq}" y1="${H-mBot}" x2="${W-mDer}" y2="${H-mBot}" stroke="${_PC.gris}"/>` +
+    rejilla + ejePct +
     d.map((x,i)=>{
       const x0 = mIzq + i*ancho + ancho/2;
-      const yP = yDe(x.presupuesto), yC = yDe(x.produccion);
+      const yP = yDe(Math.min(x.presupuesto, E.tope)), yC = yDe(Math.min(x.produccion, E.tope));
       // Los meses que NO entran en el período seleccionado se atenúan en vez
       // de desaparecer: el año sigue viéndose completo, pero se distingue de
       // un vistazo qué está contando el resto de la pantalla (Sergio, 29-oct).
       const op = x.fuera ? .22 : 1;
       return `<g opacity="${op}">` +
-        `<rect x="${x0-bw-2}" y="${yP}" width="${bw}" height="${H-mBot-yP}" rx="2" fill="${_PC.gris}"/>` +
-        `<rect x="${x0+2}" y="${yC}" width="${bw}" height="${H-mBot-yC}" rx="2" fill="${x.produccion>=x.presupuesto?_PC.verde:_PC.ambar}" opacity=".9"/>` +
-        `<text x="${x0}" y="${H-8}" text-anchor="middle" font-size="11" fill="${_PC.texto}">${x.etiqueta}</text></g>`;
+        `<rect x="${x0-bw-2}" y="${yP}" width="${bw}" height="${Math.max(0,H-mBot-yP)}" rx="2" fill="${_PC.gris}"/>` +
+        `<rect x="${x0+2}" y="${yC}" width="${bw}" height="${Math.max(0,H-mBot-yC)}" rx="2" fill="${x.produccion>=x.presupuesto?_PC.verde:_PC.ambar}" opacity=".9"/>` +
+        `<text x="${x0}" y="${H-9}" text-anchor="middle" font-size="11" fill="${_PC.texto}">${x.etiqueta}</text></g>`;
     }).join('') +
+    `<line x1="${mIzq}" y1="${H-mBot}" x2="${W-mDer}" y2="${H-mBot}" stroke="${_PC.texto}" opacity=".45"/>` +
     `<polyline points="${puntos}" fill="none" stroke="${_PC.azul}" stroke-width="2" opacity=".9"/>` +
     d.map((x,i)=>{
       const cx = mIzq + i*ancho + ancho/2;
-      const cum = x.presupuesto > 0 ? Math.min(x.produccion/x.presupuesto, 2) : 0;
-      return `<circle cx="${cx}" cy="${mTop + (1 - cum/2)*(H-mTop-mBot)}" r="3" fill="${_PC.azul}"/>`;
+      return `<circle cx="${cx.toFixed(1)}" cy="${yPct(cumplDe(x)).toFixed(1)}" r="3" ` +
+             `fill="${_PC.azul}" opacity="${x.fuera ? .3 : 1}"/>`;
     }).join('') + '</svg>';
+}
+
+// LA TABLA MES A MES (Sergio, 30-oct)
+// -----------------------------------
+// "si bien en las barras algo muestran... en ocasiones es bueno ver el detalle
+// mes a mes, esas tablas obvio dinámicas con todos los filtros".
+//
+// Sale de los MISMOS `meses` que dibuja la gráfica, que ya vienen filtrados por
+// trader, categoría, mercado y grupo. Un segundo cálculo en paralelo sería dos
+// verdades sobre la misma plata.
+//
+// Las columnas acumuladas son las que de verdad sirven para la remuneración:
+// la bolsa sale del cumplimiento del período, no del mes suelto. El acumulado
+// cuenta SOLO los meses del período —en el 2S, lo de enero a junio no entra—
+// y por eso arranca de cero en julio.
+function _tablaMensual(meses, c){
+  const d = (meses || []);
+  if(!d.length) return '<div class="field-note" style="padding:8px;">Sin datos.</div>';
+  const dentro = d.filter(x=>!x.fuera);
+  let accP = 0, accB = 0;
+  const filas = d.map(x=>{
+    if(!x.fuera){ accP += x.produccion; accB += x.presupuesto; }
+    const dif   = x.produccion - x.presupuesto;
+    const cum   = x.presupuesto > 0 ? x.produccion/x.presupuesto*100 : 0;
+    const cumAc = accB > 0 ? accP/accB*100 : 0;
+    const col   = v => v >= 100 ? _PC.verde : (v >= 80 ? _PC.ambar : _PC.rojo);
+    // Un mes de un período que no es el elegido se ve, pero se ve apagado y
+    // sin acumulado: ese acumulado no es el suyo.
+    const o = x.fuera ? 'opacity:.35;' : '';
+    return `<tr style="${o}">
+      <td style="padding:5px 9px;">${_esc(x.etiqueta)}${x.fuera?' <span class="field-note" style="font-size:10px;">fuera</span>':''}</td>
+      <td style="padding:5px 9px;text-align:right;">$${_mm(x.produccion)}</td>
+      <td style="padding:5px 9px;text-align:right;opacity:.75;">$${_mm(x.presupuesto)}</td>
+      <td style="padding:5px 9px;text-align:right;color:${dif>=0?_PC.verde:_PC.rojo};">
+        ${dif>=0?'+':'−'}$${_mm(Math.abs(dif))}</td>
+      <td style="padding:5px 9px;text-align:right;font-weight:700;color:${col(cum)};">${_pct(cum)}</td>
+      <td style="padding:5px 9px;text-align:right;">${x.fuera?'—':'$'+_mm(accP)}</td>
+      <td style="padding:5px 9px;text-align:right;opacity:.75;">${x.fuera?'—':'$'+_mm(accB)}</td>
+      <td style="padding:5px 9px;text-align:right;font-weight:700;color:${x.fuera?_PC.texto:col(cumAc)};">
+        ${x.fuera?'—':_pct(cumAc)}</td>
+    </tr>`;
+  }).join('');
+  const tP = dentro.reduce((a,x)=>a+x.produccion, 0);
+  const tB = dentro.reduce((a,x)=>a+x.presupuesto, 0);
+  const tD = tP - tB, tC = tB > 0 ? tP/tB*100 : 0;
+  const etiqueta = (c && !c.esAnio) ? c.etiqueta : 'el año';
+  return `<div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+      <thead><tr style="color:rgba(255,255,255,.5);font-size:10.5px;letter-spacing:.4px;">
+        <th style="padding:5px 9px;text-align:left;">MES</th>
+        <th style="padding:5px 9px;text-align:right;">EJECUCIÓN</th>
+        <th style="padding:5px 9px;text-align:right;">PRESUPUESTO</th>
+        <th style="padding:5px 9px;text-align:right;">DIFERENCIA</th>
+        <th style="padding:5px 9px;text-align:right;">% MES</th>
+        <th style="padding:5px 9px;text-align:right;border-left:1px solid rgba(255,255,255,.10);">EJEC. ACUM</th>
+        <th style="padding:5px 9px;text-align:right;">PRESU. ACUM</th>
+        <th style="padding:5px 9px;text-align:right;">% ACUM</th>
+      </tr></thead>
+      <tbody>${filas}
+        <tr style="border-top:1px solid rgba(255,255,255,.18);font-weight:700;">
+          <td style="padding:7px 9px;">${_esc(etiqueta)}</td>
+          <td style="padding:7px 9px;text-align:right;">$${_mm(tP)}</td>
+          <td style="padding:7px 9px;text-align:right;">$${_mm(tB)}</td>
+          <td style="padding:7px 9px;text-align:right;color:${tD>=0?_PC.verde:_PC.rojo};">
+            ${tD>=0?'+':'−'}$${_mm(Math.abs(tD))}</td>
+          <td style="padding:7px 9px;text-align:right;color:${tC>=100?_PC.verde:(tC>=80?_PC.ambar:_PC.rojo)};">${_pct(tC)}</td>
+          <td style="padding:7px 9px;text-align:right;">$${_mm(tP)}</td>
+          <td style="padding:7px 9px;text-align:right;">$${_mm(tB)}</td>
+          <td style="padding:7px 9px;text-align:right;color:${tC>=100?_PC.verde:(tC>=80?_PC.ambar:_PC.rojo)};">${_pct(tC)}</td>
+        </tr>
+      </tbody>
+    </table></div>`;
 }
 
 // Curva diaria acumulada contra la recta del presupuesto.
@@ -32559,9 +32672,19 @@ function renderPresupuesto(){
 
     ${_bloque('Producción contra presupuesto, mes a mes',
       _svgMensual(meses),
-      'Barra gris: presupuesto del mes · barra de color: producción · línea azul: % de cumplimiento (tope 200%).' +
+      'Eje izquierdo en pesos · eje derecho el % de cumplimiento (la línea azul, tope 200%) · ' +
+      'barra gris: presupuesto del mes · barra de color: producción.' +
       (esParcial ? ` Los meses fuera de <b>${_esc(nombrePeriodo)}</b> van atenuados: se ven, pero no entran en los totales de arriba.` : ''),
       esParcial ? 'el año completo, con ' + nombrePeriodo + ' resaltado' : '')}
+
+    ${_bloque('El detalle, mes a mes',
+      _tablaMensual(meses, c),
+      (esParcial
+        ? `Las columnas acumuladas cuentan SOLO los meses de <b>${_esc(nombrePeriodo)}</b>, así que arrancan de cero en ${_esc(meses.find(m=>!m.fuera) ? meses.find(m=>!m.fuera).etiqueta : nombrePeriodo)}. `
+        : 'Las columnas acumuladas van de enero a diciembre. ') +
+      'El acumulado del período es el número contra el que se mide la bolsa de remuneración.' +
+      (c.sinPresuMercado ? ' <span style="color:var(--amber,#f59e0b);">Con filtro de mercado el presupuesto no baja: el maestro no lo guarda por mercado.</span>' : ''),
+      [c.fT && 'trader ' + c.fT, c.fC, c.fM, c.fG].filter(Boolean).join(' · '))}
 
     <div style="display:flex;gap:14px;flex-wrap:wrap;">
       <div style="flex:1;min-width:320px;">
@@ -33231,7 +33354,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-30 15:25 UTC · v290';
+const BUILD_ID = '2026-10-30 16:40 UTC · v291';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
