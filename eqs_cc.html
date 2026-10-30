@@ -8515,7 +8515,23 @@ const _NEMOS_DEL_MAESTRO = new Set(NEMO_TABLE.map(r=>String(r.nuam||'').toUpperC
 
 // Nemos que aparecieron hoy y NO estaban en la tabla. Se deducen y se registran
 // para que el resto de la sesión los trate igual que a los conocidos.
+//
+// OJO CON LA CARRERA (Sergio, 30-oct). `cargarMaestros()` arranca SIN `await`,
+// así que si el archivo de Fidessa se abre antes de que Supabase conteste, la
+// tabla de nemos está vacía y un nemo que existe hace días —JREECO, que lo creó
+// Miguel— se deduce como nuevo. El dato nunca faltó: el app preguntó temprano.
+//
+// Eso tenía dos consecuencias, y la segunda es la cara:
+//   · el aviso se quedaba PEGADO toda la sesión, porque nada limpiaba este
+//     objeto aunque el maestro llegara un segundo después;
+//   · y cualquier reporte generado en esa ventana salía SIN EL ISIN, que es
+//     mucho peor que un aviso de más.
+// Ver `_maestrosListos`: ahora el lector espera a los maestros antes de leer.
 const _NEMOS_NUEVOS = {};
+
+// Promesa de la carga inicial de maestros. Quien necesite que los maestros
+// estén puestos la espera en vez de confiar en que ya llegaron.
+let _maestrosListos = null;
 
 // Deduce el nemo NUAM de un símbolo desconocido. Fidessa escribe el nemo con
 // un sufijo de plaza (".BGa", ".BG", ".CN"); quitándolo queda el nemo NUAM
@@ -10619,6 +10635,15 @@ async function cargarArchivoFidessa(input, tipo){
   const file = input.files[0];
   if(!file) return;
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar la librería de Excel (ExcelJS). Revisa tu conexión.'); return; }
+  // LOS MAESTROS PRIMERO (Sergio, 30-oct). Sin esto, abrir el archivo antes de
+  // que Supabase conteste hacía que nemos que SÍ existen se dedujeran como
+  // nuevos —y lo que se generara en esa ventana salía sin ISIN. Se espera, y
+  // si los maestros fallan se sigue igual: esto no puede dejar sin trabajar.
+  if(_maestrosListos){
+    const _est = document.getElementById('fidessaStatus');
+    if(_est) _est.textContent = 'Esperando los maestros…';
+    try{ await _maestrosListos; }catch(e){ console.warn('maestros:', e && e.message); }
+  }
   try{
     const buffer = await file.arrayBuffer();
     const wb = new ExcelJS.Workbook();
@@ -12959,6 +12984,19 @@ function procesarFidessa(){
   // de folios (que doble-cuenta los cruces).
   // Nemos que no estaban en la base: se dedujeron y funcionan, pero conviene
   // agregarlos a Bases_de_datos.xlsx para que queden con su ISIN.
+  if(typeof _NEMOS_NUEVOS !== 'undefined' && Object.keys(_NEMOS_NUEVOS).length){
+    // SOLO LOS QUE DE VERDAD SIGUEN FALTANDO (Sergio, 30-oct). Un nemo que se
+    // dedujo antes de que llegaran los maestros y que YA tiene su ISIN no es
+    // un nemo nuevo: es uno que se preguntó temprano. Se saca de la lista para
+    // que el aviso no se quede pegado el resto de la sesión señalando algo que
+    // ya está resuelto — una alarma que suena sin razón se aprende a ignorar.
+    Object.keys(_NEMOS_NUEVOS).forEach(n=>{
+      const tieneIsin = (typeof _ISIN_POR_NUAM !== 'undefined' && _ISIN_POR_NUAM[n])
+                     || (typeof _maestroEspecies !== 'undefined' && (_maestroEspecies||[])
+                          .some(e => String(e.especie||'').toUpperCase().trim() === n && e.isin));
+      if(tieneIsin) delete _NEMOS_NUEVOS[n];
+    });
+  }
   if(typeof _NEMOS_NUEVOS !== 'undefined' && Object.keys(_NEMOS_NUEVOS).length){
     const nuevos = Object.keys(_NEMOS_NUEVOS);
     const el = document.getElementById('fidessaStatus');
@@ -25704,9 +25742,18 @@ function _normAcc(t){ return String(t||'').toUpperCase()
 const ALIAS_CUENTA_PORTAFOLIO = {
   // FIDUASHMORE: el Account de EMSX viene corto (Sergio, 24-sep).
   'FIDUASHMORE': {
+    // LOS CÓDIGOS NUEVOS (Sergio, 30-oct): de ahora en adelante el Account
+    // llega como `ACEF` (Acciones Colombia + Latam) y `FLACO` (Fondo Latam
+    // Acciones Colombia Obligatorias). Los de antes se dejan: una orden vieja
+    // que se reprocese tiene que seguir resolviendo igual.
+    'ACEF':      'FIC_CO_LATAM',
+    'FLACO':     'FIC_LATAM_OBL',
     'COLATAM':   'FIC_CO_LATAM',
-    'CO+LATAM':  'FIC_CO_LATAM',
     'LATAMOBL':  'FIC_LATAM_OBL',
+    // OJO: `'CO+LATAM'` estaba aquí y NO servía para nada. La búsqueda es
+    // `ALIAS_CUENTA_PORTAFOLIO[cliente][objetivo]`, y `objetivo` ya viene por
+    // `_normAcc`, que borra todo lo que no sea letra o número. Una llave con
+    // `+` adentro no puede calzar nunca. La cubre `COLATAM` (Sergio, 30-oct).
   },
   'COLFONDOS': {
     'CESANTIASLP': 'CESLP',
@@ -33386,7 +33433,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-30 19:40 UTC · v292';
+const BUILD_ID = '2026-10-30 20:15 UTC · v293';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -33400,7 +33447,10 @@ cargarLineasNoReportar().then(cargarReportesGenerados);
 // algo desde Ayudas, así que un portafolio creado por otra persona —o por uno
 // mismo antes de recargar— no aparecía nunca en la lista de asignación
 // (Sergio, 08-sep).
-if(typeof cargarMaestros === 'function') cargarMaestros();
+// Se guarda la PROMESA: el lector de Fidessa la espera antes de leer el
+// archivo, para que un nemo que ya está en la base no se deduzca como nuevo
+// solo porque Supabase todavía no había contestado (Sergio, 30-oct).
+if(typeof cargarMaestros === 'function') _maestrosListos = cargarMaestros();
 // Flujos del día: el desplegable de especies y lo que ya se cargó hoy.
 if(typeof poblarNemosFlujo === 'function') poblarNemosFlujo();
 if(typeof cargarFlujosDia === 'function') cargarFlujosDia();
