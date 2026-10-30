@@ -5266,6 +5266,24 @@ async function guardarBlotterRFI(){
     const iso = d => (d && typeof d.getFullYear === 'function')
       ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
       : null;
+    // SE BORRA LO DE HOY ANTES DE GUARDAR (Sergio, 30-oct).
+    // `rfi_operaciones` no está en `_CONFLICTO_POR_TABLA`, así que el insert va
+    // sin `on_conflict`: volver a subir el mismo blotter —cosa que hay que
+    // hacer cada vez que se corrige algo— metía las líneas OTRA VEZ, y al
+    // recargar la página la utilidad del día salía doble. Borrar primero es
+    // determinista y no depende de qué llaves tenga la tabla.
+    const _del = await fetch(
+      `${SUPA_URL}/rest/v1/rfi_operaciones?fecha=eq.${_hoyISO()}`,
+      { method:'DELETE', headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
+                                   'Prefer':'return=minimal' } });
+    if(!_del.ok){
+      // Si no se pudo borrar, NO se inserta: duplicar es peor que no guardar.
+      // El blotter que está en pantalla sigue siendo el bueno para hoy.
+      console.warn('RFI: no se pudo limpiar lo de hoy (HTTP ' + _del.status + '); no se guarda para no duplicar.');
+      if(typeof avisoFalla === 'function')
+        avisoFalla('El blotter de RFI quedó en pantalla pero NO se guardó: no se pudo limpiar lo de hoy. Si recargas, se pierde.');
+      return;
+    }
     await guardarEnLotesSupabase('rfi_operaciones', _rfiOperaciones.map((f,i)=>({
       clave: `${_hoyISO()}|${f.isin}|${f.boleto}|${i}`,
       fecha: _hoyISO(), isin: f.isin, security: f.security, bs: f.bs,
@@ -5320,8 +5338,8 @@ function revisarNegocioRFI(n){
   if(Math.abs(nomCompra - nomVenta) > 0.001){
     avisos.push(`Los nominales no cuadran: compró ${fmtInt(nomCompra)} y vendió ${fmtInt(nomVenta)}`);
   }
-  if(!n.compras.length) avisos.push('No hay pata de compra (boleto TT) para este ISIN');
-  if(!n.ventas.length)  avisos.push('No hay ventas al cliente (boletos MT) para este ISIN');
+  if(!n.compras.length) avisos.push('No hay pata de compra (ninguna fila con B) para este ISIN');
+  if(!n.ventas.length)  avisos.push('No hay pata de venta (ninguna fila con S) para este ISIN');
   if(n.utilidad < 0)    avisos.push(`La utilidad es NEGATIVA: ${fmtMoney(n.utilidad)}`);
   return avisos;
 }
@@ -5361,10 +5379,11 @@ async function cargarBlotterRFI(input){
       const isin = String(row.getCell(1).value||'').trim();
       if(!isin || !/^[A-Z]{2}/.test(isin)) return;
       const boleto = String(row.getCell(17).value||'').trim().toUpperCase();
+      const bs = String(row.getCell(3).value||'').trim().toUpperCase();
       filas.push({
         isin,
         security: String(row.getCell(2).value||'').trim(),
-        bs: String(row.getCell(3).value||'').trim().toUpperCase(),
+        bs,
         amount: Number(row.getCell(4).value)||0,
         precio: Number(row.getCell(5).value)||0,
         settle: _rfiFecha(row.getCell(6).value),
@@ -5375,8 +5394,21 @@ async function cargarBlotterRFI(input){
         liquidacion: Number(row.getCell(11).value)||0,
         total: Number(row.getCell(13).value)||0,
         boleto,
-        // TT = NOSOTROS COMPRAMOS (al mercado). MT = nosotros vendemos (al cliente).
-        nuestra: boleto === 'TT',
+        // EL LADO LO DICE LA COLUMNA B/S, NO EL TIPO DE BOLETO (Sergio, 30-oct).
+        //
+        // Esto era `nuestra: boleto === 'TT'`. El 30-oct el blotter trajo las
+        // dos patas de VOLCAN 8½ 10/28/32 144A así:
+        //     S 236 @100,65  BLUEBAY   boleto JL
+        //     B 236 @100,60  CO-ASBRFI boleto MT   <- COMPRA, con boleto MT
+        // y como el boleto no era TT la app la contó como VENTA. El negocio
+        // quedó con 0 comprado y 472 vendido, y la utilidad salió $475.395,78
+        // cuando son $118,00 — que es exactamente la "Comisión total" que el
+        // propio archivo trae en esa fila. El REGS de al lado, idéntico pero
+        // con boleto TT en la compra, sí daba bien ($166,00).
+        //
+        // El archivo YA declara el lado en la columna 3. Esa es la fuente. El
+        // tipo de boleto queda solo como respaldo si la columna viene vacía.
+        nuestra: (bs === 'B' || bs === 'S') ? (bs === 'B') : (boleto === 'TT'),
         vendedor: String(row.getCell(18).value||'').trim(),
         fechaOp,
       });
@@ -21787,16 +21819,25 @@ function asignarDesdeEmsxRVL(){
       ok.push({ oid, ports:r.allocations.map(a=>a.portafolio.nombre).join(', ') });
     }else{
       const t = (_fidessaTradesRaw||{})[oid] || {};
+      // Se dice SIEMPRE qué cuentas vio EMSX y con cuánto: sin eso el aviso
+      // solo decía "suma X y los folios Y" y había que adivinar de dónde salía
+      // la diferencia (Sergio, 30-oct).
       fallan.push(`${nemoCanonico(t.security,'fidessa')||oid}: ` +
         (r.faltan && r.faltan.length ? 'cuentas sin portafolio (' + r.faltan.join(', ') + ')'
-         : `EMSX suma ${fmtInt(r.suma)} y los folios ${fmtInt(r.qtyFolios)}`));
+         : `EMSX suma ${fmtInt(r.suma)} y los folios ${fmtInt(r.qtyFolios)}`) +
+        (r.detalle ? `\n        EMSX: ${r.detalle}` : ''));
     }
   });
 
   // Si quedó una sola orden marcada, se refleja en el panel de asignación.
-  if(oids.length === 1 && _allocPorOrden[oids[0]]){
+  // OJO: antes esto solo entraba si la orden SÍ había quedado asignada. Cuando
+  // fallaba, el panel se quedaba mostrando el reparto de la orden ANTERIOR —el
+  // de ACEF encima del de FLACO el 30-oct— y parecía que las líneas se
+  // quedaban pegadas. Ahora el panel apunta siempre a la orden marcada, aunque
+  // sea para mostrarla vacía: lo que se ve es lo que hay.
+  if(oids.length === 1){
     _ordenActiva = oids[0];
-    allocations = _allocPorOrden[oids[0]].slice();
+    allocations = (_allocPorOrden[oids[0]] || []).slice();
     if(typeof renderAllocations === 'function') renderAllocations();
   }
   renderFolios();
@@ -25798,6 +25839,26 @@ function portafolioPorCuentaEmsx(cfg, cuenta){
   return porDentro.length === 1 ? porDentro[0] : null;
 }
 
+// Todas las combinaciones de líneas de EMSX cuyo `filled` suma `objetivo`.
+// Las de cantidad 0 se dejan por fuera: no aportan nada a la suma y sí
+// ensuciarían el reparto metiendo una cuenta de más con cantidad 0.
+// Se corta en 24 líneas y 40 soluciones; más que eso no se adivina.
+function _combinacionesQueSuman(filas, objetivo){
+  const out = [];
+  const útiles = (filas||[]).filter(r => (Number(r.filled)||0) > 0);
+  if(!útiles.length || útiles.length > 24) return out;
+  const n = útiles.length;
+  const q = útiles.map(r => Number(r.filled) || 0);
+  (function buscar(i, suma, pick){
+    if(out.length >= 40) return;
+    if(Math.abs(suma - objetivo) < 0.5 && pick.length){ out.push(pick.map(k=>útiles[k])); return; }
+    if(i >= n || suma > objetivo + 0.5) return;
+    buscar(i+1, suma + q[i], pick.concat(i));
+    buscar(i+1, suma, pick);
+  })(0, 0, []);
+  return out;
+}
+
 // Devuelve {ok, allocations, faltan, detalle} para los folios dados.
 function allocDesdeEmsx(cliente, folios){
   const cfg = getClienteDB(cliente);
@@ -25838,13 +25899,30 @@ function allocDesdeEmsx(cliente, folios){
       // 2) por CANTIDAD: la línea cuya ejecución coincide con la de la orden.
       const exactas = _cand.filter(r=>Math.abs((Number(r.filled)||0) - _qtyOrden) < 0.5);
       if(exactas.length) _filas = exactas;
-      // 3) o una combinación de líneas que sume exacto (dos cuentas en una orden).
+      // 3) o una combinación de líneas que sume exacto.
+      //
+      // OJO CON LO QUE HABÍA ACÁ: esto probaba SOLO PAREJAS. El 30-oct
+      // FIDUASHMORE operó TRES líneas por portafolio (3 FLACO + 3 ACEF, misma
+      // especie y mismo lado). Ninguna pareja sumaba la orden, así que se caía
+      // a `_filas = _cand` —TODAS las líneas de la especie, las dos cuentas— y
+      // el reparto salía con ACEF pegado adentro de la orden de FLACO: la suma
+      // no cuadraba, `ok` daba false y no dejaba avanzar.
+      //
+      // Ahora se prueban todas las combinaciones, pero solo se acepta si TODAS
+      // las que cuadran reparten IGUAL por cuenta. Si hay dos repartos
+      // distintos que suman lo mismo, eso es adivinar: se deja fallar y avisar,
+      // que es lo seguro (Sergio, 30-oct).
       else {
-        for(let i=0; i<_cand.length && _filas === _cand; i++){
-          for(let j=i+1; j<_cand.length; j++){
-            const suma = (Number(_cand[i].filled)||0) + (Number(_cand[j].filled)||0);
-            if(Math.abs(suma - _qtyOrden) < 0.5){ _filas = [_cand[i], _cand[j]]; break; }
-          }
+        const sols = _combinacionesQueSuman(_cand, _qtyOrden);
+        if(sols.length){
+          const huella = s => {
+            const m = {};
+            s.forEach(r=>{ const c = String(r.account||'').trim();
+                           m[c] = (m[c]||0) + (Number(r.filled)||0); });
+            return Object.keys(m).sort().map(k=>k+':'+m[k]).join('|');
+          };
+          const h0 = huella(sols[0]);
+          if(sols.every(s => huella(s) === h0)) _filas = sols[0];
         }
       }
     }
@@ -33433,7 +33511,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-30 20:15 UTC · v293';
+const BUILD_ID = '2026-10-30 21:10 UTC · v294';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
