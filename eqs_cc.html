@@ -917,6 +917,7 @@
           <button class="btn small" onclick="rshCargar()">↻ Actualizar</button>
           <button class="btn small purple" onclick="rshCargarSuper(this)">⬇ Leer archivos de la Super</button>
           <span style="flex:1;"></span>
+          <button class="btn small ghost" onclick="rshVista('calendario')" id="rshB0">Calendario</button>
           <button class="btn small ghost" onclick="rshVista('resumen')" id="rshB1">Resumen</button>
           <button class="btn small ghost" onclick="rshVista('especie')" id="rshB2">Por especie</button>
           <button class="btn small ghost" onclick="rshVista('fondo')"   id="rshB3">Por fondo</button>
@@ -30901,7 +30902,8 @@ initDatesRVL();
 // (Sergio, 15-oct)
 // ===================================================================
 let _rshDatos = { corte:null, contra:null, filas:[], prev:[], emision:{}, cortes:[] };
-let _rshVista = 'resumen';
+// El calendario del mes es lo primero que se ve al entrar (Sergio, 03-nov).
+let _rshVista = 'calendario';
 // RVL o RVI. Es el MISMO modulo: los datos, las tres vistas y la logica de
 // variacion son identicas, lo unico que cambia es el filtro. Dos modulos
 // separados serian dos copias del mismo codigo, y el dia que se arregle algo
@@ -31071,6 +31073,10 @@ function rshVista(v){
   // Research a mirar posiciones, no dividendos.
   if(v === 'dividendos' && !_rshDiv.cargado && !_rshDiv.cargando){
     rshCargarDividendos();
+    return;
+  }
+  if(v === 'calendario' && !_rshCal.cargado && !_rshCal.cargando){
+    rshCargarCalendario();
     return;
   }
   rshPintar();
@@ -31300,10 +31306,10 @@ function _rshTablaEvolucion(){
 }
 
 function rshPintar(){
-  ['rshB1','rshB2','rshB3','rshB4','rshB5','rshB6'].forEach((id,i)=>{
+  ['rshB0','rshB1','rshB2','rshB3','rshB4','rshB5','rshB6'].forEach((id,i)=>{
     const b = document.getElementById(id);
     if(b) b.classList.toggle('ghost',
-      ['resumen','especie','fondo','evolucion','spreads','dividendos'][i] !== _rshVista);
+      ['calendario','resumen','especie','fondo','evolucion','spreads','dividendos'][i] !== _rshVista);
   });
   // Los dos botones de la barra comparten `data-mod="Research"`, asi que
   // `switchModule` deja los DOS en activo. Aqui se corrige para que se vea
@@ -31318,7 +31324,8 @@ function rshPintar(){
     : 'Research RVL · posición de los AFPs en la bolsa local';
   const c = document.getElementById('rshCuerpo');
   if(!c) return;
-  if(_rshVista === 'especie')         c.innerHTML = _rshTablaEspecie();
+  if(_rshVista === 'calendario')      c.innerHTML = _rshCalendario();
+  else if(_rshVista === 'especie')    c.innerHTML = _rshTablaEspecie();
   else if(_rshVista === 'fondo')      c.innerHTML = _rshTablaFondo();
   else if(_rshVista === 'evolucion')  c.innerHTML = _rshTablaEvolucion();
   else if(_rshVista === 'spreads')    c.innerHTML = _rshTablaSpread();
@@ -31444,6 +31451,526 @@ function _rshTablaEspecie(){
     no coinciden entre sí, que es el caso en 21 de las 30 especies. Ese dato va a salir de
     Bloomberg.</div>`;
   return h;
+}
+
+// ===================================================================
+// CALENDARIO DEL MES — resultados y dividendos
+// -------------------------------------------------------------------
+// Lo primero que se ve al entrar a Research. Antes el calendario de
+// dividendos era la pestaña 6 de 6 y mostraba UNA semana: una temporada
+// de resultados no se ve en una semana ni escondida al final. Lo que uno
+// viene a mirar no es "quién reporta el martes", es DÓNDE SE AMONTONA
+// (Sergio, 03-nov).
+//
+// TRES TIPOS DE EVENTO, y los tres son distintos:
+//   RESULTADOS  el emisor publica su trimestre. Es del EMISOR, no de la
+//               especie: Argos reporta una vez para GRUPOARGOS y
+//               PFGRUPOARG.
+//   EX          desde ahí la acción ya NO trae el dividendo. Es la que
+//               manda para operar, y NO ES UNA FECHA: es un RANGO. De
+//               los 172 eventos de 2026 con fecha, 86 duran más de un
+//               día. HCOLSEL en noviembre va del 3 al 9.
+//   PAGO        entra la plata. Al cliente le importa; el precio no se
+//               mueve.
+//
+// EL FILTRO ES EL UNIVERSO, NO EL TEXTO. El archivo de la bolsa trae 73
+// nemos locales y la mayoría no se opera. No se puede filtrar por el
+// "- MGC" del emisor —AAPLCO, MSFTCO, NVDACO y nueve más no lo traen— ni
+// por la moneda —MINEROS reporta en USD y sí es COLCAP—. Se filtra
+// contra `calendario_universo`, que es editable. Y si esa tabla está
+// vacía NO se esconde nada: se muestra todo y se avisa, porque una
+// pantalla vacía por un filtro mal puesto es peor que una con ruido.
+// ===================================================================
+let _rshCal = { mes:0, res:[], div:[], uni:null, estado:null, sel:new Set(),
+                dia:null, cargando:false, cargado:false, fuera:0, msg:'' };
+
+function rshCalMes(d){ _rshCal.mes += d; _rshCal.dia = null; rshCargarCalendario(); }
+function rshCalHoy(){ _rshCal.mes = 0; _rshCal.dia = null; rshCargarCalendario(); }
+
+function _rshCalRango(){
+  const h = new Date(); h.setHours(0,0,0,0);
+  const ini = new Date(h.getFullYear(), h.getMonth() + _rshCal.mes, 1);
+  const fin = new Date(ini.getFullYear(), ini.getMonth() + 1, 0);
+  return { ini, fin, a:_rshISO(ini), b:_rshISO(fin) };
+}
+
+const _MES_LARGO = ['enero','febrero','marzo','abril','mayo','junio','julio',
+                    'agosto','septiembre','octubre','noviembre','diciembre'];
+
+async function rshCargarCalendario(){
+  _rshCal.cargando = true; _rshCal.msg = ''; rshPintar();
+  const { ini, a, b } = _rshCalRango();
+  try{
+    // Un rango ex puede HABER EMPEZADO el mes pasado y terminar en este.
+    // Por eso se pide con holgura hacia atrás y el solape se decide acá,
+    // no en la consulta: pedir solo `ex_date >= primero del mes` perdería
+    // justamente los rangos que cruzan el cambio de mes.
+    const antes = _rshISO(new Date(ini.getFullYear(), ini.getMonth(), 1 - 40));
+    const [res, porEx, porPago, uni, est] = await Promise.all([
+      supaFetchTodo('resultados_calendario', `modulo=eq.${_rshModulo}&fecha=gte.${a}&fecha=lte.${b}`),
+      supaFetchTodo('dividendos_calendario', `ex_date=gte.${antes}&ex_date=lte.${b}`),
+      supaFetchTodo('dividendos_calendario', `pago_date=gte.${a}&pago_date=lte.${b}`),
+      supaFetchTodo('calendario_universo',   `modulo=eq.${_rshModulo}&activo=is.true`),
+      supaFetchTodo('dividendos_estado',     'limit=1'),
+    ]);
+    // Un mismo dividendo llega por las dos consultas. Se mezcla por
+    // (isin, ex_date), que es su llave.
+    const m = {};
+    [...(porEx||[]), ...(porPago||[])].forEach(x=>{ m[x.isin + '|' + x.ex_date] = x; });
+    _rshCal.res    = res || [];
+    _rshCal.uni    = (uni && uni.length) ? uni : null;
+    _rshCal.estado = (est && est[0]) || null;
+    _rshCal.div    = Object.values(m);
+    _rshCal.cargado = true;
+  }catch(e){
+    _rshCal.res = []; _rshCal.div = []; _rshCal.cargado = true;
+    _rshCal.msg = 'No se pudo leer el calendario: ' + e.message;
+  }
+  _rshCal.cargando = false;
+  rshPintar();
+}
+
+// El nemo con el que se compara contra el universo. La vista arma
+// `ticker` desde el maestro y el cargue guarda `nemo` tal como vino del
+// archivo: cualquiera de los dos sirve para reconocerlo.
+function _rshCalNemo(x){ return String(x.nemo || x.ticker || '').trim().toUpperCase(); }
+
+function _rshCalEnUniverso(x){
+  if(!_rshCal.uni) return true;                    // sin lista, no se esconde nada
+  const n = _rshCalNemo(x);
+  return !!n && _rshCal.uni.some(u => String(u.nemo).toUpperCase() === n);
+}
+
+// Aplana todo a eventos con DÍA. Un rango ex ocupa todos sus días; el
+// primero va marcado porque es el que manda para operar.
+function _rshCalEventos(){
+  const { a, b } = _rshCalRango();
+  const ev = [];
+  _rshCal.fuera = 0;
+
+  (_rshCal.res||[]).forEach(r=>{
+    const f = String(r.fecha||'').slice(0,10);
+    if(f < a || f > b) return;
+    ev.push({ tipo:'res', dia:f, clave:'R|'+r.emisor+'|'+r.trimestre,
+              titulo:r.emisor, r });
+  });
+
+  (_rshCal.div||[]).forEach(d=>{
+    if(!_rshCalEnUniverso(d)){ _rshCal.fuera++; return; }
+    const nemo = _rshCalNemo(d) || d.isin;
+    const ex0 = String(d.ex_date||'').slice(0,10);
+    const ex1 = String(d.ex_date_fin || d.ex_date || '').slice(0,10);
+    if(ex0){
+      // Cada día del rango, acotado al mes que se está viendo.
+      let t = new Date(Math.max(new Date(ex0+'T12:00:00'), new Date(a+'T12:00:00')));
+      const hasta = new Date(Math.min(new Date((ex1||ex0)+'T12:00:00'), new Date(b+'T12:00:00')));
+      while(t <= hasta){
+        const f = _rshISO(t);
+        ev.push({ tipo:'ex', dia:f, clave:'X|'+d.isin+'|'+ex0,
+                  titulo:nemo, primero:(f === ex0), ultimo:(f === ex1), d });
+        t.setDate(t.getDate()+1);
+      }
+    }
+    const pg = String(d.pago_date||'').slice(0,10);
+    if(pg && pg >= a && pg <= b){
+      ev.push({ tipo:'pago', dia:pg, clave:'P|'+d.isin+'|'+ex0, titulo:nemo, d });
+    }
+  });
+  return ev;
+}
+
+// --- selección -----------------------------------------------------
+function rshCalMarcar(clave, on){
+  if(on) _rshCal.sel.add(clave); else _rshCal.sel.delete(clave);
+  const n = document.getElementById('rshCalSelN');
+  if(n) n.textContent = _rshCal.sel.size;
+}
+function rshCalSelTodo(cuales){
+  const ev = _rshCalEventos();
+  const { ini } = _rshCalRango();
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  // Los atajos se miden desde HOY, no desde el primero del mes: "esta
+  // semana" en un mes que ya pasó no quiere decir nada.
+  const desde = _rshISO(hoy);
+  const hastaD = new Date(hoy);
+  if(cuales === 'semana')  hastaD.setDate(hastaD.getDate() + 6);
+  if(cuales === 'dos')     hastaD.setDate(hastaD.getDate() + 13);
+  if(cuales === 'mes')     hastaD.setFullYear(9999);
+  const hasta = _rshISO(hastaD);
+  _rshCal.sel = new Set();
+  if(cuales !== 'nada'){
+    ev.forEach(x=>{
+      if(cuales === 'mes' || (x.dia >= desde && x.dia <= hasta)){
+        // De un rango ex solo entra el PRIMER día: el evento es uno solo.
+        if(x.tipo === 'ex' && !x.primero) return;
+        _rshCal.sel.add(x.clave);
+      }
+    });
+  }
+  rshPintar();
+}
+
+// --- pintar --------------------------------------------------------
+const _CAL_COL = { res:'#a855f7', ex:'#f59e0b', pago:'#22c55e' };
+
+function _rshCalendario(){
+  const { ini, fin, a, b } = _rshCalRango();
+  const esc = _esc;
+  let h = '';
+
+  // Barra: mes, navegación, atajos y copiar.
+  h += `<div class="card" style="padding:12px 14px;margin-bottom:12px;">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <button class="btn small" onclick="rshCalMes(-1)">‹</button>
+      <b style="font-size:15px;min-width:170px;text-align:center;">
+        ${_MES_LARGO[ini.getMonth()]} ${ini.getFullYear()}</b>
+      <button class="btn small" onclick="rshCalMes(1)">›</button>
+      <button class="btn small ghost" onclick="rshCalHoy()">hoy</button>
+      <span style="flex:1;"></span>
+      <span class="field-note">marcar:</span>
+      <button class="btn small ghost" onclick="rshCalSelTodo('semana')">esta semana</button>
+      <button class="btn small ghost" onclick="rshCalSelTodo('dos')">dos semanas</button>
+      <button class="btn small ghost" onclick="rshCalSelTodo('mes')">el mes</button>
+      <button class="btn small ghost" onclick="rshCalSelTodo('nada')">ninguno</button>
+      <button class="btn small purple" onclick="rshCalCopiar(this)">
+        📋 Copiar (<span id="rshCalSelN">${_rshCal.sel.size}</span>)</button>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
+      <span class="field-note">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${_CAL_COL.res};"></span> resultados
+        &nbsp;<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${_CAL_COL.ex};"></span> ex-dividendo
+        &nbsp;<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${_CAL_COL.pago};"></span> pago
+        &nbsp;· borde punteado = fecha aproximada</span>
+    </div>`;
+
+  // El sello de los dividendos. Va arriba y grande: si el feed dejó de
+  // correr, el cuadro se ve igual que uno al día.
+  const est = _rshCal.estado;
+  if(est && est.corrida){
+    const dd = Math.floor((Date.now() - new Date(est.corrida).getTime())/86400000);
+    const viejo = dd > 8;
+    h += `<div style="margin-top:9px;padding:8px 11px;border-radius:7px;font-size:12.5px;
+        background:${viejo?'rgba(245,158,11,.14)':'rgba(34,197,94,.10)'};
+        border:1px solid ${viejo?'rgba(245,158,11,.45)':'rgba(34,197,94,.3)'};">
+      <b>Dividendos al ${new Date(est.corrida).toLocaleDateString('es-CO',{day:'2-digit',month:'long',year:'numeric'})}</b>
+      · hace ${dd} día${dd===1?'':'s'} · fuente: ${esc(est.fuente||'—')}
+      ${viejo?`<br><b style="color:var(--warn,#f59e0b);">Más de 8 días. No lo uses con un cliente sin volver a cargar.</b>`:''}
+    </div>`;
+  }
+  if(!_rshCal.uni){
+    h += `<div style="margin-top:9px;padding:8px 11px;border-radius:7px;font-size:12.5px;
+        background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.45);">
+      <b style="color:var(--warn,#f59e0b);">Sin universo definido para ${esc(_rshModulo)}.</b>
+      Se está mostrando TODO lo que trae el archivo, incluido lo que no operas.
+      Corre <code>calendario_research.sql</code> o agrega los nemos en
+      <code>calendario_universo</code>.</div>`;
+  }
+  if(_rshCal.msg){
+    h += `<div style="margin-top:9px;color:var(--sell,#ef4444);font-size:12.5px;">${esc(_rshCal.msg)}</div>`;
+  }
+  h += `</div>`;
+
+  if(_rshCal.cargando) return h + `<div class="panel"><span class="field-note">cargando el calendario…</span></div>`;
+  if(!_rshCal.cargado) return h + `<div class="panel"><span class="field-note">
+      Aprieta <b>hoy</b> para traer el calendario.</span></div>`;
+
+  // --- la cuadrícula ---
+  const ev = _rshCalEventos();
+  const porDia = {};
+  ev.forEach(x=>{ (porDia[x.dia] = porDia[x.dia] || []).push(x); });
+
+  // Lunes a domingo: los días hábiles son los que importan y el fin de
+  // semana queda junto al final en vez de partir la semana en dos.
+  const dow = (ini.getDay() + 6) % 7;                 // 0 = lunes
+  const celdas = [];
+  for(let i=0; i<dow; i++) celdas.push(null);
+  for(let d=1; d<=fin.getDate(); d++) celdas.push(new Date(ini.getFullYear(), ini.getMonth(), d));
+  while(celdas.length % 7) celdas.push(null);
+
+  const hoyISO = _rshISO(new Date());
+  h += `<div class="card" style="padding:10px;overflow-x:auto;">
+    <div style="display:grid;grid-template-columns:repeat(7,minmax(118px,1fr));gap:5px;min-width:840px;">`;
+  ['lun','mar','mié','jue','vie','sáb','dom'].forEach(n=>{
+    h += `<div class="field-note" style="text-align:center;font-weight:700;
+          text-transform:uppercase;font-size:10.5px;letter-spacing:.5px;padding:3px 0;">${n}</div>`;
+  });
+  celdas.forEach(d=>{
+    if(!d){ h += `<div></div>`; return; }
+    const f = _rshISO(d);
+    const esCO = _festivosCO.has(f), esUS = _festivosUS.has(f);
+    const finde = d.getDay() === 0 || d.getDay() === 6;
+    const hoyEs = f === hoyISO;
+    const lista = porDia[f] || [];
+    const fondo = esCO ? 'rgba(239,68,68,.10)' : (finde ? 'rgba(255,255,255,.02)' : 'var(--bg-2,#161b26)');
+    h += `<div onclick="rshCalDia('${f}')" style="cursor:pointer;min-height:84px;padding:5px 6px;
+        border-radius:7px;background:${fondo};
+        border:1px solid ${hoyEs?'var(--accent,#a855f7)':'var(--border,#232938)'};
+        ${_rshCal.dia===f?'outline:2px solid var(--accent,#a855f7);':''}">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <b style="font-size:12px;${hoyEs?'color:var(--accent,#a855f7);':''}">${d.getDate()}</b>
+        <span style="font-size:9px;opacity:.75;">${esCO?'festivo CO':(esUS?'festivo US':'')}</span>
+      </div>`;
+    lista.slice(0,4).forEach(x=>{
+      const col = _CAL_COL[x.tipo];
+      const punteado = (x.tipo === 'res' && x.r && x.r.estado === 'aproximada');
+      // En un rango ex solo el PRIMER día lleva casilla: el evento es uno.
+      const conCasilla = x.tipo !== 'ex' || x.primero;
+      const et = x.tipo === 'ex'
+        ? (x.primero ? x.titulo : '·') : x.titulo;
+      h += `<div style="display:flex;align-items:center;gap:3px;margin-top:3px;">
+        ${conCasilla ? `<input type="checkbox" onclick="event.stopPropagation();rshCalMarcar('${esc(x.clave)}',this.checked)"
+             ${_rshCal.sel.has(x.clave)?'checked':''} style="margin:0;width:11px;height:11px;flex-shrink:0;">`
+          : `<span style="width:11px;flex-shrink:0;"></span>`}
+        <span style="font-size:10px;padding:1px 4px;border-radius:3px;flex:1;overflow:hidden;
+              white-space:nowrap;text-overflow:ellipsis;background:${col}22;color:${col};
+              border:1px ${punteado?'dashed':'solid'} ${col}66;">${esc(et)}</span>
+      </div>`;
+    });
+    if(lista.length > 4)
+      h += `<div class="field-note" style="font-size:9.5px;margin-top:2px;">+${lista.length-4} más</div>`;
+    h += `</div>`;
+  });
+  h += `</div></div>`;
+
+  if(_rshCal.fuera){
+    h += `<div class="field-note" style="margin-top:8px;">
+      ${_rshCal.fuera} evento(s) de dividendos quedaron por fuera porque su nemo no está
+      en el universo de ${esc(_rshModulo)}. <b>Eso no es lo mismo que "no hay"</b>.</div>`;
+  }
+
+  h += _rshCalDetalle(porDia);
+  return h;
+}
+
+function rshCalDia(f){ _rshCal.dia = (_rshCal.dia === f) ? null : f; rshPintar(); }
+
+// El detalle del día: acá sí va todo, con el P.O., el resumen y el
+// enlace al reporte.
+function _rshCalDetalle(porDia){
+  const f = _rshCal.dia;
+  if(!f) return `<div class="field-note" style="margin-top:10px;">
+    Clic en un día para ver el detalle. Las casillas marcan lo que entra al botón de copiar.</div>`;
+  const esc = _esc, lista = (porDia[f] || []);
+  const d = new Date(f + 'T12:00:00');
+  let h = `<div class="card" style="padding:12px 14px;margin-top:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+      <b style="font-size:14px;">${d.toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</b>
+      <button class="btn small ghost" onclick="rshCalDia('${f}')">cerrar</button>
+    </div>`;
+  if(!lista.length) h += `<div class="field-note" style="margin-top:8px;">Sin eventos ese día.</div>`;
+  lista.forEach(x=>{
+    const col = _CAL_COL[x.tipo];
+    if(x.tipo === 'res'){
+      const r = x.r;
+      h += `<div style="margin-top:10px;padding-left:9px;border-left:3px solid ${col};">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <b style="font-size:13.5px;">${esc(r.emisor)}</b>
+          <span class="field-note">${esc(r.trimestre)}${r.nemos?' · '+esc(r.nemos):''}</span>
+          <span style="font-size:10.5px;padding:1px 6px;border-radius:9px;
+                background:${r.estado==='confirmada'?'rgba(34,197,94,.18)':'rgba(245,158,11,.18)'};
+                color:${r.estado==='confirmada'?'var(--buy,#22c55e)':'var(--warn,#f59e0b)'};">
+            ${r.estado === 'confirmada' ? 'confirmada' : 'fecha aproximada, por confirmar'}</span>
+          ${r.cubierto ? '' : '<span class="field-note" style="font-size:10.5px;">sin cobertura de Credicorp</span>'}
+        </div>
+        ${r.recomendacion || r.precio_objetivo != null ? `<div style="font-size:12.5px;margin-top:3px;">
+          <b>${esc(r.recomendacion||'')}</b>${r.precio_objetivo!=null
+            ? ` · P.O. ${esc(r.po_moneda||'COP')} ${Number(r.precio_objetivo).toLocaleString('es-CO')}` : ''}</div>` : ''}
+        ${r.resumen ? `<div style="font-size:12.5px;margin-top:3px;opacity:.9;">${esc(r.resumen)}</div>` : ''}
+        <div class="field-note" style="font-size:11px;margin-top:3px;">
+          fuente: ${esc(r.fuente||'—')}${r.reporte_fecha?' · reporte del '+esc(r.reporte_fecha):''}
+          ${r.reporte_url?` · <a href="${esc(r.reporte_url)}" target="_blank" rel="noopener">ver reporte</a>`:''}</div>
+      </div>`;
+    }else{
+      const v = x.d;
+      const ex0 = String(v.ex_date||'').slice(0,10);
+      const ex1 = String(v.ex_date_fin||'').slice(0,10);
+      h += `<div style="margin-top:10px;padding-left:9px;border-left:3px solid ${col};">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <b style="font-size:13.5px;">${esc(_rshCalNemo(v) || v.isin)}</b>
+          <span class="field-note">${esc(x.tipo === 'ex' ? 'fecha ex' : 'pago')}</span>
+          ${v.tipo && !/ordinari|income|regular/i.test(v.tipo)
+            ? `<span style="font-size:10.5px;color:var(--warn,#f59e0b);">${esc(v.tipo)}</span>` : ''}
+        </div>
+        <div style="font-size:13px;font-weight:600;margin-top:2px;">${_rshMonto(v.monto, v.moneda)}</div>
+        <div class="field-note" style="font-size:11px;margin-top:2px;">
+          ex ${esc(ex0)}${ex1 && ex1 !== ex0 ? ' al ' + esc(ex1) : ''}
+          ${v.pago_date ? ' · pago ' + esc(String(v.pago_date).slice(0,10)) : ''}</div>
+      </div>`;
+    }
+  });
+  h += `</div>`;
+  return h;
+}
+
+// ===================================================================
+// EL BLOQUE QUE SE COPIA AL CORREO
+// -------------------------------------------------------------------
+// Outlook renderiza con el motor de Word: tabla con estilos EN LÍNEA,
+// anchos en %, altos en px, y nada de flex, grid, SVG ni <style>. Por
+// eso esto NO reutiliza el HTML de la pantalla: son dos dibujos del
+// mismo dato. El de arriba es para mirar; este es para pegar.
+//
+// LA ETIQUETA DE "APROXIMADA" VA PEGADA A CADA FILA, no en un pie de
+// página. Un cliente que lee "12-nov" en una tabla y el asterisco tres
+// párrafos abajo, leyó "12-nov" (Sergio, 03-nov).
+// ===================================================================
+function _rshCalFechaCorta(f){
+  const d = new Date(String(f).slice(0,10) + 'T12:00:00');
+  if(isNaN(d)) return String(f||'');
+  const M = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  return `${d.getDate()}-${M[d.getMonth()]}`;
+}
+
+function _rshCalHtmlCorreo(sel){
+  const esc = _esc;
+  const res = sel.filter(x=>x.tipo === 'res')
+                 .sort((a,b)=> a.dia.localeCompare(b.dia) || a.titulo.localeCompare(b.titulo));
+  // De los dividendos, una fila por evento: el rango ex y el pago juntos.
+  const vistos = {};
+  sel.filter(x=>x.tipo === 'ex' || x.tipo === 'pago').forEach(x=>{
+    const k = x.d.isin + '|' + x.d.ex_date;
+    if(!vistos[k]) vistos[k] = x.d;
+  });
+  const div = Object.values(vistos)
+    .sort((a,b)=> String(a.ex_date).localeCompare(String(b.ex_date)));
+
+  if(!res.length && !div.length) return '';
+
+  const B = '#232938', TXT = '#1a1a1a', GRIS = '#666';
+  const th = `style="padding:6px 8px;border-bottom:2px solid ${B};text-align:left;` +
+             `font-size:12px;font-weight:bold;color:${TXT};"`;
+  const td = `style="padding:6px 8px;border-bottom:1px solid #e3e3e3;font-size:12px;color:${TXT};"`;
+
+  let h = `<div style="font-family:Calibri,Arial,sans-serif;color:${TXT};">`;
+
+  if(res.length){
+    h += `<p style="font-size:14px;font-weight:bold;margin:0 0 6px 0;">Resultados trimestrales</p>`;
+    h += `<table width="100%" cellpadding="0" cellspacing="0" border="0"
+            style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;">
+      <tr><th width="13%" ${th}>Fecha</th><th width="22%" ${th}>Emisor</th>
+          <th width="20%" ${th}>Recomendación</th><th width="45%" ${th}>Qué esperamos</th></tr>`;
+    res.forEach(x=>{
+      const r = x.r;
+      const aprox = r.estado !== 'confirmada';
+      h += `<tr>
+        <td ${td}><b>${esc(_rshCalFechaCorta(r.fecha))}</b>${
+          aprox ? `<br><span style="font-size:10px;color:${GRIS};">aprox., por confirmar</span>` : ''}</td>
+        <td ${td}>${esc(r.emisor)}<br><span style="font-size:10px;color:${GRIS};">${esc(r.trimestre)}</span></td>
+        <td ${td}>${r.cubierto
+            ? `${esc(r.recomendacion||'—')}${r.precio_objetivo!=null
+                ? `<br><span style="font-size:11px;">P.O. ${esc(r.po_moneda||'COP')} ${Number(r.precio_objetivo).toLocaleString('es-CO')}</span>`
+                : ''}`
+            : `<span style="font-size:11px;color:${GRIS};">sin cobertura</span>`}</td>
+        <td ${td}>${esc(r.resumen || '')}</td></tr>`;
+    });
+    h += `</table>`;
+    // La referencia al reporte, una sola vez, con su fecha.
+    const conRep = res.filter(x=>x.r.reporte_url);
+    if(conRep.length){
+      const r0 = conRep[0].r;
+      h += `<p style="font-size:11px;color:${GRIS};margin:6px 0 14px 0;">
+        Estimaciones de Credicorp Capital Research${r0.reporte_fecha
+          ? ', ' + esc(_rshCalFechaCorta(r0.reporte_fecha))
+          : ''} · <a href="${esc(r0.reporte_url)}">ver el reporte completo</a></p>`;
+    }
+  }
+
+  if(div.length){
+    h += `<p style="font-size:14px;font-weight:bold;margin:14px 0 6px 0;">Dividendos</p>`;
+    h += `<table width="100%" cellpadding="0" cellspacing="0" border="0"
+            style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;">
+      <tr><th width="24%" ${th}>Especie</th><th width="28%" ${th}>Fecha ex</th>
+          <th width="20%" ${th}>Pago</th><th width="28%" ${th}>Valor</th></tr>`;
+    div.forEach(v=>{
+      const ex0 = String(v.ex_date||'').slice(0,10);
+      const ex1 = String(v.ex_date_fin||'').slice(0,10);
+      h += `<tr>
+        <td ${td}><b>${esc(_rshCalNemo(v) || v.isin)}</b></td>
+        <td ${td}>${esc(_rshCalFechaCorta(ex0))}${
+          ex1 && ex1 !== ex0 ? ' al ' + esc(_rshCalFechaCorta(ex1)) : ''}</td>
+        <td ${td}>${v.pago_date ? esc(_rshCalFechaCorta(v.pago_date)) : '—'}</td>
+        <td ${td}>${esc(_rshMonto(v.monto, v.moneda))}</td></tr>`;
+    });
+    h += `</table>
+      <p style="font-size:11px;color:${GRIS};margin:6px 0 0 0;">
+        Desde la fecha ex la acción ya no trae el dividendo. Los valores van en la moneda
+        de cada papel y no se suman entre monedas. Fuente: bvc/nuam.</p>`;
+  }
+
+  h += `</div>`;
+  return h;
+}
+
+// Versión en texto plano, por si el destino no acepta HTML. No es un
+// adorno: es lo que termina pegado si el portapapeles rico falla.
+function _rshCalTextoCorreo(sel){
+  const res = sel.filter(x=>x.tipo === 'res').sort((a,b)=>a.dia.localeCompare(b.dia));
+  const vistos = {};
+  sel.filter(x=>x.tipo==='ex'||x.tipo==='pago').forEach(x=>{
+    const k = x.d.isin+'|'+x.d.ex_date; if(!vistos[k]) vistos[k] = x.d; });
+  const div = Object.values(vistos).sort((a,b)=>String(a.ex_date).localeCompare(String(b.ex_date)));
+  const L = [];
+  if(res.length){
+    L.push('RESULTADOS TRIMESTRALES');
+    res.forEach(x=>{
+      const r = x.r;
+      L.push(`  ${_rshCalFechaCorta(r.fecha)}${r.estado!=='confirmada'?' (aprox., por confirmar)':''} · ` +
+             `${r.emisor} ${r.trimestre}` +
+             (r.cubierto && r.recomendacion ? ` · ${r.recomendacion}` : ' · sin cobertura') +
+             (r.precio_objetivo != null ? ` · P.O. ${r.po_moneda||'COP'} ${Number(r.precio_objetivo).toLocaleString('es-CO')}` : ''));
+      if(r.resumen) L.push(`      ${r.resumen}`);
+    });
+  }
+  if(div.length){
+    if(L.length) L.push('');
+    L.push('DIVIDENDOS');
+    div.forEach(v=>{
+      const ex0 = String(v.ex_date||'').slice(0,10), ex1 = String(v.ex_date_fin||'').slice(0,10);
+      L.push(`  ${_rshCalNemo(v)||v.isin} · ex ${_rshCalFechaCorta(ex0)}` +
+             (ex1 && ex1!==ex0 ? ` al ${_rshCalFechaCorta(ex1)}` : '') +
+             (v.pago_date ? ` · pago ${_rshCalFechaCorta(v.pago_date)}` : '') +
+             ` · ${_rshMonto(v.monto, v.moneda)}`);
+    });
+  }
+  return L.join('\n');
+}
+
+async function rshCalCopiar(btn){
+  const ev = _rshCalEventos().filter(x=>_rshCal.sel.has(x.clave));
+  if(!ev.length){
+    alert('No hay nada marcado.\n\nMarca los eventos en el calendario, o usa los atajos de arriba.');
+    return;
+  }
+  const html  = _rshCalHtmlCorreo(ev);
+  const texto = _rshCalTextoCorreo(ev);
+  const antes = btn ? btn.innerHTML : '';
+  const listo = ok => { if(btn){ btn.innerHTML = ok ? '✓ copiado' : '✕ no se pudo';
+                                 setTimeout(()=>{ btn.innerHTML = antes; }, 1600); } };
+  try{
+    if(navigator.clipboard && window.ClipboardItem){
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html':  new Blob([html],  { type:'text/html' }),
+        'text/plain': new Blob([texto], { type:'text/plain' }),
+      })]);
+      listo(true); return;
+    }
+  }catch(e){ /* se intenta el camino viejo */ }
+  // Camino de respaldo: un div editable fuera de pantalla y `copy`. Es
+  // feo pero conserva el formato donde `ClipboardItem` no existe.
+  try{
+    const d = document.createElement('div');
+    d.innerHTML = html;
+    d.setAttribute('contenteditable', 'true');
+    d.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+    document.body.appendChild(d);
+    const r = document.createRange(); r.selectNodeContents(d);
+    const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+    const ok = document.execCommand('copy');
+    s.removeAllRanges(); document.body.removeChild(d);
+    if(ok){ listo(true); return; }
+  }catch(e){ /* cae a texto plano */ }
+  try{ await navigator.clipboard.writeText(texto); listo(true); }
+  catch(e){ listo(false); alert('No se pudo copiar: ' + e.message); }
 }
 
 // ===================================================================
@@ -33671,7 +34198,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-03 14:05 UTC · v295';
+const BUILD_ID = '2026-11-03 17:30 UTC · v296';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
