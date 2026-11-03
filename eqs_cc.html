@@ -7797,7 +7797,7 @@ function _accountEsBNP(notes){
 // pudo resolver. null = no hay problema. Es una funcion APARTE a proposito:
 // `grupoDeTrade` sigue devolviendo siempre algo, como siempre, y quien
 // necesite frenar consulta esta. Asi nada de lo que ya funciona cambia.
-function bookSinResolver(clientRaw, notes, parentOrderId){
+function bookSinResolver(clientRaw, notes, parentOrderId, trailer){
   const b = _normBook(clientRaw);
   if(BOOKS_AMBIGUOS.indexOf(b) < 0) return null;
   if(parentOrderId && _asignacionOrden[String(parentOrderId)]) return null;
@@ -7806,7 +7806,7 @@ function bookSinResolver(clientRaw, notes, parentOrderId){
   // `grupoDeTrade`, el app resolveria la orden correctamente Y AL TIEMPO
   // pediria asignarla a mano: dos respuestas distintas sobre la misma orden
   // (Sergio, 30-oct).
-  if(_accountEsBNP(notes)) return null;
+  if(_accountEsBNP(notes) || _accountEsBNP(trailer)) return null;
   const cands = gruposDelBook(b);
   return cands.length > 1 ? { book: b, candidatos: cands } : null;
 }
@@ -7814,7 +7814,7 @@ function bookSinResolver(clientRaw, notes, parentOrderId){
 const CUENTAS_PROVISIONALES = ['TEST'];
 const _sinInstruccion = [];   // órdenes en cuenta provisional sin cliente en el Notes
 
-function grupoDeTrade(clientRaw, notes, parentOrderId){
+function grupoDeTrade(clientRaw, notes, parentOrderId, trailer){
   const raw = String(clientRaw||'').trim().toUpperCase();
   // Books que varios clientes comparten (hoy solo CSI). Primero lo que se
   // haya asignado a mano, despues el Account. Si ninguno resuelve, se cae
@@ -7843,7 +7843,14 @@ function grupoDeTrade(clientRaw, notes, parentOrderId){
     // Moneda, Falcom, Ashmore, Tordesilhas e Impera: se quedaba con el PRIMERO
     // del maestro, MONEDA, sin un solo aviso. La producción se le abonaba al
     // presupuesto de otro cliente.
-    if(/^(CSI|CREDIBOLSA)$/.test(raw) && _accountEsBNP(notes)){
+    // EL ANCLA TAMBIÉN LLEGA EN EL TRAILER (Sergio, 03-nov)
+    // ------------------------------------------------------
+    // El 30-oct el ancla era el Account, que viaja en el Notes. Hoy las seis
+    // órdenes de BNP AGENCY llegaron con Notes = 'MOC*' —que es la
+    // INSTRUCCIÓN de ejecución, no la cuenta— y 'BNP AGENCY' escrito en el
+    // TRAILER. Misma lección que FIDUASHMORE: el dato no siempre está en la
+    // columna donde uno lo buscó la primera vez. Se miran las dos.
+    if(/^(CSI|CREDIBOLSA)$/.test(raw) && (_accountEsBNP(notes) || _accountEsBNP(trailer))){
       return 'BNP AGENCY';
     }
     // El book CREDIBOLSA es el cliente nuevo, no la mesa de Perú.
@@ -10816,7 +10823,8 @@ async function cargarArchivoFidessa(input, tipo){
         mapa[String(folioOrden)] = {
           // El folio va como 3er argumento para que una asignacion a mano
           // (books compartidos) pueda mandar sobre el Account.
-          grupo: grupoDeTrade(row.getCell(headers['CLIENT']).value, _notesTrade, folioOrden),
+          grupo: grupoDeTrade(row.getCell(headers['CLIENT']).value, _notesTrade, folioOrden,
+                              headers['Trailer'] ? String(row.getCell(headers['Trailer']).value || '').trim() : ''),
           // Se guarda el Client/Book CRUDO: `grupo` ya viene resuelto, y sin
           // el original no hay forma de saber que la orden venia de un book
           // compartido para poder frenarla (Sergio, 14-oct).
@@ -10908,7 +10916,7 @@ function asignarGrupoOrden(oid, grupo){
   const t = (_fidessaTradesRaw || {})[String(oid)];
   if(!g){ delete _asignacionOrden[String(oid)]; }
   else   { _asignacionOrden[String(oid)] = g; }
-  if(t) t.grupo = grupoDeTrade(t.book || '', t.notes, oid);
+  if(t) t.grupo = grupoDeTrade(t.book || '', t.notes, oid, t.trailer || '');
   guardarAsignacionOrden(oid, g);
   renderFidessaTradesPanel();
   if(typeof renderModuloReportes === 'function') renderModuloReportes();
@@ -11063,7 +11071,7 @@ function renderFidessaTradesPanel(){
           // la unica forma de destrabar el dia sin volver a Fidessa, y queda
           // a la vista de quien mire la tabla (Sergio, 14-oct).
           const amb = (typeof bookSinResolver === 'function')
-            ? bookSinResolver(f.book || '', f.notes, f.folioOrden) : null;
+            ? bookSinResolver(f.book || '', f.notes, f.folioOrden, f.trailer || '') : null;
           if(!amb){
             const asignado = _asignacionOrden[String(f.folioOrden)];
             return `<td style="cursor:pointer;text-decoration:underline dotted;white-space:normal;line-height:1.3;${asignado?'color:var(--accent,#818cf8);':''}"
@@ -20142,10 +20150,30 @@ function grupoDeOperacion(cliente, account, deceval){
     }
   }
   // 3) coincidencia parcial, como último recurso
-  return _maestroGrupos.find(g=>{
+  const parcial = _maestroGrupos.find(g=>{
     const k = lim(g.grupo);
     return k && c && (k.includes(c) || c.includes(k));
-  }) || null;
+  });
+  if(parcial) return parcial;
+  // 4) EL NOMBRE DEL FONDO (Sergio, 03-nov · ANDES_MANUAL).
+  // -------------------------------------------------------------------
+  // La calculadora de FX tiene DOS entradas para el mismo fondo real: ANDES
+  // (por correo) y ANDES_MANUAL (sin DMA). `fondoReporte` ya dice que los dos
+  // son 'ANDES INVESTMENT GROUP INC', pero la planilla agrupaba con la clave
+  // cruda. Por el paso 3, 'ANDES' calza contra 'ANDES INVESTMENT GROUP INC'
+  // y 'ANDESMANUAL' no: el mismo fondo entraba por un camino y se caía por
+  // el otro. Va de ÚLTIMO: solo convierte un rechazo en grupo, nunca cambia
+  // uno ya resuelto.
+  const oficial = (typeof fondoReporte !== 'undefined' && cliente)
+    ? fondoReporte[String(cliente).trim().toUpperCase()] : '';
+  if(oficial && lim(oficial) !== c){
+    const porNombre = _maestroGrupos.find(g=>{
+      const k = lim(g.grupo), o = lim(oficial);
+      return k && (k === o || k.includes(o) || o.includes(k));
+    });
+    if(porNombre) return porNombre;
+  }
+  return null;
 }
 
 function _trmPlanilla(){
@@ -20336,7 +20364,18 @@ function filasPlanillaCOP(){
     });
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
     const t = _fidessaTradesRaw[oid];
-    const cli = normalizarGrupo(t.grupo);
+    // SE RESUELVE EN VIVO, NO CON EL GRUPO CONGELADO (Sergio, 03-nov).
+    // -----------------------------------------------------------------
+    // `t.grupo` se calcula UNA vez, al leer el archivo, y así se guarda en
+    // Supabase. Si la orden se asigna a mano más tarde —o si el ancla mejora,
+    // como hoy con el Trailer de BNP AGENCY— ese valor queda viejo y al
+    // recargar vuelve el viejo. La planilla decía "CSI — sin grupo en el
+    // maestro" con las seis órdenes ya ancladas. Se vuelve a preguntar, que es
+    // barato, y así la planilla y el cuadro de Trades dan la MISMA respuesta.
+    const cli = normalizarGrupo(
+      (typeof grupoDeTrade === 'function')
+        ? grupoDeTrade(t.book || t.grupo || '', t.notes, oid, t.trailer || '')
+        : t.grupo);
     if(!cli) return;
     // "NO SE REPORTA" significa NO LE MANDES REPORTE AL CLIENTE. No significa
     // que la linea no exista: sigue siendo una operacion con comision.
@@ -20359,7 +20398,7 @@ function filasPlanillaCOP(){
     // tarifas de los candidatos van de 0,05% a 0,20%. Antes se mandaba al
     // default en silencio; el 13-oct eso fueron $808.400 de menos.
     const _amb = (typeof bookSinResolver === 'function')
-      ? bookSinResolver(t.book || '', t.notes, oid) : null;
+      ? bookSinResolver(t.book || '', t.notes, oid, t.trailer || '') : null;
     if(_amb){
       faltan.push(`${_amb.book} orden ${oid} — sin Account: no se sabe si es ` +
                   _amb.candidatos.join(', ') + ' (asignala en Fidessa Trades)');
@@ -35407,7 +35446,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-04 02:35 UTC · v308';
+const BUILD_ID = '2026-11-04 03:05 UTC · v309';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
@@ -35448,7 +35487,7 @@ if(typeof cargarAsignacionOrdenes === 'function')
       if(!oids.length) return;
       oids.forEach(oid=>{
         const t = _fidessaTradesRaw[oid];
-        if(t) t.grupo = grupoDeTrade(t.book || '', t.notes, oid);
+        if(t) t.grupo = grupoDeTrade(t.book || '', t.notes, oid, t.trailer || '');
       });
       if(typeof renderFidessaTradesPanel === 'function') renderFidessaTradesPanel();
       if(typeof renderModuloReportes === 'function') renderModuloReportes();
