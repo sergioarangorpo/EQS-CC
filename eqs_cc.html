@@ -8789,13 +8789,17 @@ const _sortState = {};
 // "AFP PROTECCION SA", nuestra base trae "PROTECCION") — Security y Lado
 // usan coincidencia exacta porque ya vienen canonizados/normalizados.
 // =====================================================================
-function coincideFiltroRVL({cliente, cuenta, especie, lado, exacto}){
+function coincideFiltroRVL({cliente, cuenta, especie, lado, exacto, soloEspecieLado}){
   const fc = document.getElementById('filtroCliente').value;
   const fe = document.getElementById('filtroEspecie').value;
   const fl = document.getElementById('filtroLado').value;
 
   if(fl && lado !== fl) return false;
   if(fe && especie !== fe) return false;
+  // `soloEspecieLado`: quien llama ya decidió el cliente por su cuenta. Lo usa
+  // el cuadro de Fidessa Trades, que puede mostrar VARIOS clientes a la vez
+  // mientras el filtro de arriba sigue siendo de uno (Sergio, 03-nov).
+  if(soloEspecieLado) return true;
   if(fc){
     // `exacto` para las fuentes que ya traen el cliente resuelto (folios y
     // Fidessa Trades): ahí no hay que adivinar nada.
@@ -10644,10 +10648,13 @@ function getFiltrados(){
   // Es un filtro adicional al de cliente/especie/lado, para todos los clientes:
   // seleccionas la orden en Trades y abajo quedan solo sus folios (para marcar
   // cruce/pantalla y repartir a portafolios sobre esa orden).
-  const zoomParents = _tradesConsolidar.size > 0 ? _tradesConsolidar : null;
+  // El zoom de folios usa SOLO las marcas de este cliente: una orden de MLI
+  // marcada no puede vaciar los folios de Protección.
+  const _marcas = _marcadasDeCliente(cliente);
+  const zoomParents = _marcas.size > 0 ? _marcas : null;
   // Folios de distribución (sin parentOrderId, ej. PROTECCIÓN) NO enlazan por
   // parentOrderId; se enlazan a la orden seleccionada por (especie, portafolio).
-  const zoomKeys = zoomParents ? new Set([..._tradesConsolidar].map(oid=>{ const t=_fidessaTradesRaw&&_fidessaTradesRaw[oid]; return t ? nemoCanonico(t.security,'fidessa')+'|'+String(t.notes||'').trim() : ''; }).filter(Boolean)) : null;
+  const zoomKeys = zoomParents ? new Set([..._marcas].map(oid=>{ const t=_fidessaTradesRaw&&_fidessaTradesRaw[oid]; return t ? nemoCanonico(t.security,'fidessa')+'|'+String(t.notes||'').trim() : ''; }).filter(Boolean)) : null;
   let res = foliosFidessa.filter(f=>
     // Coincidencia FLEXIBLE de cliente (ej. filtro "COLFONDOS SA" calza con el
     // grupo "COLFONDOS"); antes usaba === exacto y por eso salía 0 folios.
@@ -10702,16 +10709,22 @@ function borrarFiltros(){
 function aplicarFiltros(){
   selectedFolios.clear();
   const cliente = document.getElementById('filtroCliente').value;
-  // Al cambiar de Client/Book se sueltan las órdenes marcadas del cliente
-  // anterior. Con la selección múltiple se quedaban pegadas y el cruce FX
-  // reclamaba "trades de varios clientes" (Sergio, 17-sep).
+  // LA SELECCIÓN YA NO SE BOTA AL CAMBIAR DE CLIENT/BOOK (Sergio, 03-nov).
+  // -------------------------------------------------------------------
+  // Esto borraba las marcas de los otros clientes, y el motivo escrito en
+  // septiembre era que "el cruce FX reclamaba trades de varios clientes".
+  // Ese reclamo ya no existe: el LOTE de FX cierra varios clientes y
+  // varios traders de una. El candado quedó puesto después de que se fue
+  // el ladrón, y era justo lo que impedía marcar MLI, Citi y HSBC juntos.
+  //
+  // Lo que sí se suelta es la orden ACTIVA del panel de asignación si no
+  // es de este cliente: ese panel sí es de a uno.
   if(_tradesConsolidar.size){
-    [..._tradesConsolidar].forEach(oid=>{
-      const t = (_fidessaTradesRaw||{})[oid];
-      const g = t ? normalizarGrupo(t.grupo) : '';
-      if(!cliente || (g && g !== cliente)) _tradesConsolidar.delete(oid);
-    });
-    if(!_tradesConsolidar.size){ _ordenActiva = null; allocations = []; }
+    if(_ordenActiva){
+      const ta = (_fidessaTradesRaw||{})[_ordenActiva];
+      if(!ta || normalizarGrupo(ta.grupo) !== cliente){ _ordenActiva = null; allocations = []; }
+    }
+    if(!_marcadasDeCliente(cliente).size){ _ordenActiva = null; allocations = []; }
   }
   document.getElementById('folioContextLabel').textContent = cliente ? '— ' + getClienteDB(cliente).nombre : '— selecciona cliente';
   document.getElementById('errorCantidad').textContent = '';
@@ -10943,11 +10956,28 @@ function renderFidessaTradesPanel(){
     if(n > 0) return 2;
     return _lineasNoReportar.has(String(folioOrden)) ? 1 : 0;
   };
+  // QUÉ CLIENTES SE VEN. Por defecto, solo el del filtro —idéntico a antes—.
+  // Con clientes extra marcados, se ven esos también; con "todos", todos.
+  // Esto NO toca el filtro de arriba: solo decide qué filas hay para marcar.
+  const _cliFiltro = (document.getElementById('filtroCliente')||{}).value || '';
+  const _visibles = _tradesVerTodos ? null
+    : new Set([_cliFiltro, ..._tradesClientesExtra].filter(Boolean));
   const filas = ordenarArrayGenerico(
       Object.entries(_fidessaTradesRaw).map(([folioOrden, t]) => ({folioOrden, ...t, _estadoReporte: _estadoDe(folioOrden)})),
       'fidessaTrades')
-    .filter(f => coincideFiltroRVL({cliente: f.grupo, especie: nemoCanonico(f.security,'fidessa'), lado: f.lado}));
+    .filter(f => (_visibles === null || _visibles.size === 0)
+      ? coincideFiltroRVL({cliente: f.grupo, especie: nemoCanonico(f.security,'fidessa'), lado: f.lado, soloEspecieLado: true})
+      : (_visibles.has(normalizarGrupo(f.grupo)) &&
+         coincideFiltroRVL({cliente: f.grupo, especie: nemoCanonico(f.security,'fidessa'), lado: f.lado, soloEspecieLado: true})));
   const nSel = _tradesConsolidar.size;
+  // Marcadas que NO están a la vista: si no se dicen, son marcas invisibles.
+  const _fueraDeVista = [..._tradesConsolidar].filter(oid=>!filas.some(f=>f.folioOrden === oid));
+  const _cliFuera = [...new Set(_fueraDeVista
+    .map(oid=>{ const t = (_fidessaTradesRaw||{})[oid]; return t ? normalizarGrupo(t.grupo) : ''; })
+    .filter(Boolean))];
+  // Los clientes que de verdad tienen órdenes hoy, para el selector.
+  const _cliConTrades = [...new Set(Object.values(_fidessaTradesRaw||{})
+    .map(t=>normalizarGrupo(t.grupo)).filter(Boolean))].sort();
   panel.innerHTML = `
     <div class="section-label" style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
       <span>Fidessa Trades (crudo, ${filas.length} órdenes)</span>
@@ -10955,6 +10985,27 @@ function renderFidessaTradesPanel(){
         <span class="field-note">${nSel>0 ? nSel+' seleccionada(s) para cruzar FX' : 'Selecciona trades para cruzar con FX'}</span>
         <button class="btn small purple" onclick="continuarConsolidarFX()" ${nSel===0?'disabled':''}>Consolidar y cerrar FX →</button>
       </span>
+    </div>
+    <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:0 0 7px;font-size:11.5px;">
+      <span class="field-note">ver:</span>
+      ${_cliConTrades.map(c=>{
+        const puesto = _tradesVerTodos || c === _cliFiltro || _tradesClientesExtra.has(c);
+        const fijo = (c === _cliFiltro && !_tradesVerTodos);
+        return `<button class="btn small ${puesto?'purple':'ghost'}" style="font-size:11px;padding:2px 8px;"
+          ${fijo?'title="el del filtro de arriba" disabled':''}
+          onclick="tradesVerCliente('${c.replace(/'/g,"\\'")}')">${c}</button>`;
+      }).join('')}
+      <button class="btn small ${_tradesVerTodos?'purple':'ghost'}" style="font-size:11px;padding:2px 8px;"
+        onclick="tradesVerTodos()">todos</button>
+      ${(_tradesClientesExtra.size || _tradesVerTodos)
+        ? `<button class="btn small ghost" style="font-size:11px;padding:2px 8px;"
+             onclick="tradesVerSoloFiltro()">solo ${_cliFiltro||'el del filtro'}</button>` : ''}
+      ${_cliFuera.length
+        ? `<span style="flex:1;"></span>
+           <span style="color:var(--warn,#f59e0b);">⚠ ${_fueraDeVista.length} marcada(s) que no ves,
+             de ${_cliFuera.join(', ')}</span>
+           <button class="btn small ghost" style="font-size:11px;padding:2px 8px;"
+             onclick="soltarMarcasFueraDeVista()">soltarlas</button>` : ''}
     </div>
     <div class="blotter-wrap" style="overflow-x:auto;">
       <!-- Anchos medidos contra el contenido real, no a ojo: el dato más largo
@@ -11017,6 +11068,64 @@ registrarTablaOrdenable('fidessaTrades', renderFidessaTradesPanel);
 // Selección de trades de Fidessa para el cruce con FX (clientes extranjeros
 // tipo MLI, que llegan directo a Fidessa y hay que cerrarles el dólar).
 const _tradesConsolidar = new Set(); // folioOrden seleccionados
+
+// CLIENTES EXTRA PARA EL CUADRO DE TRADES (Sergio, 03-nov)
+// -------------------------------------------------------------------
+// El filtro de arriba sigue siendo de UN cliente: lo leen el panel de
+// asignación, el de "listo para generar" y el generador, y volverlo
+// múltiple los rompe a todos. Esto decide únicamente QUÉ FILAS SE VEN en
+// el cuadro de Fidessa Trades, para poder marcar líneas de MLI, Citi y
+// HSBC en una sola pasada y cerrarles el FX juntas.
+// Vacío = exactamente como antes: solo el cliente del filtro.
+let _tradesClientesExtra = new Set();
+let _tradesVerTodos = false;
+
+// Las marcas que son DEL CLIENTE que está en pantalla. Todo lo que use la
+// selección para ACOTAR UN REPORTE tiene que mirar esto y no el conjunto
+// entero: desde que la selección sobrevive al cambio de cliente, el
+// conjunto puede traer órdenes de otros, y acotar con ellas dejaría al
+// generador diciendo "ninguna orden tiene el reparto completo" sin causa
+// visible. Para cerrar FX sí se usa el conjunto entero, que es el punto.
+function _marcadasDeCliente(cliente){
+  const c = cliente || (document.getElementById('filtroCliente')||{}).value || '';
+  const out = new Set();
+  _tradesConsolidar.forEach(oid=>{
+    const t = (_fidessaTradesRaw||{})[oid];
+    if(t && normalizarGrupo(t.grupo) === c) out.add(oid);
+  });
+  return out;
+}
+// --- qué clientes se ven en el cuadro de Trades (Sergio, 03-nov) ----
+function tradesVerCliente(c){
+  if(_tradesVerTodos) return;                 // con "todos" no hay nada que sumar
+  if(_tradesClientesExtra.has(c)) _tradesClientesExtra.delete(c);
+  else _tradesClientesExtra.add(c);
+  renderFidessaTradesPanel();
+}
+function tradesVerTodos(){
+  _tradesVerTodos = !_tradesVerTodos;
+  renderFidessaTradesPanel();
+}
+function tradesVerSoloFiltro(){
+  _tradesVerTodos = false;
+  _tradesClientesExtra = new Set();
+  renderFidessaTradesPanel();
+}
+// Suelta las marcas que no están a la vista. No se botan solas: botar algo
+// que el usuario marcó tiene que ser un acto suyo.
+function soltarMarcasFueraDeVista(){
+  const cli = (document.getElementById('filtroCliente')||{}).value || '';
+  const visibles = _tradesVerTodos ? null
+    : new Set([cli, ..._tradesClientesExtra].filter(Boolean));
+  [..._tradesConsolidar].forEach(oid=>{
+    const t = (_fidessaTradesRaw||{})[oid];
+    const g = t ? normalizarGrupo(t.grupo) : '';
+    if(visibles && !visibles.has(g)) _tradesConsolidar.delete(oid);
+  });
+  renderFidessaTradesPanel();
+  if(typeof renderFolios === 'function') renderFolios();
+}
+
 function toggleTradeConsolidar(folioOrden){
   const cliente = document.getElementById('filtroCliente').value;
   const cfg = cliente ? getClienteDB(cliente) : null;
@@ -11049,10 +11158,19 @@ function toggleTradeConsolidar(folioOrden){
 
 function toggleTodosTrades(checked){
   const cliente = document.getElementById('filtroCliente').value;
+  // LA MISMA REGLA QUE PINTA LA TABLA. Si el "marcar todas" usara otro
+  // criterio que el de las filas que se ven, marcaría cosas que no están en
+  // pantalla — y desmarcar dejaría marcas invisibles (Sergio, 03-nov).
+  const visibles = _tradesVerTodos ? null
+    : new Set([cliente, ..._tradesClientesExtra].filter(Boolean));
   const filas = ordenarArrayGenerico(Object.entries(_fidessaTradesRaw||{}).map(([folioOrden, t]) => ({folioOrden, ...t})), 'fidessaTrades')
-    .filter(f => coincideFiltroRVL({cliente: f.grupo, especie: nemoCanonico(f.security,'fidessa'), lado: f.lado}));
+    .filter(f => (visibles === null || visibles.size === 0 || visibles.has(normalizarGrupo(f.grupo))) &&
+                 coincideFiltroRVL({cliente: f.grupo, especie: nemoCanonico(f.security,'fidessa'),
+                                    lado: f.lado, soloEspecieLado: true}));
+  // Desmarcar quita SOLO lo que está a la vista: el conjunto puede traer
+  // marcas de otros clientes y botarlas sin avisar sería botar trabajo.
   if(checked) filas.forEach(f=> _tradesConsolidar.add(f.folioOrden));
-  else _tradesConsolidar.clear();
+  else filas.forEach(f=> _tradesConsolidar.delete(f.folioOrden));
   const cfg = cliente ? getClienteDB(cliente) : null;
   // Con selección múltiple no hay una única orden activa para reparto manual.
   if(cfg && cfg.reparteManual) _ordenActiva = _tradesConsolidar.size === 1 ? [..._tradesConsolidar][0] : null;
@@ -11532,7 +11650,12 @@ function _loteFXFechas(bloque){
     ? settleDateCruce(td, bloque.ladoAccion)
     : sumarDiasHabiles(hoy, 2);
   const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  return { tradeDate: iso(td), settleDate: iso(sd) };
+  // LAS DOS FORMAS. El texto va a los campos de la calculadora; los OBJETOS
+  // Date van al Excel, que hace `lado.tradeDate.toISOString()`. Mandarle solo
+  // el texto reventaba con "Cannot read properties of undefined (reading
+  // 'toISOString')" DESPUÉS de haber registrado las operaciones — o sea, en el
+  // peor momento posible (Juan Antonio, 03-nov).
+  return { tradeDate: iso(td), settleDate: iso(sd), tradeDateObj: td, settleDateObj: sd };
 }
 
 // --- validación: TODO antes de escribir NADA ------------------------
@@ -11646,7 +11769,11 @@ async function registrarLoteFX(){
           side, usd, tasaCliente:cli, tasaMercado:mkt, ...fechas, cliente:clienteCalc,
           trader: esB ? (t.b.trader||'') : '' });
       }else{
-        _loteFX.resultado.ok.push({ etiqueta, op, bloque: esB ? t.b : null, usd });
+        // La utilidad la dice la CALCULADORA, que ya la calculó para esta
+        // pata. Volverla a derivar aquí sería una segunda matemática para
+        // el mismo número, y el signo depende del lado y del modelo.
+        _loteFX.resultado.ok.push({ etiqueta, op, bloque: esB ? t.b : null, usd,
+                                    utilidad: Number(c.utilidadTotal) || 0 });
       }
     }catch(err){
       _loteFX.resultado.fallo.push({ etiqueta, motivo: err.message,
@@ -11682,10 +11809,13 @@ async function generarArchivosLoteFX(){
     (g[k] = g[k] || { cliente:r.bloque.cliente, trader:r.bloque.trader||'', regs:[] });
     // El Excel del cruce espera el bloque con sus tasas y su USD, que es
     // exactamente lo que el cruce de a uno le pasaba en `registrados`.
+    const f = _loteFXFechas(r.bloque);
     g[k].regs.push({ ...r.bloque, opId:r.op.id, usd:r.usd,
+                     // El generador del Excel las quiere como Date, no texto.
+                     tradeDate: f.tradeDateObj, settleDate: f.settleDateObj,
                      tasaFinalCliente: parseLocaleNumber(String(_loteFX.tasaCli)),
                      tasaMercado: parseLocaleNumber(String(_loteFX.tasaMkt)),
-                     utilidad: 0 });
+                     utilidad: Number(r.utilidad) || 0 });
   });
   for(const x of Object.values(g)){
     try{ await generarExcelCruce(x.cliente, x.regs, x.trader); }
@@ -11801,22 +11931,35 @@ function renderLoteFX(){
     <div style="font-size:11.5px;font-weight:700;opacity:.65;margin-bottom:7px;">
       LO QUE SE VA A REGISTRAR</div>`;
   const cli = parseLocaleNumber(String(_loteFX.tasaCli||'')) || 0;
-  let totNeto = 0, totUsd = 0;
+  // NO SE SUMAN COMPRAS CON VENTAS (Juan Antonio, 03-nov).
+  // --------------------------------------------------------------
+  // Son dos operaciones en direcciones CONTRARIAS: en una vendemos
+  // dólares y en la otra los compramos. Un solo total que las sume no es
+  // ningún número — y el que de verdad se necesita para cerrar contra la
+  // mesa es el de CADA LADO. Por eso todo se acumula por lado.
+  const TOT = { SELL:{cop:0,usd:0,n:0}, BUY:{cop:0,usd:0,n:0} };
+  const SUB = { SELL:{cop:0,usd:0}, BUY:{cop:0,usd:0} };
   let cliAnt = '';
-  let subNeto = 0, subUsd = 0;
+  const lineaLado = (lado, o, etiqueta, fuerte) => {
+    if(!o.cop && !o.usd) return '';
+    return `<div style="display:flex;gap:9px;font-size:${fuerte?'13px':'12px'};padding:2px 0;
+          ${fuerte?'font-weight:700;':'opacity:.85;'}">
+      <span style="flex:1;${fuerte?'':'padding-left:10px;'}">${etiqueta} · ${lado==='SELL'?'vendemos':'compramos'} USD</span>
+      <span style="min-width:130px;text-align:right;">${fmtMoney(o.cop)}</span>
+      <span style="min-width:110px;text-align:right;">${cli?fmtMoney(o.usd):'—'}</span></div>`;
+  };
   const cerrarSub = () => {
     if(!cliAnt) return;
-    h += `<div style="display:flex;gap:9px;font-size:12px;padding:2px 0 6px 10px;
-          border-top:1px solid var(--border,#232938);opacity:.8;">
-      <span style="flex:1;">subtotal ${esc(cliAnt)}</span>
-      <span style="min-width:130px;text-align:right;">${fmtMoney(subNeto)}</span>
-      <span style="min-width:110px;text-align:right;">${cli?fmtMoney(subUsd):'—'}</span></div>`;
-    subNeto = 0; subUsd = 0;
+    h += `<div style="border-top:1px solid var(--border,#232938);margin-top:3px;padding-top:3px;">
+      ${lineaLado('SELL', SUB.SELL, 'subtotal ' + esc(cliAnt))}
+      ${lineaLado('BUY',  SUB.BUY,  'subtotal ' + esc(cliAnt))}</div>`;
+    SUB.SELL = {cop:0,usd:0}; SUB.BUY = {cop:0,usd:0};
   };
   bloques.forEach(b=>{
     if(b.cliente !== cliAnt){ cerrarSub(); cliAnt = b.cliente; }
     const usd = cli ? b.netoCOP / cli : 0;
-    subNeto += b.netoCOP; subUsd += usd; totNeto += b.netoCOP; totUsd += usd;
+    SUB[b.ladoFX].cop += b.netoCOP; SUB[b.ladoFX].usd += usd;
+    TOT[b.ladoFX].cop += b.netoCOP; TOT[b.ladoFX].usd += usd; TOT[b.ladoFX].n++;
     const f = _loteFXFechas(b);
     h += `<div style="display:flex;gap:9px;font-size:12.5px;padding:2px 0;flex-wrap:wrap;">
       <span style="min-width:200px;"><b>${esc(b.cliente)}</b>${b.trader?' · '+esc(b.trader):''}</span>
@@ -11829,7 +11972,7 @@ function renderLoteFX(){
   cerrarSub();
   _loteFX.extras.forEach(e=>{
     const u = parseLocaleNumber(String(e.usd||'')) || 0;
-    totUsd += u;
+    TOT[e.ladoFX].usd += u; TOT[e.ladoFX].n++;
     const f = _loteFXFechas(null);
     h += `<div style="display:flex;gap:9px;font-size:12.5px;padding:2px 0;flex-wrap:wrap;">
       <span style="min-width:200px;"><b>${esc(e.cliente||'—')}</b> <span class="field-note">sin acciones</span></span>
@@ -11839,14 +11982,33 @@ function renderLoteFX(){
       <span class="field-note" style="min-width:92px;">cumple ${esc(f.settleDate)}</span>
     </div>`;
   });
-  h += `<div style="display:flex;gap:9px;font-size:13px;font-weight:700;padding:6px 0 0;
-        border-top:2px solid var(--border,#232938);margin-top:4px;">
-      <span style="flex:1;">TOTAL · ${bloques.length + _loteFX.extras.length} operación(es) de FX ·
-        ${archivos.length} archivo(s)</span>
-      <span style="min-width:130px;text-align:right;">${fmtMoney(totNeto)}</span>
-      <span style="min-width:110px;text-align:right;">${cli?fmtMoney(totUsd):'—'}</span>
+  // EL NÚMERO QUE SE CIERRA CONTRA LA MESA, por lado y grande.
+  const neto = { cop: TOT.SELL.cop - TOT.BUY.cop, usd: TOT.SELL.usd - TOT.BUY.usd };
+  h += `<div style="border-top:2px solid var(--border,#232938);margin-top:5px;padding-top:5px;">
+      ${lineaLado('SELL', TOT.SELL, `TOTAL ${TOT.SELL.n} op.`, true)}
+      ${lineaLado('BUY',  TOT.BUY,  `TOTAL ${TOT.BUY.n} op.`,  true)}
+    </div>`;
+  // Si hay de los dos lados, se muestra además la DIFERENCIA, que es lo que
+  // queda neto si se compensaran. Va aparte y con su nombre: no reemplaza a
+  // los dos de arriba, porque se registran DOS operaciones, no una.
+  if(TOT.SELL.n && TOT.BUY.n){
+    h += `<div style="display:flex;gap:9px;font-size:13px;padding:5px 0 0;
+          border-top:1px dashed var(--border,#232938);margin-top:4px;">
+      <span style="flex:1;opacity:.8;">neto si se compensaran ·
+        ${neto.usd >= 0 ? 'vendemos' : 'compramos'} USD</span>
+      <span style="min-width:130px;text-align:right;">${fmtMoney(Math.abs(neto.cop))}</span>
+      <span style="min-width:110px;text-align:right;">${cli?fmtMoney(Math.abs(neto.usd)):'—'}</span>
     </div>
-    <div class="field-note" style="margin-top:6px;">
+    <div class="field-note" style="margin-top:3px;">
+      <b>No se netean.</b> Se registran las ${TOT.SELL.n + TOT.BUY.n} operaciones, una por lado:
+      es la regla local. El neto es solo para que sepas cómo te queda la posición.</div>
+    <div class="field-note" style="margin-top:4px;color:var(--warn,#e0a93b);">
+      <b>Ojo:</b> con UNA sola tasa cliente para los dos lados, el margen se cobra en una
+      dirección y se paga en la otra, así que <b>una de las dos patas va en contra</b>.
+      Si las dos deben ganar, el cierre va en dos lotes, uno por lado, con su propia tasa.</div>`;
+  }
+  h += `<div class="field-note" style="margin-top:6px;">
+      ${bloques.length + _loteFX.extras.length} operación(es) de FX · ${archivos.length} archivo(s).
       Las fechas de cumplimiento pueden no ser todas iguales: las que vienen de acciones
       salen de T+2 contra la acción con el ajuste por festivo gringo; las sin acciones,
       de T+2 hábil.</div>
@@ -11905,11 +12067,12 @@ function elegirModoCierreFX(modo){
   p.modoCierre = modo;
   document.getElementById('modalTipoCierreFX').style.display = 'none';
   if(modo === 'vwap'){
-    // AHORA VA AL LOTE. La pantalla de negociación de a un cliente sigue
-    // ahí (`abrirNegociacionFX`) y no se borró, pero el camino normal es
-    // el lote: hace lo mismo con un cliente y además aguanta varios
-    // clientes y varios traders (Sergio, 03-nov).
-    abrirLoteFX();
+    // UN SOLO CLIENTE VUELVE AL CAMINO DE SIEMPRE (Sergio, 03-nov, urgente).
+    // Se había enrutado al lote y le faltaban cosas que esta pantalla sí
+    // tiene —el neto grande que se cierra— así que el sencillo se queda
+    // como estaba. El lote es SOLO para varios clientes, y a él se entra
+    // desde `continuarConsolidarFX`, antes de este menú.
+    abrirNegociacionFX();
   } else if(modo === 'nofx'){
     mostrarResumenSinFX();
   } else {
@@ -22159,7 +22322,8 @@ function renderStats(filtrados){
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
     const t = _fidessaTradesRaw[oid];
     if(!t.qtyDone) return;
-    if(_tradesConsolidar.size > 0 && !_tradesConsolidar.has(oid)) return; // respeta el zoom
+    { const _mc = _marcadasDeCliente();
+      if(_mc.size > 0 && !_mc.has(oid)) return; }   // respeta el zoom de ESTE cliente
     if(!coincideFiltroRVL({cliente:normalizarGrupo(t.grupo), especie:nemoCanonico(t.security,'fidessa'), lado:t.lado})) return;
     qtyTrades += t.qtyDone; nOrdenes++;
   });
@@ -22469,7 +22633,11 @@ function getOrdenesConAlloc(todas){
   // Antes esta función recogía TODAS las órdenes del cliente con folios y el
   // reporte salía completo aunque hubiera una sola línea marcada.
   poids.forEach(poid=>{
-    if(!todas && _tradesConsolidar.size > 0 && !_tradesConsolidar.has(String(poid))) poids.delete(poid);
+    // Las marcas de OTROS clientes no acotan este reporte: si este cliente
+    // no tiene ninguna marcada, es como si no hubiera selección, que es
+    // exactamente el comportamiento de siempre.
+    const _mc = _marcadasDeCliente(cliente);
+    if(!todas && _mc.size > 0 && !_mc.has(String(poid))) poids.delete(poid);
     // Marcada a mano como no reportable: no entra al archivo aunque esté
     // seleccionada. Que el letrero diga "NO SE REPORTA" y luego saliera en el
     // Excel sería peor que no tener la marca.
@@ -35127,7 +35295,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-03 21:20 UTC · v300';
+const BUILD_ID = '2026-11-03 23:40 UTC · v302';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
