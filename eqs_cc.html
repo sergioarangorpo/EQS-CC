@@ -20097,7 +20097,7 @@ function grupoDePortafolio(portafolio, deceval){
 
 // Encuentra el grupo de una operación. Busca por nombre, por alias, y para los
 // que llegan bajo CCSI (Moneda, Falcom, Tordesilhas, Impera) por el ACCOUNT.
-function grupoDeOperacion(cliente, account, deceval){
+function grupoDeOperacion(cliente, account, deceval, _sinHermanos){
   const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
   const c = lim(cliente), a = lim(account);
   if(!c && !a && !deceval) return null;
@@ -20166,12 +20166,28 @@ function grupoDeOperacion(cliente, account, deceval){
   // uno ya resuelto.
   const oficial = (typeof fondoReporte !== 'undefined' && cliente)
     ? fondoReporte[String(cliente).trim().toUpperCase()] : '';
-  if(oficial && lim(oficial) !== c){
-    const porNombre = _maestroGrupos.find(g=>{
-      const k = lim(g.grupo), o = lim(oficial);
-      return k && (k === o || k.includes(o) || o.includes(k));
-    });
-    if(porNombre) return porNombre;
+  if(oficial && !_sinHermanos){
+    // 4.a) POR LA CLAVE HERMANA, que es lo que de verdad funciona.
+    // Buscar el NOMBRE del fondo en el maestro obliga a adivinar cómo se
+    // llama allá, y el primer intento falló justo por eso. ANDES ya resuelve
+    // todos los días; ANDES_MANUAL es el MISMO fondo según `fondoReporte`,
+    // así que se resuelve con la clave que sí funciona y listo. Sin inventar
+    // nombres y sin depender de cómo esté escrito el maestro.
+    const hermanas = Object.keys(fondoReporte)
+      .filter(k => k !== String(cliente).trim().toUpperCase()
+                && lim(fondoReporte[k]) === lim(oficial));
+    for(const h of hermanas){
+      const g = grupoDeOperacion(h, account, deceval, true);   // sin re-saltar
+      if(g) return g;
+    }
+    // 4.b) y si ninguna hermana resuelve, el nombre oficial del fondo.
+    if(lim(oficial) !== c){
+      const porNombre = _maestroGrupos.find(g=>{
+        const k = lim(g.grupo), o = lim(oficial);
+        return k && (k === o || k.includes(o) || o.includes(k));
+      });
+      if(porNombre) return porNombre;
+    }
   }
   return null;
 }
@@ -35446,7 +35462,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-04 03:05 UTC · v309';
+const BUILD_ID = '2026-11-04 03:20 UTC · v310';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
