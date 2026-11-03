@@ -12960,6 +12960,44 @@ async function guardarFidessaFoliosSupabase(filas){
     notes: String(f.notes||''),
   }));
   if(rows.length===0) return;
+  // SE BORRA LO DE HOY ANTES DE GUARDAR (Sergio, 03-nov · PORVENIR).
+  // ===================================================================
+  // La llave de arriba termina en `_${i}`: la POSICIÓN de la fila dentro
+  // del archivo. El archivo de folios CRECE durante el día, así que al
+  // volver a subirlo las posiciones corren y el MISMO folio cae bajo un
+  // id distinto: en vez de pisar, AGREGA. Tres cargas del archivo de hoy
+  // (1.171 filas) dejaron 3.624 filas en la tabla, y PORVENIR mostró
+  // 16.609.235 acciones contra 5.324.000 ejecutados.
+  //
+  // Quitar la posición de la llave no sirve: está ahí porque dos filas
+  // de un composite pueden coincidir en todo lo demás, y además es la
+  // única forma de recuperar el orden del archivo al releer (lo necesita
+  // la asignación de hijas). Así que se borra el día y se vuelve a
+  // escribir, igual que el blotter de RFI.
+  //
+  // El filtro es EL MISMO que usa `cargarFidessaDesdeSupabase` para leer:
+  // si leemos lo de hoy, borramos lo de hoy. Que no se separen nunca.
+  const _h = new Date();
+  const _inicioHoy = new Date(_h.getFullYear(), _h.getMonth(), _h.getDate(), 0,0,0).toISOString();
+  try{
+    const _del = await fetch(
+      `${SUPA_URL}/rest/v1/fidessa_folios?actualizado_en=gte.${_inicioHoy}`,
+      { method:'DELETE', headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
+                                   'Prefer':'return=minimal' } });
+    if(!_del.ok){
+      // Si no se pudo limpiar, NO se inserta: duplicar es peor que no
+      // guardar. Lo que está en pantalla sigue siendo lo bueno de hoy.
+      console.warn('Folios: no se pudo limpiar lo de hoy (HTTP ' + _del.status + '); no se guarda para no duplicar.');
+      if(typeof avisoFalla === 'function')
+        avisoFalla('Los folios quedaron en pantalla pero NO se guardaron: no se pudo limpiar los de hoy. Si recargas, se pierden.');
+      return;
+    }
+  }catch(e){
+    console.warn('Folios: falló el borrado de hoy:', e.message);
+    if(typeof avisoFalla === 'function')
+      avisoFalla('Los folios quedaron en pantalla pero NO se guardaron: falló el borrado de los de hoy.');
+    return;
+  }
   const ok = await guardarEnLotesSupabase('fidessa_folios', rows);
   if(!ok){
     // Si la tabla todavía no tiene la columna `notes`, PostgREST rechaza el
@@ -22121,58 +22159,54 @@ function renderHistoricoRVL(){
   const nG = filas.filter(f=>f.estado === 'generado').length;
   const nA = filas.filter(f=>f.estado === 'asignado').length;
   const nP = filas.filter(f=>f.estado === 'parcial').length;
-
   const COL = { generado:'var(--buy,#22c55e)', asignado:'var(--accent,#a855f7)', parcial:'var(--warn,#f59e0b)' };
   const ETI = { generado:'✓ generado', asignado:'● asignado', parcial:'◐ a medias' };
 
-  // El cliente de la pantalla va de primero: es el que se está trabajando.
-  const actual = (document.getElementById('filtroCliente') || {}).value || '';
-  const porCliente = {};
-  filas.forEach(f=>{ (porCliente[f.cliente] = porCliente[f.cliente] || []).push(f); });
-  const clientes = Object.keys(porCliente).sort((a,b)=>
-    (a === actual ? -1 : b === actual ? 1 : a.localeCompare(b)));
-
-  let h = `<div class="card" style="padding:12px 14px;">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
-      <b style="font-size:13px;">HISTÓRICO DE HOY</b>
-      <span style="font-size:12px;display:flex;gap:12px;flex-wrap:wrap;">
-        <span style="color:${COL.asignado};"><b>${nA}</b> asignada${nA===1?'':'s'}</span>
-        ${nP ? `<span style="color:${COL.parcial};"><b>${nP}</b> a medias</span>` : ''}
-        <span style="color:${COL.generado};"><b>${nG}</b> generada${nG===1?'':'s'}</span>
-      </span>
-    </div>`;
-
-  clientes.forEach(c=>{
-    h += `<div style="margin-top:9px;">
-      <div style="font-size:11.5px;font-weight:700;opacity:${c === actual ? '1' : '.65'};
-           letter-spacing:.3px;">${esc(c)}${c === actual ? '' : ''}</div>`;
-    porCliente[c]
-      .sort((x,y)=> (x.estado === y.estado ? 0 : x.estado === 'generado' ? 1 : -1))
-      .forEach(f=>{
-        h += `<div style="display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;
-              font-size:12.5px;padding:2px 0 2px 10px;">
-          <span style="color:${COL[f.estado]};font-weight:700;min-width:92px;">${ETI[f.estado]}</span>
-          <b style="min-width:110px;">${esc(f.especie)}</b>
-          <span style="opacity:.75;min-width:52px;">${esc(f.lado)}</span>
-          <span style="min-width:80px;text-align:right;">${fmtInt(f.cantidad)}</span>
-          <span class="field-note" style="flex:1;min-width:160px;">${esc(f.portafolios || '')}</span>
-          ${f.estado === 'generado'
-            ? `<span class="field-note">${esc(f.hora)}${f.version > 1 ? ' · v' + f.version : ''}</span>`
-            : (f.estado === 'parcial'
-               ? `<span style="color:${COL.parcial};">faltan ${fmtInt(f.falta)}</span>` : '')}
-        </div>`;
-      });
-    h += `</div>`;
+  // UN CUADRO, NO UNA LISTA (Sergio, 03-nov).
+  // -------------------------------------------------------------------
+  // Esto era una lista agrupada por cliente, con un subtítulo por cada
+  // uno. Ocupaba el triple y había que leerla en vez de barrerla. Es la
+  // misma tabla de RVI: encabezados, una fila por línea, el cliente como
+  // una columna más. Se ordena por hora descendente, lo último arriba.
+  const ord = [...filas].sort((a,b)=>{
+    if(a.estado !== b.estado) return a.estado === 'generado' ? 1 : -1;
+    return String(b.hora||'').localeCompare(String(a.hora||''));
   });
 
-  if(nA || nP){
-    h += `<div class="field-note" style="margin-top:9px;">
-      <b style="color:${COL.asignado};">Asignado</b> quiere decir que el reparto está puesto
-      <b>en esta sesión</b>. Todavía no está guardado en ninguna parte: si recargas la página
-      sin generar, se pierde y hay que volver a asignarlo.</div>`;
-  }
-  h += `</div>`;
-  cont.innerHTML = h;
+  cont.innerHTML = `
+    <div class="section-label">
+      Histórico registrado hoy
+      <span class="hint">${nA ? nA + ' asignada' + (nA===1?'':'s') + ' · ' : ''}${
+        nP ? nP + ' a medias · ' : ''}${nG} generada${nG===1?'':'s'}</span>
+    </div>
+    <div class="blotter-wrap">
+      <table>
+        <thead><tr>
+          <th style="width:96px;">Estado</th>
+          <th>Cliente</th>
+          <th>Especie</th>
+          <th style="width:62px;">Lado</th>
+          <th class="num" style="width:104px;">Cantidad</th>
+          <th>Portafolio</th>
+          <th style="width:74px;">Hora</th>
+        </tr></thead>
+        <tbody>
+          ${ord.map(f=>`<tr>
+            <td style="color:${COL[f.estado]};font-weight:700;white-space:nowrap;">${ETI[f.estado]}</td>
+            <td>${esc(f.cliente)}</td>
+            <td><b>${esc(f.especie)}</b></td>
+            <td>${esc(f.lado)}</td>
+            <td class="num">${fmtInt(f.cantidad)}</td>
+            <td class="field-note">${esc(f.portafolios || '')}${
+              f.estado === 'parcial' ? ` <span style="color:${COL.parcial};">faltan ${fmtInt(f.falta)}</span>` : ''}</td>
+            <td class="field-note">${esc(f.hora)}${f.version > 1 ? ' · v'+f.version : ''}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${(nA || nP) ? `<div class="field-note" style="margin-top:5px;">
+      <b style="color:${COL.asignado};">Asignado</b> es el reparto puesto <b>en esta sesión</b>:
+      todavía no está guardado. Si recargas sin generar, se pierde.</div>` : ''}`;
 }
 
 function renderPanelListo(filtrados){
@@ -35373,7 +35407,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-04 01:35 UTC · v306';
+const BUILD_ID = '2026-11-04 02:35 UTC · v308';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
