@@ -1477,12 +1477,6 @@
 
   <!-- Semáforo de preparación: qué falta para poder generar -->
   <div id="panelListo" style="margin:0 24px 18px;display:none;"></div>
-  <!-- ===== HISTÓRICO DE HOY (RVL) =====
-       El 30-oct, con los dos portafolios de FIDUASHMORE, no había forma de
-       ver desde la pantalla de RVL si ACEF y FLACO habían quedado pegados.
-       Esto lo muestra, SIN cambiar nada de cómo se reporta (Sergio, 03-nov). -->
-  <div id="histRVL" style="margin:0 24px 18px;display:none;"></div>
-
   <div class="grid">
 
     <div class="col-main">
@@ -1637,6 +1631,12 @@
 
     </div>
   </div>
+
+  <!-- ===== HISTÓRICO DE HOY (RVL) =====
+       ABAJO, como en RVI. Estaba arriba, entre el semáforo y los folios, y
+       ahí le quitaba visibilidad a lo que de verdad se trabaja (Sergio,
+       03-nov). Lo de aquí abajo ya está generado: no estorba. -->
+  <div id="histRVL" style="margin:0 24px 18px;display:none;"></div>
 
   <!-- Validador ancho: resumen de TODO lo asignado (todas las órdenes con
        reparto), para revisar antes de generar. Solo para clientes de reparto
@@ -10654,7 +10654,22 @@ function getFiltrados(){
   const zoomParents = _marcas.size > 0 ? _marcas : null;
   // Folios de distribución (sin parentOrderId, ej. PROTECCIÓN) NO enlazan por
   // parentOrderId; se enlazan a la orden seleccionada por (especie, portafolio).
-  const zoomKeys = zoomParents ? new Set([..._marcas].map(oid=>{ const t=_fidessaTradesRaw&&_fidessaTradesRaw[oid]; return t ? nemoCanonico(t.security,'fidessa')+'|'+String(t.notes||'').trim() : ''; }).filter(Boolean)) : null;
+  // OJO CON LA LLAVE VACÍA (Sergio, 03-nov · PORVENIR).
+  // -------------------------------------------------------------------
+  // Esta llave es (especie|portafolio) y existe SOLO para los folios de
+  // distribución de PROTECCIÓN, que no traen Parent Order ID pero SÍ
+  // traen portafolio (OBL-MODER, CES-LP...). Si el portafolio viene
+  // vacío la llave queda en "ECOPETROL|" y entonces calza con CUALQUIER
+  // folio huérfano de esa especie con portafolio vacío — de todo el día
+  // y de cualquier orden. Así PORVENIR mostró 15.500.000 contra dos
+  // órdenes que suman 4.500.000. Sin portafolio no hay enlace.
+  const zoomKeys = zoomParents ? new Set([..._marcas].map(oid=>{
+      const t = _fidessaTradesRaw && _fidessaTradesRaw[oid];
+      if(!t) return '';
+      const port = String(t.notes||'').trim();
+      if(!port) return '';                       // ← sin portafolio, no se enlaza
+      return nemoCanonico(t.security,'fidessa') + '|' + port;
+    }).filter(Boolean)) : null;
   let res = foliosFidessa.filter(f=>
     // Coincidencia FLEXIBLE de cliente (ej. filtro "COLFONDOS SA" calza con el
     // grupo "COLFONDOS"); antes usaba === exacto y por eso salía 0 folios.
@@ -10678,7 +10693,8 @@ function getFiltrados(){
     // 135.000 y 6.800) se veían como una sola de 141.800 al hacer zoom.
     (f.origen==='proteccion-directo' || !zoomParents
       || zoomParents.has(String(f.parentOrderId))
-      || (!f.parentOrderId && zoomKeys && zoomKeys.has(String(f.especie)+'|'+String(f.portafolio||'').trim())))
+      || (!f.parentOrderId && zoomKeys && String(f.portafolio||'').trim()
+          && zoomKeys.has(String(f.especie)+'|'+String(f.portafolio||'').trim())))
   );
   if(sortCol){
     res = [...res].sort((a,b)=>{
@@ -11577,7 +11593,19 @@ function _loteFXNuevo(){
       });
     });
   }
-  return { items, extras: [], tipo:'', tasaMkt:'', tasaCli:'', resultado:null, corriendo:false };
+  // DOS COSAS DISTINTAS QUE SE LLAMAN "TRADER" (Sergio, 03-nov).
+  // -------------------------------------------------------------------
+  // `item.trader`  = el trader DEL CLIENTE (Beatriz, Mario, Lucas). Sirve
+  //                  para NOMBRAR el Excel: Trade_Confirmation_<broker>_<TRADER>_fecha.
+  // `receptor`     = el de NUESTRA mesa (JAJ o SAR). Es el que va en la
+  //                  operación, sale en la columna RECEPTOR, en la Planilla
+  //                  COP y en el reporte al cliente.
+  // El lote metía el primero donde va el segundo y quedó "BEATRIZ RIPAMONTI"
+  // como receptor de dos operaciones de MLI. No se vuelven a mezclar.
+  const recSel = document.getElementById('trader');
+  return { items, extras: [], tipo:'', tasaMkt:'', tasaCli:'',
+           receptor: (recSel && recSel.value) || 'JAJ',
+           resultado:null, corriendo:false };
 }
 
 function abrirLoteFX(){
@@ -11775,7 +11803,9 @@ async function registrarLoteFX(){
       const c = _loteFXCalcular(clienteCalc, side, usd, fechas, mkt, cli);
       if(!c) throw new Error('la calculadora no devolvió nada');
       const op = _fxOpDesde({
-        c, cliente: clienteCalc, trader: esB ? (t.b.trader||'') : '',
+        // El RECEPTOR es el de la mesa. El trader del cliente va en el
+        // bloque y solo sirve para nombrar el archivo.
+        c, cliente: clienteCalc, trader: _loteFX.receptor || 'JAJ',
         tipoOperacion: _loteFX.tipo,
         tradeDate: fechas.tradeDate, settleDate: fechas.settleDate,
         horaRegistro: new Date().toLocaleTimeString('es-CO',
@@ -11870,6 +11900,11 @@ function renderLoteFX(){
           <option value="SPOT"${_loteFX.tipo==='SPOT'?' selected':''}>SPOT</option>
           <option value="NEXT_DAY"${_loteFX.tipo==='NEXT_DAY'?' selected':''}>NEXT DAY</option>
           <option value="WMCO"${_loteFX.tipo==='WMCO'?' selected':''}>WMCO</option>
+        </select></div>
+      <div><label class="field-note">Receptor (nuestra mesa)</label><br>
+        <select onchange="loteFXSet('receptor', this.value)" ${corriendo?'disabled':''} style="min-width:150px;">
+          <option value="JAJ"${_loteFX.receptor==='JAJ'?' selected':''}>JAJ — Juan Antonio Jiménez</option>
+          <option value="SAR"${_loteFX.receptor==='SAR'?' selected':''}>SAR — Sergio Arango</option>
         </select></div>
       <div><label class="field-note">Tasa mercado</label><br>
         <input type="text" inputmode="decimal" value="${esc(_loteFX.tasaMkt)}" ${corriendo?'disabled':''}
@@ -35338,7 +35373,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-04 00:45 UTC · v304';
+const BUILD_ID = '2026-11-04 01:35 UTC · v306';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
