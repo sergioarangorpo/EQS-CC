@@ -1892,6 +1892,25 @@
 </div>
 
 <!-- Menú: ¿cómo se cerró este FX? VWAP del día vs WMCO (previo ya registrado) -->
+<!-- ===== EL LOTE DE FX =====
+     Varios clientes, varios traders y un solo cierre. El tipo y las dos
+     tasas van arriba y aplican a todo: eso es consolidar. Abajo, el
+     resumen de lo que se va a registrar ANTES de escribir nada — con
+     doce operaciones de un golpe, ver primero no es un lujo. -->
+<div class="edit-overlay" id="modalLoteFX" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(1060px,96vw);margin-top:4vh;max-height:88vh;display:flex;flex-direction:column;">
+    <h3 style="font-size:15px;">Consolidar y cerrar FX</h3>
+    <div id="loteFXBody" style="overflow-y:auto;flex:1;padding-right:4px;"></div>
+    <div class="edit-actions" style="margin-top:14px;display:flex;gap:9px;flex-wrap:wrap;">
+      <button class="btn ghost" onclick="cerrarLoteFX()">Cerrar</button>
+      <span style="flex:1;"></span>
+      <button class="btn purple" id="loteFXGenerar" style="display:none;"
+              onclick="generarArchivosLoteFX()">Generar archivos</button>
+      <button class="btn primary" id="loteFXRegistrar" onclick="registrarLoteFX()">Registrar</button>
+    </div>
+  </div>
+</div>
+
 <div class="edit-overlay" id="modalTipoCierreFX" style="align-items:flex-start;">
   <div class="edit-modal" style="width:min(560px,94vw);margin-top:8vh;">
     <h3 style="font-size:15px;">¿Cómo se cerró este FX?</h3>
@@ -11174,9 +11193,16 @@ function continuarConsolidarFX(){
   const bloques = consolidarTradesParaFX();
   if(bloques.length === 0){ alert('Selecciona al menos un trade de Fidessa para cruzar con FX.'); return; }
   // Todos deben ser del mismo cliente (un cruce es por cliente).
+  // VARIOS CLIENTES SÍ, PERO SOLO POR EL LOTE (Sergio, 03-nov).
+  // El cruce de a uno calcula la comisión con `tarifaCruce(trades[0].grupo)`
+  // y le pondría la tarifa del primero a todos. WMCO y SIN FX siguen siendo
+  // de un cliente, así que con varios se va derecho al lote, que sí calcula
+  // la tarifa de cada quien.
   const clientes = [...new Set(bloques.map(b=>b.cliente))];
   if(clientes.length > 1){
-    alert('Seleccionaste trades de varios clientes ('+clientes.join(', ')+'). El cruce FX es por cliente — selecciona los de uno solo.');
+    _cruceFXPendiente = { cliente: clientes[0], bloques: [], idx:0,
+                          registrados: [], modoCierre: 'vwap', varios: true };
+    abrirLoteFX();
     return;
   }
   const hoy = new Date(); hoy.setHours(0,0,0,0);
@@ -11338,15 +11364,552 @@ function aplicarNegociacionFX(){
   irACalculadoraCruce();
 }
 
+// ===================================================================
+// EL LOTE DE FX — varios clientes, varios traders, un solo cierre
+// -------------------------------------------------------------------
+// EL CASO (Juan Antonio y Sergio, 03-nov)
+// Un día real: MLI con líneas de tres traders, Citi con dos, y HSBC
+// cerrando al cierre una línea que no tiene acciones detrás. Hoy eso son
+// ocho viajes a la calculadora, uno por lado y por cliente, escribiendo
+// las mismas dos tasas ocho veces.
+//
+// LO QUE CAMBIA Y LO QUE NO
+// -------------------------
+// El caso sencillo NO se elimina: se perfecciona. Un cliente con un
+// trader pasa por este mismo camino y tiene que dar EXACTAMENTE la misma
+// operación y el mismo Excel que antes. Es la primera prueba del archivo.
+//
+// LAS CUATRO REGLAS QUE LO SOSTIENEN
+// ----------------------------------
+// 1. LA OPERACIÓN SE ARMA POR EL MISMO CAMINO. Nada de recalcular la
+//    utilidad aquí: se ponen los campos de la calculadora, se llama a
+//    `calcular()` y se construye con `_fxOpDesde`, igual que al registrar
+//    a mano. Dos matemáticas para el mismo número es como no tener
+//    ninguna.
+// 2. SE VALIDA TODO ANTES DE ESCRIBIR NADA. Sobre todo que cada cliente
+//    resuelva a un cliente de la calculadora: el 16-oct un cruce de CITI
+//    se registró a nombre de Andes y con el modelo de tasas de Andes
+//    porque eso no se frenó. Descubrirlo en la séptima de doce sería peor.
+// 3. SI UNA FALLA, LAS DEMÁS SIGUEN, y al final se listan las que no
+//    entraron CON SU DATA, para meterlas a mano (Sergio, 03-nov).
+// 4. UNA LÍNEA SIN TRADER NO PASA. O se va al archivo equivocado o no se
+//    va a ninguno, y en los dos casos en silencio.
+//
+// El tipo de operación y las dos tasas van ARRIBA y aplican a todo: eso
+// es lo que significa consolidar.
+// ===================================================================
+let _loteFX = null;
+
+function _loteFXNuevo(){
+  const items = [...( _tradesConsolidar || [])]
+    .map(oid => ({ oid, t: (_fidessaTradesRaw||{})[oid] }))
+    .filter(x => x.t && x.t.grupo && (x.t.qtyDone||0) > 0)
+    .map(x => ({
+      oid: x.oid,
+      cliente: normalizarGrupo(x.t.grupo) || x.t.grupo,
+      especie: nemoCanonico(x.t.security, 'fidessa') || x.t.security || '—',
+      lado: x.t.lado,
+      qty: Number(x.t.qtyDone) || 0,
+      precio: Number(x.t.avgPx) || 0,
+      bruto: (Number(x.t.qtyDone)||0) * (Number(x.t.avgPx)||0),
+      trader: '',
+    }))
+    .sort((a,b)=> a.cliente.localeCompare(b.cliente) ||
+                  a.lado.localeCompare(b.lado) ||
+                  a.especie.localeCompare(b.especie));
+  // RESPALDO: si la selección de Fidessa ya no está pero el cruce SÍ trae
+  // sus bloques, se arma desde ahí. Pasa cuando se llega al lote por el
+  // menú de tipo de cierre con el cruce ya calculado. Sin esto el lote se
+  // abriría vacío diciendo "no hay líneas" con el cruce armado al lado.
+  if(!items.length && _cruceFXPendiente && (_cruceFXPendiente.bloques||[]).length){
+    _cruceFXPendiente.bloques.forEach((b, nb)=>{
+      (b.detalle||[]).forEach((d, nd)=>{
+        items.push({
+          oid: `B${nb}_${nd}`,
+          cliente: b.cliente,
+          especie: d.security,
+          lado: b.ladoAccion,
+          qty: Number(d.qty) || 0,
+          precio: Number(d.precio) || 0,
+          bruto: Number(d.gross) || (Number(d.qty)||0) * (Number(d.precio)||0),
+          trader: '',
+        });
+      });
+    });
+  }
+  return { items, extras: [], tipo:'', tasaMkt:'', tasaCli:'', resultado:null, corriendo:false };
+}
+
+function abrirLoteFX(){
+  _loteFX = _loteFXNuevo();
+  if(!_loteFX.items.length){
+    alert('No hay líneas marcadas con cliente y cantidad ejecutada.');
+    return;
+  }
+  // Si TODAS las líneas de un cliente son del mismo y único trader posible,
+  // se preselecciona. No se adivina cuando hay varios.
+  const porCli = {};
+  _loteFX.items.forEach(i=>{ (porCli[i.cliente] = porCli[i.cliente]||[]).push(i); });
+  Object.keys(porCli).forEach(c=>{
+    const tr = tradersDeCliente(c) || [];
+    if(tr.length === 1) porCli[c].forEach(i=>{ i.trader = tr[0]; });
+  });
+  renderLoteFX();
+  document.getElementById('modalLoteFX').style.display = 'flex';
+}
+
+function cerrarLoteFX(){
+  document.getElementById('modalLoteFX').style.display = 'none';
+  _loteFX = null;
+}
+
+function loteFXSet(campo, v){ if(_loteFX){ _loteFX[campo] = v; renderLoteFX(); } }
+function loteFXTrader(oid, v){
+  if(!_loteFX) return;
+  const i = _loteFX.items.find(x=>x.oid === oid);
+  if(i){ i.trader = v; renderLoteFX(); }
+}
+// Todas las líneas de un cliente al mismo trader, de un golpe.
+function loteFXTraderTodos(cliente, v){
+  if(!_loteFX || !v) return;
+  _loteFX.items.filter(i=>i.cliente === cliente).forEach(i=>{ i.trader = v; });
+  renderLoteFX();
+}
+function loteFXAgregarExtra(){
+  if(!_loteFX) return;
+  _loteFX.extras.push({ id:'X'+Date.now()+Math.random().toString(36).slice(2,6),
+                        cliente:'', ladoFX:'SELL', usd:'' });
+  renderLoteFX();
+}
+function loteFXExtra(id, campo, v){
+  if(!_loteFX) return;
+  const e = _loteFX.extras.find(x=>x.id === id);
+  if(e){ e[campo] = v; renderLoteFX(); }
+}
+function loteFXQuitarExtra(id){
+  if(!_loteFX) return;
+  _loteFX.extras = _loteFX.extras.filter(x=>x.id !== id);
+  renderLoteFX();
+}
+
+// --- los bloques: uno por (cliente, trader, lado de la acción) ------
+// Cada bloque es UNA operación de FX y entra a UN archivo. Agrupar solo
+// por lado —como hacía el cruce de un cliente— mezclaría las líneas de
+// Mario Muro con las de Beatriz en la misma operación.
+function _loteFXBloques(){
+  if(!_loteFX) return [];
+  const g = {};
+  _loteFX.items.forEach(i=>{
+    const k = i.cliente + '|' + (i.trader||'') + '|' + i.lado;
+    (g[k] = g[k] || { cliente:i.cliente, trader:i.trader||'', ladoAccion:i.lado,
+                      detalle:[], bruto:0 });
+    g[k].detalle.push({ security:i.especie, qty:i.qty, precio:i.precio, gross:i.bruto });
+    g[k].bruto += i.bruto;
+  });
+  return Object.values(g).map(b=>{
+    // LA TARIFA ES LA DE SU CLIENTE. El cruce de un solo cliente tomaba
+    // `tarifaCruce(trades[0].grupo)` — con varios clientes mezclados eso
+    // le aplicaría la tarifa de MLI a lo de Citi, en silencio.
+    const tar = tarifaCruce(b.cliente);
+    const comision = b.bruto * tar.tasa;
+    const netoCOP = b.ladoAccion === 'Compra' ? b.bruto + comision : b.bruto - comision;
+    return { ...b, comision, netoCOP,
+             ladoFX: b.ladoAccion === 'Compra' ? 'SELL' : 'BUY' };
+  }).sort((a,b)=> a.cliente.localeCompare(b.cliente) ||
+                  a.trader.localeCompare(b.trader) ||
+                  a.ladoAccion.localeCompare(b.ladoAccion));
+}
+
+// --- las fechas del lote -------------------------------------------
+function _loteFXFechas(bloque){
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const td = (_loteFX.tipo === 'NEXT_DAY') ? siguienteDiaHabil(hoy) : hoy;
+  // Con acciones detrás, el cumplimiento es el del cruce: T+2 contra la
+  // acción, y con el ajuste si cae un festivo gringo en la ventana. Sin
+  // acciones no hay de dónde colgarse: T+2 hábil, que es lo que pone la
+  // calculadora para una operación suelta.
+  const sd = bloque && bloque.ladoAccion
+    ? settleDateCruce(td, bloque.ladoAccion)
+    : sumarDiasHabiles(hoy, 2);
+  const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  return { tradeDate: iso(td), settleDate: iso(sd) };
+}
+
+// --- validación: TODO antes de escribir NADA ------------------------
+function _loteFXProblemas(){
+  const P = [];
+  if(!_loteFX) return ['No hay lote abierto.'];
+  if(!_loteFX.tipo) P.push('Falta el tipo de operación.');
+  const mkt = parseLocaleNumber(String(_loteFX.tasaMkt||''));
+  const cli = parseLocaleNumber(String(_loteFX.tasaCli||''));
+  if(!(mkt > 0)) P.push('Falta la tasa de mercado.');
+  if(!(cli > 0)) P.push('Falta la tasa del cliente.');
+
+  const sinTrader = _loteFX.items.filter(i =>
+    (tradersDeCliente(i.cliente)||[]).length > 0 && !i.trader);
+  if(sinTrader.length){
+    P.push(`${sinTrader.length} línea(s) sin trader: ` +
+      sinTrader.map(i=>`${i.cliente} ${i.especie} ${i.lado}`).join(' · '));
+  }
+
+  // QUE CADA CLIENTE EXISTA EN LA CALCULADORA. Si no, la operación se
+  // registraría a nombre del cliente anterior y con SU modelo de tasas.
+  const sel = document.getElementById('cliente');
+  const clientes = [...new Set(_loteFX.items.map(i=>i.cliente)
+    .concat(_loteFX.extras.map(e=>e.cliente).filter(Boolean)))];
+  const huerfanos = clientes.filter(c => !_clienteCalculadoraDeCruce(c, sel));
+  if(huerfanos.length){
+    P.push(`Sin cliente en la calculadora de FX: ${huerfanos.join(', ')}. ` +
+           `Registrarlos así los dejaría a nombre de otro cliente y con su modelo de tasas.`);
+  }
+
+  _loteFX.extras.forEach((e,n)=>{
+    if(!e.cliente) P.push(`Línea sin acciones #${n+1}: falta el cliente.`);
+    if(!(parseLocaleNumber(String(e.usd||'')) > 0))
+      P.push(`Línea sin acciones #${n+1}: falta el monto en USD.`);
+  });
+  return P;
+}
+
+// --- registrar ------------------------------------------------------
+// Pone los campos de la calculadora y devuelve lo que ella calculó. NO se
+// recalcula nada por fuera: es el mismo camino del registro a mano.
+function _loteFXCalcular(clienteCalc, side, usd, fechas, mkt, cli){
+  const sel = document.getElementById('cliente');
+  sel.value = clienteCalc;
+  if(typeof cambiarCliente === 'function') cambiarCliente();
+  // El tipo se pone SIN disparar el onchange: `cambiarTipoOperacion()`
+  // recalcularía las fechas y pisaría las del lote.
+  document.getElementById('tipoOperacion').value = _loteFX.tipo;
+  document.getElementById('side').value = side;
+  document.getElementById('tradeDate').value = fechas.tradeDate;
+  document.getElementById('settleDate').value = fechas.settleDate;
+  ['rateUnica','rate'].forEach(id=>{
+    const el = document.getElementById(id); if(el) el.value = String(cli);
+  });
+  const m = document.getElementById('spotReal'); if(m) m.value = String(mkt);
+  document.getElementById('amount').value =
+    usd.toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2});
+  calcular();
+  return window._lastCalc;
+}
+
+async function registrarLoteFX(){
+  if(!_loteFX || _loteFX.corriendo) return;
+  const P = _loteFXProblemas();
+  if(P.length){
+    alert('Antes de registrar:\n\n' + P.map(x=>'   • '+x).join('\n'));
+    return;
+  }
+  const bloques = _loteFXBloques();
+  const mkt = parseLocaleNumber(String(_loteFX.tasaMkt));
+  const cli = parseLocaleNumber(String(_loteFX.tasaCli));
+  const total = bloques.length + _loteFX.extras.length;
+  if(!confirm(`Se van a registrar ${total} operación(es) de FX ` +
+              `y a generar ${_loteFXArchivos(bloques).length} archivo(s).\n\n¿Sigo?`)) return;
+
+  _loteFX.corriendo = true;
+  _loteFX.resultado = { ok: [], fallo: [] };
+  renderLoteFX();
+
+  const sel = document.getElementById('cliente');
+  const tareas = bloques.map(b=>({ tipo:'bloque', b }))
+    .concat(_loteFX.extras.map(e=>({ tipo:'extra', e })));
+
+  for(const t of tareas){
+    const esB = t.tipo === 'bloque';
+    const cliente = esB ? t.b.cliente : t.e.cliente;
+    const side = esB ? t.b.ladoFX : t.e.ladoFX;
+    const fechas = _loteFXFechas(esB ? t.b : null);
+    const usd = esB ? (t.b.netoCOP / cli) : parseLocaleNumber(String(t.e.usd));
+    const clienteCalc = _clienteCalculadoraDeCruce(cliente, sel);
+    const etiqueta = esB
+      ? `${cliente}${t.b.trader ? ' · ' + t.b.trader : ''} · ${t.b.ladoAccion}`
+      : `${cliente} · sin acciones`;
+    try{
+      const c = _loteFXCalcular(clienteCalc, side, usd, fechas, mkt, cli);
+      if(!c) throw new Error('la calculadora no devolvió nada');
+      const op = _fxOpDesde({
+        c, cliente: clienteCalc, trader: esB ? (t.b.trader||'') : '',
+        tipoOperacion: _loteFX.tipo,
+        tradeDate: fechas.tradeDate, settleDate: fechas.settleDate,
+        horaRegistro: new Date().toLocaleTimeString('es-CO',
+          { timeZone:'America/Bogota', hour12:false }),
+        origen: 'lote',
+      });
+      operaciones.unshift(op);
+      const guardo = await guardarOperacionSupabase(op);
+      if(guardo === false){
+        // Quedó EN PANTALLA pero no en Supabase. Se dice, porque al
+        // recargar desaparece y nadie se entera.
+        _loteFX.resultado.fallo.push({ etiqueta, motivo:'no se pudo guardar en Supabase',
+          side, usd, tasaCliente:cli, tasaMercado:mkt, ...fechas, cliente:clienteCalc,
+          trader: esB ? (t.b.trader||'') : '' });
+      }else{
+        _loteFX.resultado.ok.push({ etiqueta, op, bloque: esB ? t.b : null, usd });
+      }
+    }catch(err){
+      _loteFX.resultado.fallo.push({ etiqueta, motivo: err.message,
+        side, usd, tasaCliente:cli, tasaMercado:mkt, ...fechas, cliente,
+        trader: esB ? (t.b.trader||'') : '' });
+    }
+    renderLoteFX();
+  }
+
+  _loteFX.corriendo = false;
+  try{ renderHistory(); }catch(e){}
+  renderLoteFX();
+}
+
+// Un archivo por (cliente, trader) de los bloques CON acciones. Las
+// líneas sin acciones no llevan reporte: solo se registran (Sergio, 03-nov).
+function _loteFXArchivos(bloques){
+  const g = {};
+  (bloques || _loteFXBloques()).forEach(b=>{
+    const k = b.cliente + '|' + (b.trader||'');
+    (g[k] = g[k] || { cliente:b.cliente, trader:b.trader||'', bloques:[] }).bloques.push(b);
+  });
+  return Object.values(g);
+}
+
+async function generarArchivosLoteFX(){
+  if(!_loteFX || !_loteFX.resultado) return;
+  const hechos = _loteFX.resultado.ok.filter(r=>r.bloque);
+  if(!hechos.length){ alert('No hay operaciones con acciones registradas en este lote.'); return; }
+  const g = {};
+  hechos.forEach(r=>{
+    const k = r.bloque.cliente + '|' + (r.bloque.trader||'');
+    (g[k] = g[k] || { cliente:r.bloque.cliente, trader:r.bloque.trader||'', regs:[] });
+    // El Excel del cruce espera el bloque con sus tasas y su USD, que es
+    // exactamente lo que el cruce de a uno le pasaba en `registrados`.
+    g[k].regs.push({ ...r.bloque, opId:r.op.id, usd:r.usd,
+                     tasaFinalCliente: parseLocaleNumber(String(_loteFX.tasaCli)),
+                     tasaMercado: parseLocaleNumber(String(_loteFX.tasaMkt)),
+                     utilidad: 0 });
+  });
+  for(const x of Object.values(g)){
+    try{ await generarExcelCruce(x.cliente, x.regs, x.trader); }
+    catch(e){ alert(`No se pudo generar el archivo de ${x.cliente}${x.trader?' · '+x.trader:''}: ${e.message}`); }
+  }
+}
+
+// --- la pantalla ---------------------------------------------------
+function renderLoteFX(){
+  const cont = document.getElementById('loteFXBody');
+  if(!cont || !_loteFX) return;
+  const esc = _esc;
+  const bloques = _loteFXBloques();
+  const archivos = _loteFXArchivos(bloques);
+  const P = _loteFXProblemas();
+  const R = _loteFX.resultado;
+  const corriendo = _loteFX.corriendo;
+
+  let h = '';
+
+  // ---- arriba: lo que aplica a TODO ----
+  h += `<div style="background:var(--bg-2,#161b26);border:1px solid var(--border,#232938);
+        border-radius:8px;padding:11px 13px;margin-bottom:12px;">
+    <div style="font-size:11.5px;font-weight:700;opacity:.65;margin-bottom:7px;">
+      APLICA A TODO EL LOTE</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+      <div><label class="field-note">Tipo de operación</label><br>
+        <select onchange="loteFXSet('tipo', this.value)" ${corriendo?'disabled':''} style="min-width:150px;">
+          <option value=""${!_loteFX.tipo?' selected':''}>— elegí el tipo —</option>
+          <option value="SPOT"${_loteFX.tipo==='SPOT'?' selected':''}>SPOT</option>
+          <option value="NEXT_DAY"${_loteFX.tipo==='NEXT_DAY'?' selected':''}>NEXT DAY</option>
+          <option value="WMCO"${_loteFX.tipo==='WMCO'?' selected':''}>WMCO</option>
+        </select></div>
+      <div><label class="field-note">Tasa mercado</label><br>
+        <input type="text" inputmode="decimal" value="${esc(_loteFX.tasaMkt)}" ${corriendo?'disabled':''}
+               oninput="_loteFX.tasaMkt=this.value" onblur="loteFXSet('tasaMkt', this.value)"
+               style="width:130px;"></div>
+      <div><label class="field-note">Tasa cliente</label><br>
+        <input type="text" inputmode="decimal" value="${esc(_loteFX.tasaCli)}" ${corriendo?'disabled':''}
+               oninput="_loteFX.tasaCli=this.value" onblur="loteFXSet('tasaCli', this.value)"
+               style="width:130px;"></div>
+    </div>
+    <div class="field-note" style="margin-top:6px;">
+      El tipo arranca en blanco a propósito: heredarlo del cierre anterior ya dejó
+      un VWAP marcado como WMCO.</div>
+  </div>`;
+
+  // ---- las líneas, por cliente ----
+  const porCli = {};
+  _loteFX.items.forEach(i=>{ (porCli[i.cliente] = porCli[i.cliente]||[]).push(i); });
+  Object.keys(porCli).sort().forEach(c=>{
+    const traders = tradersDeCliente(c) || [];
+    h += `<div style="margin-bottom:10px;">
+      <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
+        <b style="font-size:13px;">${esc(c)}</b>
+        <span class="field-note">${porCli[c].length} línea(s) · ${esc(tarifaCruce(c).etiqueta)}</span>
+        ${traders.length ? `<span style="flex:1;"></span>
+          <span class="field-note">todas a:</span>
+          <select onchange="loteFXTraderTodos('${esc(c)}', this.value); this.value='';"
+                  ${corriendo?'disabled':''} style="font-size:11.5px;">
+            <option value="">—</option>
+            ${traders.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('')}
+          </select>` : `<span class="field-note">(sin lista de traders · no lleva reporte)</span>`}
+      </div>`;
+    porCli[c].forEach(i=>{
+      const falta = traders.length && !i.trader;
+      h += `<div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:12.5px;
+            padding:3px 0 3px 10px;${falta?'background:rgba(245,158,11,.08);border-radius:5px;':''}">
+        <b style="min-width:110px;">${esc(i.especie)}</b>
+        <span style="min-width:52px;opacity:.8;">${esc(i.lado)}</span>
+        <span style="min-width:84px;text-align:right;">${fmtInt(i.qty)}</span>
+        <span style="min-width:96px;text-align:right;opacity:.8;">${fmtMoney(i.precio)}</span>
+        <span style="min-width:120px;text-align:right;">${fmtMoney(i.bruto)}</span>
+        ${traders.length ? `<select onchange="loteFXTrader('${esc(i.oid)}', this.value)"
+            ${corriendo?'disabled':''} style="font-size:11.5px;min-width:170px;
+            ${falta?'border-color:var(--warn,#f59e0b);':''}">
+          <option value=""${!i.trader?' selected':''}>— trader —</option>
+          ${traders.map(t=>`<option value="${esc(t)}"${i.trader===t?' selected':''}>${esc(t)}</option>`).join('')}
+        </select>` : ''}
+      </div>`;
+    });
+    h += `</div>`;
+  });
+
+  // ---- líneas sin acciones ----
+  h += `<div style="margin:12px 0;">
+    <div style="display:flex;gap:9px;align-items:center;">
+      <b style="font-size:12.5px;">Líneas sin acciones</b>
+      <span class="field-note">solo se registran en FX · no llevan reporte</span>
+      <span style="flex:1;"></span>
+      <button class="btn small" onclick="loteFXAgregarExtra()" ${corriendo?'disabled':''}>+ agregar</button>
+    </div>`;
+  _loteFX.extras.forEach(e=>{
+    h += `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:5px 0 0 10px;">
+      <input type="text" placeholder="cliente" value="${esc(e.cliente)}" ${corriendo?'disabled':''}
+             oninput="_loteFX.extras.find(x=>x.id==='${e.id}').cliente=this.value"
+             onblur="loteFXExtra('${e.id}','cliente',this.value)" style="width:150px;font-size:12px;">
+      <select onchange="loteFXExtra('${e.id}','ladoFX',this.value)" ${corriendo?'disabled':''} style="font-size:12px;">
+        <option value="SELL"${e.ladoFX==='SELL'?' selected':''}>vendemos USD</option>
+        <option value="BUY"${e.ladoFX==='BUY'?' selected':''}>compramos USD</option>
+      </select>
+      <input type="text" inputmode="decimal" placeholder="monto USD" value="${esc(e.usd)}" ${corriendo?'disabled':''}
+             oninput="_loteFX.extras.find(x=>x.id==='${e.id}').usd=this.value"
+             onblur="loteFXExtra('${e.id}','usd',this.value)" style="width:130px;font-size:12px;">
+      <button class="btn small ghost" onclick="loteFXQuitarExtra('${e.id}')" ${corriendo?'disabled':''}>✕</button>
+    </div>`;
+  });
+  h += `</div>`;
+
+  // ---- el resumen: lo que se va a registrar ----
+  h += `<div style="background:var(--bg-2,#161b26);border:1px solid var(--border,#232938);
+        border-radius:8px;padding:11px 13px;margin-bottom:12px;">
+    <div style="font-size:11.5px;font-weight:700;opacity:.65;margin-bottom:7px;">
+      LO QUE SE VA A REGISTRAR</div>`;
+  const cli = parseLocaleNumber(String(_loteFX.tasaCli||'')) || 0;
+  let totNeto = 0, totUsd = 0;
+  let cliAnt = '';
+  let subNeto = 0, subUsd = 0;
+  const cerrarSub = () => {
+    if(!cliAnt) return;
+    h += `<div style="display:flex;gap:9px;font-size:12px;padding:2px 0 6px 10px;
+          border-top:1px solid var(--border,#232938);opacity:.8;">
+      <span style="flex:1;">subtotal ${esc(cliAnt)}</span>
+      <span style="min-width:130px;text-align:right;">${fmtMoney(subNeto)}</span>
+      <span style="min-width:110px;text-align:right;">${cli?fmtMoney(subUsd):'—'}</span></div>`;
+    subNeto = 0; subUsd = 0;
+  };
+  bloques.forEach(b=>{
+    if(b.cliente !== cliAnt){ cerrarSub(); cliAnt = b.cliente; }
+    const usd = cli ? b.netoCOP / cli : 0;
+    subNeto += b.netoCOP; subUsd += usd; totNeto += b.netoCOP; totUsd += usd;
+    const f = _loteFXFechas(b);
+    h += `<div style="display:flex;gap:9px;font-size:12.5px;padding:2px 0;flex-wrap:wrap;">
+      <span style="min-width:200px;"><b>${esc(b.cliente)}</b>${b.trader?' · '+esc(b.trader):''}</span>
+      <span style="min-width:150px;opacity:.85;">${esc(b.ladoAccion)} → ${b.ladoFX==='SELL'?'vendemos':'compramos'} USD</span>
+      <span style="min-width:130px;text-align:right;">${fmtMoney(b.netoCOP)}</span>
+      <span style="min-width:110px;text-align:right;">${cli?fmtMoney(usd):'—'}</span>
+      <span class="field-note" style="min-width:92px;">cumple ${esc(f.settleDate)}</span>
+    </div>`;
+  });
+  cerrarSub();
+  _loteFX.extras.forEach(e=>{
+    const u = parseLocaleNumber(String(e.usd||'')) || 0;
+    totUsd += u;
+    const f = _loteFXFechas(null);
+    h += `<div style="display:flex;gap:9px;font-size:12.5px;padding:2px 0;flex-wrap:wrap;">
+      <span style="min-width:200px;"><b>${esc(e.cliente||'—')}</b> <span class="field-note">sin acciones</span></span>
+      <span style="min-width:150px;opacity:.85;">${e.ladoFX==='SELL'?'vendemos':'compramos'} USD</span>
+      <span style="min-width:130px;text-align:right;">—</span>
+      <span style="min-width:110px;text-align:right;">${fmtMoney(u)}</span>
+      <span class="field-note" style="min-width:92px;">cumple ${esc(f.settleDate)}</span>
+    </div>`;
+  });
+  h += `<div style="display:flex;gap:9px;font-size:13px;font-weight:700;padding:6px 0 0;
+        border-top:2px solid var(--border,#232938);margin-top:4px;">
+      <span style="flex:1;">TOTAL · ${bloques.length + _loteFX.extras.length} operación(es) de FX ·
+        ${archivos.length} archivo(s)</span>
+      <span style="min-width:130px;text-align:right;">${fmtMoney(totNeto)}</span>
+      <span style="min-width:110px;text-align:right;">${cli?fmtMoney(totUsd):'—'}</span>
+    </div>
+    <div class="field-note" style="margin-top:6px;">
+      Las fechas de cumplimiento pueden no ser todas iguales: las que vienen de acciones
+      salen de T+2 contra la acción con el ajuste por festivo gringo; las sin acciones,
+      de T+2 hábil.</div>
+  </div>`;
+
+  // ---- problemas ----
+  if(P.length && !R){
+    h += `<div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);
+          border-radius:7px;padding:10px 12px;font-size:12.5px;margin-bottom:12px;">
+      <b style="color:var(--warn,#f59e0b);">Falta antes de registrar:</b>
+      ${P.map(x=>`<div style="margin-top:3px;">· ${esc(x)}</div>`).join('')}</div>`;
+  }
+
+  // ---- resultado ----
+  if(R){
+    h += `<div style="border-radius:7px;padding:10px 12px;font-size:12.5px;margin-bottom:12px;
+          background:${R.fallo.length?'rgba(245,158,11,.12)':'rgba(34,197,94,.10)'};
+          border:1px solid ${R.fallo.length?'rgba(245,158,11,.45)':'rgba(34,197,94,.35)'};">
+      <b>${R.ok.length} registrada(s)${R.fallo.length?` · ${R.fallo.length} NO`:''}</b>
+      ${corriendo?' <span class="field-note">· trabajando…</span>':''}`;
+    R.ok.forEach(r=>{ h += `<div style="margin-top:2px;color:var(--buy,#22c55e);">✓ ${esc(r.etiqueta)}</div>`; });
+    if(R.fallo.length){
+      h += `<div style="margin-top:8px;"><b style="color:var(--warn,#f59e0b);">
+        Estas NO entraron. Los datos para meterlas a mano:</b></div>`;
+      R.fallo.forEach(f=>{
+        h += `<div style="margin-top:4px;padding-left:10px;">
+          ✕ <b>${esc(f.etiqueta)}</b> — ${esc(f.motivo)}<br>
+          <code style="font-size:11.5px;">cliente ${esc(f.cliente)} · ${esc(f.side)} ·
+          USD ${fmtMoney(f.usd)} · tasa cliente ${esc(String(f.tasaCliente))} ·
+          tasa mercado ${esc(String(f.tasaMercado))} · op ${esc(f.tradeDate)} ·
+          cumple ${esc(f.settleDate)}${f.trader?' · '+esc(f.trader):''}</code></div>`;
+      });
+    }
+    h += `</div>`;
+  }
+
+  cont.innerHTML = h;
+
+  const bReg = document.getElementById('loteFXRegistrar');
+  const bGen = document.getElementById('loteFXGenerar');
+  if(bReg){
+    bReg.disabled = corriendo || P.length > 0 || !!R;
+    bReg.textContent = corriendo ? 'Registrando…'
+      : `Registrar ${bloques.length + _loteFX.extras.length} operación(es)`;
+  }
+  if(bGen){
+    const hay = R && !corriendo && R.ok.some(r=>r.bloque);
+    bGen.style.display = hay ? '' : 'none';
+    bGen.textContent = `Generar ${archivos.length} archivo(s)`;
+  }
+}
+
 function elegirModoCierreFX(modo){
   const p = _cruceFXPendiente;
   if(!p){ return; }
   p.modoCierre = modo;
   document.getElementById('modalTipoCierreFX').style.display = 'none';
   if(modo === 'vwap'){
-    // Los dos lados se negocian juntos ANTES de ir a la calculadora
-    // (Sergio, 17-sep).
-    abrirNegociacionFX();
+    // AHORA VA AL LOTE. La pantalla de negociación de a un cliente sigue
+    // ahí (`abrirNegociacionFX`) y no se borró, pero el camino normal es
+    // el lote: hace lo mismo con un cliente y además aguanta varios
+    // clientes y varios traders (Sergio, 03-nov).
+    abrirLoteFX();
   } else if(modo === 'nofx'){
     mostrarResumenSinFX();
   } else {
@@ -34564,7 +35127,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-03 20:40 UTC · v299';
+const BUILD_ID = '2026-11-03 21:20 UTC · v300';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
