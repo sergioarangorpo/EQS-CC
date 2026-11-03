@@ -10719,6 +10719,15 @@ function aplicarFiltros(){
   //
   // Lo que sí se suelta es la orden ACTIVA del panel de asignación si no
   // es de este cliente: ese panel sí es de a uno.
+  if(!TRADES_MULTICLIENTE){
+    // Como siempre: las marcas son del cliente en pantalla.
+    _tradesVerTodos = false; _tradesClientesExtra = new Set();
+    [..._tradesConsolidar].forEach(oid=>{
+      const t = (_fidessaTradesRaw||{})[oid];
+      const g = t ? normalizarGrupo(t.grupo) : '';
+      if(!cliente || (g && g !== cliente)) _tradesConsolidar.delete(oid);
+    });
+  }
   if(_tradesConsolidar.size){
     if(_ordenActiva){
       const ta = (_fidessaTradesRaw||{})[_ordenActiva];
@@ -10986,6 +10995,7 @@ function renderFidessaTradesPanel(){
         <button class="btn small purple" onclick="continuarConsolidarFX()" ${nSel===0?'disabled':''}>Consolidar y cerrar FX →</button>
       </span>
     </div>
+    ${!TRADES_MULTICLIENTE ? '' : `
     <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:0 0 7px;font-size:11.5px;">
       <span class="field-note">ver:</span>
       ${_cliConTrades.map(c=>{
@@ -11006,7 +11016,7 @@ function renderFidessaTradesPanel(){
              de ${_cliFuera.join(', ')}</span>
            <button class="btn small ghost" style="font-size:11px;padding:2px 8px;"
              onclick="soltarMarcasFueraDeVista()">soltarlas</button>` : ''}
-    </div>
+    </div>`}
     <div class="blotter-wrap" style="overflow-x:auto;">
       <!-- Anchos medidos contra el contenido real, no a ojo: el dato más largo
            de Client/Book es "BANCO BTG PACTUAL CAYMAN BRANCH" (31 caracteres),
@@ -11077,6 +11087,18 @@ const _tradesConsolidar = new Set(); // folioOrden seleccionados
 // el cuadro de Fidessa Trades, para poder marcar líneas de MLI, Citi y
 // HSBC en una sola pasada y cerrarles el FX juntas.
 // Vacío = exactamente como antes: solo el cliente del filtro.
+// MARCAR VARIOS CLIENTES — APAGADO (Sergio, 03-nov, en subasta).
+// =====================================================================
+// Se prendió esta mañana y en la tarde ya había costado errores reales:
+// quedaron 359 marcadas de 12 clientes sin que se vieran, y de ahí salió
+// un cruce de HSBC_NY con órdenes que no eran. Marcas que uno no ve son
+// una trampa, por más aviso que se ponga.
+//
+// Apagado quiere decir EXACTAMENTE lo de antes: las marcas son de un
+// cliente, y al cambiar de Client/Book se sueltan. El código del lote
+// queda intacto; lo que se apaga es poder marcar de varios a la vez.
+// Para volver a prenderlo, esto en true y nada más.
+const TRADES_MULTICLIENTE = false;
 let _tradesClientesExtra = new Set();
 let _tradesVerTodos = false;
 
@@ -35316,7 +35338,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-04 00:20 UTC · v303';
+const BUILD_ID = '2026-11-04 00:45 UTC · v304';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
