@@ -3933,11 +3933,32 @@ function cambiarTipoOperacion(){
   } else {
     tradeDateInput.value = hoy.toISOString().slice(0,10);
   }
-  // La fecha de cumplimiento por defecto siempre es T+2 hábil desde HOY,
-  // no desde la fecha de operación — NEXT_DAY solo corre la fecha de
-  // operación un día, no debe arrastrar también el cumplimiento.
-  const settle = sumarDiasHabiles(hoy, 2);
-  document.getElementById('settleDate').value = settle.toISOString().slice(0,10);
+  // EN UN CRUCE, EL CUMPLIMIENTO NO ES UN T+2 PLANO (Sergio, 03-nov).
+  // ------------------------------------------------------------------
+  // `settleDateCruce` ajusta cuando cae un festivo GRINGO en la ventana
+  // T→T+2: comprando acciones (vendemos USD) el SD es un día antes;
+  // vendiendo (compramos USD) un día después. `irACalculadoraCruce` ya
+  // ponía esa fecha… y esta función la pisaba apenas se elegía el tipo,
+  // que es el paso siguiente y obligatorio. O sea que el ajuste nunca
+  // sobrevivía.
+  //
+  // Medido: un cruce del 9-nov compra salía con cumplimiento 11-nov
+  // cuando debía ser 10-nov, y uno del 24-nov venta con 26-nov cuando
+  // debía ser 27-nov. El 11 y el 26 de noviembre son festivos en EE.UU.
+  //
+  // Fuera de un cruce no cambia nada: sigue siendo T+2 hábil desde HOY.
+  // NEXT_DAY solo corre la fecha de operación, no arrastra el cumplimiento.
+  const sdEl = document.getElementById('settleDate');
+  if(typeof _cruceActivo !== 'undefined' && _cruceActivo &&
+     typeof settleDateCruce === 'function'){
+    const tdTxt = tradeDateInput.value;
+    const td = tdTxt ? new Date(Number(tdTxt.slice(0,4)), Number(tdTxt.slice(5,7))-1,
+                                Number(tdTxt.slice(8,10))) : hoy;
+    sdEl.value = settleDateCruce(td, _cruceActivo.ladoAccion).toISOString().slice(0,10);
+  }else{
+    const settle = sumarDiasHabiles(hoy, 2);
+    sdEl.value = settle.toISOString().slice(0,10);
+  }
 
   validarFechaOperacion();
   cambiarCliente();
@@ -4162,9 +4183,14 @@ async function guardarOperacionSupabase(op){
       },
       body: JSON.stringify(opToRow(op))
     });
-    if(!res.ok) console.error(`⚠ No se pudo guardar la operación ${op.id} en Supabase (HTTP ${res.status}). Revisar permisos/RLS de fx_operaciones_registradas.`);
+    if(!res.ok){
+      console.error(`⚠ No se pudo guardar la operación ${op.id} en Supabase (HTTP ${res.status}). Revisar permisos/RLS de fx_operaciones_registradas.`);
+      return false;
+    }
+    return true;
   }catch(e){
     console.error(`⚠ Error de red guardando la operación ${op.id}:`, e);
+    return false;
   }
 }
 
@@ -4259,6 +4285,41 @@ function calcularDesdeValores(modelo, side, amount, params){
   return {fxMkt:spotReal, tasaClienteT0, tasaFinalCliente:rateUnica, tasaFinalNuestra:tasaClienteT0, margenSpot, margenSwap, utilidadTotal, comEqs, comMesa};
 }
 
+// ===================================================================
+// LA OPERACIÓN DE FX, ARMADA EN UN SOLO SITIO
+// -------------------------------------------------------------------
+// Esto vivía dentro de `registrar()`, pegado a los campos de la
+// pantalla. Se saca aparte para que el LOTE de FX pueda registrar varias
+// sin pasar por la calculadora a mano, por EXACTAMENTE el mismo camino.
+// Si el lote armara su propia operación, serían dos matemáticas para el
+// mismo número y el día que una cambie nadie se entera (Sergio, 03-nov).
+function _fxOpDesde({ c, cliente, trader, tipoOperacion, tradeDate, settleDate,
+                      horaRegistro, origen, emailsOrigen }){
+  return {
+    id: Date.now(),
+    horaRegistro,
+    tradeDate, settleDate,
+    modelo: c.modelo,
+    cliente,
+    tipoOperacion,
+    side: c.side,
+    amount: c.amount,
+    noches: c.noches,
+    params: {...c.params},
+    trader,
+    // Origen determina el comportamiento del botón de acción en el histórico:
+    // 'inbox'  -> viene de correos consolidados (Andes): el botón "deshace" y
+    //             devuelve los correos originales a la bandeja.
+    // 'manual' -> tasa/monto tecleados a mano (WMCO, BNP, etc.): el botón
+    //             abre un modal de corrección libre.
+    // 'lote'   -> entró por el lote de FX. Se marca distinto para poder
+    //             encontrarlas si hay que deshacer un lote entero.
+    origen: origen || 'manual',
+    emailsOrigen: emailsOrigen || null,
+    verificado: false,
+  };
+}
+
 function registrar(){
   const c = window._lastCalc;
   if(!c) return;
@@ -4279,28 +4340,14 @@ function registrar(){
   const horaRegistro = esInbox
     ? [...selectedRows].map(i => inboxData[i].time).sort()[0]
     : new Date().toLocaleTimeString('es-CO', {timeZone:'America/Bogota', hour12:false}); // 24h sin a.m./p.m., igual que las horas del inbox
-  const op = {
-    id: Date.now(),
-    horaRegistro,
+  const op = _fxOpDesde({
+    c, cliente, trader, tipoOperacion,
     tradeDate: document.getElementById('tradeDate').value,
     settleDate: document.getElementById('settleDate').value,
-    modelo: c.modelo,
-    cliente: cliente,
-    tipoOperacion: tipoOperacion,
-    side: c.side,
-    amount: c.amount,
-    noches: c.noches,
-    params: {...c.params},
-    trader: trader,
-    // Origen determina el comportamiento del botón de acción en el histórico:
-    // 'inbox'  -> viene de correos consolidados (Andes): el botón "deshace" y
-    //             devuelve los correos originales a la bandeja.
-    // 'manual' -> tasa/monto tecleados a mano (WMCO, BNP, etc.): el botón
-    //             abre un modal de corrección libre.
+    horaRegistro,
     origen: esInbox ? 'inbox' : 'manual',
     emailsOrigen: esInbox ? [...selectedRows].map(i => ({...inboxData[i]})) : null,
-    verificado: false,
-  };
+  });
   operaciones.unshift(op);
   guardarOperacionSupabase(op);
   renderHistory();
@@ -34517,7 +34564,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-03 20:05 UTC · v298';
+const BUILD_ID = '2026-11-03 20:40 UTC · v299';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
