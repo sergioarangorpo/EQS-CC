@@ -31482,7 +31482,7 @@ function _rshTablaEspecie(){
 // pantalla vacía por un filtro mal puesto es peor que una con ruido.
 // ===================================================================
 let _rshCal = { mes:0, res:[], div:[], uni:null, estado:null, sel:new Set(),
-                dia:null, cargando:false, cargado:false, fuera:0, msg:'' };
+                dia:null, cargando:false, cargado:false, fuera:0, msg:'', previa:null };
 
 function rshCalMes(d){ _rshCal.mes += d; _rshCal.dia = null; rshCargarCalendario(); }
 function rshCalHoy(){ _rshCal.mes = 0; _rshCal.dia = null; rshCargarCalendario(); }
@@ -31632,8 +31632,10 @@ function _rshCalendario(){
       <button class="btn small ghost" onclick="rshCalSelTodo('dos')">dos semanas</button>
       <button class="btn small ghost" onclick="rshCalSelTodo('mes')">el mes</button>
       <button class="btn small ghost" onclick="rshCalSelTodo('nada')">ninguno</button>
-      <button class="btn small purple" onclick="rshCalCopiar(this)">
-        📋 Copiar (<span id="rshCalSelN">${_rshCal.sel.size}</span>)</button>
+      <span class="field-note">marcados: <b id="rshCalSelN">${_rshCal.sel.size}</b></span>
+      <button class="btn small" onclick="rshCalVerBBG()">👁 ver BBG</button>
+      <button class="btn small" onclick="rshCalCopiarBBG(this)">📋 Bloomberg</button>
+      <button class="btn small purple" onclick="rshCalCopiar(this)">📋 Correo</button>
     </div>
     <div style="margin-top:8px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
       <span class="field-note">
@@ -31669,6 +31671,19 @@ function _rshCalendario(){
     h += `<div style="margin-top:9px;color:var(--sell,#ef4444);font-size:12.5px;">${esc(_rshCal.msg)}</div>`;
   }
   h += `</div>`;
+
+  if(_rshCal.previa){
+    h += `<div class="card" style="padding:12px 14px;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;">
+        <b style="font-size:13px;">Como se va a ver en Bloomberg</b>
+        <button class="btn small ghost" onclick="rshCalVerBBG()">cerrar</button>
+      </div>
+      <pre style="margin:0;padding:11px 13px;border-radius:7px;background:#0b0e14;
+           border:1px solid var(--border,#232938);color:#d6deeb;font-size:12px;
+           font-family:Consolas,'Courier New',monospace;line-height:1.45;
+           white-space:pre-wrap;max-width:620px;overflow-x:auto;">${_esc(_rshCal.previa)}</pre>
+    </div>`;
+  }
 
   if(_rshCal.cargando) return h + `<div class="panel"><span class="field-note">cargando el calendario…</span></div>`;
   if(!_rshCal.cargado) return h + `<div class="panel"><span class="field-note">
@@ -31971,6 +31986,159 @@ async function rshCalCopiar(btn){
   }catch(e){ /* cae a texto plano */ }
   try{ await navigator.clipboard.writeText(texto); listo(true); }
   catch(e){ listo(false); alert('No se pudo copiar: ' + e.message); }
+}
+
+
+// ===================================================================
+// EL BLOQUE PARA BLOOMBERG
+// -------------------------------------------------------------------
+// El chat de Bloomberg es TEXTO PLANO y se lee en una ventana angosta.
+// Nada de tablas: lineas cortas, encabezados en mayuscula y vinetas,
+// igual que el texto de flujos del dia que ya se manda (`textoBloomberg`).
+//
+// TRES DECISIONES, y las tres se pueden revertir en una linea:
+//
+// 1. SIN TILDES. Bloomberg todavia maltrata los acentos segun por donde
+//    entre el mensaje, y un "aproximaci?n" en un chat a un cliente se ve
+//    peor que un "aproximacion".
+// 2. NUMEROS EN FORMATO INGLES — "PO COP 31,600", no "31.600". Es como
+//    Sergio lo escribio y es como lo leen los clientes de afuera, que
+//    son la mitad de los que reciben esto.
+// 3. LINEAS DE 68 CARACTERES. El resumen se parte con sangria en vez de
+//    salir en una linea de 300 que el chat corta donde quiera.
+// ===================================================================
+const _BBG_ANCHO = 68;
+
+function _bbgPlano(t){
+  // Las tildes se quitan por compatibilidad, no por descuido.
+  return String(t == null ? '' : t).normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+function _bbgNum(n){
+  const v = Number(n);
+  return isFinite(v) ? v.toLocaleString('en-US', { maximumFractionDigits:4 }) : '';
+}
+function _bbgFecha(f){
+  const d = new Date(String(f).slice(0,10) + 'T12:00:00');
+  if(isNaN(d)) return String(f || '');
+  const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${M[d.getMonth()]} ${d.getDate()}`;
+}
+// Parte un texto largo en lineas de `_BBG_ANCHO`, con sangria. Devuelve
+// las lineas ya armadas, no un parrafo suelto.
+function _bbgEnvolver(t, sangria){
+  const pal = _bbgPlano(t).split(/\s+/).filter(Boolean);
+  const out = []; let l = '';
+  pal.forEach(p=>{
+    // OJO con el `l &&`: sin el, una palabra mas larga que el ancho
+    // empujaba una linea VACIA antes de ella.
+    if(l && (l + ' ' + p).trim().length > _BBG_ANCHO - sangria.length){ out.push(sangria + l.trim()); l = p; }
+    else l += ' ' + p;
+  });
+  if(l.trim()) out.push(sangria + l.trim());
+  return out;
+}
+
+function _rshCalBloomberg(sel){
+  const res = sel.filter(x=>x.tipo === 'res')
+                 .sort((a,b)=> a.dia.localeCompare(b.dia) || a.titulo.localeCompare(b.titulo));
+  const vistos = {};
+  sel.filter(x=>x.tipo === 'ex' || x.tipo === 'pago').forEach(x=>{
+    const k = x.d.isin + '|' + x.d.ex_date; if(!vistos[k]) vistos[k] = x.d;
+  });
+  const div = Object.values(vistos).sort((a,b)=>String(a.ex_date).localeCompare(String(b.ex_date)));
+  if(!res.length && !div.length) return '';
+
+  const L = [];
+  L.push('{CO} CALENDARIO CORPORATIVO {CO}');
+  L.push('');
+
+  if(res.length){
+    // El trimestre sale del dato, no escrito a mano: si un dia se mezclan
+    // dos trimestres en la misma seleccion, el titulo tiene que decirlo.
+    const tri = [...new Set(res.map(x=>x.r.trimestre).filter(Boolean))];
+    L.push('RESULTADOS' + (tri.length === 1 ? ' ' + _bbgPlano(tri[0]) : ''));
+    res.forEach(x=>{
+      const r = x.r;
+      const fecha = _bbgFecha(r.fecha);
+      const partes = [ _bbgPlano(r.emisor).toUpperCase() ];
+      if(r.estado !== 'confirmada') partes.push('fecha aprox');
+      if(r.cubierto){
+        if(r.recomendacion) partes.push(_bbgPlano(r.recomendacion));
+        if(r.precio_objetivo != null)
+          partes.push(`PO ${_bbgPlano(r.po_moneda || 'COP')} ${_bbgNum(r.precio_objetivo)}`);
+      }else{
+        partes.push('sin cobertura');
+      }
+      if(tri.length > 1 && r.trimestre) partes.push(_bbgPlano(r.trimestre));
+      L.push(`- ${fecha} - ` + partes.join(' - '));
+      if(r.resumen) _bbgEnvolver(r.resumen, '    ').forEach(x=>L.push(x));
+    });
+    L.push('');
+  }
+
+  if(div.length){
+    L.push('DIVIDENDOS');
+    div.forEach(v=>{
+      const ex0 = String(v.ex_date||'').slice(0,10);
+      const ex1 = String(v.ex_date_fin||'').slice(0,10);
+      const ex  = _bbgFecha(ex0) + (ex1 && ex1 !== ex0 ? ' to ' + _bbgFecha(ex1) : '');
+      const p = [ _bbgPlano(_rshCalNemo(v) || v.isin).toUpperCase(), 'ex ' + ex ];
+      if(v.pago_date) p.push('pago ' + _bbgFecha(v.pago_date));
+      p.push(`${_bbgPlano(v.moneda || '')} ${_bbgNum(v.monto)}`.trim());
+      if(v.tipo && !/ordinari|income|regular/i.test(v.tipo)) p.push(_bbgPlano(v.tipo));
+      L.push('- ' + p.join(' - '));
+    });
+    L.push('');
+  }
+
+  // El pie. Corto, pero no opcional: dice de donde sale cada cosa y que
+  // las aproximadas no estan confirmadas.
+  const conRep = res.filter(x=>x.r.reporte_url);
+  if(conRep.length){
+    const r0 = conRep[0].r;
+    L.push('Estimados: Credicorp Capital Research' +
+           (r0.reporte_fecha ? ', ' + _bbgFecha(r0.reporte_fecha) : '') + '.');
+    L.push(_bbgPlano(r0.reporte_url));
+  }
+  if(res.some(x=>x.r.estado !== 'confirmada'))
+    L.push('Las fechas marcadas "fecha aprox" estan por confirmar.');
+  if(div.length) L.push('Dividendos: bvc/nuam. Montos en la moneda de cada papel.');
+
+  return L.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+async function rshCalCopiarBBG(btn){
+  const ev = _rshCalEventos().filter(x=>_rshCal.sel.has(x.clave));
+  if(!ev.length){
+    alert('No hay nada marcado.\n\nMarca los eventos en el calendario, o usa los atajos de arriba.');
+    return;
+  }
+  const txt = _rshCalBloomberg(ev);
+  const antes = btn ? btn.innerHTML : '';
+  const listo = ok => { if(btn){ btn.innerHTML = ok ? '✓ copiado' : '✕ no se pudo';
+                                 setTimeout(()=>{ btn.innerHTML = antes; }, 1600); } };
+  try{ await navigator.clipboard.writeText(txt); listo(true); }
+  catch(e){
+    // El respaldo de siempre: un textarea fuera de pantalla.
+    try{
+      const t = document.createElement('textarea');
+      t.value = txt; t.style.cssText = 'position:fixed;left:-9999px;top:0;';
+      document.body.appendChild(t); t.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(t);
+      listo(ok);
+    }catch(e2){ listo(false); alert('No se pudo copiar: ' + e2.message); }
+  }
+}
+
+// Vista previa, para no tener que pegarlo en Bloomberg para saber como
+// quedo. El chat es angosto y el texto se ve distinto al leerlo en una
+// caja de ancho fijo que en la pantalla del app.
+function rshCalVerBBG(){
+  const ev = _rshCalEventos().filter(x=>_rshCal.sel.has(x.clave));
+  if(!ev.length){ alert('No hay nada marcado.'); return; }
+  _rshCal.previa = _rshCal.previa ? null : _rshCalBloomberg(ev);
+  rshPintar();
 }
 
 // ===================================================================
@@ -34198,7 +34366,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-03 17:30 UTC · v296';
+const BUILD_ID = '2026-11-03 17:55 UTC · v297';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
