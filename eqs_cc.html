@@ -1477,6 +1477,11 @@
 
   <!-- Semáforo de preparación: qué falta para poder generar -->
   <div id="panelListo" style="margin:0 24px 18px;display:none;"></div>
+  <!-- ===== HISTÓRICO DE HOY (RVL) =====
+       El 30-oct, con los dos portafolios de FIDUASHMORE, no había forma de
+       ver desde la pantalla de RVL si ACEF y FLACO habían quedado pegados.
+       Esto lo muestra, SIN cambiar nada de cómo se reporta (Sergio, 03-nov). -->
+  <div id="histRVL" style="margin:0 24px 18px;display:none;"></div>
 
   <div class="grid">
 
@@ -20442,6 +20447,9 @@ async function cargarReportesGenerados(){
   }
   renderModuloReportes();
   if(typeof renderFidessaTradesPanel === 'function') renderFidessaTradesPanel();
+  // El cuadro de RVL se repinta con el registro fresco: después de generar,
+  // la línea tiene que pasar de "asignado" a "generado" sin recargar nada.
+  try{ if(typeof renderHistoricoRVL === 'function') renderHistoricoRVL(); }catch(e){}
 }
 
 // Cuántas veces se ha reportado una línea (para la marca del cuadro de Trades)
@@ -21174,7 +21182,150 @@ function marcarSeleccionComo(tipo){
 // comisión. Sustituye al cuadro "Histórico generado hoy", que solo mostraba la
 // línea en curso y daba sensación de que lo asignado se perdía (Sergio, 14-ago).
 // =====================================================================
+// ===================================================================
+// HISTÓRICO DE HOY — RVL
+// -------------------------------------------------------------------
+// DOS ESTADOS, y la diferencia es el punto de todo el cuadro:
+//
+//   ASIGNADO   la orden tiene su reparto puesto. Es lo que faltaba ver el
+//              30-oct: con los dos portafolios de FIDUASHMORE no había
+//              forma de saber desde esta pantalla si ACEF y FLACO habían
+//              quedado pegados.
+//   GENERADO   el reporte salió y quedó en `reportes_generados`, con su
+//              hora y su versión.
+//
+// NO se mezclan. Un cuadro que se llama "generado" mostrando cosas que
+// solo están asignadas mentiría justo en la dirección peligrosa: verías
+// la línea ahí y concluirías que ya se reportó.
+//
+// Y SE DICE QUE "ASIGNADO" NO ESTÁ GUARDADO. `_allocPorOrden` vive en
+// memoria: si se recarga la página sin generar, el reparto se pierde. Un
+// cuadro que muestre "asignado" sin decir eso invita justo al error que
+// viene a prevenir.
+//
+// Esto NO cambia nada de cómo se reporta. Solo mira (Sergio, 03-nov).
+// ===================================================================
+function _histRVLDatos(){
+  const gen = ((typeof ultimaVersionPorLinea === 'function'
+      ? ultimaVersionPorLinea(_reportesGenerados || [])
+      : (_reportesGenerados || []))
+    ).filter(r => r.modulo === 'RVL');
+
+  // EL IDENTIFICADOR DE RVL VIENE COMPUESTO: `orden#portafolio`. Una orden
+  // repartida en tres portafolios deja TRES filas con el mismo prefijo.
+  // Para saber si la ORDEN ya se generó hay que quedarse con lo de antes
+  // del `#`; comparando la cadena entera, una orden repartida se vería
+  // eternamente como "asignada".
+  const ordGen = new Set(gen.map(r => String(r.parent_order_id).split('#')[0]));
+
+  const filas = gen.map(r => ({
+    estado: 'generado',
+    cliente: r.cliente || '—',
+    especie: r.especie || '—',
+    lado: r.lado || '',
+    cantidad: Number(r.cantidad) || 0,
+    portafolios: r.portafolios || '',
+    hora: r.generado_en ? new Date(r.generado_en).toLocaleTimeString('es-CO',
+            { hour:'2-digit', minute:'2-digit', hour12:false }) : '',
+    version: Number(r.version) || 1,
+  }));
+
+  // Lo asignado sale de la MISMA función que usa el generador para saber
+  // qué va al archivo. Si dos sitios decidieran esto por separado, el
+  // cuadro podría decir que una orden está lista y el generador no verla.
+  let asignadas = [];
+  try{ asignadas = (typeof getOrdenesConAlloc === 'function') ? getOrdenesConAlloc(true) : []; }
+  catch(e){ asignadas = []; }
+  asignadas.forEach(o=>{
+    const oid = String(o.parentOrderId);
+    if(ordGen.has(oid)) return;                       // ya se generó: no se repite
+    const t = (_fidessaTradesRaw || {})[oid] || {};
+    const nombres = (o.allocations || []).map(a=>{
+      const cfg = getClienteDB(document.getElementById('filtroCliente').value) || {};
+      const p = (cfg.portafolios || []).find(x=>x.id === a.portId);
+      return (p ? p.nombre : a.portId) + ' ' + fmtInt(a.cantidad);
+    }).join(' · ');
+    filas.push({
+      estado: o.completa ? 'asignado' : 'parcial',
+      cliente: normalizarGrupo(t.grupo) || t.grupo || '—',
+      especie: nemoCanonico(t.security, 'fidessa') || '—',
+      lado: t.lado || '',
+      cantidad: Number(o.qtyOrden) || 0,
+      portafolios: nombres,
+      falta: o.completa ? 0 : (Number(o.qtyOrden) || 0) - (Number(o.sumaAsignada) || 0),
+      hora: '', version: 0,
+    });
+  });
+  return filas;
+}
+
+function renderHistoricoRVL(){
+  const cont = document.getElementById('histRVL');
+  if(!cont) return;
+  const filas = _histRVLDatos();
+  if(!filas.length){ cont.style.display = 'none'; cont.innerHTML = ''; return; }
+  cont.style.display = '';
+
+  const esc = (typeof _esc === 'function') ? _esc : (x=>String(x==null?'':x));
+  const nG = filas.filter(f=>f.estado === 'generado').length;
+  const nA = filas.filter(f=>f.estado === 'asignado').length;
+  const nP = filas.filter(f=>f.estado === 'parcial').length;
+
+  const COL = { generado:'var(--buy,#22c55e)', asignado:'var(--accent,#a855f7)', parcial:'var(--warn,#f59e0b)' };
+  const ETI = { generado:'✓ generado', asignado:'● asignado', parcial:'◐ a medias' };
+
+  // El cliente de la pantalla va de primero: es el que se está trabajando.
+  const actual = (document.getElementById('filtroCliente') || {}).value || '';
+  const porCliente = {};
+  filas.forEach(f=>{ (porCliente[f.cliente] = porCliente[f.cliente] || []).push(f); });
+  const clientes = Object.keys(porCliente).sort((a,b)=>
+    (a === actual ? -1 : b === actual ? 1 : a.localeCompare(b)));
+
+  let h = `<div class="card" style="padding:12px 14px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+      <b style="font-size:13px;">HISTÓRICO DE HOY</b>
+      <span style="font-size:12px;display:flex;gap:12px;flex-wrap:wrap;">
+        <span style="color:${COL.asignado};"><b>${nA}</b> asignada${nA===1?'':'s'}</span>
+        ${nP ? `<span style="color:${COL.parcial};"><b>${nP}</b> a medias</span>` : ''}
+        <span style="color:${COL.generado};"><b>${nG}</b> generada${nG===1?'':'s'}</span>
+      </span>
+    </div>`;
+
+  clientes.forEach(c=>{
+    h += `<div style="margin-top:9px;">
+      <div style="font-size:11.5px;font-weight:700;opacity:${c === actual ? '1' : '.65'};
+           letter-spacing:.3px;">${esc(c)}${c === actual ? '' : ''}</div>`;
+    porCliente[c]
+      .sort((x,y)=> (x.estado === y.estado ? 0 : x.estado === 'generado' ? 1 : -1))
+      .forEach(f=>{
+        h += `<div style="display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;
+              font-size:12.5px;padding:2px 0 2px 10px;">
+          <span style="color:${COL[f.estado]};font-weight:700;min-width:92px;">${ETI[f.estado]}</span>
+          <b style="min-width:110px;">${esc(f.especie)}</b>
+          <span style="opacity:.75;min-width:52px;">${esc(f.lado)}</span>
+          <span style="min-width:80px;text-align:right;">${fmtInt(f.cantidad)}</span>
+          <span class="field-note" style="flex:1;min-width:160px;">${esc(f.portafolios || '')}</span>
+          ${f.estado === 'generado'
+            ? `<span class="field-note">${esc(f.hora)}${f.version > 1 ? ' · v' + f.version : ''}</span>`
+            : (f.estado === 'parcial'
+               ? `<span style="color:${COL.parcial};">faltan ${fmtInt(f.falta)}</span>` : '')}
+        </div>`;
+      });
+    h += `</div>`;
+  });
+
+  if(nA || nP){
+    h += `<div class="field-note" style="margin-top:9px;">
+      <b style="color:${COL.asignado};">Asignado</b> quiere decir que el reparto está puesto
+      <b>en esta sesión</b>. Todavía no está guardado en ninguna parte: si recargas la página
+      sin generar, se pierde y hay que volver a asignarlo.</div>`;
+  }
+  h += `</div>`;
+  cont.innerHTML = h;
+}
+
 function renderPanelListo(filtrados){
+  try{ renderHistoricoRVL(); }catch(e){ /* informativo: nunca tumba la pantalla */ }
   const cont = document.getElementById('panelListo');
   if(!cont) return;
   const cliente = document.getElementById('filtroCliente').value;
@@ -34366,7 +34517,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-03 17:55 UTC · v297';
+const BUILD_ID = '2026-11-03 20:05 UTC · v298';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
