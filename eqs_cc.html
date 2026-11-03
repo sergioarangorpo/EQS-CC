@@ -3049,6 +3049,11 @@
             <div><label class="field-note">Día</label>
               <input type="date" id="presuDiaFecha" style="min-width:150px;"></div>
             <button class="btn small purple" onclick="verDiaPlanilla()">Ver el día</button>
+            <div><label class="field-note">Hasta <span style="opacity:.6;">(opcional)</span></label>
+              <input type="date" id="presuDiaHasta" style="min-width:150px;"
+                     title="Para bajar varios días de una. Vacío = solo el día de la izquierda."></div>
+            <button class="btn small" onclick="descargarPlanillaRango(this)"
+                    title="Baja a Excel la Planilla COP del rango: una hoja con todas las filas y otra con el resumen por día, mercado, trader y grupo.">⬇ Descargar Excel</button>
             <div style="flex:1;min-width:260px;">
               <label class="field-note">Reparar desde un archivo</label>
               <input type="file" id="presuDiaArchivo" accept=".xlsx"
@@ -33179,6 +33184,142 @@ async function verDiaPlanilla(fechaForzada){
   }
 }
 
+// BAJAR LA PLANILLA COP A EXCEL, DE UN DÍA O DE UN RANGO (Sergio, 03-nov)
+// ---------------------------------------------------------------------
+// Hasta hoy, para ver dos días había que entrar a Supabase y escribir SQL a
+// mano. Esto lo vuelve parte del app.
+//
+// EL ARCHIVO SALE CON EL MISMO MOLDE que el `PLANILLA_COP_AAAAMMDD.xlsx` que
+// el app ya genera: las MISMAS 16 columnas, en las MISMAS celdas (B..Q),
+// mismos formatos. Así un día bajado desde aquí se puede volver a cargar en
+// "Reparar desde un archivo" sin traducir nada.
+//
+// Lo que se agrega va donde el lector NO mira: la FECHA en la columna A y el
+// `generado_por` en la R. `leerArchivoDiaPlanilla` lee de la 2 a la 17, así
+// que las dos son invisibles para él y no rompen nada.
+//
+// EL NOMBRE DEL ARCHIVO DE RANGO VA CON GUIONES, a propósito. `_fechaDeNombre`
+// se queda con los primeros OCHO DÍGITOS SEGUIDOS del nombre: un archivo
+// llamado `..._20261029_20261030.xlsx` se habría cargado ENTERO sobre el 29,
+// metiendo las filas del 30 en el día equivocado y en silencio. Con
+// `2026-10-29_a_2026-10-30` no hay ocho dígitos seguidos, el lector no saca
+// fecha y lo rechaza diciendo por qué. El segundo candado está en el lector:
+// ahora compara la fecha de la columna A contra la del nombre.
+const _PLANILLA_COLS = ['Fondo','Grupo','Tipo','Nemo','Cantidad','Precio','Valor Bruto',
+  'Comisión $','Comisión %','Iva','Giro Total','Trader','Mercado','Liquidación',
+  'Cumplimiento','Categoria'];
+
+async function descargarPlanillaRango(btn){
+  if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar ExcelJS.'); return; }
+  const desde = (document.getElementById('presuDiaFecha')||{}).value || '';
+  const hasta = (document.getElementById('presuDiaHasta')||{}).value || desde;
+  if(!desde){ alert('Escoge por lo menos el día de la izquierda.'); return; }
+  // No se adivina invirtiéndolo: si las fechas están al revés es un dedazo y
+  // hay que verlo.
+  if(hasta < desde){ alert(`El "hasta" (${hasta}) es anterior al día (${desde}). Revísalo.`); return; }
+
+  const antes = btn ? btn.innerHTML : '';
+  if(btn){ btn.disabled = true; btn.innerHTML = 'Leyendo…'; }
+  try{
+    // `supaFetchTodo` pagina: PostgREST corta en 1.000 filas y no avisa, y un
+    // mes entero pasa de eso con facilidad.
+    const filas = await supaFetchTodo('planilla_cop',
+      `fecha=gte.${desde}&fecha=lte.${hasta}&order=fecha.asc,categoria.asc,grupo.asc,nemo.asc`);
+    if(!filas || !filas.length){
+      alert(`No hay filas de la Planilla COP entre ${desde} y ${hasta}.`);
+      return;
+    }
+
+    const wb = new ExcelJS.Workbook();
+
+    // ---------- hoja 1: todas las filas ----------
+    const ws = wb.addWorksheet('Planilla COP');
+    ws.getColumn(1).width = 12;                               // Fecha
+    [28,26,8,16,14,14,18,16,13,14,18,8,11,13,13,15]
+      .forEach((w,i)=>{ ws.getColumn(i+2).width = w; });
+    ws.getColumn(18).width = 14;                              // Generado por
+    ['Fecha', ..._PLANILLA_COLS, 'Generado por'].forEach((h,i)=>{
+      const c = ws.getCell(1, i+1);
+      c.value = h;
+      c.font = { name:'Calibri', size:11, bold:true };
+    });
+    let r = 2;
+    filas.forEach(f=>{
+      ws.getCell(r,1).value = _fechaExcel(f.fecha);
+      [f.fondo, f.grupo, f.tipo, f.nemo, f.cantidad, f.precio, f.bruto, f.comision,
+       f.comision_pct, f.iva, f.giro, f.trader, f.mercado,
+       _fechaExcel(f.liquidacion), _fechaExcel(f.cumplimiento), f.categoria]
+        .forEach((v,i)=>{ ws.getCell(r, i+2).value = v; });
+      ws.getCell(r,18).value = f.generado_por || '';
+      ws.getCell(r,1).numFmt = 'dd/mm/yyyy';
+      ws.getCell(r,6).numFmt = '#,##0';
+      ['G','H','I','K','L'].forEach(c=>{ ws.getCell(`${c}${r}`).numFmt = '#,##0.00'; });
+      ws.getCell(r,10).numFmt = '0.000%';
+      ['O','P'].forEach(c=>{ ws.getCell(`${c}${r}`).numFmt = 'dd/mm/yyyy'; });
+      r++;
+    });
+
+    // ---------- hoja 2: el resumen, igual que la pantalla ----------
+    const ws2 = wb.addWorksheet('Resumen');
+    [14,16,30,10,10,18,16,20].forEach((w,i)=>{ ws2.getColumn(i+1).width = w; });
+    ['Bloque','Día','Detalle','Filas','Grupos','Comisión sin IVA','IVA','Valor Bruto']
+      .forEach((h,i)=>{
+        const c = ws2.getCell(1, i+1);
+        c.value = h;
+        c.font = { name:'Calibri', size:11, bold:true };
+      });
+    // Suma un conjunto de filas y lo deja como una línea del resumen.
+    const _sum = (xs, campo) => xs.reduce((a,x)=>a + (Number(x[campo])||0), 0);
+    const _linea = (bloque, dia, detalle, xs) => ({
+      bloque, dia, detalle, filas: xs.length,
+      grupos: new Set(xs.map(x=>x.grupo)).size,
+      com: _sum(xs,'comision'), iva: _sum(xs,'iva'), bruto: _sum(xs,'bruto'),
+    });
+    // Agrupa por un campo y devuelve las líneas, de mayor a menor comisión.
+    const _porCampo = (bloque, dia, xs, campo) => {
+      const m = {};
+      xs.forEach(x=>{ const k = String(x[campo] || '(vacío)');
+                      (m[k] = m[k] || []).push(x); });
+      return Object.keys(m).map(k=>_linea(bloque, dia, k, m[k]))
+                           .sort((a,b)=>b.com - a.com);
+    };
+    const dias = [...new Set(filas.map(f=>String(f.fecha).slice(0,10)))].sort();
+    const lineas = [];
+    if(dias.length > 1) lineas.push(_linea('TOTAL', `${dias[0]} a ${dias[dias.length-1]}`, '', filas));
+    dias.forEach(d=>{
+      const xs = filas.filter(f=>String(f.fecha).slice(0,10) === d);
+      lineas.push(_linea('DÍA', d, '', xs));
+      ['mercado','trader','grupo'].forEach(campo=>{
+        _porCampo(campo.toUpperCase(), d, xs, campo).forEach(l=>lineas.push(l));
+      });
+    });
+    let r2 = 2;
+    lineas.forEach(l=>{
+      [l.bloque, l.dia, l.detalle, l.filas, l.grupos, l.com, l.iva, l.bruto]
+        .forEach((v,i)=>{ ws2.getCell(r2, i+1).value = v; });
+      if(l.bloque === 'TOTAL' || l.bloque === 'DÍA')
+        [1,2,3,4,5,6,7,8].forEach(c=>{ ws2.getCell(r2,c).font = { name:'Calibri', size:11, bold:true }; });
+      ['F','G','H'].forEach(c=>{ ws2.getCell(`${c}${r2}`).numFmt = '#,##0'; });
+      r2++;
+    });
+
+    // El nombre de UN día conserva el molde del app (AAAAMMDD) para que se
+    // pueda volver a cargar. El de un RANGO va con guiones a propósito: ver
+    // el comentario de arriba.
+    const nombre = (desde === hasta)
+      ? `PLANILLA_COP_${desde.replace(/-/g,'')}.xlsx`
+      : `PLANILLA_COP_${desde}_a_${hasta}.xlsx`;
+    _bajarAlNavegador(nombre, await wb.xlsx.writeBuffer());
+    if(typeof avisoExito === 'function')
+      avisoExito('Quedó en Descargas',
+        `${nombre}<br>${filas.length} fila(s) · ${dias.length} día(s)`);
+  }catch(e){
+    alert('No se pudo bajar la planilla: ' + e.message);
+  }finally{
+    if(btn){ btn.disabled = false; btn.innerHTML = antes; }
+  }
+}
+
 // ¿Existe la columna `nota`? Las correcciones a mano se guardan ahí. Si no
 // existe, el app NO escribe a medias: lo dice y manda a correr el SQL.
 async function _diaHayNota(){
@@ -33362,11 +33503,23 @@ async function leerArchivoDiaPlanilla(input){
     const ws = wb.worksheets[0];
     const filas = [];
     const malas = [];
+    // Filas que vienen de OTRO día. El archivo de rango que baja
+    // `descargarPlanillaRango` trae la fecha en la columna A; el nombre con
+    // guiones ya hace que este lector lo rechace, pero si alguien lo renombra
+    // a `PLANILLA_COP_20261029.xlsx` el molde calza y entrarían las filas del
+    // 30 metidas en el 29, sin que nada lo dijera. Se cuentan y se avisan.
+    // Los archivos que genera el app por día dejan la columna A VACÍA, así que
+    // para ellos esto no cambia absolutamente nada.
+    const otroDia = [];
     const val = c => { const v = c && c.value; return (v && v.result !== undefined) ? v.result : v; };
     const num = v => { if(v == null || v === '') return null;
                        const n = Number(v); return isFinite(n) ? n : null; };
+    // `instanceof Date` dice NO a una fecha que venga de otro contexto, y
+    // entonces la fecha se iba por la rama de texto y salía null. Es la misma
+    // piedra que ya está escrita en las reglas y la que corrigió `_fechaExcel`
+    // en agosto: se compara con `toString.call` (Sergio, 03-nov).
     const fec = v => { if(!v) return null;
-                       if(v instanceof Date) return _isoLocal(v);
+                       if(Object.prototype.toString.call(v) === '[object Date]') return _isoLocal(v);
                        const s = String(v); return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0,10) : null; };
     ws.eachRow((row, i)=>{
       if(i === 1) return;                       // encabezado
@@ -33379,6 +33532,10 @@ async function leerArchivoDiaPlanilla(input){
       const vacia = [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]
         .every(c => { const v = val(row.getCell(c)); return v == null || String(v).trim() === ''; });
       if(vacia) return;
+      // La columna A manda sobre el nombre del archivo: un dato es más fuerte
+      // que una convención de nombres.
+      const fFila = fec(val(row.getCell(1)));
+      if(fFila && fFila !== fecha){ otroDia.push(i); return; }
       if(!g || com == null){ malas.push(i); return; }
       filas.push({
         fecha, fondo:String(val(row.getCell(2))||''), grupo:g,
@@ -33393,7 +33550,7 @@ async function leerArchivoDiaPlanilla(input){
         generado_por:(typeof USUARIO !== 'undefined' ? USUARIO : 'SAR') + ' (archivo)',
       });
     });
-    _presuDiaArchivo = { fecha, filas, nombre:file.name, malas };
+    _presuDiaArchivo = { fecha, filas, nombre:file.name, malas, otroDia };
     await verDiaPlanilla(fecha);               // repinta el día Y el bloque del archivo
   }catch(e){
     cont.innerHTML = `<div style="color:var(--sell,#ef4444);font-size:12px;">
@@ -33423,6 +33580,9 @@ function _diaBloqueArchivo(){
         hay.n ? ` &nbsp;·&nbsp; el día tiene hoy <b>${hay.n}</b> por <b>${mm(hay.com)}</b>` : ''}</div>
       ${a.malas && a.malas.length ? `<div style="color:var(--amber,#f59e0b);margin-top:3px;">
         ⚠ ${a.malas.length} fila(s) del archivo sin grupo o sin comisión: no entran.</div>` : ''}
+      ${a.otroDia && a.otroDia.length ? `<div style="color:var(--amber,#f59e0b);margin-top:3px;">
+        ⚠ ${a.otroDia.length} fila(s) del archivo son de <b>otro día</b> (lo dice su columna Fecha):
+        no entran. ¿Es un archivo de rango?</div>` : ''}
       ${menos ? `<div style="color:var(--sell,#ef4444);margin-top:3px;">
         ⚠ <b>El archivo trae MENOS de lo que el día ya tiene.</b> Reemplazar borra el día completo y deja solo esto.</div>` : ''}
       <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
@@ -33511,7 +33671,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-10-30 21:10 UTC · v294';
+const BUILD_ID = '2026-11-03 14:05 UTC · v295';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
