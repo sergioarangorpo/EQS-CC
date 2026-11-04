@@ -14077,7 +14077,106 @@ function procesarFidessa(){
       if(cand.length===1){ f.parentOrderId = cand[0].oid; _casadosPorNotes++; }
     });
   }
-  window._diagFidessa = { patasMercadoProt:_patasMercadoProt, poidsReasignados:Object.keys(_aliasPoid).length, casadosPorNotes:_casadosPorNotes };
+  // --- 0.c bis) FILAS DE DISTRIBUCIÓN DE CUALQUIER CLIENTE -------------
+  // EL CASO (Sergio, 04-nov · PORVENIR)
+  // -----------------------------------
+  // Porvenir hizo un composite de dos órdenes —MAYOR RIESGO y RETIRO
+  // PROGRAMADO— y el archivo de folios trajo el reparto YA HECHO: 166
+  // filas sin Parent Order ID, con el portafolio en el Notes. Es el mismo
+  // formato de PROTECCIÓN, pero el camino de PROTECCIÓN está atado a
+  // `PROTECCION_SUBCUENTAS` y no sirve para nadie más.
+  //
+  // El PASO 0.c de arriba casa folios sin POID por el Notes, pero exige
+  // que el LADO coincida. Y no coincide nunca en una fila de
+  // distribución: el archivo reparte y escribe las hijas como si fueran
+  // la contraparte, así que vienen en S cuando el cliente compró. Esa es
+  // la única razón por la que quedaban huérfanas.
+  //
+  // POR QUÉ NO BASTA EL NOTES SOLO: Porvenir tenía DOS órdenes de
+  // ECOPETROL con Notes 'MAYOR RIESGO' el mismo día —una de 2.500.000 ya
+  // completa con sus propios folios, y la del composite—. Casar por
+  // Notes a secas daba dos candidatas y no se asignaba.
+  // Lo que desempata es el DÉFICIT: la orden que ya tiene sus folios no
+  // necesita más. Si queda UNA sola con déficit, es esa. Si quedan dos,
+  // NO se asigna: huérfana visible antes que adivinada.
+  let _distCasadas = 0;
+  {
+    const cubierto = {};
+    _fidessaFoliosRaw.forEach(f=>{
+      const p = f.parentOrderId ? String(f.parentOrderId) : '';
+      if(p && _fidessaTradesRaw[p]) cubierto[p] = (cubierto[p]||0) + (Number(f.cantidad)||0);
+    });
+    _fidessaFoliosRaw.forEach(f=>{
+      if(f.parentOrderId) return;
+      if(!_esFilaDistribucion(f)) return;
+      const n = String(f.notes||'').trim();
+      if(!n) return;
+      // PROTECCIÓN tiene su propio camino (`foliosProtDirectos`): no se toca.
+      if(typeof PROTECCION_SUBCUENTAS!=='undefined' && PROTECCION_SUBCUENTAS[n]) return;
+      const cli = normalizarGrupo(String(f.clientBook||'').trim());
+      const esp = nemoCanonico(f.instrument,'fidessa');
+      const cand = Object.keys(_fidessaTradesRaw||{}).filter(oid=>{
+        const t = _fidessaTradesRaw[oid];
+        return normalizarGrupo(t.grupo) === cli
+            && nemoCanonico(t.security,'fidessa') === esp
+            && String(t.notes||'').trim() === n;
+      });
+      if(!cand.length) return;
+      // Entre las candidatas, las que todavía esperan folios.
+      const conDeficit = cand.filter(oid =>
+        (Number(_fidessaTradesRaw[oid].qtyDone)||0) - (cubierto[oid]||0) > 0);
+      const elegidas = conDeficit.length ? conDeficit : cand;
+      if(elegidas.length !== 1) return;          // ante duda, huérfana visible
+      f.parentOrderId = elegidas[0];
+      cubierto[elegidas[0]] = (cubierto[elegidas[0]]||0) + (Number(f.cantidad)||0);
+      _distCasadas++;
+    });
+  }
+  // --- 0.d) SEGUNDA PASADA DE ALIAS, YA CON LA DISTRIBUCIÓN PEGADA ----
+  // El PASO 0.b reasigna los Parent Order ID de MERCADO a la orden real
+  // cuando la cantidad calza EXACTO con su déficit. Corre ANTES que la
+  // distribución, así que en ese momento el déficit de la orden todavía
+  // es el total y nada calza.
+  //
+  // EL CASO (Sergio, 04-nov · PORVENIR): antes de armar el composite, la
+  // orden de MAYOR RIESGO alcanzó a hacer 67.639 por VWAP, que quedaron
+  // bajo su propio POID de mercado. Con la distribución ya pegada
+  // (1.543.673), a esa orden le falta justo 67.639. Antes de 0.c bis le
+  // faltaba 1.611.312 y no calzaba con nada.
+  //
+  // MISMA REGLA DE SIEMPRE: cero tolerancia. Tiene que calzar EXACTO con
+  // el déficit de UNA sola orden, del mismo cliente y la misma especie.
+  // Si no, se queda como está y que lo delate el arqueo.
+  let _aliasSegunda = 0;
+  {
+    const cubierto = {}, porPoid = {};
+    _fidessaFoliosRaw.forEach(f=>{
+      const p = f.parentOrderId ? String(f.parentOrderId) : '';
+      if(!p) return;
+      if(_fidessaTradesRaw[p]){ cubierto[p] = (cubierto[p]||0) + (Number(f.cantidad)||0); return; }
+      const k = p + '|' + nemoCanonico(f.instrument,'fidessa');
+      (porPoid[k] = porPoid[k] || { poid:p, esp:nemoCanonico(f.instrument,'fidessa'),
+                                    q:0, libros:new Set() });
+      porPoid[k].q += Number(f.cantidad)||0;
+      porPoid[k].libros.add(normalizarGrupo(String(f.clientBook||'').trim()));
+    });
+    Object.values(porPoid).forEach(g=>{
+      const cand = Object.keys(_fidessaTradesRaw||{}).filter(oid=>{
+        const t = _fidessaTradesRaw[oid];
+        if(nemoCanonico(t.security,'fidessa') !== g.esp) return false;
+        return (Number(t.qtyDone)||0) - (cubierto[oid]||0) === g.q;
+      });
+      if(cand.length !== 1) return;              // ante duda, no se toca
+      const oid = cand[0];
+      _fidessaFoliosRaw.forEach(f=>{
+        if(String(f.parentOrderId||'') === g.poid &&
+           nemoCanonico(f.instrument,'fidessa') === g.esp) f.parentOrderId = oid;
+      });
+      cubierto[oid] = (cubierto[oid]||0) + g.q;
+      _aliasSegunda++;
+    });
+  }
+  window._diagFidessa = { patasMercadoProt:_patasMercadoProt, poidsReasignados:Object.keys(_aliasPoid).length, casadosPorNotes:_casadosPorNotes, distCasadas:_distCasadas, aliasSegunda:_aliasSegunda };
   // Índice EMSX por Instructions (=ORD_NUM): da account (portafolio) y trader.
   // Se construye ANTES de segregar para poder resolver folios cuyo Notes sea un
   // ORD_NUM numérico (ej. PFAVAL 12225008 → account VOL-AVAL) — Sergio lo subió
@@ -36443,7 +36542,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-04 20:40 UTC · v318';
+const BUILD_ID = '2026-11-04 20:40 UTC · v319';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
