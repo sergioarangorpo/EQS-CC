@@ -924,6 +924,7 @@
           <button class="btn small ghost" onclick="rshVista('evolucion')" id="rshB4">Evolución</button>
           <button class="btn small ghost" onclick="rshVista('spreads')" id="rshB5">Spreads</button>
           <button class="btn small ghost" onclick="rshVista('dividendos')" id="rshB6">Dividendos</button>
+          <button class="btn small ghost" onclick="rshVista('volumen')" id="rshB7">Volumen y subasta</button>
         </div>
         <div id="rshAviso" class="field-note" style="margin-top:8px;"></div>
       </div>
@@ -32845,10 +32846,10 @@ function _rshTablaEvolucion(){
 }
 
 function rshPintar(){
-  ['rshB0','rshB1','rshB2','rshB3','rshB4','rshB5','rshB6'].forEach((id,i)=>{
+  ['rshB0','rshB1','rshB2','rshB3','rshB4','rshB5','rshB6','rshB7'].forEach((id,i)=>{
     const b = document.getElementById(id);
     if(b) b.classList.toggle('ghost',
-      ['calendario','resumen','especie','fondo','evolucion','spreads','dividendos'][i] !== _rshVista);
+      ['calendario','resumen','especie','fondo','evolucion','spreads','dividendos','volumen'][i] !== _rshVista);
   });
   // Los dos botones de la barra comparten `data-mod="Research"`, asi que
   // `switchModule` deja los DOS en activo. Aqui se corrige para que se vea
@@ -32869,6 +32870,7 @@ function rshPintar(){
   else if(_rshVista === 'evolucion')  c.innerHTML = _rshTablaEvolucion();
   else if(_rshVista === 'spreads')    c.innerHTML = _rshTablaSpread();
   else if(_rshVista === 'dividendos') c.innerHTML = _rshTablaDividendos();
+  else if(_rshVista === 'volumen')    c.innerHTML = _rshTablaVolumen();
   else                                c.innerHTML = _rshResumen();
 }
 
@@ -33748,6 +33750,202 @@ function _rshMonto(m, moneda){
          ' ' + (moneda || '');
 }
 
+// ===================================================================
+// VOLUMEN Y SUBASTA — el dato que piden los clientes
+// -------------------------------------------------------------------
+// EL CASO (Sergio, 04-nov)
+// *"Santander nos acaba de enviar una canasta gigante, nos preguntó cuál
+//  ha sido el volumen promedio de 8 especies en cantidad de acciones y
+//  plata y el vol en la subasta de cierre"*.
+//
+// LA DATA YA EXISTE. Cada vez que se guarda el cierre del día,
+// `cierres_mercado` queda con, por especie: cantidad, monto, trades, vwap
+// y subasta_qty / subasta_precio / subasta_monto. Esto no calcula nada
+// nuevo: lee y promedia.
+//
+// EL PROMEDIO ES POR DÍA OPERADO, no por día calendario. Una especie que
+// operó 12 de 60 días tiene un promedio de 12, y la columna DÍAS lo dice:
+// sin eso, un promedio alto puede ser una especie ilíquida que tuvo un
+// solo día grande.
+// ===================================================================
+let _rshVol = { nemos:'', desde:'', hasta:'', datos:null, cargando:false, msg:'' };
+
+function rshVolSet(campo, v){ if(_rshVol){ _rshVol[campo] = v; } }
+
+function _rshVolNemos(){
+  return [...new Set(String(_rshVol.nemos||'')
+    .toUpperCase().split(/[^A-Z0-9._]+/).map(x=>x.trim()).filter(Boolean))];
+}
+
+async function rshCargarVolumen(){
+  if(_rshVol.cargando) return;
+  const nemos = _rshVolNemos();
+  _rshVol.cargando = true; _rshVol.msg = ''; rshPintar();
+  try{
+    let q = 'select=fecha,nemo,cantidad,monto,trades,vwap,subasta_qty,subasta_monto,subasta_precio&order=fecha.asc';
+    if(_rshVol.desde) q += `&fecha=gte.${_rshVol.desde}`;
+    if(_rshVol.hasta) q += `&fecha=lte.${_rshVol.hasta}`;
+    const filas = await supaFetchTodo('cierres_mercado', q);
+    const porNemo = {};
+    const fechas = new Set();
+    filas.forEach(r=>{
+      const n = String(r.nemo||'').toUpperCase().trim();
+      if(!n) return;
+      if(nemos.length && nemos.indexOf(n) < 0) return;
+      fechas.add(r.fecha);
+      const d = porNemo[n] || (porNemo[n] = { nemo:n, dias:0, qty:0, monto:0, trades:0,
+                                              sQty:0, sMonto:0, diasSub:0,
+                                              maxQty:0, minQty:Infinity, primera:r.fecha, ultima:r.fecha });
+      const q0 = Number(r.cantidad)||0, m0 = Number(r.monto)||0;
+      // Un día sin cantidad no es un día operado: promediarlo mete ceros
+      // que bajan el promedio de una especie que sí se movió.
+      if(q0 > 0){
+        d.dias++; d.qty += q0; d.monto += m0; d.trades += Number(r.trades)||0;
+        if(q0 > d.maxQty) d.maxQty = q0;
+        if(q0 < d.minQty) d.minQty = q0;
+      }
+      const sq = Number(r.subasta_qty)||0;
+      if(sq > 0){ d.diasSub++; d.sQty += sq; d.sMonto += Number(r.subasta_monto)||0; }
+      if(r.fecha < d.primera) d.primera = r.fecha;
+      if(r.fecha > d.ultima)  d.ultima  = r.fecha;
+    });
+    const out = Object.values(porNemo).map(d=>({
+      ...d,
+      minQty: d.minQty === Infinity ? 0 : d.minQty,
+      promQty:   d.dias ? d.qty/d.dias     : 0,
+      promMonto: d.dias ? d.monto/d.dias   : 0,
+      promTrades:d.dias ? d.trades/d.dias  : 0,
+      vwap:      d.qty  ? d.monto/d.qty    : 0,
+      // El promedio de subasta va sobre los días OPERADOS, no sobre los
+      // días que hubo subasta: lo que el cliente pregunta es cuánto se
+      // hace en la subasta de un día típico.
+      promSubQty:   d.dias ? d.sQty/d.dias   : 0,
+      promSubMonto: d.dias ? d.sMonto/d.dias : 0,
+      pctSub:       d.monto ? d.sMonto/d.monto*100 : 0,
+    })).sort((a,b)=> b.promMonto - a.promMonto);
+
+    const faltan = nemos.filter(n=>!porNemo[n]);
+    const fs = [...fechas].sort();
+    _rshVol.datos = { filas: out, faltan, pedidos: nemos,
+                      desde: fs[0] || '', hasta: fs[fs.length-1] || '',
+                      diasRango: fs.length };
+    if(!out.length) _rshVol.msg = nemos.length
+      ? `No hay cierres guardados para ${nemos.join(', ')} en ese rango.`
+      : 'No hay cierres guardados en ese rango.';
+  }catch(e){
+    _rshVol.datos = null; _rshVol.msg = 'No se pudo leer: ' + e.message;
+  }
+  _rshVol.cargando = false;
+  rshPintar();
+}
+
+// Texto para pegar en el correo al cliente. Sin acentos raros ni tablas:
+// se pega plano y se lee.
+function _rshVolTexto(){
+  const D = _rshVol.datos;
+  if(!D || !D.filas.length) return '';
+  const M = n => Math.round(n).toLocaleString('es-CO');
+  const L = [];
+  L.push(`Volumen promedio diario — ${D.desde} a ${D.hasta} (${D.diasRango} ruedas)`);
+  L.push('');
+  D.filas.forEach(f=>{
+    L.push(`${f.nemo}: ${M(f.promQty)} acciones/dia · COP ${M(f.promMonto)}/dia · ` +
+           `subasta de cierre ${M(f.promSubQty)} acciones (COP ${M(f.promSubMonto)}, ` +
+           `${f.pctSub.toFixed(1)}% del volumen) · ${f.dias} dias operados`);
+  });
+  if(D.faltan.length){ L.push(''); L.push(`Sin datos: ${D.faltan.join(', ')}`); }
+  return L.join('\n');
+}
+
+function rshVolCopiar(btn){
+  const t = _rshVolTexto();
+  if(!t) return;
+  navigator.clipboard.writeText(t).then(()=>{
+    if(btn){ const o = btn.textContent; btn.textContent = '✓ copiado';
+             setTimeout(()=>{ btn.textContent = o; }, 1600); }
+  });
+}
+
+function _rshTablaVolumen(){
+  const esc = (typeof _esc === 'function') ? _esc : (x=>String(x==null?'':x));
+  const M = n => Math.round(n).toLocaleString('es-CO');
+  let h = `<div class="panel" style="margin-bottom:12px;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+      <div style="flex:1;min-width:300px;">
+        <label class="field-note">Especies (pegá los nemos; vacío = todas)</label>
+        <input type="text" value="${esc(_rshVol.nemos)}" placeholder="ECOPETROL PFCIBEST ISA GRUPOSURA…"
+               oninput="rshVolSet('nemos', this.value)" style="width:100%;"></div>
+      <div><label class="field-note">Desde</label><br>
+        <input type="date" value="${esc(_rshVol.desde)}" onchange="rshVolSet('desde', this.value)"></div>
+      <div><label class="field-note">Hasta</label><br>
+        <input type="date" value="${esc(_rshVol.hasta)}" onchange="rshVolSet('hasta', this.value)"></div>
+      <button class="btn small purple" onclick="rshCargarVolumen()">Calcular</button>
+    </div>
+    <div class="field-note" style="margin-top:7px;">
+      Sale de los cierres guardados cada día. El promedio es <b>por día operado</b>,
+      no por día calendario.</div>
+  </div>`;
+
+  if(_rshVol.cargando) return h + `<div class="panel"><span class="field-note">calculando…</span></div>`;
+  if(_rshVol.msg)      return h + `<div class="panel"><span class="field-note">${esc(_rshVol.msg)}</span></div>`;
+  const D = _rshVol.datos;
+  if(!D) return h + `<div class="panel"><span class="field-note">
+      Pegá los nemos que te pidieron y dale Calcular. Lo que sale es el volumen promedio
+      diario en acciones y en pesos, y cuánto de eso se hace en la subasta de cierre.</span></div>`;
+
+  h += `<div class="section-label" style="margin:4px 0 8px;">
+      ${D.filas.length} especie(s) · ${esc(D.desde)} a ${esc(D.hasta)} · ${D.diasRango} rueda(s)
+      <span style="flex:1;"></span>
+      <button class="btn small" onclick="rshVolCopiar(this)">📋 Copiar para el correo</button></div>`;
+
+  if(D.faltan.length){
+    h += `<div class="field-note" style="margin-bottom:9px;padding:7px 10px;border-radius:6px;
+          background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);">
+      <b style="color:var(--warn,#f59e0b);">Sin cierres guardados:</b> ${esc(D.faltan.join(', '))}.
+      No se inventan: o no operaron en el rango, o el nemo está escrito distinto.</div>`;
+  }
+
+  h += `<div class="blotter-wrap"><table>
+    <thead><tr>
+      <th>Especie</th>
+      <th class="num">Días<br>operados</th>
+      <th class="num">Acciones<br>promedio/día</th>
+      <th class="num">COP<br>promedio/día</th>
+      <th class="num">VWAP<br>del período</th>
+      <th class="num">Subasta<br>acciones/día</th>
+      <th class="num">Subasta<br>COP/día</th>
+      <th class="num">% en<br>subasta</th>
+      <th class="num">Trades<br>/día</th>
+    </tr></thead><tbody>`;
+  D.filas.forEach(f=>{
+    const alto = f.pctSub >= 25;
+    h += `<tr>
+      <td><b>${esc(f.nemo)}</b></td>
+      <td class="num">${f.dias}</td>
+      <td class="num">${M(f.promQty)}</td>
+      <td class="num">${M(f.promMonto)}</td>
+      <td class="num">${f.vwap.toLocaleString('es-CO',{maximumFractionDigits:2})}</td>
+      <td class="num">${M(f.promSubQty)}</td>
+      <td class="num">${M(f.promSubMonto)}</td>
+      <td class="num"${alto?' style="color:var(--warn,#f59e0b);font-weight:700;"':''}>${f.pctSub.toFixed(1)}%</td>
+      <td class="num">${f.promTrades.toFixed(0)}</td>
+    </tr>`;
+  });
+  const tQ = D.filas.reduce((s,f)=>s+f.promQty,0), tM = D.filas.reduce((s,f)=>s+f.promMonto,0);
+  const tSQ = D.filas.reduce((s,f)=>s+f.promSubQty,0), tSM = D.filas.reduce((s,f)=>s+f.promSubMonto,0);
+  h += `</tbody><tfoot><tr style="font-weight:700;border-top:2px solid var(--border,#232938);">
+      <td>TOTAL</td><td class="num">—</td>
+      <td class="num">${M(tQ)}</td><td class="num">${M(tM)}</td><td class="num">—</td>
+      <td class="num">${M(tSQ)}</td><td class="num">${M(tSM)}</td>
+      <td class="num">${tM?(tSM/tM*100).toFixed(1):'0.0'}%</td><td class="num">—</td>
+    </tr></tfoot></table></div>`;
+  h += `<div class="field-note" style="margin-top:7px;">
+      <b>Días operados</b> es cuántas ruedas tuvo cantidad esa especie. Si son muchos menos
+      que las ${D.diasRango} del rango, el promedio es de una especie que no opera todos los
+      días y conviene decirlo cuando se responda.</div>`;
+  return h;
+}
+
 function _rshTablaDividendos(){
   const EX   = '#a855f7';   // morado: fecha ex
   const PAGO = '#22c55e';   // verde: fecha de pago
@@ -33911,7 +34109,11 @@ let _rshSpr = { a:null, b:null, datos:null, cargando:false, msg:'' };
 // un z no quiere decir nada; la celda queda vacía y se cuenta aparte.
 // ===================================================================
 const RSH_MTZ_MIN_DIAS = 20;
-let _rshMtz = { cargando:false, msg:'', datos:null, universo:null, min:RSH_MTZ_MIN_DIAS };
+// `crudo` guarda las series completas tal como vinieron. Los filtros de
+// fecha recortan SOBRE eso y recalculan en memoria: no se vuelve a
+// consultar por cambiar el rango (Sergio, 04-nov).
+let _rshMtz = { cargando:false, msg:'', datos:null, crudo:null,
+                desde:'', hasta:'', min:RSH_MTZ_MIN_DIAS };
 
 // El ratio A/B y B/A son el mismo par visto al derecho y al revés: el z de
 // uno es el del otro con el signo cambiado. Se calcula media matriz.
@@ -33967,20 +34169,80 @@ async function rshCargarMatriz(){
     const isins = (porMoneda[moneda] || []).sort((x,y)=>
       String(series[x].ticker).localeCompare(String(series[y].ticker)));
     if(isins.length < 2){
-      _rshMtz.datos = null; _rshMtz.msg = 'No hay suficientes especies con precio para armar la matriz.';
+      _rshMtz.datos = null; _rshMtz.crudo = null;
+      _rshMtz.msg = 'No hay suficientes especies con precio para armar la matriz.';
     }else{
-      const { celdas, pares } = _rshMtzCalcular(series, isins, _rshMtz.min);
       const todas = [].concat(...isins.map(i=>series[i].fechas));
-      _rshMtz.datos = { series, isins, celdas, pares, moneda,
+      _rshMtz.crudo = { series, isins, moneda,
         otrasMonedas: Object.keys(porMoneda).filter(m=>m !== moneda),
-        desde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
-        hasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '',
-        posibles: isins.length*(isins.length-1)/2 };
+        topeDesde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
+        topeHasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '' };
+      _rshMtzRecalcular();
     }
   }catch(e){
     _rshMtz.datos = null; _rshMtz.msg = 'No se pudo leer: ' + e.message;
   }
   _rshMtz.cargando = false;
+  rshPintar();
+}
+
+// Recorta las series al rango elegido y vuelve a calcular. Sin red: las
+// series completas ya están en `_rshMtz.crudo`.
+function _rshMtzRecalcular(){
+  const C = _rshMtz.crudo;
+  if(!C){ _rshMtz.datos = null; return; }
+  const d0 = _rshMtz.desde || '', d1 = _rshMtz.hasta || '';
+  const recorte = {};
+  C.isins.forEach(i=>{
+    const s = C.series[i];
+    if(!d0 && !d1){ recorte[i] = s; return; }
+    const r = { isin:s.isin, ticker:s.ticker, moneda:s.moneda,
+                fechas:[], cierres:[], porFecha:{} };
+    s.fechas.forEach((f,k)=>{
+      if(d0 && f < d0) return;
+      if(d1 && f > d1) return;
+      r.fechas.push(f); r.cierres.push(s.cierres[k]); r.porFecha[f] = s.cierres[k];
+    });
+    recorte[i] = r;
+  });
+  const vivos = C.isins.filter(i=>recorte[i].fechas.length > 0);
+  const { celdas, pares } = _rshMtzCalcular(recorte, vivos, _rshMtz.min);
+  const todas = [].concat(...vivos.map(i=>recorte[i].fechas));
+  _rshMtz.datos = { series: recorte, isins: vivos, celdas, pares,
+    moneda: C.moneda, otrasMonedas: C.otrasMonedas,
+    desde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
+    hasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '',
+    topeDesde: C.topeDesde, topeHasta: C.topeHasta,
+    recortado: !!(d0 || d1),
+    posibles: vivos.length*(vivos.length-1)/2 };
+  _rshMtz.msg = '';
+}
+
+// Cambiar el rango NO vuelve a consultar: recorta lo que ya está en memoria.
+function rshMtzRango(campo, v){
+  _rshMtz[campo] = v || '';
+  if(_rshMtz.crudo) _rshMtzRecalcular();
+  rshPintar();
+}
+// Atajos: últimos N días de calendario contados desde el último día con data.
+function rshMtzUltimos(dias){
+  const C = _rshMtz.crudo;
+  if(!C) return;
+  if(!dias){ _rshMtz.desde = ''; _rshMtz.hasta = ''; }
+  else{
+    const h = C.topeHasta;
+    const d = new Date(h + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - dias);
+    _rshMtz.desde = d.toISOString().slice(0,10);
+    _rshMtz.hasta = '';
+  }
+  _rshMtzRecalcular();
+  rshPintar();
+}
+function rshMtzMinDias(v){
+  const n = Math.max(2, Number(v)||RSH_MTZ_MIN_DIAS);
+  _rshMtz.min = n;
+  if(_rshMtz.crudo) _rshMtzRecalcular();
   rshPintar();
 }
 
@@ -34134,9 +34396,24 @@ function _rshMatrizHtml(){
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
       <b style="font-size:13px;">Matriz de spreads</b>
       <span class="field-note">${n} especies · ${D.pares.length} de ${D.posibles} pares con
-        ${_rshMtz.min}+ días · ${esc(D.moneda)}</span>
+        ${_rshMtz.min}+ días · ${esc(D.moneda)}${D.recortado?' · rango recortado':''}</span>
       <span style="flex:1;"></span>
       <button class="btn small" onclick="rshCargarMatriz()">↻</button>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:9px;">
+      <div><label class="field-note">Desde</label><br>
+        <input type="date" value="${esc(_rshMtz.desde)}" min="${esc(D.topeDesde||'')}"
+               max="${esc(D.topeHasta||'')}" onchange="rshMtzRango('desde', this.value)"></div>
+      <div><label class="field-note">Hasta</label><br>
+        <input type="date" value="${esc(_rshMtz.hasta)}" min="${esc(D.topeDesde||'')}"
+               max="${esc(D.topeHasta||'')}" onchange="rshMtzRango('hasta', this.value)"></div>
+      <button class="btn small ghost" style="font-size:11px;" onclick="rshMtzUltimos(30)">1 mes</button>
+      <button class="btn small ghost" style="font-size:11px;" onclick="rshMtzUltimos(60)">2 meses</button>
+      <button class="btn small ${D.recortado?'ghost':'purple'}" style="font-size:11px;"
+              onclick="rshMtzUltimos(0)">todo</button>
+      <div><label class="field-note">Mínimo de días por par</label><br>
+        <input type="number" min="2" step="1" value="${_rshMtz.min}" style="width:76px;"
+               onchange="rshMtzMinDias(this.value)"></div>
     </div>
     <div class="field-note" style="margin-bottom:9px;">
       Cada celda es <b>a cuántas desviaciones</b> está el ratio
@@ -36121,7 +36398,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-04 18:15 UTC · v314';
+const BUILD_ID = '2026-11-04 19:10 UTC · v315';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
