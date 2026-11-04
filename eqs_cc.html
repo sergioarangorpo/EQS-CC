@@ -33885,6 +33885,122 @@ function _rshTablaDividendos(){
 // ===================================================================
 let _rshSpr = { a:null, b:null, datos:null, cargando:false, msg:'' };
 
+// ===================================================================
+// LA MATRIZ DE SPREADS — todos los pares, de un vistazo
+// -------------------------------------------------------------------
+// Sergio, 04-nov: *"una matriz de resultados con todas las combinaciones
+// posibles, que me muestre de forma visual y rápida cómo están las
+// relaciones de spreads con mapa de calor, y si escojo alguna de las
+// combinaciones me traiga la data"*.
+//
+// UNA SOLA LECTURA. 31 especies son 465 pares. Pedirle a Supabase un par
+// a la vez serían 465 viajes; se traen las 31 series UNA vez y los 465
+// pares se calculan en memoria. Tarda lo que tarda una consulta.
+//
+// EL COLOR ES EL Z, NO EL RATIO. Un ratio de 0,97 y otro de 15,4 no se
+// pueden comparar entre sí: dependen del precio de cada papel. Lo que sí
+// se compara es a cuántas desviaciones está cada uno de SU propia media.
+// Es el `StDev from Mean` de la pantalla de Bloomberg.
+//
+// LA HISTORIA ES DE 3 MESES (desde el 03-ago-2026), unos 42 días por
+// especie. Con esa muestra la media todavía se mueve: la matriz dice qué
+// pares están tensionados HOY, no qué está históricamente barato. Va
+// escrito en la pantalla, no en un comentario.
+//
+// LOS PARES CON POCA HISTORIA NO SE PINTAN. Con menos de 20 días comunes
+// un z no quiere decir nada; la celda queda vacía y se cuenta aparte.
+// ===================================================================
+const RSH_MTZ_MIN_DIAS = 20;
+let _rshMtz = { cargando:false, msg:'', datos:null, universo:null, min:RSH_MTZ_MIN_DIAS };
+
+// El ratio A/B y B/A son el mismo par visto al derecho y al revés: el z de
+// uno es el del otro con el signo cambiado. Se calcula media matriz.
+function _rshMtzCalcular(series, isins, minDias){
+  const celdas = {}, pares = [];
+  for(let i = 0; i < isins.length; i++){
+    for(let j = i+1; j < isins.length; j++){
+      const A = series[isins[i]], B = series[isins[j]];
+      if(!A || !B) continue;
+      const rs = [];
+      A.fechas.forEach((f, k)=>{
+        const vb = B.porFecha[f], va = A.cierres[k];
+        if(vb > 0 && va > 0) rs.push(va/vb);
+      });
+      if(rs.length < minDias) continue;
+      const hoy = rs[rs.length-1];
+      const prom = rs.reduce((s,v)=>s+v,0)/rs.length;
+      const sd = Math.sqrt(rs.reduce((s,v)=>s+(v-prom)*(v-prom),0)/rs.length) || 0;
+      const z = sd ? (hoy-prom)/sd : 0;
+      const pct = Math.round(rs.filter(v=>v<hoy).length/rs.length*100);
+      const c = { a:isins[i], b:isins[j], z, pct, hoy, prom, dias:rs.length,
+                  tA:A.ticker, tB:B.ticker };
+      celdas[isins[i]+'|'+isins[j]] = c;
+      celdas[isins[j]+'|'+isins[i]] = { ...c, a:isins[j], b:isins[i], z:-z, pct:100-pct,
+                                        hoy: hoy ? 1/hoy : 0, prom: prom ? 1/prom : 0,
+                                        tA:B.ticker, tB:A.ticker };
+      pares.push(c);
+    }
+  }
+  return { celdas, pares };
+}
+
+async function rshCargarMatriz(){
+  if(_rshMtz.cargando) return;
+  _rshMtz.cargando = true; _rshMtz.msg = ''; rshPintar();
+  try{
+    const filas = await supaFetchTodo('precios_diarios',
+      'select=fecha,isin,ticker,cierre,moneda&order=fecha.asc');
+    const series = {};
+    filas.forEach(r=>{
+      const v = Number(r.cierre);
+      if(!(v > 0)) return;
+      const s = series[r.isin] || (series[r.isin] = {
+        isin:r.isin, ticker:r.ticker || r.isin, moneda:(r.moneda||'').toUpperCase(),
+        fechas:[], cierres:[], porFecha:{} });
+      s.fechas.push(r.fecha); s.cierres.push(v); s.porFecha[r.fecha] = v;
+    });
+    // NO SE MEZCLAN MONEDAS. Un papel en pesos contra uno en dólares es el
+    // dólar disfrazado de valor relativo — la misma regla del gráfico.
+    const porMoneda = {};
+    Object.values(series).forEach(s=>{ (porMoneda[s.moneda] = porMoneda[s.moneda] || []).push(s.isin); });
+    const moneda = Object.keys(porMoneda).sort((x,y)=>porMoneda[y].length-porMoneda[x].length)[0] || '';
+    const isins = (porMoneda[moneda] || []).sort((x,y)=>
+      String(series[x].ticker).localeCompare(String(series[y].ticker)));
+    if(isins.length < 2){
+      _rshMtz.datos = null; _rshMtz.msg = 'No hay suficientes especies con precio para armar la matriz.';
+    }else{
+      const { celdas, pares } = _rshMtzCalcular(series, isins, _rshMtz.min);
+      const todas = [].concat(...isins.map(i=>series[i].fechas));
+      _rshMtz.datos = { series, isins, celdas, pares, moneda,
+        otrasMonedas: Object.keys(porMoneda).filter(m=>m !== moneda),
+        desde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
+        hasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '',
+        posibles: isins.length*(isins.length-1)/2 };
+    }
+  }catch(e){
+    _rshMtz.datos = null; _rshMtz.msg = 'No se pudo leer: ' + e.message;
+  }
+  _rshMtz.cargando = false;
+  rshPintar();
+}
+
+// Verde = el de la fila está BARATO contra el de la columna; rojo = caro.
+// Mismo criterio de color que el gráfico de abajo, para que no haya que
+// recordar dos convenciones.
+function _rshMtzColor(z){
+  const t = Math.max(-3, Math.min(3, z)) / 3;          // −1 .. 1
+  const a = (Math.abs(t) * 0.68).toFixed(3);
+  return t >= 0 ? `rgba(239,68,68,${a})` : `rgba(34,197,94,${a})`;
+}
+
+// Clic en una celda: carga ese par en el gráfico de abajo.
+function rshMtzAbrir(a, b){
+  _rshSpr.a = a; _rshSpr.b = b;
+  rshCargarSpread();
+  setTimeout(()=>{ const el = document.getElementById('rshSprGrafico');
+                   if(el && el.scrollIntoView) el.scrollIntoView({behavior:'smooth', block:'start'}); }, 120);
+}
+
 async function rshSpreadElegir(cual, isin){
   _rshSpr[cual] = isin || null;
   if(_rshSpr.a && _rshSpr.b) return rshCargarSpread();
@@ -33990,6 +34106,102 @@ function _rshSpreadSvg(d, W, H){
   return `<svg width="${W}" height="${H}" style="display:block;max-width:100%;">${o}</svg>`;
 }
 
+// La matriz, arriba del selector de par. Se dibuja sola la primera vez.
+function _rshMatrizHtml(){
+  const esc = (typeof _esc === 'function') ? _esc : (x=>String(x==null?'':x));
+  if(_rshMtz.cargando)
+    return `<div class="panel" style="margin-bottom:12px;">
+      <span class="field-note">armando la matriz…</span></div>`;
+  if(_rshMtz.msg)
+    return `<div class="panel" style="margin-bottom:12px;">
+      <span class="field-note">${esc(_rshMtz.msg)}</span>
+      <button class="btn small" style="margin-left:8px;" onclick="rshCargarMatriz()">reintentar</button></div>`;
+  const D = _rshMtz.datos;
+  if(!D)
+    return `<div class="panel" style="margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <b style="font-size:13px;">Matriz de spreads</b>
+      <span class="field-note">todas las combinaciones, de un vistazo</span>
+      <span style="flex:1;"></span>
+      <button class="btn small purple" onclick="rshCargarMatriz()">Armar matriz</button></div>`;
+
+  const T = i => (D.series[i] && D.series[i].ticker) || i;
+  const n = D.isins.length;
+
+  // Los más tensionados, arriba: es lo que se mira primero.
+  const top = [...D.pares].sort((x,y)=>Math.abs(y.z)-Math.abs(x.z)).slice(0, 6);
+
+  let h = `<div class="panel" style="margin-bottom:12px;">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+      <b style="font-size:13px;">Matriz de spreads</b>
+      <span class="field-note">${n} especies · ${D.pares.length} de ${D.posibles} pares con
+        ${_rshMtz.min}+ días · ${esc(D.moneda)}</span>
+      <span style="flex:1;"></span>
+      <button class="btn small" onclick="rshCargarMatriz()">↻</button>
+    </div>
+    <div class="field-note" style="margin-bottom:9px;">
+      Cada celda es <b>a cuántas desviaciones</b> está el ratio
+      <b>fila ÷ columna</b> de su propia media.
+      <span style="color:var(--buy,#22c55e);font-weight:700;">Verde</span>: la fila está barata
+      contra la columna. <span style="color:var(--sell,#ef4444);font-weight:700;">Rojo</span>: cara.
+      Clic en una celda para ver el par abajo.
+    </div>
+    <div class="field-note" style="margin-bottom:10px;padding:7px 10px;border-radius:6px;
+         background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);">
+      <b style="color:var(--warn,#f59e0b);">La historia es de 3 meses</b>
+      (${esc(D.desde)} a ${esc(D.hasta)}). Con esa muestra la media todavía se mueve:
+      esto dice qué pares están tensionados <b>hoy</b>, no qué está históricamente barato.
+      ${D.otrasMonedas.length ? `Se dejaron por fuera las de ${esc(D.otrasMonedas.join(', '))}:
+        un ratio entre monedas distintas grafica el dólar, no el valor relativo.` : ''}
+    </div>`;
+
+  if(top.length){
+    h += `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:11px;">`;
+    top.forEach(c=>{
+      const col = c.z >= 0 ? 'var(--sell,#ef4444)' : 'var(--buy,#22c55e)';
+      h += `<button class="btn small ghost" style="font-size:11.5px;border-color:${col};"
+             onclick="rshMtzAbrir('${esc(c.a)}','${esc(c.b)}')">
+             ${esc(c.tA)}/${esc(c.tB)} <b style="color:${col};">${c.z>=0?'+':''}${c.z.toFixed(1)}σ</b></button>`;
+    });
+    h += `</div>`;
+  }
+
+  h += `<div style="overflow:auto;max-height:620px;">
+    <table style="border-collapse:separate;border-spacing:1px;font-size:10.5px;">
+      <thead><tr>
+        <th style="position:sticky;left:0;top:0;z-index:3;background:var(--bg-1,#0f1320);"></th>
+        ${D.isins.map(i=>`<th style="position:sticky;top:0;z-index:2;background:var(--bg-1,#0f1320);
+             padding:3px 2px;font-weight:600;opacity:.75;white-space:nowrap;
+             writing-mode:vertical-rl;transform:rotate(180deg);height:66px;">${esc(T(i))}</th>`).join('')}
+      </tr></thead><tbody>`;
+  D.isins.forEach(fi=>{
+    h += `<tr><th style="position:sticky;left:0;z-index:1;background:var(--bg-1,#0f1320);
+            padding:2px 7px 2px 3px;text-align:right;font-weight:600;opacity:.75;
+            white-space:nowrap;">${esc(T(fi))}</th>`;
+    D.isins.forEach(ci=>{
+      if(fi === ci){
+        h += `<td style="width:30px;height:21px;background:var(--bg-2,#161b26);opacity:.45;"></td>`;
+        return;
+      }
+      const c = D.celdas[fi+'|'+ci];
+      if(!c){
+        h += `<td title="${esc(T(fi))}/${esc(T(ci))} — sin días suficientes"
+              style="width:30px;height:21px;background:repeating-linear-gradient(45deg,
+              transparent,transparent 3px,rgba(148,163,184,.18) 3px,rgba(148,163,184,.18) 6px);"></td>`;
+        return;
+      }
+      h += `<td onclick="rshMtzAbrir('${esc(fi)}','${esc(ci)}')"
+            title="${esc(c.tA)}/${esc(c.tB)} · ${c.z>=0?'+':''}${c.z.toFixed(2)} σ · ratio ${c.hoy.toFixed(c.hoy<10?3:2)} · más alto que el ${c.pct}% de ${c.dias} días"
+            style="width:30px;height:21px;cursor:pointer;text-align:center;
+                   background:${_rshMtzColor(c.z)};
+                   ${Math.abs(c.z) >= 2 ? 'outline:1px solid rgba(255,255,255,.35);outline-offset:-1px;' : ''}">
+            ${Math.abs(c.z) >= 1.5 ? (c.z>0?'+':'') + c.z.toFixed(1) : ''}</td>`;
+    });
+    h += `</tr>`;
+  });
+  h += `</tbody></table></div></div>`;
+  return h;
+}
+
 function _rshTablaSpread(){
   const porEt = {};
   (_rshDatos.filas||[]).forEach(f=>{
@@ -34002,7 +34214,8 @@ function _rshTablaSpread(){
     ops.map(e=>`<option value="${porEt[e].isin}"${porEt[e].isin===val?' selected':''}>${e}</option>`).join('') +
     `</select>`;
 
-  let h = `<div class="panel" style="margin-bottom:12px;">
+  let h = _rshMatrizHtml();
+  h += `<div class="panel" id="rshSprGrafico" style="margin-bottom:12px;">
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
       <label class="field-note">Vender</label>${sel('a', _rshSpr.a)}
       <span style="opacity:.6;font-size:17px;">/</span>
@@ -35908,7 +36121,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-04 16:35 UTC · v313';
+const BUILD_ID = '2026-11-04 18:15 UTC · v314';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
