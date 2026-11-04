@@ -3079,6 +3079,11 @@
           <button class="btn small" onclick="limpiarFiltrosPresupuesto()">✕ Limpiar</button>
           <button class="btn small purple" onclick="cargarPresupuesto(true)">↻ Recargar</button>
           <button class="btn small" onclick="descargarEjecucionXLSX()">📥 Excel</button>
+          <!-- HASTA DÓNDE LLEGA LA DATA (Sergio, 04-nov). Lo primero que hay
+               que saber al abrir el módulo: si la ejecución viene con un día
+               de rezago, todo lo de abajo lo tiene. Va en amarillo y al lado
+               del Excel para que no haya que buscarlo. -->
+          <span id="presuCorte" style="display:none;"></span>
         </div>
       </div>
 
@@ -20605,6 +20610,45 @@ function _fechaReal(v){
   return isNaN(d) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
+// El último día que trae `ejecucion_diaria`, que es la fuente granular.
+// Devuelve '' si no hay data: ahí el chip dice otra cosa, no una fecha falsa.
+function _presuUltimoDia(){
+  let max = '';
+  (_ejecDiaria||[]).forEach(r=>{
+    const d = String(r.dia||'').slice(0,10);
+    if(/^\d{4}-\d{2}-\d{2}$/.test(d) && d > max) max = d;
+  });
+  return max;
+}
+
+function _presuPintarCorte(estado){
+  const el = document.getElementById('presuCorte');
+  if(!el) return;
+  const base = 'display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;' +
+               'padding:4px 10px;border-radius:6px;border:1px solid ;';
+  if(estado === 'cargando'){
+    el.style.display = '';
+    el.style.cssText = base + 'background:rgba(148,163,184,.12);border-color:rgba(148,163,184,.4);';
+    el.textContent = 'cargando la ejecución…';
+    return;
+  }
+  if(estado === 'error'){
+    el.style.display = '';
+    el.style.cssText = base + 'background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.5);color:var(--sell,#ef4444);';
+    el.textContent = '⚠ No se pudo leer la ejecución';
+    return;
+  }
+  const d = _presuUltimoDia();
+  el.style.display = '';
+  if(!d){
+    el.style.cssText = base + 'background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.5);color:var(--sell,#ef4444);';
+    el.textContent = '⚠ Sin data de ejecución';
+    return;
+  }
+  el.style.cssText = base + 'background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.55);color:var(--warn,#f59e0b);';
+  el.textContent = `⚠ Data hasta ${d.slice(8,10)}/${d.slice(5,7)}/${d.slice(0,4)}`;
+}
+
 // Lo reportado hoy, indexado por módulo y por el MISMO identificador con el
 // que se registró. Es el ancla: la planilla compara contra esto en vez de
 // confiar en que dos caminos distintos den el mismo número.
@@ -22557,17 +22601,21 @@ function _histRVLDatos(){
   // eternamente como "asignada".
   const ordGen = new Set(gen.map(r => String(r.parent_order_id).split('#')[0]));
 
-  const filas = gen.map(r => ({
-    estado: 'generado',
-    cliente: r.cliente || '—',
-    especie: r.especie || '—',
-    lado: r.lado || '',
-    cantidad: Number(r.cantidad) || 0,
-    portafolios: r.portafolios || '',
-    hora: r.generado_en ? new Date(r.generado_en).toLocaleTimeString('es-CO',
-            { hour:'2-digit', minute:'2-digit', hour12:false }) : '',
-    version: Number(r.version) || 1,
-  }));
+  // LO GENERADO YA NO VIVE AQUÍ (Sergio, 04-nov).
+  // -------------------------------------------------------------------
+  // *"ese HISTÓRICO REGISTRADO HOY no se necesita, para eso está el
+  //  módulo Reportes, lo que debería quedar ahí es ALOCACIÓN DE
+  //  EJECUCIÓN... una vez genere el reporte se puede resetear ese cuadro,
+  //  ya viaja al otro módulo"*.
+  //
+  // `gen` se sigue leyendo, pero solo para SABER QUÉ YA SE FUE: las
+  // órdenes reportadas salen del cuadro. Ese es el reset que faltaba.
+  //
+  // Y se vacía POR ORDEN, no por cliente. Con Porvenir da igual —el
+  // reporte lleva sus tres órdenes y el cuadro queda limpio—, pero
+  // COLFONDOS reporta varias veces al día: borrar por cliente le quitaría
+  // de la vista líneas que todavía no ha reportado.
+  const filas = [];
 
   // Lo asignado sale de la MISMA función que usa el generador para saber
   // qué va al archivo. Si dos sitios decidieran esto por separado, el
@@ -22606,28 +22654,29 @@ function renderHistoricoRVL(){
   cont.style.display = '';
 
   const esc = (typeof _esc === 'function') ? _esc : (x=>String(x==null?'':x));
-  const nG = filas.filter(f=>f.estado === 'generado').length;
   const nA = filas.filter(f=>f.estado === 'asignado').length;
   const nP = filas.filter(f=>f.estado === 'parcial').length;
-  const COL = { generado:'var(--buy,#22c55e)', asignado:'var(--accent,#a855f7)', parcial:'var(--warn,#f59e0b)' };
-  const ETI = { generado:'✓ generado', asignado:'● asignado', parcial:'◐ a medias' };
+  const COL = { asignado:'var(--accent,#a855f7)', parcial:'var(--warn,#f59e0b)' };
+  const ETI = { asignado:'● asignado', parcial:'◐ a medias' };
 
-  // UN CUADRO, NO UNA LISTA (Sergio, 03-nov).
+  // ALOCACIÓN DE EJECUCIÓN, no un histórico (Sergio, 04-nov).
   // -------------------------------------------------------------------
-  // Esto era una lista agrupada por cliente, con un subtítulo por cada
-  // uno. Ocupaba el triple y había que leerla en vez de barrerla. Es la
-  // misma tabla de RVI: encabezados, una fila por línea, el cliente como
-  // una columna más. Se ordena por hora descendente, lo último arriba.
+  // Lo que se ve acá es el reparto EN CURSO: lo que ya asignaste y no has
+  // reportado. Sirve para revisar de un vistazo cómo quedó repartida cada
+  // orden —el caso que lo pidió fue FIDUASHMORE con dos portafolios, que
+  // no había forma de confirmar visualmente antes de reportar—. Lo ya
+  // reportado vive en el módulo Reportes, no acá.
+  // Las que están a medias van primero: son las que falta terminar.
   const ord = [...filas].sort((a,b)=>{
-    if(a.estado !== b.estado) return a.estado === 'generado' ? 1 : -1;
-    return String(b.hora||'').localeCompare(String(a.hora||''));
+    if(a.estado !== b.estado) return a.estado === 'parcial' ? -1 : 1;
+    return String(a.cliente).localeCompare(String(b.cliente));
   });
 
   cont.innerHTML = `
     <div class="section-label">
-      Histórico registrado hoy
-      <span class="hint">${nA ? nA + ' asignada' + (nA===1?'':'s') + ' · ' : ''}${
-        nP ? nP + ' a medias · ' : ''}${nG} generada${nG===1?'':'s'}</span>
+      Alocación de ejecución
+      <span class="hint">${nA} asignada${nA===1?'':'s'}${
+        nP ? ' · ' + nP + ' a medias' : ''} · pendiente(s) de reportar</span>
     </div>
     <div class="blotter-wrap">
       <table>
@@ -22638,7 +22687,6 @@ function renderHistoricoRVL(){
           <th style="width:62px;">Lado</th>
           <th class="num" style="width:104px;">Cantidad</th>
           <th>Portafolio</th>
-          <th style="width:74px;">Hora</th>
         </tr></thead>
         <tbody>
           ${ord.map(f=>`<tr>
@@ -22649,14 +22697,14 @@ function renderHistoricoRVL(){
             <td class="num">${fmtInt(f.cantidad)}</td>
             <td class="field-note">${esc(f.portafolios || '')}${
               f.estado === 'parcial' ? ` <span style="color:${COL.parcial};">faltan ${fmtInt(f.falta)}</span>` : ''}</td>
-            <td class="field-note">${esc(f.hora)}${f.version > 1 ? ' · v'+f.version : ''}</td>
           </tr>`).join('')}
         </tbody>
       </table>
     </div>
-    ${(nA || nP) ? `<div class="field-note" style="margin-top:5px;">
-      <b style="color:${COL.asignado};">Asignado</b> es el reparto puesto <b>en esta sesión</b>:
-      todavía no está guardado. Si recargas sin generar, se pierde.</div>` : ''}`;
+    <div class="field-note" style="margin-top:5px;">
+      Esto es el reparto <b>en curso</b>: la línea desaparece cuando generás su reporte
+      y pasa al módulo Reportes. Vive <b>en esta sesión</b>: si recargás sin generar,
+      el reparto se pierde y hay que volver a hacerlo.</div>`;
 }
 
 function renderPanelListo(filtrados){
@@ -34174,8 +34222,9 @@ function _presuCanonizar(filas){
 
 async function cargarPresupuesto(forzar){
   const est = document.getElementById('presuEstado');
-  if(_ejecCargado && !forzar){ renderPresupuesto(); return; }
+  if(_ejecCargado && !forzar){ _presuPintarCorte(); renderPresupuesto(); return; }
   if(est) est.textContent = 'cargando…';
+  _presuPintarCorte('cargando');
   try{
     if(!_maestroGrupos.length && typeof cargarMaestroGrupos === 'function') await cargarMaestroGrupos();
     // La curva vive en la tabla desde el 28-oct. Falla suave: si no se puede
@@ -34191,8 +34240,10 @@ async function cargarPresupuesto(forzar){
     _presuCanonizar(_ejecMensual);
     _ejecCargado = true;
     if(est) est.textContent = `${_ejecMensual.length} fila(s) mensuales · ${_ejecDiaria.length} día(s)`;
+    _presuPintarCorte();
   }catch(e){
     _ejecMensual = []; _ejecDiaria = [];
+    _presuPintarCorte('error');
     if(est) est.innerHTML = `<span style="color:var(--sell,#ef4444);">no se pudo leer la ejecución: ${e.message}</span>`;
   }
   poblarFiltrosPresupuesto();
@@ -35857,7 +35908,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-04 15:55 UTC · v312';
+const BUILD_ID = '2026-11-04 16:35 UTC · v313';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
