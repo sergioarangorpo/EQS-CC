@@ -11207,6 +11207,26 @@ function _tradesVisibles(cliente){
   return new Set([cli, ..._tradesClientesExtra].filter(Boolean));
 }
 
+// EL CLIENTE DE UNA ORDEN, RESUELTO EN VIVO (Sergio, 04-nov).
+// =====================================================================
+// `t.grupo` se calcula UNA vez al leer el archivo y después se guarda así
+// en Supabase. Si la orden se asignó a mano más tarde, o si el ancla
+// mejoró —como el Trailer de BNP AGENCY el 03-nov—, ese valor queda
+// viejo, y al recargar la página vuelve el viejo.
+//
+// Lo vimos simulando el cierre del 04-nov: la orden de BNP AGENCY llegaba
+// como 'CSI' y el lote la rechazaba con "sin cliente en la calculadora de
+// FX". La Planilla COP ya resuelve en vivo desde ayer; esto hace lo mismo
+// para todo lo que mira el cuadro de Trades y el lote.
+function _clienteDeOrden(oid){
+  const t = (_fidessaTradesRaw||{})[oid];
+  if(!t) return '';
+  const g = (typeof grupoDeTrade === 'function')
+    ? grupoDeTrade(t.book || t.grupo || '', t.notes, oid, t.trailer || '')
+    : t.grupo;
+  return normalizarGrupo(g || t.grupo) || normalizarGrupo(t.grupo) || '';
+}
+
 // Las marcas que son DEL CLIENTE que está en pantalla. Todo lo que use la
 // selección para ACOTAR UN REPORTE tiene que mirar esto y no el conjunto
 // entero: desde que la selección sobrevive al cambio de cliente, el
@@ -11383,7 +11403,9 @@ function tradersDeCliente(grupo){
 // local), nunca neteada en una sola.
 function consolidarTradesParaFX(){
   const sel = [...(_tradesConsolidar)]
-    .map(oid => ({ oid, ..._fidessaTradesRaw[oid] }))
+    .map(oid => { const t = _fidessaTradesRaw[oid];
+                  // El cliente, resuelto en vivo: ver `_clienteDeOrden`.
+                  return t ? { oid, ...t, grupo: _clienteDeOrden(oid) || t.grupo } : { oid }; })
     .filter(t => t && t.grupo);
   // Agrupar por lado de la ACCIÓN (Compra/Venta).
   const lados = { Compra: [], Venta: [] };
@@ -11796,7 +11818,7 @@ function _loteFXNuevo(){
     .filter(x => x.t && x.t.grupo && (x.t.qtyDone||0) > 0)
     .map(x => ({
       oid: x.oid,
-      cliente: normalizarGrupo(x.t.grupo) || x.t.grupo,
+      cliente: _clienteDeOrden(x.oid) || normalizarGrupo(x.t.grupo) || x.t.grupo,
       especie: nemoCanonico(x.t.security, 'fidessa') || x.t.security || '—',
       lado: x.t.lado,
       qty: Number(x.t.qtyDone) || 0,
@@ -36421,7 +36443,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-04 19:55 UTC · v317';
+const BUILD_ID = '2026-11-04 20:40 UTC · v318';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
