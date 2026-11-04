@@ -32870,7 +32870,13 @@ function rshPintar(){
   else if(_rshVista === 'evolucion')  c.innerHTML = _rshTablaEvolucion();
   else if(_rshVista === 'spreads')    c.innerHTML = _rshTablaSpread();
   else if(_rshVista === 'dividendos') c.innerHTML = _rshTablaDividendos();
-  else if(_rshVista === 'volumen')    c.innerHTML = _rshTablaVolumen();
+  else if(_rshVista === 'volumen'){
+    c.innerHTML = _rshTablaVolumen();
+    // ARRANCA SOLO, con TODAS las especies (Sergio, 04-nov). Antes había que
+    // teclear los nemos y darle Calcular para ver algo: para responderle a un
+    // cliente uno primero quiere ver el panorama y después acotar.
+    if(!_rshVol.datos && !_rshVol.cargando && !_rshVol.msg) rshCargarVolumen();
+  }
   else                                c.innerHTML = _rshResumen();
 }
 
@@ -33879,11 +33885,11 @@ function _rshTablaVolumen(){
         <input type="date" value="${esc(_rshVol.desde)}" onchange="rshVolSet('desde', this.value)"></div>
       <div><label class="field-note">Hasta</label><br>
         <input type="date" value="${esc(_rshVol.hasta)}" onchange="rshVolSet('hasta', this.value)"></div>
-      <button class="btn small purple" onclick="rshCargarVolumen()">Calcular</button>
+      <button class="btn small purple" onclick="rshCargarVolumen()">↻ Recalcular</button>
     </div>
     <div class="field-note" style="margin-top:7px;">
-      Sale de los cierres guardados cada día. El promedio es <b>por día operado</b>,
-      no por día calendario.</div>
+      Arranca con todas las especies. Sale de los cierres guardados cada día, y el
+      promedio es <b>por día operado</b>, no por día calendario.</div>
   </div>`;
 
   if(_rshVol.cargando) return h + `<div class="panel"><span class="field-note">calculando…</span></div>`;
@@ -33905,29 +33911,46 @@ function _rshTablaVolumen(){
       No se inventan: o no operaron en el rango, o el nemo está escrito distinto.</div>`;
   }
 
+  // LA BARRA ES LA LECTURA RÁPIDA. Las cifras siguen ahí porque es lo que
+  // se le responde al cliente, pero la proporción entre especies se ve sin
+  // leer un solo número (Sergio, 04-nov).
+  const maxM = Math.max(...D.filas.map(f=>f.promMonto), 1);
+  const maxS = Math.max(...D.filas.map(f=>f.promSubMonto), 1);
+  const barra = (v, max, color) => {
+    const pct = Math.max(0, Math.min(100, v/max*100));
+    return `<div style="position:relative;">
+      <div style="position:absolute;left:0;top:1px;bottom:1px;width:${pct.toFixed(1)}%;
+           background:${color};border-radius:2px;"></div>
+      <span style="position:relative;">${M(v)}</span></div>`;
+  };
+  // El % en subasta como mapa de calor: 0% transparente, 50%+ bien marcado.
+  const calor = p => `rgba(245,158,11,${Math.min(1, Math.max(0, p/50)) * 0.75})`;
+
   h += `<div class="blotter-wrap"><table>
     <thead><tr>
       <th>Especie</th>
       <th class="num">Días<br>operados</th>
       <th class="num">Acciones<br>promedio/día</th>
-      <th class="num">COP<br>promedio/día</th>
+      <th class="num" style="min-width:150px;">COP promedio/día</th>
       <th class="num">VWAP<br>del período</th>
       <th class="num">Subasta<br>acciones/día</th>
-      <th class="num">Subasta<br>COP/día</th>
+      <th class="num" style="min-width:150px;">Subasta COP/día</th>
       <th class="num">% en<br>subasta</th>
       <th class="num">Trades<br>/día</th>
     </tr></thead><tbody>`;
   D.filas.forEach(f=>{
-    const alto = f.pctSub >= 25;
+    // Pocos días operados: el promedio es de una especie que no opera a
+    // diario y conviene que se vea en la fila, no solo en la nota de abajo.
+    const flaca = D.diasRango >= 10 && f.dias < D.diasRango * 0.5;
     h += `<tr>
       <td><b>${esc(f.nemo)}</b></td>
-      <td class="num">${f.dias}</td>
+      <td class="num"${flaca?' style="color:var(--warn,#f59e0b);" title="opera menos de la mitad de las ruedas del rango"':''}>${f.dias}${flaca?' ⚠':''}</td>
       <td class="num">${M(f.promQty)}</td>
-      <td class="num">${M(f.promMonto)}</td>
+      <td class="num">${barra(f.promMonto, maxM, 'rgba(129,140,248,.30)')}</td>
       <td class="num">${f.vwap.toLocaleString('es-CO',{maximumFractionDigits:2})}</td>
       <td class="num">${M(f.promSubQty)}</td>
-      <td class="num">${M(f.promSubMonto)}</td>
-      <td class="num"${alto?' style="color:var(--warn,#f59e0b);font-weight:700;"':''}>${f.pctSub.toFixed(1)}%</td>
+      <td class="num">${barra(f.promSubMonto, maxS, 'rgba(245,158,11,.28)')}</td>
+      <td class="num" style="background:${calor(f.pctSub)};font-weight:${f.pctSub>=25?'700':'400'};">${f.pctSub.toFixed(1)}%</td>
       <td class="num">${f.promTrades.toFixed(0)}</td>
     </tr>`;
   });
@@ -36398,7 +36421,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-04 19:10 UTC · v315';
+const BUILD_ID = '2026-11-04 19:35 UTC · v316';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
