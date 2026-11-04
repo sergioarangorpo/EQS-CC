@@ -1957,6 +1957,19 @@
         <label>Trader</label>
         <select id="negTrader" onchange="_cruceFXPendiente && (_cruceFXPendiente.trader = this.value);"></select>
       </div>
+      <!-- EL TIPO DE OPERACIÓN SE ELIGE AQUÍ (Sergio, 04-nov).
+           Era lo ÚNICO que faltaba llenar al llegar a la calculadora de FX.
+           Puesto acá, el cierre se registra sin salir de RVL. -->
+      <div class="field" style="width:200px;">
+        <label>Tipo de operación</label>
+        <select id="negTipo" onchange="recalcularNegociacionFX()">
+          <option value="">— elegí el tipo —</option>
+          <option value="SPOT">SPOT</option>
+          <option value="NEXT_DAY">NEXT DAY</option>
+          <option value="WMCO">WMCO</option>
+        </select>
+        <div class="field-note" style="font-size:10.5px;">Define la fecha de operación.</div>
+      </div>
       <div class="field" style="width:180px;">
         <label>Tasa mercado</label>
         <input type="text" inputmode="decimal" id="negTasaMercado" oninput="recalcularNegociacionFX()">
@@ -1974,10 +1987,19 @@
     </div>
 
     <div id="negociarFXCuerpo"></div>
+    <div id="negFalta" class="field-note" style="margin-top:10px;"></div>
 
-    <div class="edit-actions" style="margin-top:16px;">
+    <div class="edit-actions" style="margin-top:16px;display:flex;gap:9px;flex-wrap:wrap;align-items:center;">
       <button class="btn ghost" onclick="document.getElementById('modalNegociarFX').style.display='none';">Cancelar</button>
-      <button class="btn primary" onclick="aplicarNegociacionFX()">Registrar los lados y seguir</button>
+      <!-- SALIDA DE EMERGENCIA. El camino viejo —pasar por la calculadora de
+           FX lado por lado— se queda tal cual. Si algo del registro directo
+           no cuadra, este botón sigue ahí (Sergio, 04-nov). -->
+      <button class="btn ghost" style="font-size:12px;" onclick="aplicarNegociacionFX()"
+              title="Lleva a la calculadora de FX, lado por lado, como siempre">
+        Ir a la calculadora de FX</button>
+      <span style="flex:1;"></span>
+      <button class="btn primary" id="negRegistrar" onclick="registrarCruceDesdeRVL()">
+        Registrar FX y generar Excel</button>
     </div>
   </div>
 </div>
@@ -11477,6 +11499,10 @@ function abrirNegociacionFX(){
   document.getElementById('negTasaMercado').value = sug ? String(sug) : '';
   document.getElementById('negTasaCliente').value = '';
   document.getElementById('negTasasSeparadas').checked = false;
+  // Sin tipo por defecto: con VWAP del día hay que decir si fue SPOT o
+  // NEXT DAY, y adivinarlo sería poner una fecha de operación que nadie
+  // eligió (Sergio, 04-nov).
+  { const tEl = document.getElementById('negTipo'); if(tEl) tEl.value = ''; }
   recalcularNegociacionFX();
   document.getElementById('modalNegociarFX').style.display = 'flex';
 }
@@ -11553,6 +11579,146 @@ function recalcularNegociacionFX(){
           ${pygTotal ? fmtMoney(pygTotal) : '—'}</div>
       </div>
     </div>`;
+
+  // El botón de registrar solo se habilita con el tipo y las tasas puestas.
+  const _bReg = document.getElementById('negRegistrar');
+  if(_bReg){
+    const _F = (typeof _cruceFaltaRegistrar === 'function') ? _cruceFaltaRegistrar() : ['—'];
+    _bReg.disabled = _F.length > 0;
+    _bReg.title = _F.length ? ('Falta: ' + _F.join(' · ')) : 'Registra el FX y genera el Excel del cliente';
+  }
+  const _falta = document.getElementById('negFalta');
+  if(_falta){
+    const _F = (typeof _cruceFaltaRegistrar === 'function') ? _cruceFaltaRegistrar() : [];
+    _falta.innerHTML = _F.length
+      ? `<b style="color:var(--warn,#f59e0b);">Falta para registrar:</b> ${_F.join(' · ')}`
+      : '';
+  }
+}
+
+// ===================================================================
+// REGISTRAR EL CRUCE DESDE RVL, SIN PASAR POR EL MÓDULO DE FX
+// -------------------------------------------------------------------
+// Sergio, 04-nov: *"de esa forma no volvemos nunca al módulo de FX a
+// registrar y directamente desde la selección y confirmación de trades en
+// RVL con FX se registra"*.
+//
+// Lo único que faltaba llenar al llegar a la calculadora era el TIPO de
+// operación: ahora se elige arriba y este botón hace el resto.
+//
+// SE ARMA POR EL MISMO CAMINO DE SIEMPRE. No se recalcula nada aquí: se
+// ponen los campos de la calculadora, se llama a `calcular()` y se
+// construye con `_fxOpDesde`, exactamente igual que al registrar a mano y
+// que en el lote. Dos matemáticas para el mismo número es como no tener
+// ninguna.
+//
+// EL BOTÓN VIEJO NO SE FUE: "Ir a la calculadora de FX" sigue al lado como
+// salida de emergencia.
+// ===================================================================
+function _cruceTasasDeLado(i){
+  const separadas = document.getElementById('negTasasSeparadas').checked;
+  const mkt0 = parseNum(document.getElementById('negTasaMercado').value);
+  const cli0 = parseNum(document.getElementById('negTasaCliente').value);
+  const mkt = separadas ? (parseNum((document.getElementById('negMkt'+i)||{}).value) || mkt0) : mkt0;
+  const cli = separadas ? (parseNum((document.getElementById('negCli'+i)||{}).value) || cli0) : cli0;
+  return { mkt, cli };
+}
+
+// Qué falta para poder registrar desde aquí. Mismo criterio que el lote.
+function _cruceFaltaRegistrar(){
+  const p = _cruceFXPendiente;
+  const F = [];
+  if(!p || !p.bloques || !p.bloques.length) return ['No hay cruce abierto.'];
+  if(!((document.getElementById('negTipo')||{}).value)) F.push('Falta el tipo de operación');
+  const lados = _negLados();
+  lados.forEach((b,i)=>{
+    const t = _cruceTasasDeLado(i);
+    if(!(t.mkt > 0)) F.push(`Falta la tasa de mercado${lados.length>1?' del lado '+(i+1):''}`);
+    if(!(t.cli > 0)) F.push(`Falta la tasa del cliente${lados.length>1?' del lado '+(i+1):''}`);
+  });
+  const traders = tradersDeCliente(p.cliente) || [];
+  const tSel = (document.getElementById('negTrader')||{}).value || p.trader || '';
+  if(traders.length && !tSel) F.push('Falta el trader (nombra el archivo del cliente)');
+  const sel = document.getElementById('cliente');
+  if(!_clienteCalculadoraDeCruce(p.cliente, sel))
+    F.push(`${p.cliente} no está en la calculadora de FX`);
+  return [...new Set(F)];
+}
+
+async function registrarCruceDesdeRVL(){
+  const p = _cruceFXPendiente;
+  if(!p || p._registrando) return;
+  const F = _cruceFaltaRegistrar();
+  if(F.length){ alert('Falta antes de registrar:\n\n· ' + F.join('\n· ')); return; }
+
+  const tipo = document.getElementById('negTipo').value;
+  const tSel = (document.getElementById('negTrader')||{}).value || '';
+  if(tSel) p.trader = tSel;
+  const sel = document.getElementById('cliente');
+  const clienteCalc = _clienteCalculadoraDeCruce(p.cliente, sel);
+  const lados = _negLados();
+
+  if(!confirm(`Se van a registrar ${lados.length} operación(es) de FX de ` +
+              `${p.cliente}${p.trader?' · '+p.trader:''} y a generar el Excel.\n\n¿Sigo?`)) return;
+
+  p._registrando = true;
+  const btn = document.getElementById('negRegistrar');
+  if(btn){ btn.disabled = true; btn.textContent = 'Registrando…'; }
+
+  const hechos = [], fallidos = [];
+  for(let i = 0; i < lados.length; i++){
+    const b = lados[i];
+    const { mkt, cli } = _cruceTasasDeLado(i);
+    const f = _loteFXFechas(b, tipo);
+    const usd = (Number(b.netoCOP) || 0) / cli;
+    try{
+      const c = _loteFXCalcular(clienteCalc, b.ladoFX, usd, f, mkt, cli, tipo);
+      if(!c) throw new Error('la calculadora no devolvió nada');
+      const op = _fxOpDesde({
+        c, cliente: clienteCalc,
+        // El RECEPTOR es el de nuestra mesa (JAJ/SAR), nunca el trader del
+        // cliente: eso lo aprendimos el 03-nov con "BEATRIZ RIPAMONTI".
+        trader: (document.getElementById('trader')||{}).value || 'JAJ',
+        tipoOperacion: tipo,
+        tradeDate: f.tradeDate, settleDate: f.settleDate,
+        horaRegistro: new Date().toLocaleTimeString('es-CO',
+          { timeZone:'America/Bogota', hour12:false }),
+        origen: 'manual',
+      });
+      operaciones.unshift(op);
+      const guardo = await guardarOperacionSupabase(op);
+      if(guardo === false){
+        fallidos.push(`${b.ladoAccion} · ${b.ladoFX} · USD ${fmtMoney(usd)} — no se pudo guardar en Supabase`);
+      }else{
+        hechos.push({ ...b, opId:op.id, usd,
+                      tradeDate: f.tradeDateObj, settleDate: f.settleDateObj,
+                      tasaFinalCliente: cli, tasaMercado: mkt,
+                      utilidad: Number(c.utilidadTotal) || 0 });
+      }
+    }catch(err){
+      fallidos.push(`${b.ladoAccion} · ${b.ladoFX} — ${err.message}`);
+    }
+  }
+
+  if(typeof renderHistory === 'function'){ try{ renderHistory(); }catch(e){} }
+
+  if(hechos.length){
+    try{ await _cerrarCruceGenerando(p.cliente, hechos, p.trader || ''); }
+    catch(e){ fallidos.push('El Excel no se pudo generar: ' + e.message); }
+  }
+
+  p._registrando = false;
+  if(btn){ btn.disabled = false; btn.textContent = 'Registrar FX y generar Excel'; }
+
+  if(fallidos.length){
+    alert(`${hechos.length} operación(es) registrada(s).\n\nEstas NO:\n· ` + fallidos.join('\n· '));
+    return;
+  }
+  document.getElementById('modalNegociarFX').style.display = 'none';
+  if(typeof avisoExito === 'function')
+    avisoExito(`${hechos.length} operación(es) de FX registradas`,
+               `${p.cliente}${p.trader?' · '+p.trader:''} · ${tipo} · Excel generado`);
+  _cruceFXPendiente = null;
 }
 
 // Guarda las tasas en cada lado y sigue al flujo de siempre: la calculadora,
@@ -11751,9 +11917,10 @@ function _loteFXBloques(){
 }
 
 // --- las fechas del lote -------------------------------------------
-function _loteFXFechas(bloque){
+function _loteFXFechas(bloque, tipo){
   const hoy = new Date(); hoy.setHours(0,0,0,0);
-  const td = (_loteFX.tipo === 'NEXT_DAY') ? siguienteDiaHabil(hoy) : hoy;
+  const _tipo = (tipo != null) ? tipo : (_loteFX ? _loteFX.tipo : '');
+  const td = (_tipo === 'NEXT_DAY') ? siguienteDiaHabil(hoy) : hoy;
   // Con acciones detrás, el cumplimiento es el del cruce: T+2 contra la
   // acción, y con el ajuste si cae un festivo gringo en la ventana. Sin
   // acciones no hay de dónde colgarse: T+2 hábil, que es lo que pone la
@@ -11809,13 +11976,16 @@ function _loteFXProblemas(){
 // --- registrar ------------------------------------------------------
 // Pone los campos de la calculadora y devuelve lo que ella calculó. NO se
 // recalcula nada por fuera: es el mismo camino del registro a mano.
-function _loteFXCalcular(clienteCalc, side, usd, fechas, mkt, cli){
+// `tipo` entra por parámetro para que el cierre de UN cliente use esta
+// misma función sin depender de `_loteFX` (Sergio, 04-nov). Por defecto
+// toma el del lote, así nada de lo que ya llamaba a esto cambia.
+function _loteFXCalcular(clienteCalc, side, usd, fechas, mkt, cli, tipo){
   const sel = document.getElementById('cliente');
   sel.value = clienteCalc;
   if(typeof cambiarCliente === 'function') cambiarCliente();
   // El tipo se pone SIN disparar el onchange: `cambiarTipoOperacion()`
   // recalcularía las fechas y pisaría las del lote.
-  document.getElementById('tipoOperacion').value = _loteFX.tipo;
+  document.getElementById('tipoOperacion').value = (tipo != null ? tipo : _loteFX.tipo);
   document.getElementById('side').value = side;
   document.getElementById('tradeDate').value = fechas.tradeDate;
   document.getElementById('settleDate').value = fechas.settleDate;
@@ -11932,7 +12102,9 @@ async function generarArchivosLoteFX(){
                      utilidad: Number(r.utilidad) || 0 });
   });
   for(const x of Object.values(g)){
-    try{ await generarExcelCruce(x.cliente, x.regs, x.trader); }
+    // Por el camino completo: registra las líneas en RVL y elige el formato
+    // del broker. Antes llamaba al genérico y se saltaba las dos cosas.
+    try{ await _cerrarCruceGenerando(x.cliente, x.regs, x.trader); }
     catch(e){ alert(`No se pudo generar el archivo de ${x.cliente}${x.trader?' · '+x.trader:''}: ${e.message}`); }
   }
 }
@@ -12730,6 +12902,24 @@ function aplicarCorreccionWMCO(){
 
   // Panel con el botón para generar el Excel de cruce (solo si Sergio lo pide).
   mostrarPanelExcelCruce(cli, registrados, trader);
+}
+
+// EL EXCEL DEL CRUCE, POR EL CAMINO COMPLETO (Sergio, 04-nov).
+// ---------------------------------------------------------------------
+// `generarExcelCrucePendiente` hace DOS cosas, y las dos importan:
+//   1. REGISTRA las líneas en RVL (`registrarLoteRVL`). Sin esto quedan
+//      como pendientes de reportar aunque el archivo ya haya salido, y la
+//      Planilla COP no tiene contra qué anclarse.
+//   2. Elige el formato: MLI, CITI, CREDIBOLSA y BNP AGENCY llevan el que
+//      pidió el broker (`generarExcelCruceMLI`); los demás, el estándar.
+// Llamar a `generarExcelCruce` directo se salta las dos. El lote lo hacía
+// así desde el 03-nov y le habría mandado a MLI el formato equivocado.
+//
+// Esto NO muestra el panel ni cambia de módulo: es para los caminos que
+// cierran desde RVL y no vuelven a FX.
+async function _cerrarCruceGenerando(cli, reg, trader){
+  _cruceExcelPendiente = { cli, reg, trader };
+  await generarExcelCrucePendiente();
 }
 
 // Panel persistente con el botón "Generar Excel de cruce". Lo usan las dos rutas
@@ -35667,7 +35857,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-04 15:05 UTC · v311';
+const BUILD_ID = '2026-11-04 15:55 UTC · v312';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
