@@ -7409,19 +7409,22 @@ const clientesDB = {
   'FIDUASHMORE': {
     nombre: 'FIDUASHMORE',
     formatoReporte: 'generico_equity',
-    // Cliente de portafolio ÚNICO, como BTG Cayman: no hay nada que repartir,
-    // toda la orden va a FIDUASHMORE. Antes pedía asignación manual sin razón.
+    // No reparte a mano: el portafolio sale del Account de EMSX, no de una
+    // asignación. (El comentario viejo decía "portafolio ÚNICO" y hace rato
+    // que no lo es: son TRES desde el 05-nov.)
     reparteManual: false,
-    // DOS portafolios desde el 24-sep. El Account de EMSX llega corto
-    // ("CO + LATAM", "LATAM OBL") y el nombre completo es el que va al reporte;
-    // el puente entre los dos está en ALIAS_CUENTA_PORTAFOLIO.
-    // IVA siempre en RVL. Falta el código Orión de los dos: hasta tenerlo, el
-    // COR frena y avisa cuál falta (Sergio, 24-sep).
+    // TRES portafolios. El Account de EMSX llega corto —`ACEF`, `FLACO`,
+    // `ACEF BI`— y el nombre completo es el que va al reporte; el puente
+    // entre los dos está en ALIAS_CUENTA_PORTAFOLIO.
+    // IVA siempre en RVL.
     portafolios: [
       { id:'FIC_CO_LATAM', nombre:'FIC ASHMORE ACCIONES COLOMBIA + LATAM',
         deceval:'2326832', nit:'', iva:true },
       { id:'FIC_LATAM_OBL', nombre:'FIC ASHMORE LATAM COLOMBIA OBLIGATORIAS',
         deceval:'4616608', nit:'', iva:true },
+      // Entró el 05-nov, en plena subasta de cierre (Sergio).
+      { id:'FIC_BI_CO_LATAM', nombre:'FIDUASHMORE BEST IDEAS CO+ LATAM',
+        deceval:'4636667', nit:'902109399', iva:true },
     ],
     fileNombre: 'Fiduashmore',
     // Siempre 0,09%, en bloque y en pantalla.
@@ -27917,6 +27920,12 @@ const ALIAS_CUENTA_PORTAFOLIO = {
     // que se reprocese tiene que seguir resolviendo igual.
     'ACEF':      'FIC_CO_LATAM',
     'FLACO':     'FIC_LATAM_OBL',
+    // EL TERCERO (Sergio, 05-nov): el Account llega como `ACEF BI`.
+    // `_normAcc` lo deja en `ACEFBI`, y la busqueda del alias es EXACTA
+    // sobre esa llave, asi que `ACEFBI` y `ACEF` no se pisan aunque uno
+    // sea prefijo del otro. Sin esta linea el Account no calzaba con nada
+    // y la orden frenaba pidiendo asignacion a mano.
+    'ACEFBI':    'FIC_BI_CO_LATAM',
     'COLATAM':   'FIC_CO_LATAM',
     'LATAMOBL':  'FIC_LATAM_OBL',
     // OJO: `'CO+LATAM'` estaba aquí y NO servía para nada. La búsqueda es
@@ -37148,7 +37157,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-05 21:20 UTC · v327';
+const BUILD_ID = '2026-11-05 21:45 UTC · v328';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
