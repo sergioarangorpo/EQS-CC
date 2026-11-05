@@ -34748,6 +34748,7 @@ function _rshMtzRecalcular(){
     moneda: C.moneda, otrasMonedas: C.otrasMonedas,
     desde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
     hasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '',
+    ruedas: new Set(todas).size,
     topeDesde: C.topeDesde, topeHasta: C.topeHasta,
     recortado: !!(d0 || d1),
     posibles: vivos.length*(vivos.length-1)/2 };
@@ -34757,6 +34758,7 @@ function _rshMtzRecalcular(){
 // Cambiar el rango NO vuelve a consultar: recorta lo que ya está en memoria.
 function rshMtzRango(campo, v){
   _rshMtz[campo] = v || '';
+  _rshMtz.ventana = null;   // lo escribio a mano: ningun atajo esta vigente
   if(_rshMtz.crudo) _rshMtzRecalcular();
   rshPintar();
 }
@@ -34764,13 +34766,17 @@ function rshMtzRango(campo, v){
 function rshMtzUltimos(dias){
   const C = _rshMtz.crudo;
   if(!C) return;
+  _rshMtz.ventana = dias;
   if(!dias){ _rshMtz.desde = ''; _rshMtz.hasta = ''; }
   else{
     const h = C.topeHasta;
     const d = new Date(h + 'T00:00:00Z');
     d.setUTCDate(d.getUTCDate() - dias);
     _rshMtz.desde = d.toISOString().slice(0,10);
-    _rshMtz.hasta = '';
+    // EL CALENDARIO TIENE QUE QUEDAR LLENO, LAS DOS PUNTAS (Sergio, 05-nov).
+    // Antes se ponia `desde` y se dejaba `hasta` vacio: el atajo funcionaba
+    // pero en pantalla no se veia hasta donde llegaba la ventana.
+    _rshMtz.hasta = h;
   }
   _rshMtzRecalcular();
   rshPintar();
@@ -34943,10 +34949,11 @@ function _rshMatrizHtml(){
       <div><label class="field-note">Hasta</label><br>
         <input type="date" value="${esc(_rshMtz.hasta)}" min="${esc(D.topeDesde||'')}"
                max="${esc(D.topeHasta||'')}" onchange="rshMtzRango('hasta', this.value)"></div>
-      <button class="btn small ghost" style="font-size:11px;" onclick="rshMtzUltimos(30)">1 mes</button>
-      <button class="btn small ghost" style="font-size:11px;" onclick="rshMtzUltimos(60)">2 meses</button>
+      ${[[90,'3 meses'],[180,'6 meses'],[365,'12 meses']].map(([d,t])=>
+        `<button class="btn small ${_rshMtz.ventana===d?'purple':'ghost'}" style="font-size:11px;"
+                 onclick="rshMtzUltimos(${d})">${t}</button>`).join('')}
       <button class="btn small ${D.recortado?'ghost':'purple'}" style="font-size:11px;"
-              onclick="rshMtzUltimos(0)">todo</button>
+              onclick="rshMtzUltimos(0)">máx</button>
       <div><label class="field-note">Mínimo de días por par</label><br>
         <input type="number" min="2" step="1" value="${_rshMtz.min}" style="width:76px;"
                onchange="rshMtzMinDias(this.value)"></div>
@@ -34958,14 +34965,31 @@ function _rshMatrizHtml(){
       contra la columna. <span style="color:var(--sell,#ef4444);font-weight:700;">Rojo</span>: cara.
       Clic en una celda para ver el par abajo.
     </div>
-    <div class="field-note" style="margin-bottom:10px;padding:7px 10px;border-radius:6px;
-         background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);">
-      <b style="color:var(--warn,#f59e0b);">La historia es de 3 meses</b>
-      (${esc(D.desde)} a ${esc(D.hasta)}). Con esa muestra la media todavía se mueve:
-      esto dice qué pares están tensionados <b>hoy</b>, no qué está históricamente barato.
-      ${D.otrasMonedas.length ? `Se dejaron por fuera las de ${esc(D.otrasMonedas.join(', '))}:
-        un ratio entre monedas distintas grafica el dólar, no el valor relativo.` : ''}
-    </div>`;
+    ${(()=>{
+      // EL TEXTO SE CALCULA, NO SE ESCRIBE. Decia "La historia es de 3 meses"
+      // a mano desde que la data eran 3 meses; con dos anos cargados seguia
+      // diciendo 3 y la fecha de al lado lo desmentia (Sergio, 05-nov).
+      const r = D.ruedas || 0;
+      const meses = (D.desde && D.hasta)
+        ? Math.round((new Date(D.hasta) - new Date(D.desde)) / 2629800000) : 0;
+      const lapso = meses >= 12
+        ? (meses % 12 === 0 ? (meses/12) + (meses===12?' año':' años')
+           : (meses/12).toFixed(1).replace('.',',') + ' años')
+        : meses + (meses === 1 ? ' mes' : ' meses');
+      const corta = r < 250;
+      const monedas = D.otrasMonedas.length
+        ? ` Se dejaron por fuera las de ${esc(D.otrasMonedas.join(', '))}:
+            un ratio entre monedas distintas grafica el dólar, no el valor relativo.` : '';
+      if(!corta) return `<div class="field-note" style="margin-bottom:10px;">
+        Ventana: <b>${esc(D.desde)} a ${esc(D.hasta)}</b> ·
+        <b>${r}</b> ruedas · ${lapso}.${monedas}</div>`;
+      return `<div class="field-note" style="margin-bottom:10px;padding:7px 10px;border-radius:6px;
+           background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);">
+        <b style="color:var(--warn,#f59e0b);">Ventana corta: ${r} ruedas</b>
+        (${esc(D.desde)} a ${esc(D.hasta)}, ${lapso}). Con esa muestra la media
+        todavía se mueve: esto dice qué pares están tensionados <b>hoy</b>, no qué
+        está históricamente barato.${monedas}</div>`;
+    })()}`;
 
   if(top.length){
     h += `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:11px;">`;
@@ -36934,7 +36958,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-05 14:10 UTC · v321';
+const BUILD_ID = '2026-11-05 17:20 UTC · v322';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
