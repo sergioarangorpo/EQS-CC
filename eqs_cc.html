@@ -33063,6 +33063,12 @@ function rshIrA(mod){
   // Los cortes se vuelven a pedir: un instrumento de RVI puede existir en
   // meses en los que no hay nada de RVL y al reves.
   _rshDatos.cortes = [];
+  // Y la matriz tambien: se queda en memoria y es de UN modulo. Sin esto,
+  // pasar de RVL a RVI mostraba la matriz de RVL con el titulo de RVI.
+  if(typeof _rshMtz !== 'undefined'){
+    _rshMtz.crudo = null; _rshMtz.datos = null; _rshMtz.modulo = '';
+    _rshMtz.desde = ''; _rshMtz.hasta = ''; _rshMtz.ventana = null; _rshMtz.msg = '';
+  }
   if(typeof switchModule === 'function') switchModule('Research');
   else rshCargar();
 }
@@ -34739,8 +34745,24 @@ const RSH_MTZ_MIN_DIAS = 20;
 // `crudo` guarda las series completas tal como vinieron. Los filtros de
 // fecha recortan SOBRE eso y recalculan en memoria: no se vuelve a
 // consultar por cambiar el rango (Sergio, 04-nov).
-let _rshMtz = { cargando:false, msg:'', datos:null, crudo:null,
+// LA MONEDA LA DECIDE EL MODULO, NO LA MAYORIA (Sergio, 05-nov)
+// ---------------------------------------------------------------------
+// Antes se tomaba la moneda con MAS especies. Funcionaba por accidente:
+// solo habia 31 papeles y todos en pesos. El dia que entren los ~566 de RVI
+// en dolares, la mayoria se da vuelta y Research RVL pasaria a mostrar la
+// matriz de los ETF internacionales, sin avisar.
+// Una mayoria no es un criterio: el modulo si.
+const MONEDA_MODULO = { RVL:'COP', RVI:'USD' };
+
+let _rshMtz = { cargando:false, msg:'', datos:null, crudo:null, modulo:'',
                 desde:'', hasta:'', min:RSH_MTZ_MIN_DIAS };
+
+// Nemo -> ticker pelado, para casar `rvi_universo` contra `precios_diarios`.
+// El universo puede traer "SPY US Equity" y la tabla de precios "SPY".
+function _rshTickerPelado(x){
+  return String(x||'').toUpperCase().trim()
+    .replace(/\s+[A-Z0-9]{0,3}\s*(EQUITY|INDEX)$/,'').trim();
+}
 
 // El ratio A/B y B/A son el mismo par visto al derecho y al revés: el z de
 // uno es el del otro con el signo cambiado. Se calcula media matriz.
@@ -34815,15 +34837,49 @@ async function rshCargarMatriz(){
     // dólar disfrazado de valor relativo — la misma regla del gráfico.
     const porMoneda = {};
     Object.values(series).forEach(s=>{ (porMoneda[s.moneda] = porMoneda[s.moneda] || []).push(s.isin); });
-    const moneda = Object.keys(porMoneda).sort((x,y)=>porMoneda[y].length-porMoneda[x].length)[0] || '';
-    const isins = (porMoneda[moneda] || []).sort((x,y)=>
-      String(series[x].ticker).localeCompare(String(series[y].ticker)));
+    const moneda = MONEDA_MODULO[_rshModulo] || 'COP';
+
+    // EN RVI, EL UNIVERSO LO MANDA `rvi_universo` (Sergio, 05-nov).
+    // La tabla de precios tiene ~566 papeles en dolares. Una matriz de 566
+    // especies son 159.895 pares: a esa escala encontrar pares "tensionados"
+    // por puro azar deja de ser un riesgo y pasa a ser una certeza. El
+    // universo del informe de RVI ya esta curado y es el que se compara.
+    let permitidos = null, universoFallo = false;
+    if(_rshModulo === 'RVI'){
+      try{
+        let uni = (typeof _rviUniverso !== 'undefined' && _rviUniverso.length)
+          ? _rviUniverso
+          : (await supaFetch('rvi_universo', 'activo=eq.true&limit=500') || []);
+        if(!uni.length) universoFallo = true;
+        else permitidos = new Set(uni.map(u=>_rshTickerPelado(u.nemo)).filter(Boolean));
+      }catch(e){ universoFallo = true; }
+    }
+    if(universoFallo){
+      // NO se cae a "entonces los uso todos": serian 566 y la matriz
+      // mentiria. Sin universo no hay matriz, y se dice por que.
+      _rshMtz.datos = null; _rshMtz.crudo = null; _rshMtz.modulo = _rshModulo;
+      _rshMtz.msg = 'No se pudo leer `rvi_universo`, que es la lista de especies '
+                  + 'que se comparan en RVI. Sin esa lista no se arma la matriz: '
+                  + 'con los ~566 papeles de la tabla serían 159.895 pares y el '
+                  + 'cuadro no diría nada. Revisá Ayudas → Universo del informe de RVI.';
+      _rshMtz.cargando = false; rshPintar(); return;
+    }
+
+    const isins = (porMoneda[moneda] || [])
+      .filter(i => !permitidos || permitidos.has(_rshTickerPelado(series[i].ticker)))
+      .sort((x,y)=> String(series[x].ticker).localeCompare(String(series[y].ticker)));
     if(isins.length < 2){
-      _rshMtz.datos = null; _rshMtz.crudo = null;
-      _rshMtz.msg = 'No hay suficientes especies con precio para armar la matriz.';
+      _rshMtz.datos = null; _rshMtz.crudo = null; _rshMtz.modulo = _rshModulo;
+      _rshMtz.msg = `No hay suficientes especies en ${moneda} para armar la matriz de `
+                  + `${_rshModulo}` + (permitidos ? ' dentro del universo del informe.' : '.');
     }else{
+      _rshMtz.modulo = _rshModulo;
       const todas = [].concat(...isins.map(i=>series[i].fechas));
       _rshMtz.crudo = { series, isins, moneda, enConflicto, colapsados,
+        modulo:_rshModulo, delUniverso: permitidos ? permitidos.size : 0,
+        fueraDelUniverso: permitidos
+          ? (porMoneda[moneda]||[]).filter(i=>!permitidos.has(_rshTickerPelado(series[i].ticker))).length
+          : 0,
         otrasMonedas: Object.keys(porMoneda).filter(m=>m !== moneda),
         topeDesde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
         topeHasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '' };
@@ -34860,6 +34916,8 @@ function _rshMtzRecalcular(){
   const todas = [].concat(...vivos.map(i=>recorte[i].fechas));
   _rshMtz.datos = { series: recorte, isins: vivos, celdas, pares,
     moneda: C.moneda, otrasMonedas: C.otrasMonedas,
+    modulo: C.modulo || '', delUniverso: C.delUniverso || 0,
+    fueraDelUniverso: C.fueraDelUniverso || 0,
     enConflicto: C.enConflicto || [], colapsados: C.colapsados || 0,
     desde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
     hasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '',
@@ -35053,7 +35111,8 @@ function _rshMatrizHtml(){
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
       <b style="font-size:13px;">Matriz de spreads</b>
       <span class="field-note">${n} especies · ${D.pares.length} de ${D.posibles} pares con
-        ${_rshMtz.min}+ días · ${esc(D.moneda)}${D.recortado?' · rango recortado':''}</span>
+        ${_rshMtz.min}+ días · ${esc(D.moneda)}${D.recortado?' · rango recortado':''}${
+          D.delUniverso ? ` · universo del informe de ${esc(D.modulo)}` : ''}</span>
       <span style="flex:1;"></span>
       <button class="btn small" onclick="rshCargarMatriz()">↻</button>
     </div>
@@ -35091,6 +35150,11 @@ function _rshMatrizHtml(){
         cotizaron en paralelo.</div>` : ''}
     ${D.colapsados ? `<div class="field-note" style="margin-bottom:10px;">
         ${D.colapsados} fila(s) repetidas con el mismo precio se colapsaron.</div>` : ''}
+    ${D.fueraDelUniverso ? `<div class="field-note" style="margin-bottom:10px;">
+        ${D.fueraDelUniverso} especie(s) con precio en ${esc(D.moneda)} quedaron fuera del
+        cuadro por no estar en el universo del informe de ${esc(D.modulo)}. Siguen en la base
+        y se pueden ver en el gráfico de un par; lo que no hacen es entrar a la matriz.
+        El universo se edita en Ayudas → Universo del informe de RVI.</div>` : ''}
     ${(()=>{
       // EL TEXTO SE CALCULA, NO SE ESCRIBE. Decia "La historia es de 3 meses"
       // a mano desde que la data eran 3 meses; con dos anos cargados seguia
@@ -37084,7 +37148,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-05 20:50 UTC · v326';
+const BUILD_ID = '2026-11-05 21:20 UTC · v327';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
