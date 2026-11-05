@@ -1906,6 +1906,9 @@
       <button class="btn ghost" onclick="cerrarLoteFX()">Cerrar</button>
       <button class="btn ghost" id="loteFXAtras" style="display:none;"
               onclick="loteFXPaso(_loteFX ? _loteFX.paso - 1 : 1)">← Atrás</button>
+      <span style="flex:0;"></span>
+      <button class="btn primary" id="loteFXElegir" style="display:none;"
+              onclick="loteFXConfirmarSeleccion()">Continuar →</button>
       <span style="flex:1;"></span>
       <button class="btn purple" id="loteFXGenerar" style="display:none;"
               onclick="generarArchivosLoteFX()">Generar archivos</button>
@@ -11061,6 +11064,12 @@ function renderFidessaTradesPanel(){
       <span style="display:flex;align-items:center;gap:8px;">
         <span class="field-note">${nSel>0 ? nSel+' seleccionada(s) para cruzar FX' : 'Selecciona trades para cruzar con FX'}</span>
         <button class="btn small purple" onclick="continuarConsolidarFX()" ${nSel===0?'disabled':''}>Consolidar y cerrar FX →</button>
+        <!-- VARIOS CLIENTES TIENEN SU PROPIA PANTALLA (Sergio, 05-nov).
+             No depende de lo marcado acá: abre con TODAS las órdenes de
+             clientes que cierran FX y uno elige ahí. -->
+        <button class="btn small" onclick="abrirLoteFXSeleccion()"
+                title="Abre el lote con todas las órdenes de clientes que cierran FX">
+          Cerrar FX de varios clientes →</button>
       </span>
     </div>
     ${(!TRADES_MULTICLIENTE || _cliConTrades.length < 2) ? '' : `
@@ -11179,13 +11188,21 @@ function clienteCierraFX(grupo){
 // perdían de vista. Vuelve acotado a los de FX: el cuadro de chips los
 // muestra todos, siempre, y no hay forma de marcar a nadie más.
 // ---------------------------------------------------------------------
-// LO QUE PASÓ EL 03-NOV, para que no se repita: quedaron 359 marcadas de
-// 12 clientes sin que se vieran, y de ahí salió un cruce de HSBC_NY con
-// órdenes que no eran. Marcas que uno no ve son una trampa, por más aviso
-// que se ponga. Por eso ahora el universo marcable son los de FX y nada
-// más, y al cambiar de cliente se sueltan las marcas de los que NO son
-// de FX. En false, todo vuelve al comportamiento de un solo cliente.
-const TRADES_MULTICLIENTE = true;
+// APAGADO OTRA VEZ, Y AHORA SÍ CON SALIDA (Sergio, 05-nov).
+// ---------------------------------------------------------------------
+// El 03-nov marcar de varios clientes dejó 359 marcas invisibles. El
+// 04-nov se acotó a los de FX y funcionó, pero seguía siendo confuso:
+// *"tuve que presionar los botones de clientes varias veces, no es
+// sencillo quitar"*. La causa era tener DOS mecanismos para UNA decisión
+// —el chip decidía qué se veía, el checkbox qué entraba—.
+//
+// El lote ahora tiene su PROPIA pantalla (`abrirLoteFXSeleccion`), así
+// que marcar de varios clientes acá ya no hace falta para nada. El cuadro
+// de Trades vuelve a ser de un cliente, que es como siempre funcionó
+// bien, y los chips desaparecen.
+//
+// En true vuelven los chips. El código queda, no se borra.
+const TRADES_MULTICLIENTE = false;
 let _tradesClientesExtra = new Set();
 let _tradesVerTodos = false;
 
@@ -11812,20 +11829,67 @@ function aplicarNegociacionFX(){
 // ===================================================================
 let _loteFX = null;
 
+// Una línea del lote, desde una orden de Fidessa.
+// Clientes que operan por DMA: ellos llevan sus propios registros y nos
+// pasan el valor por cerrar; nosotros no cerramos el FX de esas puntas ni
+// sabemos cómo lo cuadran (Sergio, 05-nov). En el paso 0 solo hace falta
+// decidir si entran o no, así que se muestran sin cuenta, precio ni notas.
+const CLIENTES_DMA = new Set(['HSBC_NY']);
+// El FX que el cliente DMA nos escribe por chat: "sell COP buy USD $39,000".
+// Lado SIEMPRE desde el cliente: BUY = el cliente compra USD (es lo que
+// significa "buy USD" en ese mensaje). Es la misma convención de los
+// bloques: Compra de acción → el cliente vende USD → SELL.
+function _loteFXDma(cliente){
+  if(!_loteFX) return null;
+  _loteFX.dma = _loteFX.dma || {};
+  if(!_loteFX.dma[cliente]) _loteFX.dma[cliente] = { on:false, ladoFX:'BUY', usd:'' };
+  return _loteFX.dma[cliente];
+}
+function loteFXDmaSet(cliente, campo, v){
+  const d = _loteFXDma(cliente);
+  if(!d) return;
+  d[campo] = (campo === 'on') ? !d.on : v;
+  renderLoteFX();
+}
+function _esClienteDMA(cliente){ return CLIENTES_DMA.has(String(cliente||'').trim()); }
+
+function _loteFXLinea(oid){
+  const t = (_fidessaTradesRaw||{})[oid];
+  if(!t || !t.grupo || !((t.qtyDone||0) > 0)) return null;
+  return {
+    oid,
+    cliente: _clienteDeOrden(oid) || normalizarGrupo(t.grupo) || t.grupo,
+    especie: nemoCanonico(t.security, 'fidessa') || t.security || '—',
+    lado: t.lado,
+    qty: Number(t.qtyDone) || 0,
+    precio: Number(t.avgPx) || 0,
+    bruto: (Number(t.qtyDone)||0) * (Number(t.avgPx)||0),
+    // La cuenta (CITIANDRE, MLIBEATRIZ...) viene en Notes. En el paso 0 se
+    // muestra y se agrupa por ella: Sergio decide qué consolidar mirando la
+    // cuenta, no solo la especie (05-nov).
+    notes: String(t.notes || '').trim(),
+    // CITIANDRE, CITIJENN, MLIBEATRIZ... el nombre de la cuenta vive en el
+    // Trailer, NO en Notes (Notes es la instrucción). Por acá se agrupa.
+    cuenta: String(t.trailer || '').trim(),
+    trader: '',
+  };
+}
+
+// TODAS las líneas que PODRÍAN entrar a un lote: las de clientes que
+// cierran FX y tienen ejecutado. Es el universo del paso 0.
+function _loteFXCandidatos(){
+  return Object.keys(_fidessaTradesRaw || {})
+    .map(_loteFXLinea)
+    .filter(l => l && clienteCierraFX(l.cliente))
+    .sort((a,b)=> a.cliente.localeCompare(b.cliente) ||
+                  a.lado.localeCompare(b.lado) ||
+                  a.especie.localeCompare(b.especie));
+}
+
 function _loteFXNuevo(){
   const items = [...( _tradesConsolidar || [])]
-    .map(oid => ({ oid, t: (_fidessaTradesRaw||{})[oid] }))
-    .filter(x => x.t && x.t.grupo && (x.t.qtyDone||0) > 0)
-    .map(x => ({
-      oid: x.oid,
-      cliente: _clienteDeOrden(x.oid) || normalizarGrupo(x.t.grupo) || x.t.grupo,
-      especie: nemoCanonico(x.t.security, 'fidessa') || x.t.security || '—',
-      lado: x.t.lado,
-      qty: Number(x.t.qtyDone) || 0,
-      precio: Number(x.t.avgPx) || 0,
-      bruto: (Number(x.t.qtyDone)||0) * (Number(x.t.avgPx)||0),
-      trader: '',
-    }))
+    .map(_loteFXLinea)
+    .filter(Boolean)
     .sort((a,b)=> a.cliente.localeCompare(b.cliente) ||
                   a.lado.localeCompare(b.lado) ||
                   a.especie.localeCompare(b.especie));
@@ -11861,7 +11925,137 @@ function _loteFXNuevo(){
   const recSel = document.getElementById('trader');
   return { items, extras: [], tipo:'', tasaMkt:'', tasaCli:'',
            receptor: (recSel && recSel.value) || 'JAJ',
+           cands: null, elegidos: null,
            paso: 1, resultado:null, corriendo:false };
+}
+
+// ===================================================================
+// PASO 0 — QUÉ ENTRA (Sergio, 05-nov)
+// -------------------------------------------------------------------
+// *"El consolidar y generar FX con varios clientes es confuso y lento...
+//  tuve que presionar los botones de clientes varias veces, no es
+//  sencillo quitar."*
+//
+// La causa: había DOS mecanismos para UNA decisión. El chip del cuadro de
+// Trades decidía qué se VEÍA y el checkbox qué ENTRABA. Para meter las
+// líneas de tres clientes había que hacer las dos cosas, cliente por
+// cliente, en un cuadro con las 36 órdenes del día.
+//
+// Ahora el lote tiene su propia pantalla: SOLO los clientes que cierran
+// FX y sus líneas, agrupadas, con "todas / ninguna" por cliente. Ayer
+// habrían sido 11 líneas de 3 clientes, todas a la vista, sin filtrar.
+//
+// ARRANCAN SIN MARCAR, por decisión de Sergio: marcar de más es un cierre
+// con líneas que no iban, y eso no se ve hasta que ya se registró.
+function abrirLoteFXSeleccion(){
+  const cands = _loteFXCandidatos();
+  if(!cands.length){
+    alert('No hay órdenes de clientes que cierren FX con cantidad ejecutada.');
+    return;
+  }
+  _loteFX = _loteFXNuevo();
+  _loteFX.cands = cands;
+  // Lo que ya esté marcado en el cuadro de Trades entra preseleccionado:
+  // si el camino viejo se usó, no se pierde el trabajo.
+  _loteFX.elegidos = new Set([...(_tradesConsolidar||[])]
+    .filter(o => cands.some(c => c.oid === o)));
+  _loteFX.items = [];
+  _loteFX.paso = 0;
+  renderLoteFX();
+  document.getElementById('modalLoteFX').style.display = 'flex';
+}
+
+function loteFXElegir(oid){
+  if(!_loteFX || !_loteFX.elegidos) return;
+  if(_loteFX.elegidos.has(oid)) _loteFX.elegidos.delete(oid);
+  else _loteFX.elegidos.add(oid);
+  renderLoteFX();
+}
+// Marca o desmarca TODAS las órdenes de una especie y un lado. Si ya
+// estaban todas, las quita; si hay algunas, completa el grupo.
+function loteFXElegirGrupo(cliente, cuenta, especie, lado){
+  if(!_loteFX || !_loteFX.elegidos) return;
+  const g = (_loteFX.cands||[]).filter(c =>
+    c.cliente === cliente && (c.cuenta||'') === (cuenta||'') &&
+    c.especie === especie && c.lado === lado);
+  if(!g.length) return;
+  const todas = g.every(c => _loteFX.elegidos.has(c.oid));
+  g.forEach(c => { if(todas) _loteFX.elegidos.delete(c.oid);
+                   else _loteFX.elegidos.add(c.oid); });
+  renderLoteFX();
+}
+// Igual que loteFXElegirGrupo pero sin mirar la cuenta: en DMA el trailer
+// viene vacío o con un código por orden y no debe partir el grupo.
+function loteFXElegirGrupoDMA(cliente, especie, lado){
+  if(!_loteFX || !_loteFX.elegidos) return;
+  const g = (_loteFX.cands||[]).filter(c =>
+    c.cliente === cliente && c.especie === especie && c.lado === lado);
+  if(!g.length) return;
+  const todas = g.every(c => _loteFX.elegidos.has(c.oid));
+  g.forEach(c => { if(todas) _loteFX.elegidos.delete(c.oid);
+                   else _loteFX.elegidos.add(c.oid); });
+  renderLoteFX();
+}
+function loteFXAbrirGrupo(k){
+  if(!_loteFX) return;
+  _loteFX.abiertos = _loteFX.abiertos || new Set();
+  if(_loteFX.abiertos.has(k)) _loteFX.abiertos.delete(k);
+  else _loteFX.abiertos.add(k);
+  renderLoteFX();
+}
+function loteFXElegirCliente(cliente, on){
+  if(!_loteFX || !_loteFX.elegidos) return;
+  (_loteFX.cands||[]).filter(c => c.cliente === cliente).forEach(c=>{
+    if(on) _loteFX.elegidos.add(c.oid); else _loteFX.elegidos.delete(c.oid);
+  });
+  renderLoteFX();
+}
+
+// Del paso 0 al 1: lo elegido se vuelve el lote. La preselección de
+// trader es la misma de `abrirLoteFX`, para que los dos caminos den
+// exactamente el mismo lote.
+// Los DMA marcados que YA tienen monto, y los que lo tienen a medias.
+function _loteFXDmaListos(){
+  const d = (_loteFX||{}).dma || {};
+  return Object.keys(d).filter(c => d[c].on &&
+    (parseLocaleNumber(String(d[c].usd||'')) || 0) > 0);
+}
+function _loteFXDmaIncompletos(){
+  const d = (_loteFX||{}).dma || {};
+  return Object.keys(d).filter(c => d[c].on &&
+    !((parseLocaleNumber(String(d[c].usd||'')) || 0) > 0));
+}
+
+function loteFXConfirmarSeleccion(){
+  if(!_loteFX) return;
+  const dmaOk = _loteFXDmaListos();
+  if(!(_loteFX.elegidos && _loteFX.elegidos.size) && !dmaOk.length) return;
+  if(_loteFXDmaIncompletos().length) return;
+  _loteFX.items = (_loteFX.cands||[]).filter(c => _loteFX.elegidos.has(c.oid))
+                                     .map(c => ({ ...c }));
+  // El FX de un DMA no tiene cruce detrás: entra como "línea sin acciones",
+  // que es el camino que el lote ya tenía para un FX suelto. Se reconstruyen
+  // en cada confirmación para que volver atrás y corregir no las duplique.
+  _loteFX.extras = (_loteFX.extras||[]).filter(e => !e.dma);
+  dmaOk.forEach(cl=>{
+    const d = _loteFX.dma[cl];
+    _loteFX.extras.push({ id:'DMA'+cl, dma:true, cliente:cl,
+                          ladoFX:d.ladoFX, usd:d.usd });
+  });
+  _loteFXPreseleccionarTrader();
+  _loteFX.paso = 1;
+  renderLoteFX();
+}
+
+function _loteFXPreseleccionarTrader(){
+  // Si TODAS las líneas de un cliente son del mismo y único trader
+  // posible, se preselecciona. No se adivina cuando hay varios.
+  const porCli = {};
+  (_loteFX.items||[]).forEach(i=>{ (porCli[i.cliente] = porCli[i.cliente]||[]).push(i); });
+  Object.keys(porCli).forEach(c=>{
+    const tr = tradersDeCliente(c) || [];
+    if(tr.length === 1) porCli[c].forEach(i=>{ if(!i.trader) i.trader = tr[0]; });
+  });
 }
 
 function abrirLoteFX(){
@@ -11870,14 +12064,7 @@ function abrirLoteFX(){
     alert('No hay líneas marcadas con cliente y cantidad ejecutada.');
     return;
   }
-  // Si TODAS las líneas de un cliente son del mismo y único trader posible,
-  // se preselecciona. No se adivina cuando hay varios.
-  const porCli = {};
-  _loteFX.items.forEach(i=>{ (porCli[i.cliente] = porCli[i.cliente]||[]).push(i); });
-  Object.keys(porCli).forEach(c=>{
-    const tr = tradersDeCliente(c) || [];
-    if(tr.length === 1) porCli[c].forEach(i=>{ i.trader = tr[0]; });
-  });
+  _loteFXPreseleccionarTrader();
   renderLoteFX();
   document.getElementById('modalLoteFX').style.display = 'flex';
 }
@@ -12224,7 +12411,9 @@ function renderLoteFX(){
   const cont = document.getElementById('loteFXBody');
   if(!cont || !_loteFX) return;
   const esc = _esc;
-  if(!_loteFX.paso) _loteFX.paso = 1;
+  // OJO: `!_loteFX.paso` daba true con paso 0 y lo volvía 1, así que la
+  // pantalla de selección no se veía nunca. CERO NO ES VACÍO (05-nov).
+  if(_loteFX.paso == null) _loteFX.paso = 1;
   const bloques  = _loteFXBloques();
   const archivos = _loteFXArchivos(bloques);
   const R = _loteFX.resultado;
@@ -12234,9 +12423,10 @@ function renderLoteFX(){
   const titulo = document.getElementById('loteFXTitulo');
   if(titulo){
     titulo.textContent = R ? 'Consolidar y cerrar FX — resultado'
+      : (_loteFX.paso === 0 ? 'Qué entra en este cierre'
       : (_loteFX.paso === 1 ? 'Paso 1 de 3 · Órdenes y traders'
       : (_loteFX.paso === 2 ? 'Paso 2 de 3 · Tasas, totales y neto'
-      :                       'Paso 3 de 3 · Confirmá lo que se va a guardar'));
+      :                       'Paso 3 de 3 · Confirmá lo que se va a guardar')));
   }
 
   let h = '';
@@ -12264,6 +12454,182 @@ function renderLoteFX(){
     h += `</div>`;
     cont.innerHTML = h;
     _loteFXBotones({ paso:'fin', archivos, nOps });
+    return;
+  }
+
+  // =================== PASO 0 — QUÉ ENTRA ===================
+  if(_loteFX.paso === 0){
+    const C = _loteFX.cands || [];
+    const E = _loteFX.elegidos || new Set();
+    _loteFX.abiertos = _loteFX.abiertos || new Set();
+    const porCli = {};
+    C.forEach(c=>{ (porCli[c.cliente] = porCli[c.cliente]||[]).push(c); });
+    const clientes = Object.keys(porCli).sort();
+    const esc2 = x => esc(x).replace(/'/g,"\\'");
+
+    h += `<div class="field-note" style="margin-bottom:10px;">
+      Estas son <b>todas</b> las órdenes de hoy de clientes que cierran FX.
+      Marcá las que van en este cierre. Arrancan sin marcar.</div>`;
+
+    clientes.forEach(cl=>{
+      const ls = porCli[cl];
+      const n = ls.filter(l=>E.has(l.oid)).length;
+      // SE AGRUPA POR ESPECIE Y LADO (Sergio, 05-nov).
+      // HSBC trajo 17 órdenes de ISA Venta el mismo día y se comían la
+      // pantalla: no se veía MLI ni Larraín sin bajar. Y daba igual verlas
+      // sueltas, porque el lote las junta en UN bloque de todos modos.
+      // Cuando hay más de una, se puede abrir para elegir de a una.
+      // Se agrupa por CUENTA + especie + lado. La cuenta es lo que parte a
+      // CITI en CITIANDRE (MOC*) y CITIJENN (VWAP for SWAP), que es
+      // justo lo que hay que mirar para decidir qué se consolida.
+      // NO se agrupa por Notes: HSBC trae una Notes distinta por orden
+      // (UBRSVT...) y volveríamos a las 17 filas.
+      const dma = _esClienteDMA(cl);
+      if(dma){
+        const d = _loteFXDma(cl);
+        const q = {}; ls.forEach(l=>{ const k=l.especie+'|'+l.lado;
+          (q[k]=q[k]||{especie:l.especie,lado:l.lado,qty:0}).qty += l.qty; });
+        h += `<div style="background:var(--bg-2,#161b26);border:1px solid var(--border,#232938);
+              border-radius:8px;padding:10px 12px;margin-bottom:10px;">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+            <b style="font-size:13px;">${esc(cl)}</b>
+            <span class="field-note">DMA · ellos ejecutan y nos pasan el valor por cerrar</span>
+          </div>
+          <div class="field-note" style="margin-bottom:8px;">
+            ${Object.values(q).map(x=>
+              `${esc(x.especie)} ${esc(x.lado)} ${fmtInt(x.qty)}`).join(' · ')}</div>
+          <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;">
+            <label style="display:flex;gap:7px;align-items:center;cursor:pointer;">
+              <input type="checkbox" ${d.on?'checked':''}
+                     onchange="loteFXDmaSet('${esc2(cl)}','on')">
+              <span>Hay FX con ellos</span></label>
+            <select ${d.on?'':'disabled'}
+                    onchange="loteFXDmaSet('${esc2(cl)}','ladoFX',this.value)">
+              <option value="BUY"${d.ladoFX==='BUY'?' selected':''}>el cliente compra USD</option>
+              <option value="SELL"${d.ladoFX==='SELL'?' selected':''}>el cliente vende USD</option>
+            </select>
+            <input type="text" inputmode="decimal" placeholder="monto USD"
+                   value="${esc(d.usd||'')}" ${d.on?'':'disabled'}
+                   oninput="(_loteFX.dma['${esc2(cl)}']||{}).usd=this.value"
+                   onblur="renderLoteFX()" style="width:150px;text-align:right;">
+            <span class="field-note">ej. <i>sell COP buy USD $39,000</i> → compra USD · 39000</span>
+          </div></div>`;
+        return;
+      }
+      const gs = {};
+      ls.forEach(l=>{ const k = (dma ? '' : (l.cuenta||''))+'|'+l.especie+'|'+l.lado;
+        (gs[k] = gs[k] || { cuenta:l.cuenta||'', especie:l.especie,
+                            lado:l.lado, ls:[] }).ls.push(l); });
+      const grupos = Object.values(gs).sort((a,b)=>
+        a.cuenta.localeCompare(b.cuenta) || a.lado.localeCompare(b.lado) ||
+        a.especie.localeCompare(b.especie));
+
+      h += `<div style="background:var(--bg-2,#161b26);border:1px solid var(--border,#232938);
+            border-radius:8px;padding:10px 12px;margin-bottom:10px;">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
+          <b style="font-size:13px;">${esc(cl)}</b>
+          <span class="field-note">${n} de ${ls.length} orden(es)${
+            dma ? ' · DMA, el FX lo cuadran ellos' : ''}</span>
+          <span style="flex:1;"></span>
+          <button class="btn small ${n===ls.length?'purple':'ghost'}" style="font-size:11px;"
+                  onclick="loteFXElegirCliente('${esc2(cl)}', true)">todas</button>
+          <button class="btn small ghost" style="font-size:11px;"
+                  onclick="loteFXElegirCliente('${esc2(cl)}', false)">ninguna</button>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px;table-layout:fixed;">
+          <colgroup><col style="width:28px;"><col style="width:110px;"><col>
+            <col style="width:58px;"><col style="width:88px;">
+            <col style="width:88px;"><col style="width:152px;">
+            <col style="width:150px;"></colgroup>`;
+
+      grupos.forEach(g=>{
+        const k = cl+'|'+g.cuenta+'|'+g.especie+'|'+g.lado;
+        // Las instrucciones del grupo, sin repetir. Si son muchas (HSBC) se
+        // dice cuántas en vez de escupir 17 códigos.
+        const ins = [...new Set(g.ls.map(l=>l.notes).filter(Boolean))];
+        // Si son más de dos no se listan: el "N órd. · ver" de al lado ya
+        // dice que hay varias, y escupir 17 códigos no le sirve a nadie.
+        const insTxt = ins.length && ins.length <= 2 ? ins.join(' · ') : '';
+        const marcadas = g.ls.filter(l=>E.has(l.oid)).length;
+        const todas = marcadas === g.ls.length, algunas = marcadas > 0 && !todas;
+        const qty = g.ls.reduce((x,l)=>x+l.qty, 0);
+        const bruto = g.ls.reduce((x,l)=>x+l.bruto, 0);
+        const px = qty ? bruto/qty : 0;
+        const abierto = _loteFX.abiertos.has(k);
+        const sel = dma
+          ? `loteFXElegirGrupoDMA('${esc2(cl)}','${esc2(g.especie)}','${esc2(g.lado)}')`
+          : `loteFXElegirGrupo('${esc2(cl)}','${esc2(g.cuenta)}','${esc2(g.especie)}','${esc2(g.lado)}')`;
+        // DMA: solo marcar / no marcar, especie, lado y cantidad. Precio,
+        // bruto, cuenta y notas no aportan nada porque el cierre no es nuestro.
+        if(dma){
+          h += `<tr style="border-top:1px solid var(--border,#232938);cursor:pointer;"
+                onclick="${sel}">
+            <td style="padding:4px 6px;">
+              <input type="checkbox" ${todas?'checked':''}
+                     style="${algunas?'opacity:.55;':''}"
+                     onclick="event.stopPropagation(); ${sel}"></td>
+            <td colspan="2" style="padding:4px 6px;"><b>${esc(g.especie)}</b></td>
+            <td style="padding:4px 6px;color:${g.lado==='Compra'?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};">${esc(g.lado)}</td>
+            <td style="padding:4px 6px;text-align:right;">${fmtInt(qty)}</td>
+            <td colspan="3" style="padding:4px 6px 4px 12px;" class="field-note">${
+              g.ls.length > 1 ? g.ls.length + ' órd.' : ''}</td>
+          </tr>`;
+          return;
+        }
+        h += `<tr style="border-top:1px solid var(--border,#232938);cursor:pointer;"
+              onclick="${sel}">
+          <td style="padding:4px 6px;">
+            <input type="checkbox" ${todas?'checked':''}
+                   style="${algunas?'opacity:.55;':''}"
+                   onclick="event.stopPropagation(); ${sel}"></td>
+          <td style="padding:4px 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+              title="${esc(g.cuenta)}">${g.cuenta ? esc(g.cuenta) : '<span class="field-note">—</span>'}</td>
+          <td style="padding:4px 6px;"><b>${esc(g.especie)}</b></td>
+          <td style="padding:4px 6px;color:${g.lado==='Compra'?'var(--buy,#22c55e)':'var(--sell,#ef4444)'};">${esc(g.lado)}</td>
+          <td style="padding:4px 6px;text-align:right;">${fmtInt(qty)}</td>
+          <td style="padding:4px 6px;text-align:right;">${fmtMoney(px)}</td>
+          <td style="padding:4px 6px;text-align:right;">${fmtMoney(bruto)}</td>
+          <td style="padding:4px 6px 4px 12px;" class="field-note">
+            ${esc(insTxt)}${g.ls.length > 1
+              ? `${insTxt ? ' · ' : ''}${marcadas ? marcadas+'/' : ''}${g.ls.length} órd.
+                 <a href="javascript:void(0)" style="margin-left:3px;color:#8b5cf6;"
+                    onclick="event.stopPropagation(); loteFXAbrirGrupo('${esc2(k)}')">${abierto?'ocultar':'ver'}</a>`
+              : ''}</td>
+        </tr>`;
+        if(abierto && g.ls.length > 1){
+          g.ls.forEach(l=>{
+            h += `<tr style="cursor:pointer;opacity:.85;"
+                  onclick="loteFXElegir('${esc2(l.oid)}')">
+              <td style="padding:2px 6px;text-align:right;">
+                <input type="checkbox" ${E.has(l.oid)?'checked':''}
+                       onclick="event.stopPropagation(); loteFXElegir('${esc2(l.oid)}')"></td>
+              <td colspan="3" style="padding:2px 6px 2px 16px;overflow:hidden;
+                  text-overflow:ellipsis;white-space:nowrap;" class="field-note">${esc(l.oid)}</td>
+              <td style="padding:2px 6px;text-align:right;">${fmtInt(l.qty)}</td>
+              <td style="padding:2px 6px;text-align:right;">${fmtMoney(l.precio)}</td>
+              <td style="padding:2px 6px;text-align:right;">${fmtMoney(l.bruto)}</td>
+              <td style="padding:2px 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                  class="field-note" title="${esc(l.notes)}">${esc(l.notes)}</td></tr>`;
+          });
+        }
+      });
+      h += `</table></div>`;
+    });
+
+    const nE = E.size;
+    const nDma = _loteFXDmaListos().length;
+    const brutoE = C.filter(c=>E.has(c.oid)).reduce((x,c)=>x+c.bruto, 0);
+    h += `<div class="field-note" style="margin-top:4px;">
+      ${nE ? `<b>${nE} orden(es)</b> de ${new Set(C.filter(c=>E.has(c.oid)).map(c=>c.cliente)).size}
+              cliente(s) · bruto ${fmtMoney(brutoE)}`
+           : 'Todavía no has marcado ninguna orden.'}${
+        nDma ? ` · <b>${nDma} FX por DMA</b>` : ''}</div>`;
+    cont.innerHTML = h;
+    const falta0 = [];
+    if(!nE && !nDma) falta0.push('Marcá al menos una línea, o cargá el FX de un DMA');
+    _loteFXDmaIncompletos().forEach(c=>
+      falta0.push(`${c}: marcaste FX pero falta el monto USD`));
+    _loteFXBotones({ paso:0, falta:falta0, archivos, nOps });
     return;
   }
 
@@ -12521,7 +12887,11 @@ function _loteFXBotones({ paso, falta, archivos, nOps }){
     if(texto != null) b.textContent = texto;
     b.disabled = !!disabled;
   };
-  set('loteFXAtras',     paso === 2 || paso === 3, '← Atrás', corriendo);
+  // Del paso 1 se puede volver al 0 solo si se entró por ahí.
+  const hayPaso0 = !!(_loteFX && _loteFX.cands);
+  set('loteFXAtras',     paso === 2 || paso === 3 || (paso === 1 && hayPaso0),
+                         '← Atrás', corriendo);
+  set('loteFXElegir',    paso === 0, 'Continuar →', corriendo || (falta||[]).length > 0);
   set('loteFXContinuar', paso === 1, 'Continuar →', corriendo || (falta||[]).length > 0);
   set('loteFXSeguir',    paso === 2, 'Revisar y registrar →', corriendo || (falta||[]).length > 0);
   set('loteFXRegistrar', paso === 3,
@@ -27834,13 +28204,35 @@ async function registrarLoteRVL(cliente, loteOps, version){
       if(!port) port = portDef.nombre;
       const k = String(f.especie) + '|' + String(f.lado) + '|' + port;
       const a = g[k] || (g[k] = { portafolio:{ nombre:port }, especie:f.especie,
-                                  lado:f.lado, cantidad:0, bruto:0, comMonto:0 });
+                                  lado:f.lado, cantidad:0, bruto:0, comMonto:0,
+                                  // El OBJETO del portafolio, no solo el nombre: de él
+                                  // salen el deceval y la marca de IVA. Ver abajo.
+                                  portObj: (cfgR.portafolios||[]).find(p=>p.nombre === port) ||
+                                           f.portafolioObj || null });
       const q = Number(f.cantidad)||0, px = Number(f.precio)||0;
       a.cantidad += q;
       a.bruto += q * px;
       a.comMonto += q * px * ((Number(f.comisionPct)||0)/100);
     });
-    loteOps = Object.values(g).map(o=>({ ...o, precio: o.cantidad>0 ? o.bruto/o.cantidad : 0 }));
+    // EL IVA TAMBIÉN VIAJA POR ESTE CAMINO (Sergio, 04-nov · PORVENIR).
+    // -------------------------------------------------------------------
+    // Este respaldo calculaba la comisión y se olvidaba del IVA, así que la
+    // línea quedaba con `iva: null` y la Planilla COP frenaba con "reportada
+    // SIN IVA registrado". Es el mismo descuido del 19-oct, que entonces se
+    // arregló en seis generadores y no acá.
+    //
+    // El IVA sale de las MISMAS funciones que usa el reporte al cliente:
+    // `ivaProteccionDeFolio` cuando el portafolio es una sub-cuenta de
+    // PROTECCIÓN, y `ivaDeLineaRVL` para el resto —que mira primero el
+    // deceval, que es el ancla—. Nada de 19% parejo: los fondos de pensiones
+    // no lo pagan.
+    loteOps = Object.values(g).map(o=>{
+      const nom = (o.portafolio && o.portafolio.nombre) || '';
+      const ivaMonto = (typeof PROTECCION_SUBCUENTAS !== 'undefined' && PROTECCION_SUBCUENTAS[nom])
+        ? ivaProteccionDeFolio(nom, o.comMonto)
+        : ivaDeLineaRVL(!!(o.portObj && o.portObj.iva), o.portObj, o.comMonto);
+      return { ...o, precio: o.cantidad>0 ? o.bruto/o.cantidad : 0, ivaMonto };
+    });
   }
   const _usadas = {};
   const lineas = (loteOps||[]).map(o=>{
@@ -36542,7 +36934,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-04 20:40 UTC · v319';
+const BUILD_ID = '2026-11-05 14:10 UTC · v321';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
