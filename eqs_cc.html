@@ -34688,15 +34688,38 @@ async function rshCargarMatriz(){
   try{
     const filas = await supaFetchTodo('precios_diarios',
       'select=fecha,isin,ticker,cierre,moneda&order=fecha.asc');
-    const series = {};
+    // UNA SERIE DE PRECIOS TIENE UN PRECIO POR DIA (Sergio, 05-nov).
+    // `precios_diarios` puede traer la misma (fecha, isin) dos veces: el view
+    // une cierres_mercado contra afp_nemo_isin, y ese mapeo colapsa un papel
+    // y su sucesor en UN ISIN canonico —que es correcto para posiciones de
+    // AFP, donde se quiere seguir el mismo papel a traves del cambio de
+    // nombre, y es veneno para precios cuando los dos cotizaron en paralelo.
+    // PFDAVVNDA y PFDAVIGRP: 47 dias en comun, los 47 con precio distinto.
+    //
+    // Repetido IGUAL -> se colapsa callado, no hay nada que decidir.
+    // Repetido DISTINTO -> no hay como saber cual es el bueno, y escoger en
+    // silencio seria inventar: la especie SALE del cuadro y se avisa.
+    const series = {}, dupIgual = {}, dupConflicto = {}, nombre = {};
     filas.forEach(r=>{
       const v = Number(r.cierre);
       if(!(v > 0)) return;
+      nombre[r.isin] = nombre[r.isin] || r.ticker || r.isin;
       const s = series[r.isin] || (series[r.isin] = {
         isin:r.isin, ticker:r.ticker || r.isin, moneda:(r.moneda||'').toUpperCase(),
         fechas:[], cierres:[], porFecha:{} });
+      const antes = s.porFecha[r.fecha];
+      if(antes !== undefined){
+        if(antes === v) dupIgual[r.isin] = (dupIgual[r.isin] || 0) + 1;
+        else            dupConflicto[r.isin] = (dupConflicto[r.isin] || 0) + 1;
+        return;
+      }
       s.fechas.push(r.fecha); s.cierres.push(v); s.porFecha[r.fecha] = v;
     });
+    const enConflicto = Object.keys(dupConflicto)
+      .map(i => ({ isin:i, ticker:nombre[i], dias:dupConflicto[i] }))
+      .sort((a,b)=> b.dias - a.dias);
+    enConflicto.forEach(x => { delete series[x.isin]; });
+    const colapsados = Object.values(dupIgual).reduce((a,b)=>a+b, 0);
     // NO SE MEZCLAN MONEDAS. Un papel en pesos contra uno en dólares es el
     // dólar disfrazado de valor relativo — la misma regla del gráfico.
     const porMoneda = {};
@@ -34709,7 +34732,7 @@ async function rshCargarMatriz(){
       _rshMtz.msg = 'No hay suficientes especies con precio para armar la matriz.';
     }else{
       const todas = [].concat(...isins.map(i=>series[i].fechas));
-      _rshMtz.crudo = { series, isins, moneda,
+      _rshMtz.crudo = { series, isins, moneda, enConflicto, colapsados,
         otrasMonedas: Object.keys(porMoneda).filter(m=>m !== moneda),
         topeDesde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
         topeHasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '' };
@@ -34746,6 +34769,7 @@ function _rshMtzRecalcular(){
   const todas = [].concat(...vivos.map(i=>recorte[i].fechas));
   _rshMtz.datos = { series: recorte, isins: vivos, celdas, pares,
     moneda: C.moneda, otrasMonedas: C.otrasMonedas,
+    enConflicto: C.enConflicto || [], colapsados: C.colapsados || 0,
     desde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
     hasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '',
     ruedas: new Set(todas).size,
@@ -34965,6 +34989,17 @@ function _rshMatrizHtml(){
       contra la columna. <span style="color:var(--sell,#ef4444);font-weight:700;">Rojo</span>: cara.
       Clic en una celda para ver el par abajo.
     </div>
+    ${(D.enConflicto && D.enConflicto.length) ? `
+      <div class="field-note" style="margin-bottom:10px;padding:7px 10px;border-radius:6px;
+           background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);">
+        <b style="color:var(--warn,#f59e0b);">${D.enConflicto.length} especie(s) fuera del
+        cuadro: la base trae dos precios distintos para el mismo día.</b><br>
+        ${D.enConflicto.map(x=>`${esc(x.ticker)} (${x.dias} día(s))`).join(' · ')}.
+        No se elige uno al azar: sin saber cuál es el bueno, el cuadro mentiría.
+        Pasa cuando un papel y su sucesor comparten el ISIN canónico y
+        cotizaron en paralelo.</div>` : ''}
+    ${D.colapsados ? `<div class="field-note" style="margin-bottom:10px;">
+        ${D.colapsados} fila(s) repetidas con el mismo precio se colapsaron.</div>` : ''}
     ${(()=>{
       // EL TEXTO SE CALCULA, NO SE ESCRIBE. Decia "La historia es de 3 meses"
       // a mano desde que la data eran 3 meses; con dos anos cargados seguia
@@ -36958,7 +36993,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-05 17:20 UTC · v322';
+const BUILD_ID = '2026-11-05 17:45 UTC · v323';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
