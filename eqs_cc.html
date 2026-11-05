@@ -18183,17 +18183,66 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version, lot
   // es de donde la ficha los copia (ver `aplicarMaestroDecevales`). Si el
   // portafolio no esta en la ficha, se le pregunta DIRECTO al maestro: misma
   // fuente, un paso menos.
-  const _maestroPorNombre = {}, _maestroPorFondo = {};
+  // ÚLTIMO RECURSO: EL NÚMERO DEL PORTAFOLIO (Sergio, 05-nov)
+  // ---------------------------------------------------------------------
+  // *"Dependemos de cómo lo envíe el trader. Cuando envían directo escriben
+  //  diferente: PA AHORRO ESP 39, ESP 39, ESPECIAL 39, PA 39. Es una locura
+  //  y se lo hemos dicho... ¿y si asocias por número? El número es único
+  //  por portafolio."*
+  //
+  // Medido sobre los 82 fondos de FIDUCIARIA CREDICORP: 55 traen número,
+  // 27 no, ninguno trae dos, y NINGÚN número se repite. Asi que el número
+  // identifica el fondo — pero solo con estos cuatro candados:
+  //
+  //  1. VA DE ÚLTIMO. Si el nombre calza, manda el nombre. Esto solo entra
+  //     cuando ya fallaron el nombre exacto y el calce por subcadena.
+  //  2. UN SOLO NÚMERO en el texto que llega. Con dos no se sabe cuál es
+  //     ("FIDUCOLOMBIA P.A. 20-06" trae 20 y 06).
+  //  3. SOLO DENTRO DE ESTE CLIENTE. Entre clientes el número SÍ se repite.
+  //     Un `client_book` entra solo si TODAS sus palabras estan en el
+  //     nombre del cliente: "FIDUCIARIA CREDICORP" entra en "CREDICORP
+  //     CAPITAL FIDUCIARIA"; "FIDUCIARIA BANCOLOMBIA" no, porque
+  //     BANCOLOMBIA no esta. Si ninguno califica, esto no resuelve nada.
+  //  4. UN SOLO CANDIDATO. Con dos no se adivina: se deja sin resolver y el
+  //     COR frena, que es lo que ya hace hoy y esta bien. Hoy no hay
+  //     colisiones; el dia que creen "AHORRO ESPECIAL NO 2" va a chocar con
+  //     "FI FUNDACION SMURFIT 2", que ya existe. Ese dia avisa, no inventa.
+  const _palabras = t => String(t||'').toUpperCase()
+    .replace(/[^A-Z0-9]/g, ' ').split(/\s+/).filter(Boolean);
+  const _palCli = new Set(_palabras(nombreCli));
+  const _numDe = t => {
+    const n = String(t||'').match(/\d+/g);
+    return (n && n.length === 1) ? String(Number(n[0])) : null;
+  };
+  const _maestroPorNombre = {}, _maestroPorFondo = {}, _maestroPorNumero = {};
   try{
     Object.values(_maestroDeceval||{}).forEach(m=>{
       if(m.portafolio) _maestroPorNombre[norm(m.portafolio)] = m;
       if(m.id_fondo)   _maestroPorFondo[norm(m.id_fondo)] = m;
+      // --- indice por numero, solo de los books de ESTE cliente ---
+      const pb = _palabras(m.client_book);
+      if(!pb.length || !pb.every(x => _palCli.has(x))) return;
+      const nP = _numDe(m.portafolio), nF = _numDe(m.id_fondo);
+      // Si los dos nombres dicen numeros distintos, no se usa: no hay como
+      // saber cual manda y adivinar aca es mandar la complementacion al
+      // fondo equivocado.
+      if(nP && nF && nP !== nF) return;
+      const n = nP || nF;
+      if(!n) return;
+      (_maestroPorNumero[n] = _maestroPorNumero[n] || []).push(m);
     });
   }catch(e){}
+  const _porNumero = nom => {
+    const n = _numDe(nom);
+    if(!n) return null;
+    const c = _maestroPorNumero[n] || [];
+    return c.length === 1 ? c[0] : null;   // dos candidatos = no se resuelve
+  };
   const _portDelMaestro = nom => {
     // nota: `especialFid` sale tal cual del maestro, marca incluida. Quien la
     // interpreta es `efParaCOR`, en un solo sitio.
-    const m = _maestroPorNombre[norm(nom)] || _maestroPorFondo[norm(nom)];
+    const m = _maestroPorNombre[norm(nom)] || _maestroPorFondo[norm(nom)]
+              || _porNumero(nom);
     if(!m || !String(m.deceval||'').trim()) return null;
     return { nombre: m.portafolio || nom, deceval: String(m.deceval),
              orion: m.codigo_orion || '', dv: m.dv || '',
@@ -37014,7 +37063,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-05 18:15 UTC · v324';
+const BUILD_ID = '2026-11-05 20:05 UTC · v325';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
