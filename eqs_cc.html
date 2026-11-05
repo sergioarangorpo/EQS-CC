@@ -7803,18 +7803,39 @@ function gruposDelBook(book){
   return [...new Set([...propios, ...extra])];
 }
 
-// Busca en el Account cual de los grupos del book es. Calce por nombre
+// Busca en un texto cual de los grupos del book es. Calce por nombre
 // completo: Sergio confirmo que se escribe tal cual (FALCOM, MONEDA,
 // ASHMORE, TORDESILHAS, IMPERA CAPITAL).
-function _resolverBookCompartido(book, notes){
-  const cands = gruposDelBook(book);
-  if(cands.length < 2) return null;
-  const acc = _normBook(notes).replace(/[^A-Z0-9]/g, '');
+function _calzaGrupoDelBook(cands, texto){
+  const acc = _normBook(texto).replace(/[^A-Z0-9]/g, '');
   if(!acc) return null;
   // El mas largo primero: si un nombre contiene a otro, gana el especifico.
   const calzan = cands.slice().sort((a,b)=>b.length-a.length)
     .filter(g => acc.includes(_normBook(g).replace(/[^A-Z0-9]/g, '')));
   return calzan.length ? calzan[0] : null;
+}
+
+// SE MIRAN LAS DOS COLUMNAS, PARA TODOS (Sergio, 05-nov)
+// -------------------------------------------------------------------
+// Antes esta funcion miraba solo el Notes, y mirar el Trailer era un
+// parche puesto a mano SOLO para BNP AGENCY. Pero el cliente viene escrito
+// bien casi siempre —FALCOM, IMPERA, BNP AGENCY, el que sea— y a veces esta
+// en una columna y a veces en la otra: *"si el cliente esta en marcado
+// hacerlo automaticamente"*. El Trailer se llena al MARCAR la orden, asi
+// que a media jornada viene vacio y por eso el app preguntaba antes de
+// tener el dato.
+//
+// SI LAS DOS COLUMNAS DICEN COSAS DISTINTAS, NO SE RESUELVE. Escoger una
+// seria inventar, y las tarifas de los candidatos van de 0,05% a 0,20%:
+// el 13-oct equivocarse fueron $808.400. Se devuelve null y el selector
+// aparece, que es exactamente para lo que esta.
+function _resolverBookCompartido(book, notes, trailer){
+  const cands = gruposDelBook(book);
+  if(cands.length < 2) return null;
+  const porNotes   = _calzaGrupoDelBook(cands, notes);
+  const porTrailer = _calzaGrupoDelBook(cands, trailer);
+  if(porNotes && porTrailer && porNotes !== porTrailer) return null;
+  return porNotes || porTrailer || null;
 }
 
 // ¿El ACCOUNT de esta orden dice que es BNP AGENCY? (Sergio, 30-oct)
@@ -7839,7 +7860,7 @@ function bookSinResolver(clientRaw, notes, parentOrderId, trailer){
   const b = _normBook(clientRaw);
   if(BOOKS_AMBIGUOS.indexOf(b) < 0) return null;
   if(parentOrderId && _asignacionOrden[String(parentOrderId)]) return null;
-  if(_resolverBookCompartido(b, notes)) return null;
+  if(_resolverBookCompartido(b, notes, trailer)) return null;
   // Y lo que resuelva el ancla de BNP. Si esta funcion no mirara lo mismo que
   // `grupoDeTrade`, el app resolveria la orden correctamente Y AL TIEMPO
   // pediria asignarla a mano: dos respuestas distintas sobre la misma orden
@@ -7861,7 +7882,7 @@ function grupoDeTrade(clientRaw, notes, parentOrderId, trailer){
   if(BOOKS_AMBIGUOS.indexOf(raw) >= 0){
     const aMano = parentOrderId && _asignacionOrden[String(parentOrderId)];
     if(aMano) return aMano;
-    const porAcc = _resolverBookCompartido(raw, notes);
+    const porAcc = _resolverBookCompartido(raw, notes, trailer);
     if(porAcc) return porAcc;
   }
   // BNP AGENCY llega bajo el Client/Book CSI y se distingue por el ACCOUNT,
@@ -36993,7 +37014,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-05 17:45 UTC · v323';
+const BUILD_ID = '2026-11-05 18:15 UTC · v324';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
