@@ -29157,6 +29157,13 @@ function confirmarPorvenir(cliente, folios, comUnica, version){
   });
 }
 
+// El valor de un campo de fecha de la pantalla, o '' si no esta.
+// NO inventa una fecha: si el campo esta vacio, quien llame debe frenar.
+function _valCampoFecha(id){
+  try{ const e = document.getElementById(id); return (e && e.value) || ''; }
+  catch(_){ return ''; }
+}
+
 async function generarReportePorvenir(cliente, loteDet, opciones){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar la librería de Excel (ExcelJS).'); return; }
   if(!loteDet || loteDet.length === 0){ alert('No hay folios para reportar.'); return; }
@@ -29186,12 +29193,21 @@ async function generarReportePorvenir(cliente, loteDet, opciones){
     const trader = (opts.traderPorPort && port) ? (opts.traderPorPort[port.nombre] || null) : null;
     return { folio:Number(f.folio), hora:f.hora, especie:f.especie, lado:f.lado,
              cantidad:f.cantidad, precio:f.precio, pct, bruto, com, iva, neto,
-             port, deceval: port ? port.deceval : '', fechaCum: aFecha(f.fechaCum),
+             port, deceval: port ? port.deceval : '',
+             // LAS FECHAS TIENEN RESPALDO (Sergio, 05-nov).
+             // `loteDet` no siempre las trae: el 05-nov la pestana CONTADO
+             // salio con la columna Dia vacia en las 234 filas, y el plano
+             // sin Cumplimiento. Es EXACTAMENTE lo del 14-ago en SKANDIA
+             // -"comision 0 y fechas vacias en las 236 filas"-, que alla se
+             // arreglo leyendo los campos de la pantalla y aca no.
+             // Una regla escrita en un sitio y no en el otro se desincroniza.
+             fechaCum: aFecha(f.fechaCum || _valCampoFecha('fechaCumplimiento')),
              // SIN VALOR POR DEFECTO: antes tomaba el primero de la lista y el
              // reporte salía a nombre de un trader que no dio la orden
              // (Sergio, 17-sep). Si falta, la validación de abajo frena.
              trader: trader || '',
-             fechaReg: aFecha(f.fechaReg), cumplimiento: opts.cumplimiento || 'T+2' };
+             fechaReg: aFecha(f.fechaReg || _valCampoFecha('fechaRegistro')),
+             cumplimiento: opts.cumplimiento || 'T+2' };
   });
 
   if(sinPort.size){
@@ -29326,7 +29342,16 @@ async function generarReportePorvenir(cliente, loteDet, opciones){
   // ---------- 2) Archivo plano ----------
   {
     const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('Hoja1');
-    const H = ['Folio','Especie','Conf.','Codigo Cliente','Cliente','Cantidad/V.Nominal','Precio','Valor Bruto',
+    // COLUMNA `Tipo` DESPUÉS DE `Especie` (Sergio, 05-nov)
+    // -----------------------------------------------------------------
+    // Antes el lado (Compra/Venta) se escribía en `Liquidación`, que es una
+    // FECHA, y `Cumplimiento` salía vacía. El plano le decía "Compra" al
+    // cliente donde espera un día. Ahora el lado tiene su propia columna y
+    // las dos fechas quedan donde van:
+    //   Liquidación  = fecha de OPERACIÓN
+    //   Cumplimiento = fecha de CUMPLIMIENTO
+    // Misma convención de la macro: Liquidación es el día que se operó.
+    const H = ['Folio','Especie','Tipo','Conf.','Codigo Cliente','Cliente','Cantidad/V.Nominal','Precio','Valor Bruto',
                'Comision','IVA Comision','Interes','Rte.Fuente','Valor Neto','Corredor','Reg.','Liquidación','Cumplimiento'];
     H.forEach((h,i)=>{ const c = ws.getCell(1,i+1); c.value = h; c.font = {bold:true}; });
     // El nombre que espera Porvenir en el plano es el del FONDO completo, no el
@@ -29335,17 +29360,20 @@ async function generarReportePorvenir(cliente, loteDet, opciones){
     filas.forEach((f,i)=>{
       const r = i+2;
       [ '1000' + String(f.folio),      // folio del plano = 1000 + TCN completo
-        f.especie, 29, '800170043', nombreLargo(f.port),
+        f.especie, f.lado, 29, '800170043', nombreLargo(f.port),
         f.cantidad, f.precio, f.bruto, f.com, f.iva, 0, 0, f.neto,
-        opts.corredor || 'SAR', 'BVC', f.lado, f.fechaCum
+        opts.corredor || 'SAR', 'BVC', f.fechaReg, f.fechaCum
       ].forEach((v,c)=>{ ws.getCell(r,c+1).value = v; });
       // Formatos calcados del archivo real.
       const CONT_Q = '_(* #,##0_);_(* \\(#,##0\\);_(* "-"_);_(@_)';
       const CONT_$ = '_("$"* #,##0_);_("$"* \\(#,##0\\);_("$"* "-"_);_(@_)';
-      ws.getCell(r,6).numFmt = CONT_Q;
-      [7,8,9,10,11,12].forEach(c=> ws.getCell(r,c).numFmt = CONT_$);
-      ws.getCell(r,13).numFmt = '_-"$"* #,##0.00_-;\\-"$"* #,##0.00_-;_-"$"* "-"_-;_-@_-';
-      ws.getCell(r,17).numFmt = 'dd/mm/yyyy';
+      // Las columnas corrieron UNA a la derecha al entrar `Tipo`. Si estos
+      // indices no se mueven con ellas, los pesos quedan formateados en la
+      // columna de las cantidades.
+      ws.getCell(r,7).numFmt = CONT_Q;                          // Cantidad
+      [8,9,10,11,12,13].forEach(c=> ws.getCell(r,c).numFmt = CONT_$);
+      ws.getCell(r,14).numFmt = '_-"$"* #,##0.00_-;\\-"$"* #,##0.00_-;_-"$"* "-"_-;_-@_-';
+      [17,18].forEach(c=> ws.getCell(r,c).numFmt = 'dd/mm/yyyy');   // las DOS fechas
     });
     autofitColumnas(ws);
     await bajar(wb, `Archivo_plano_Porvenir${suf}.xlsx`);
@@ -37157,7 +37185,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-05 21:45 UTC · v328';
+const BUILD_ID = '2026-11-05 22:10 UTC · v329';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
