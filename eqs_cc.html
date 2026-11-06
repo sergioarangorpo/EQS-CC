@@ -18308,6 +18308,28 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version, lot
       faltan.push(`${port.nombre} (deceval ${port.deceval||'—'})`);
       return;
     }
+    // UN ORIÓN DE UNO O DOS DÍGITOS NO ES UN ORIÓN (Sergio, 06-nov).
+    // El 05-nov el COR de PORVENIR salió con `cliente = 6` en las 117 líneas
+    // de Conservador. Miguel lo cazó: *"dejó unas líneas con la columna
+    // cliente con un solo numero"*. El 6 era el DV del portafolio, copiado
+    // dentro de la columna del Orión en el maestro.
+    //
+    // El app no se equivocó: como "6" no tiene 9 dígitos, no lo tomó por NIT,
+    // lo escribió como código Orión y dejó el DV vacío — que es exactamente
+    // lo que debe hacer con un código que no es NIT. El problema es que
+    // aceptó un código imposible.
+    //
+    // Los códigos reales tienen 4 a 6 dígitos (40457, 38504, 22791) o son un
+    // NIT de 9. Menos de 4 es basura. Frena, y lo dice con el valor a la
+    // vista, en vez de mandar a bolsa un identificador que no existe:
+    // un dato inventado es peor que un dato ausente.
+    const _orionNum = String(port.orion||'').replace(/\D/g,'');
+    if(_orionNum.length < 4){
+      faltan.push(`${port.nombre} (deceval ${port.deceval||'—'}) — el código Orión `
+        + `dice "${port.orion}" y eso no es un código: los reales tienen 4 a 6 `
+        + `dígitos, o 9 si son un NIT. Revisá el maestro.`);
+      return;
+    }
     n++;
     const orion = String(port.orion||'');
     const esNit = orion.replace(/\D/g,'').length === 9;
@@ -29157,6 +29179,35 @@ function confirmarPorvenir(cliente, folios, comUnica, version){
   });
 }
 
+// EL NIT DE UN PORTAFOLIO DE PORVENIR (Sergio, 06-nov)
+// ---------------------------------------------------------------------
+// El plano le mandaba `800170043` a TODAS las filas. Ese es el NIT de
+// Cesantias LP: las 117 lineas de Conservador salieron el 05-nov con el
+// NIT de otro fondo. Estaba escrito a mano en el generador.
+//
+// `_porvPortDeFolio` devuelve una entrada de PORVENIR_PORTAFOLIOS, que
+// solo trae nombre y deceval. El NIT vive en `maestro_deceval`, indexado
+// por deceval, que es el ancla de todo. De respaldo se mira la ficha del
+// cliente, que `aplicarMaestroDeceval` llena de la misma fuente.
+//
+// Si no aparece devuelve '' y quien llama DEBE frenar: un NIT equivocado
+// viaja al cliente y nadie lo nota, porque parece un NIT valido.
+function _nitDePortPorv(port){
+  const d = String((port && port.deceval) || '').trim();
+  if(!d) return '';
+  try{
+    const m = (typeof _maestroDeceval !== 'undefined' && _maestroDeceval)
+      ? _maestroDeceval[d] : null;
+    if(m && String(m.nit||'').trim()) return String(m.nit).trim();
+  }catch(_){}
+  try{
+    const cfg = (typeof getClienteDB === 'function') ? (getClienteDB('PORVENIR')||{}) : {};
+    const p = (cfg.portafolios||[]).find(x=>String(x.deceval||'').trim() === d);
+    if(p && String(p.nit||'').trim()) return String(p.nit).trim();
+  }catch(_){}
+  return '';
+}
+
 // El valor de un campo de fecha de la pantalla, o '' si no esta.
 // NO inventa una fecha: si el campo esta vacio, quien llame debe frenar.
 function _valCampoFecha(id){
@@ -29194,6 +29245,7 @@ async function generarReportePorvenir(cliente, loteDet, opciones){
     return { folio:Number(f.folio), hora:f.hora, especie:f.especie, lado:f.lado,
              cantidad:f.cantidad, precio:f.precio, pct, bruto, com, iva, neto,
              port, deceval: port ? port.deceval : '',
+             nitPort: _nitDePortPorv(port),
              // LAS FECHAS TIENEN RESPALDO (Sergio, 05-nov).
              // `loteDet` no siempre las trae: el 05-nov la pestana CONTADO
              // salio con la columna Dia vacia en las 234 filas, y el plano
@@ -29213,6 +29265,19 @@ async function generarReportePorvenir(cliente, loteDet, opciones){
   if(sinPort.size){
     alert('No se generó el reporte de PORVENIR.\n\nEstos portafolios no están en PARAMETROS: ' +
           [...sinPort].join(', ') + '.\n\nRevisa el Instruction de la orden en Fidessa.');
+    return;
+  }
+  // SIN NIT NO HAY PLANO (Sergio, 06-nov).
+  // El NIT va en la columna `Codigo Cliente` y es lo que identifica al fondo
+  // ante la bolsa. Antes iba uno fijo y por eso nadie lo notaba. Ahora, si
+  // falta, se frena: un NIT equivocado parece válido y viaja al cliente.
+  const sinNit = [...new Set(filas.filter(f=>!String(f.nitPort||'').trim())
+    .map(f=>`${(f.port && f.port.nombre) || '(sin portafolio)'} (deceval ${(f.port && f.port.deceval) || '—'})`))];
+  if(sinNit.length){
+    alert('No se generó el reporte de PORVENIR.\n\nEstos portafolios no tienen NIT en el '
+        + 'maestro de decevales, y el NIT es la columna "Codigo Cliente" del archivo plano:\n\n'
+        + sinNit.map(x=>'   · ' + x).join('\n')
+        + '\n\nCárgalos en Ayudas → Maestros → Decevales y vuelve a generar.');
     return;
   }
 
@@ -29360,7 +29425,10 @@ async function generarReportePorvenir(cliente, loteDet, opciones){
     filas.forEach((f,i)=>{
       const r = i+2;
       [ '1000' + String(f.folio),      // folio del plano = 1000 + TCN completo
-        f.especie, f.lado, 29, '800170043', nombreLargo(f.port),
+        // `Codigo Cliente` = el NIT DE ESE portafolio. Antes era fijo
+        // ('800170043', el de Cesantías LP) y las 117 filas de Conservador
+        // salieron con el NIT de otro fondo (Sergio, 06-nov).
+        f.especie, f.lado, 29, f.nitPort, nombreLargo(f.port),
         f.cantidad, f.precio, f.bruto, f.com, f.iva, 0, 0, f.neto,
         opts.corredor || 'SAR', 'BVC', f.fechaReg, f.fechaCum
       ].forEach((v,c)=>{ ws.getCell(r,c+1).value = v; });
@@ -37185,7 +37253,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-05 22:10 UTC · v329';
+const BUILD_ID = '2026-11-06 13:45 UTC · v331';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
