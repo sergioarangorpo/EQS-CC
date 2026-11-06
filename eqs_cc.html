@@ -34949,7 +34949,52 @@ async function rshCargarMatriz(){
     // especies son 159.895 pares: a esa escala encontrar pares "tensionados"
     // por puro azar deja de ser un riesgo y pasa a ser una certeza. El
     // universo del informe de RVI ya esta curado y es el que se compara.
-    let permitidos = null, universoFallo = false;
+    // EN RVL, EL UNIVERSO SON LAS DEL COLCAP (Sergio, 06-nov)
+    // -----------------------------------------------------------------
+    // *"Tenemos acciones que no operan realmente, eso genera ruido y poco
+    //  se puede hacer de valor."* POPULAR tiene 141 ruedas de 487, VILLAS
+    //  147, OCCIDENTE 180. Un par contra una de esas vale lo que vale la
+    //  mas corta, y la media se mueve con cada dato.
+    //
+    // La lista vive en `calendario_universo`, que YA existe, ya es editable
+    // y ya esta por modulo. Pero esa tabla es la de SEGUIMIENTO -37 nemos,
+    // con ETB, BVC, PEI, TIN y los ETF- y alimenta el calendario de
+    // resultados y dividendos. No se pisa: se marca cuales ademas entran a
+    // la matriz, con la columna `en_matriz`.
+    //
+    // SI NADIE ESTA MARCADO NO SE ESCONDE NADA: se comparan todas y se
+    // avisa. Es la misma regla que ya tiene el calendario -"una pantalla
+    // vacia por un filtro mal puesto es peor que una con ruido"- y aca se
+    // puede, porque 31 especies son 465 pares: ruidoso pero legible.
+    // En RVI es al reves y a proposito: alli son 566 especies = 159.895
+    // pares, y mostrar todo no seria ruido, seria mentira.
+    let permitidos = null, universoFallo = false, avisoUniverso = '';
+    if(_rshModulo === 'RVL'){
+      try{
+        const uni = await supaFetchTodo('calendario_universo',
+                      'modulo=eq.RVL&activo=is.true') || [];
+        const enM = uni.filter(u => u.en_matriz === true);
+        if(enM.length){
+          permitidos = new Set(enM.map(u=>_rshTickerPelado(u.nemo)).filter(Boolean));
+        }else if(uni.length){
+          avisoUniverso = 'Ninguna especie está marcada <code>en_matriz</code> en '
+            + '<code>calendario_universo</code>, así que se están comparando todas '
+            + 'las que tengan precio — incluidas las que casi no operan. Marcá ahí '
+            + 'las del COLCAP para acotar el cuadro.';
+        }else{
+          avisoUniverso = 'La lista <code>calendario_universo</code> no tiene nemos '
+            + 'activos para RVL, así que no se filtró nada.';
+        }
+      }catch(e){
+        // OJO: aca NO existe `esc`, es un alias local de otras funciones.
+        // El global es `_esc`. Si se usa `esc` el catch revienta y se lleva
+        // la matriz entera: el aviso mataba justo lo que venia a salvar.
+        const _m = (typeof _esc === 'function') ? _esc(e.message)
+                                                : String(e && e.message || e);
+        avisoUniverso = 'No se pudo leer <code>calendario_universo</code> ('
+          + _m + '), así que no se filtró nada.';
+      }
+    }
     if(_rshModulo === 'RVI'){
       try{
         let uni = (typeof _rviUniverso !== 'undefined' && _rviUniverso.length)
@@ -34981,6 +35026,7 @@ async function rshCargarMatriz(){
       _rshMtz.modulo = _rshModulo;
       const todas = [].concat(...isins.map(i=>series[i].fechas));
       _rshMtz.crudo = { series, isins, moneda, enConflicto, colapsados,
+        avisoUniverso,
         modulo:_rshModulo, delUniverso: permitidos ? permitidos.size : 0,
         fueraDelUniverso: permitidos
           ? (porMoneda[moneda]||[]).filter(i=>!permitidos.has(_rshTickerPelado(series[i].ticker))).length
@@ -35022,6 +35068,7 @@ function _rshMtzRecalcular(){
   _rshMtz.datos = { series: recorte, isins: vivos, celdas, pares,
     moneda: C.moneda, otrasMonedas: C.otrasMonedas,
     modulo: C.modulo || '', delUniverso: C.delUniverso || 0,
+    avisoUniverso: C.avisoUniverso || '',
     fueraDelUniverso: C.fueraDelUniverso || 0,
     enConflicto: C.enConflicto || [], colapsados: C.colapsados || 0,
     desde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
@@ -35255,6 +35302,11 @@ function _rshMatrizHtml(){
         cotizaron en paralelo.</div>` : ''}
     ${D.colapsados ? `<div class="field-note" style="margin-bottom:10px;">
         ${D.colapsados} fila(s) repetidas con el mismo precio se colapsaron.</div>` : ''}
+    ${D.avisoUniverso ? `<div class="field-note" style="margin-bottom:10px;padding:7px 10px;
+         border-radius:6px;background:rgba(245,158,11,.12);
+         border:1px solid rgba(245,158,11,.45);">
+        <b style="color:var(--warn,#f59e0b);">Sin universo acotado.</b>
+        ${D.avisoUniverso}</div>` : ''}
     ${D.fueraDelUniverso ? `<div class="field-note" style="margin-bottom:10px;">
         ${D.fueraDelUniverso} especie(s) con precio en ${esc(D.moneda)} quedaron fuera del
         cuadro por no estar en el universo del informe de ${esc(D.modulo)}. Siguen en la base
@@ -37253,7 +37305,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-06 13:45 UTC · v331';
+const BUILD_ID = '2026-11-06 17:10 UTC · v332';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
