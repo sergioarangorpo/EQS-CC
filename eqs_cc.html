@@ -7948,7 +7948,7 @@ function grupoDeTrade(clientRaw, notes, parentOrderId, trailer){
 // paso mejoramos MUCHO la vinculación EMSX<->Fidessa (ya no solo por
 // precio/cantidad parecidos — ahora se puede confirmar por nemo exacto).
 const GRUPO_COMISIONES_DB = [{"grupo": "COLFONDOS", "book": "COLFONDOS", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0018}}, {"grupo": "SANTANDER", "book": "SANTANDER", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "PROTECCION", "book": "PROTECCION", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0008, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "PORVENIR", "book": "PORVENIR", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0008, "ICOLCAP": 0.001, "OTRAS": 0.0015}}, {"grupo": "LARRAIN VIAL PP", "book": "LV_CO", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "CREDICORPFFMM", "book": "CREDICORPFFMM", "reporte": true, "formato": "SI", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "FIDUASHMORE", "book": "FIDUASHMORE", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.0009, "allIn": false, "bloque": null}, {"grupo": "CITIGROUP GLOBAL MARKETS LTD", "book": "CITI_NY", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "GOLDMAN", "book": "GOLDMAN", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "BTG PACTUAL PP", "book": "BTG", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null},
-{"grupo": "BTG PACTUAL AM", "book": "BTG_AM", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0012, "PFCIBEST": 0.0012, "ICOLCAP": 0.0012, "OTRAS": 0.0012}}, {"grupo": "SKANDIA", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "HSBC BANK PLC", "book": "HSBC_NY", "reporte": false, "formato": "NO", "fx": true, "variable": false, "base": 0.00055, "allIn": false, "bloque": null}, {"grupo": "BRADESCO", "book": "BRSE", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "SCOTIA", "book": "SCOTIA", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "FIDUCIARIA BANCOLOMBIA", "book": "VALORES_AM", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.001, "allIn": false, "bloque": {"ECOPETROL": 0.002, "PFCIBEST": 0.002, "ICOLCAP": 0.002, "OTRAS": 0.002}}, {"grupo": "MERRILL LYNCH INTERNATIONAL", "book": "MLI", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "AVAL FIDUCIARIA", "book": "AVAL_FIDU", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "PLURAL", "book": "PLURAL", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00084, "allIn": false, "bloque": null}, {"grupo": "BNP PARIBAS", "book": "BNP_B", "reporte": true, "formato": "SI", "fx": true, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "HORZ", "book": "HORZ", "reporte": true, "formato": "SI", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "SURAMERICANA", "book": "SURA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "METLIFE COLOMBIA", "book": "METLIFE", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "ALLIANZ", "book": "ALLIANZ_SEG_CO", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "ITAU", "book": "ITAU_NY", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0007, "allIn": false, "bloque": null}, {"grupo": "SEGUROS BOLIVAR", "book": "BOLIVAR", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.002, "allIn": false, "bloque": {"ECOPETROL": 0.002, "PFCIBEST": 0.002, "ICOLCAP": 0.002, "OTRAS": 0.002}}, {"grupo": "FIDUCIARIA SURA", "book": "FIDUSURA", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.001, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "FIDUDAVIVIENDA", "book": "FIDUDAVI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "MORGAN STANLEY", "book": "MORGAN_STANLEY", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00077, "allIn": false, "bloque": null}, {"grupo": "SKANDIA SEGUROS", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "COWEN", "book": "COWEN", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.002, "allIn": false, "bloque": null}, {"grupo": "CAXDAC", "book": "CAXDAC", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0015, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "MONEDA", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.00126, "allIn": false, "bloque": null}, {"grupo": "SOCIETTE", "book": "BISG", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00042, "allIn": false, "bloque": null}, {"grupo": "FALCOM", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "ASHMORE", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.0005, "allIn": false, "bloque": null}, {"grupo": "FIDUCIARIA SKANDIA", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "CREDIBOLSA", "book": "CREDIBOLSA", "reporte": true, "formato": "PROFORMA MLI", "fx": true, "variable": false, "base": 0.0015, "allIn": true, "bloque": null}, {"grupo": "TORDESILHAS", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.002, "allIn": false, "bloque": null}, {"grupo": "IMPERA CAPITAL", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.00126, "allIn": false, "bloque": null},
+{"grupo": "BTG PACTUAL AM", "book": "BTG_AM", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0012, "PFCIBEST": 0.0012, "ICOLCAP": 0.0012, "OTRAS": 0.0012}}, {"grupo": "SKANDIA", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "HSBC BANK PLC", "book": "HSBC_NY", "reporte": false, "formato": "NO", "fx": true, "variable": false, "base": 0.00055, "allIn": false, "bloque": null}, {"grupo": "BRADESCO", "book": "BRSE", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "SCOTIA", "book": "SCOTIA", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "FIDUCIARIA BANCOLOMBIA", "book": "VALORES_AM", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.001, "allIn": false, "bloque": {"ECOPETROL": 0.002, "PFCIBEST": 0.002, "ICOLCAP": 0.002, "OTRAS": 0.002}}, {"grupo": "MERRILL LYNCH INTERNATIONAL", "book": "MLI", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "AVAL FIDUCIARIA", "book": "AVAL_FIDU", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "PLURAL", "book": "PLURAL", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00084, "allIn": false, "bloque": null}, {"grupo": "BNP PARIBAS", "book": "BNP_B", "reporte": true, "formato": "SI", "fx": true, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "HORZ", "book": "HORZ", "reporte": true, "formato": "SI", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "SURAMERICANA", "book": "SURA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "METLIFE COLOMBIA", "book": "METLIFE", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "ALLIANZ", "book": "ALLIANZ_SEG_CO", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "ITAU", "book": "ITAU_NY", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0007, "allIn": false, "bloque": null}, {"grupo": "SEGUROS BOLIVAR", "book": "BOLIVAR", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.002, "allIn": false, "bloque": {"ECOPETROL": 0.002, "PFCIBEST": 0.002, "ICOLCAP": 0.002, "OTRAS": 0.002}}, {"grupo": "FIDUCIARIA SURA", "book": "FIDUSURA", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.001, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "FIDUDAVIVIENDA", "book": "FIDUDAVI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "MORGAN STANLEY", "book": "MORGAN_STANLEY", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00077, "allIn": false, "bloque": null}, {"grupo": "SKANDIA SEGUROS", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "COWEN", "book": "COWEN", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.002, "allIn": false, "bloque": null}, {"grupo": "CAXDAC", "book": "CAXDAC", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "MONEDA", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.00126, "allIn": false, "bloque": null}, {"grupo": "SOCIETTE", "book": "BISG", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00042, "allIn": false, "bloque": null}, {"grupo": "FALCOM", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "ASHMORE", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.0005, "allIn": false, "bloque": null}, {"grupo": "FIDUCIARIA SKANDIA", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "CREDIBOLSA", "book": "CREDIBOLSA", "reporte": true, "formato": "PROFORMA MLI", "fx": true, "variable": false, "base": 0.0015, "allIn": true, "bloque": null}, {"grupo": "TORDESILHAS", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.002, "allIn": false, "bloque": null}, {"grupo": "IMPERA CAPITAL", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.00126, "allIn": false, "bloque": null},
 // BNP AGENCY (Sergio, 19-oct). Tenia ficha en clientesDB y esta en
 // `maestro_grupos` —es de JAJ— pero NO tenia fila aqui, y de eso cuelgan dos
 // cosas: `_dashTarifaCierta` devolvia null, asi que si operaba y no se habia
@@ -8625,9 +8625,28 @@ function ivaGenericoDeLinea(nombreCliente, nombrePort, comMonto){
   const cfgCli = (typeof getClienteDB === 'function') ? (getClienteDB(nombreCliente) || {}) : {};
   const port = (cfgCli.portafolios || []).find(p =>
     String(p.nombre) === String(nombrePort) || String(p.id) === String(nombrePort)) || null;
+  // CUANDO LA FICHA LO DICE, LA FICHA MANDA (Sergio, 06-nov)
+  // -------------------------------------------------------------------
+  // Aca iba `true` fijo como `baseLlevaIva`. El DECEVAL sigue mandando
+  // primero —eso no cambia—, pero si el portafolio no esta en esa tabla,
+  // `ivaDeLineaRVL` cae en `base ? com*0,19 : 0` y cobraba 19% AUNQUE la
+  // ficha dijera `iva:false`.
+  //
+  // A CAXDAC —fondo de pensiones obligatorio de los aviadores, exento— le
+  // salian $991.984 de IVA en el archivo que recibe el cliente. Sus cuatro
+  // fondos ni siquiera tienen deceval, asi que la tabla no podia salvarlos;
+  // el unico dato era el `iva:false` de la ficha, y se ignoraba.
+  //
+  // ESTO SOLO MUEVE AL GENERICO DE EQUITY: `ivaGenericoDeLinea` se llama en
+  // dos sitios y los dos son de ese formato (el archivo del cliente y el
+  // registro de la Planilla COP, que tienen que dar el mismo numero).
+  // Medido sobre todo el app: cambian 5 portafolios, los 5 de CAXDAC.
+  // Tocar `ivaDeLineaRVL` en vez de esto habria movido 212, entre ellos
+  // COLFONDOS, SKANDIA y BNP, que tienen su propio generador.
+  const base = (port && port.iva !== undefined) ? !!port.iva : true;
   return (typeof ivaDeLineaRVL === 'function')
-    ? ivaDeLineaRVL(true, port, comMonto)
-    : (Number(comMonto) || 0) * 0.19;
+    ? ivaDeLineaRVL(base, port, comMonto)
+    : (Number(comMonto) || 0) * (base ? 0.19 : 0);
 }
 
 function comisionFolioPct(cliente, f){
@@ -10465,6 +10484,25 @@ const VALORES_AM_NUEVOS = [
   { deceval: 4352995, nombre: 'FIDUBANCOLOMBIA P.A. INVERLASER' },
 ];
 
+// Formato de reporte de los grupos que `construirClientesDBDesdeCategorias`
+// arma solo. Solo lo confirmado por Sergio.
+//   · CAXDAC (06-nov): reporte generico de equity, reparto a mano entre sus
+//     cinco fondos (Vejez, Invalidez, Sobrevivientes, Extralegal y la
+//     Administradora). Hasta hoy le salia el reporte viejo.
+// PENDIENTES DE CONFIRMAR, siguen con el viejo y con aviso:
+//   SURAMERICANA · SEGUROS BOLIVAR · FIDUDAVIVIENDA
+const FORMATO_GRUPOS_AUTO = {
+  // CAXDAC: 0,1% EN TODO, bloque y pantalla (Sergio, 06-nov). Venia con
+  // bloque 0,15% y pantalla 0,08%, que eran el placeholder de COLFONDOS.
+  // Poner los dos IGUALES no es cosmetico: activa la `tarifaUnica` que ya
+  // usan Alianza, BTG y Fiduashmore, y esa manda sobre los selectores de
+  // "Comisión del día". Si quedaran distintos, el reporte volveria a tomar
+  // lo que tenga puesto el selector, que es lo que haya dejado el cliente
+  // anterior.
+  'CAXDAC': { formatoReporte:'generico_equity', reparteManual:true, fileNombre:'Caxdac',
+              comisionBloque:0.001, comisionPantalla:0.001 },
+};
+
 function construirClientesDBDesdeCategorias(){
   const porGrupo = {};
   CATEGORIAS_DB.forEach(c=>{
@@ -10508,6 +10546,17 @@ function construirClientesDBDesdeCategorias(){
     if(gruposReclamados.has(grupo)) return; // lo cubre un cliente real
     clientesDB[grupo] = {
       nombre: grupo,
+      // EL FORMATO DE LOS QUE NACEN SOLOS (Sergio, 06-nov)
+      // -------------------------------------------------------------
+      // Un cliente que esta en CATEGORIAS pero que nadie curo a mano se
+      // arma aca, y se armaba SIN `formatoReporte`. Sin formato,
+      // `generarReporte` lo lleva al `else` final y le saca el reporte
+      // viejo. Sale un archivo, no hay error, y nadie se entera hasta
+      // que el cliente lo recibe: eso le paso a CAXDAC el 06-nov y toco
+      // reportar con la macro.
+      // Lo que va aca es lo confirmado por Sergio, nada mas. Los que
+      // falten siguen cayendo al viejo, pero ahora el app AVISA antes
+      // de generar (ver el guard en `generarReporte`).
       portafolios: porGrupo[grupo].map(c=>({
         id: String(c.deceval), nombre: c.nombre,
         iva: calcularIva(c),
@@ -10517,6 +10566,10 @@ function construirClientesDBDesdeCategorias(){
       // Sergio confirme las tasas reales (quedaron iguales a COLFONDOS por ahora).
       comisionBloque: 0.0015,
       comisionPantalla: 0.0008,
+      // VA DE ULTIMO, Y ESO IMPORTA. Arriba estaba, y lo confirmado por
+      // Sergio quedaba pisado por el placeholder: la tarifa de CAXDAC se
+      // escribia y despues se borraba sola (06-nov).
+      ...(FORMATO_GRUPOS_AUTO[grupo] || {}),
     };
   });
 }
@@ -26588,6 +26641,25 @@ async function _generarUnMacroFFMM(macro, lote, cliente, fechaReg){
 
 }
 
+// ¿Este cliente deberia reportar y no tiene formato? Devuelve false si hay
+// que frenar. Fuera de `generarReporte` para poder probarlo solo.
+function _avisarSinFormatoReporte(cliente){
+  try{
+    const cfg = getClienteDB(cliente) || {};
+    if(cfg.formatoReporte) return true;
+    if(normalizarGrupo(cliente) === 'PROTECCION') return true;   // tiene camino propio
+    const g = (typeof GRUPO_COMISIONES_DB !== 'undefined' ? GRUPO_COMISIONES_DB : [])
+                .filter(x=>x.grupo === cliente)[0];
+    if(!g || !g.reporte) return true;      // no reporta: el viejo esta bien
+    return confirm(
+      `${cliente} está marcado para reportar pero NO tiene formato configurado.\n\n` +
+      `Va a salir el reporte ANTIGUO, no el genérico de todos los folios con el ` +
+      `consolidado arriba.\n\n` +
+      `En la ficha del grupo el formato pactado dice "${g.formato || '—'}".\n\n` +
+      `¿Generar igual con el antiguo?`);
+  }catch(_){ return true; }   // el aviso nunca puede tumbar la generación
+}
+
 async function generarReporte(){
   const cliente = document.getElementById('filtroCliente').value;
   // Clientes de reparto manual con reporte genérico equity (FIDUCIARIA
@@ -27434,6 +27506,16 @@ async function generarReporte(){
     // ejecutado, portafolios y precio. Solo genera si él aprueba.
     mostrarAprobacionProteccion(cliente, loteDet);
   } else {
+    // EL AVISO QUE HOY FALTO (Sergio, 06-nov).
+    // -----------------------------------------------------------------
+    // Aca cae todo el que no tiene `formatoReporte`. Para un cliente que
+    // NO reporta eso esta bien. Para uno con `reporte: true` significa que
+    // le falta configuracion, y el archivo sale igual, en el formato
+    // viejo, sin un solo ruido. Asi se le mando a CAXDAC.
+    // Se avisa y se deja seguir: frenar aqui dejaria sin reportar a
+    // SURAMERICANA, SEGUROS BOLIVAR y FIDUDAVIVIENDA, que hoy usan este
+    // camino y a los que no les hemos confirmado cual es el suyo.
+    if(!_avisarSinFormatoReporte(cliente)) return;
     await generarYDescargarReporteRVL(cliente);
   }
   _limpiarTrasReportar();
@@ -37652,7 +37734,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-06 20:05 UTC · v336';
+const BUILD_ID = '2026-11-06 22:05 UTC · v338';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
