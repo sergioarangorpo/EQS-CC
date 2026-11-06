@@ -34847,6 +34847,7 @@ let _rshSpr = { a:null, b:null, datos:null, cargando:false, msg:'' };
 // un z no quiere decir nada; la celda queda vacía y se cuenta aparte.
 // ===================================================================
 const RSH_MTZ_MIN_DIAS = 20;
+const RSH_MTZ_VENTANA_DEF = 365;   // la matriz llega con 1 año puesto
 // `crudo` guarda las series completas tal como vinieron. Los filtros de
 // fecha recortan SOBRE eso y recalculan en memoria: no se vuelve a
 // consultar por cambiar el rango (Sergio, 04-nov).
@@ -34904,8 +34905,18 @@ async function rshCargarMatriz(){
   if(_rshMtz.cargando) return;
   _rshMtz.cargando = true; _rshMtz.msg = ''; rshPintar();
   try{
+    // LA MONEDA SE FILTRA EN EL SERVIDOR (Sergio, 06-nov: "tardó 20 segundos,
+    // antes era automatico y con mas nemos").
+    // -----------------------------------------------------------------
+    // Se bajaba TODA `precios_diarios` y despues se tiraba el 90%. Con solo
+    // RVL cargado eran ~13.000 filas; con RVI son ~150.000, y PostgREST
+    // pagina de a 1.000 -> ~150 llamadas en fila. De ahi los 20 segundos.
+    // Menos nemos en el cuadro no ayuda: el filtro del universo se aplica
+    // DESPUES de bajar. Filtrando la moneda aca, RVL vuelve a ~13 llamadas.
+    const monedaMod = MONEDA_MODULO[_rshModulo] || '';
     const filas = await supaFetchTodo('precios_diarios',
-      'select=fecha,isin,ticker,cierre,moneda&order=fecha.asc');
+      'select=fecha,isin,ticker,cierre,moneda&order=fecha.asc'
+      + (monedaMod ? `&moneda=eq.${encodeURIComponent(monedaMod)}` : ''));
     // UNA SERIE DE PRECIOS TIENE UN PRECIO POR DIA (Sergio, 05-nov).
     // `precios_diarios` puede traer la misma (fecha, isin) dos veces: el view
     // une cierres_mercado contra afp_nemo_isin, y ese mapeo colapsa un papel
@@ -35029,8 +35040,13 @@ async function rshCargarMatriz(){
     // REGLA DE ORO no perdona: que algo se pierda sin ruido.
     const conPrecio = new Set((porMoneda[moneda]||[])
       .map(i => _rshTickerPelado(series[i].ticker)));
+    // OJO: las que salieron por CONFLICTO de ISIN ya no estan en `series`,
+    // asi que caerian aca como "sin precio" y el aviso culparia a la causa
+    // equivocada. PFDAVIGRP salia en el amarillo Y en el rojo, y el rojo
+    // mentia: precio tiene, lo que no tiene es UNO solo (Sergio, 06-nov).
+    const enConflictoTk = new Set(enConflicto.map(x=>_rshTickerPelado(x.ticker)));
     const sinPrecio = permitidos
-      ? [...permitidos].filter(n => n && !conPrecio.has(n)).sort()
+      ? [...permitidos].filter(n => n && !conPrecio.has(n) && !enConflictoTk.has(n)).sort()
       : [];
 
     if(isins.length < 2){
@@ -35055,7 +35071,15 @@ async function rshCargarMatriz(){
         otrasMonedas: Object.keys(porMoneda).filter(m=>m !== moneda),
         topeDesde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
         topeHasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '' };
-      _rshMtzRecalcular();
+      // POR DEFECTO, UN AÑO, Y CON EL CALENDARIO LLENO (Sergio, 06-nov).
+      // Llegaba en "max" -dos años- y los campos Desde/Hasta en blanco, asi
+      // que no se veia que ventana estabas mirando. Si ya elegiste algo a
+      // mano, el ↻ lo respeta: solo se aplica cuando no hay nada puesto.
+      if(!_rshMtz.ventana && !_rshMtz.desde && !_rshMtz.hasta){
+        rshMtzUltimos(RSH_MTZ_VENTANA_DEF);
+      }else{
+        _rshMtzRecalcular();
+      }
     }
   }catch(e){
     _rshMtz.datos = null; _rshMtz.msg = 'No se pudo leer: ' + e.message;
@@ -35209,6 +35233,9 @@ async function rshCargarSpread(){
       pct: Math.round(menores/rs.length*100),
       z: sd ? (hoy-prom)/sd : 0,
       min: Math.min(...rs), max: Math.max(...rs),
+      // el resumen dice CUANDO fue el extremo, no solo cuanto
+      fMin: pts.reduce((m,p)=> p.r < m.r ? p : m, pts[0]).f,
+      fMax: pts.reduce((m,p)=> p.r > m.r ? p : m, pts[0]).f,
       tA: pa[pa.length-1].ticker || a, tB: pb[pb.length-1].ticker || b,
       moneda: mA, desde: pts[0].f, hasta: pts[pts.length-1].f,
       pxA: pts[pts.length-1].a, pxB: pts[pts.length-1].b,
@@ -35220,20 +35247,53 @@ async function rshCargarSpread(){
   rshPintar();
 }
 
+// LA ESCALA DEL RATIO, EN UN SOLO LUGAR (06-nov)
+// La linea del tiempo y el histograma de al lado tienen que compartirla, o
+// las marcas de media y de hoy caen a distinta altura en cada uno y el
+// cuadro se lee como si dijeran cosas distintas. Tambien se abre para que
+// entren las bandas de ±2σ aunque la serie nunca haya llegado hasta ahi.
+function _rshEscalaRatio(d){
+  const rs = d.pts.map(p=>p.r);
+  let lo = Math.min(...rs), hi = Math.max(...rs);
+  if(d.sd > 0){
+    lo = Math.min(lo, d.prom - 2.25*d.sd);
+    hi = Math.max(hi, d.prom + 2.25*d.sd);
+  }
+  const pad = (hi-lo)*0.06 || Math.abs(hi)*0.02 || 1;
+  return { lo: lo - pad, hi: hi + pad };
+}
+const _rshFmtR = v => (Math.abs(v) < 10 ? v.toFixed(3) : v.toFixed(2));
+
 function _rshSpreadSvg(d, W, H){
   const ML = 62, MR = 12, MT = 10, MB = 28;
   const w = W-ML-MR, h = H-MT-MB;
-  const rs = d.pts.map(p=>p.r);
-  let lo = Math.min(...rs), hi = Math.max(...rs);
-  const pad = (hi-lo)*0.08 || Math.abs(hi)*0.02 || 1;
-  lo -= pad; hi += pad;
+  const esc0 = (typeof _esc === 'function') ? _esc : (x=>String(x==null?'':x));
+  const { lo, hi } = _rshEscalaRatio(d);
   const X = i => ML + (d.pts.length===1 ? w/2 : (i/(d.pts.length-1))*w);
   const Y = v => MT + h - ((v-lo)/(hi-lo))*h;
   let o = '';
-  // banda de ±1 desviación
-  const y1 = Y(d.prom + d.sd), y2 = Y(d.prom - d.sd);
-  o += `<rect x="${ML}" y="${Math.min(y1,y2).toFixed(1)}" width="${w}"
-          height="${Math.abs(y2-y1).toFixed(1)}" fill="var(--purple,#a855f7)" opacity=".10"/>`;
+  // BANDAS DE ±1σ Y ±2σ (Sergio, 06-nov). La de 2σ va mas tenue: lo que
+  // importa es ver de un golpe cuando la linea se salio de la zona normal.
+  if(d.sd > 0){
+    [[2,'.055'],[1,'.11']].forEach(([k,op])=>{
+      const ya = Y(d.prom + k*d.sd), yb = Y(d.prom - k*d.sd);
+      o += `<rect x="${ML}" y="${Math.min(ya,yb).toFixed(1)}" width="${w}"
+              height="${Math.abs(yb-ya).toFixed(1)}"
+              fill="var(--purple,#a855f7)" opacity="${op}"/>`;
+    });
+    [[2,'2σ'],[1,'1σ'],[-1,'-1σ'],[-2,'-2σ']].forEach(([k,et])=>{
+      const y = Y(d.prom + k*d.sd);
+      if(y < MT || y > MT+h) return;
+      o += `<line x1="${ML}" y1="${y.toFixed(1)}" x2="${ML+w}" y2="${y.toFixed(1)}"
+              stroke="var(--purple,#a855f7)" stroke-width="1"
+              stroke-dasharray="2 5" opacity="${Math.abs(k)===2?'.45':'.3'}"/>
+            <text x="${ML+w-3}" y="${(y-3).toFixed(1)}" text-anchor="end" font-size="9"
+              fill="var(--purple,#a855f7)" opacity=".75">${et}</text>`;
+    });
+    const ym = Y(d.prom);
+    o += `<line x1="${ML}" y1="${ym.toFixed(1)}" x2="${ML+w}" y2="${ym.toFixed(1)}"
+            stroke="var(--purple,#a855f7)" stroke-width="1.2" opacity=".6"/>`;
+  }
   // mediana
   o += `<line x1="${ML}" y1="${Y(d.med).toFixed(1)}" x2="${ML+w}" y2="${Y(d.med).toFixed(1)}"
           stroke="var(--purple,#a855f7)" stroke-width="1.2" stroke-dasharray="5 4" opacity=".75"/>`;
@@ -35254,7 +35314,209 @@ function _rshSpreadSvg(d, W, H){
   o += `<polyline points="${d.pts.map((p,i)=>`${X(i).toFixed(1)},${Y(p.r).toFixed(1)}`).join(' ')}"
           fill="none" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round"/>`;
   o += `<circle cx="${X(d.pts.length-1).toFixed(1)}" cy="${Y(d.hoy).toFixed(1)}" r="3.5" fill="#38bdf8"/>`;
-  return `<svg width="${W}" height="${H}" style="display:block;max-width:100%;">${o}</svg>`;
+  // viewBox y no px: el panel ocupa el ancho que le den, como la matriz.
+  return `<svg viewBox="0 0 ${W} ${H}"
+            style="display:block;width:100%;height:auto;">${o}</svg>`;
+}
+
+// HISTOGRAMA DEL RATIO, CON LA CAMPANA ENCIMA (Sergio, 06-nov)
+// =====================================================================
+// Es el panel de la derecha del Spread Analysis de Bloomberg. Comparte la
+// escala vertical con la linea del tiempo de al lado, asi que la marca de
+// "hoy" queda a la misma altura en los dos: se lee de corrido.
+//
+// LA CAMPANA ES UNA REFERENCIA, NO UNA AFIRMACION. Se dibuja la normal con
+// la media y la desviacion de la muestra para poder comparar contra ella;
+// si las barras no se le parecen, eso es justamente lo que hay que ver, y
+// no quiere decir que el cuadro este mal. Un ratio de dos acciones casi
+// nunca es normal: tiene colas y suele tener dos jorobas si hubo un salto.
+function _rshHistoSvg(d, W, H){
+  const ML = 8, MR = 30, MT = 10, MB = 28;
+  const w = W-ML-MR, h = H-MT-MB;
+  const { lo, hi } = _rshEscalaRatio(d);
+  const Y = v => MT + h - ((v-lo)/(hi-lo))*h;
+  const rs = d.pts.map(p=>p.r);
+  const N = Math.max(12, Math.min(30, Math.round(Math.sqrt(rs.length)*1.6)));
+  const paso = (hi-lo)/N;
+  const cuentas = new Array(N).fill(0);
+  rs.forEach(v=>{
+    let k = Math.floor((v-lo)/paso);
+    if(k < 0) k = 0; if(k >= N) k = N-1;
+    cuentas[k]++;
+  });
+  const maxC = Math.max(1, ...cuentas);
+  const X = c => ML + (c/maxC)*w;
+  let o = '';
+  cuentas.forEach((c,k)=>{
+    if(!c) return;
+    const ya = Y(lo + (k+1)*paso), yb = Y(lo + k*paso);
+    const alto = Math.max(1, Math.abs(yb-ya) - 1);
+    o += `<rect x="${ML}" y="${Math.min(ya,yb).toFixed(1)}" width="${(X(c)-ML).toFixed(1)}"
+            height="${alto.toFixed(1)}" fill="#64748b" opacity=".55"/>`;
+  });
+  // la normal con la media y la desviacion de la muestra
+  if(d.sd > 0){
+    const dens = v => Math.exp(-((v-d.prom)*(v-d.prom))/(2*d.sd*d.sd));
+    const picoBarra = maxC;
+    const pts = [];
+    for(let k=0;k<=80;k++){
+      const v = lo + (hi-lo)*k/80;
+      // la normal se escala al conteo esperado del bin mas alto posible
+      const esperado = dens(v) * rs.length * paso / (d.sd*Math.sqrt(2*Math.PI));
+      pts.push(`${(ML + Math.min(1.25, esperado/picoBarra)*w).toFixed(1)},${Y(v).toFixed(1)}`);
+    }
+    o += `<polyline points="${pts.join(' ')}" fill="none" stroke="#f59e0b"
+            stroke-width="1.6" opacity=".85"/>`;
+  }
+  // media, mediana y hoy — los mismos trazos que la linea de al lado
+  const marca = (v, color, ancho, guion, et) => {
+    const y = Y(v);
+    if(y < MT-1 || y > MT+h+1) return '';
+    return `<line x1="${ML}" y1="${y.toFixed(1)}" x2="${ML+w}" y2="${y.toFixed(1)}"
+              stroke="${color}" stroke-width="${ancho}"
+              ${guion?`stroke-dasharray="${guion}"`:''} opacity=".85"/>
+            <text x="${ML+w+3}" y="${(y+3.5).toFixed(1)}" font-size="9"
+              fill="${color}" opacity=".9">${et}</text>`;
+  };
+  o += marca(d.prom, 'var(--purple,#a855f7)', 1.2, '', 'x̄');
+  o += marca(d.med,  'var(--purple,#a855f7)', 1.2, '5 4', 'Me');
+  o += marca(d.hoy,  '#38bdf8', 2, '', 'hoy');
+  o += `<text x="${ML}" y="${H-10}" font-size="9.5" fill="currentColor" opacity=".55">
+          ${rs.length} días · ${N} rangos</text>`;
+  // viewBox y no px: el panel ocupa el ancho que le den, como la matriz.
+  return `<svg viewBox="0 0 ${W} ${H}"
+            style="display:block;width:100%;height:auto;">${o}</svg>`;
+}
+
+// LAS DOS SERIES DE PRECIO, CADA UNA EN SU EJE (Sergio, 06-nov)
+// =====================================================================
+// Bloomberg las pone arriba del spread con dos ejes independientes, y por
+// eso se ven juntas aunque una valga 2.695 y la otra 78.000. El eje
+// izquierdo es el primer papel, el derecho el segundo. SON ESCALAS
+// DISTINTAS: que las lineas se crucen no significa nada: lo que se mira es
+// la FORMA, si van juntas o si se abrieron.
+function _rshPreciosSvg(d, W, H){
+  const ML = 56, MR = 56, MT = 12, MB = 26;
+  const w = W-ML-MR, h = H-MT-MB;
+  const esc0 = (typeof _esc === 'function') ? _esc : (x=>String(x==null?'':x));
+  const rango = sel => {
+    const v = d.pts.map(sel);
+    let a = Math.min(...v), b = Math.max(...v);
+    const pd = (b-a)*0.08 || Math.abs(b)*0.02 || 1;
+    return { lo:a-pd, hi:b+pd };
+  };
+  const RA = rango(p=>p.a), RB = rango(p=>p.b);
+  const X  = i => ML + (d.pts.length===1 ? w/2 : (i/(d.pts.length-1))*w);
+  const YA = v => MT + h - ((v-RA.lo)/(RA.hi-RA.lo))*h;
+  const YB = v => MT + h - ((v-RB.lo)/(RB.hi-RB.lo))*h;
+  const mil = v => Math.abs(v) >= 1000 ? Math.round(v).toLocaleString('es-CO')
+                                       : v.toFixed(v<10?2:0);
+  let o = '';
+  for(let k=0;k<=3;k++){
+    const y = MT + h - (k/3)*h;
+    o += `<line x1="${ML}" y1="${y.toFixed(1)}" x2="${ML+w}" y2="${y.toFixed(1)}"
+            stroke="var(--line,#222)" stroke-width="1" opacity=".35"/>
+          <text x="${ML-6}" y="${(y+3.5).toFixed(1)}" text-anchor="end" font-size="9.5"
+            fill="#38bdf8" opacity=".8">${mil(RA.lo + (RA.hi-RA.lo)*k/3)}</text>
+          <text x="${ML+w+6}" y="${(y+3.5).toFixed(1)}" font-size="9.5"
+            fill="#f59e0b" opacity=".8">${mil(RB.lo + (RB.hi-RB.lo)*k/3)}</text>`;
+  }
+  const salto = Math.ceil(d.pts.length/8);
+  d.pts.forEach((p,i)=>{
+    if(i % salto) return;
+    o += `<text x="${X(i).toFixed(1)}" y="${H-9}" text-anchor="middle" font-size="9.5"
+            fill="currentColor" opacity=".55">${p.f.slice(5).replace('-','/')}</text>`;
+  });
+  o += `<polyline points="${d.pts.map((p,i)=>`${X(i).toFixed(1)},${YA(p.a).toFixed(1)}`).join(' ')}"
+          fill="none" stroke="#38bdf8" stroke-width="1.7" stroke-linejoin="round"/>`;
+  o += `<polyline points="${d.pts.map((p,i)=>`${X(i).toFixed(1)},${YB(p.b).toFixed(1)}`).join(' ')}"
+          fill="none" stroke="#f59e0b" stroke-width="1.7" stroke-linejoin="round"/>`;
+  o += `<text x="${ML}" y="${MT-1}" font-size="10" fill="#38bdf8" font-weight="600">
+          ${esc0(d.tA)} (izq)</text>
+        <text x="${ML+w}" y="${MT-1}" text-anchor="end" font-size="10" fill="#f59e0b"
+          font-weight="600">${esc0(d.tB)} (der)</text>`;
+  // viewBox y no px: el panel ocupa el ancho que le den, como la matriz.
+  return `<svg viewBox="0 0 ${W} ${H}"
+            style="display:block;width:100%;height:auto;">${o}</svg>`;
+}
+
+// EL CUADRO DE RESUMEN, como el Spread Summary de Bloomberg (06-nov).
+function _rshResumenHtml(d){
+  const esc0 = (typeof _esc === 'function') ? _esc : (x=>String(x==null?'':x));
+  const col = d.z >= 0 ? 'var(--sell,#ef4444)' : 'var(--buy,#22c55e)';
+  const off = d.hoy - d.prom;
+  const fil = [
+    ['Último',          _rshFmtR(d.hoy),  ''],
+    ['Media',           _rshFmtR(d.prom), ''],
+    ['Contra la media', (off>=0?'+':'') + _rshFmtR(off)
+       + (d.prom ? ` (${(off/d.prom*100).toFixed(1)}%)` : ''), col],
+    ['Mediana',         _rshFmtR(d.med),  ''],
+    ['Desviación',      _rshFmtR(d.sd),   ''],
+    ['σ desde la media',(d.z>=0?'+':'') + d.z.toFixed(2), col],
+    ['Percentil',       d.pct + '%',      ''],
+    ['Máximo',          _rshFmtR(d.max) + ' · ' + esc0(d.fMax), ''],
+    ['Mínimo',          _rshFmtR(d.min) + ' · ' + esc0(d.fMin), ''],
+  ];
+  return `<table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+    ${fil.map(([k,v,c])=>`<tr style="border-top:1px solid var(--line,#222);">
+      <td style="padding:5px 2px;opacity:.72;">${k}</td>
+      <td class="num" style="padding:5px 2px;font-weight:600;
+          ${c?`color:${c};`:''}">${v}</td></tr>`).join('')}
+  </table>`;
+}
+
+// COPIAR EL PAR COMO IMAGEN (Sergio, 06-nov)
+// =====================================================================
+// Mismo camino que el cierre de RVI: html2canvas -> blob -> portapapeles,
+// con "Descargar PNG" al lado por si el navegador no deja escribir imagen.
+//
+// EL DETALLE QUE ROMPE ESTO: desde v335 los tres svg no tienen `width` ni
+// `height`, solo viewBox y width:100%, para que ocupen el ancho. html2canvas
+// no sabe medir un svg asi y lo dibuja EN BLANCO. Se le fijan las medidas
+// reales en px mientras dura la captura y se devuelven como estaban.
+async function _rshParCanvas(){
+  if(typeof html2canvas === 'undefined')
+    throw new Error('no cargó html2canvas (revisa la conexión)');
+  const caja = document.getElementById('rshParImagen');
+  if(!caja) throw new Error('no hay un par abierto');
+  const svgs = Array.prototype.slice.call(caja.querySelectorAll('svg'));
+  const antes = svgs.map(g=>({ g,
+    w: g.getAttribute('width'), h: g.getAttribute('height'),
+    st: g.getAttribute('style') }));
+  svgs.forEach(g=>{
+    const r = g.getBoundingClientRect();
+    const W = Math.max(1, Math.round(r.width)), H = Math.max(1, Math.round(r.height));
+    g.setAttribute('width', W); g.setAttribute('height', H);
+    g.style.width = W + 'px'; g.style.height = H + 'px';
+  });
+  try{
+    return await html2canvas(caja,
+      { backgroundColor:'#0b0e16', scale:2, logging:false, useCORS:true });
+  } finally {
+    antes.forEach(function(a){
+      if(a.w === null) a.g.removeAttribute('width');  else a.g.setAttribute('width', a.w);
+      if(a.h === null) a.g.removeAttribute('height'); else a.g.setAttribute('height', a.h);
+      if(a.st === null) a.g.removeAttribute('style'); else a.g.setAttribute('style', a.st);
+    });
+  }
+}
+async function copiarParImagen(btn){
+  try{
+    const canvas = await _rshParCanvas();
+    const blob = await new Promise(r=>canvas.toBlob(r, 'image/png'));
+    await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+    if(btn){ const p = btn.innerHTML; btn.innerHTML = '✓ Copiada';
+             setTimeout(()=>{ btn.innerHTML = p; }, 1400); }
+  }catch(e){
+    alert('No se pudo copiar la imagen (' + e.message + ').\n\nUsá "Descargar PNG".');
+  }
+}
+async function descargarParImagen(){
+  try{
+    const d = _rshSpr.datos || {};
+    const slug = [String(d.tA||'A'), String(d.tB||'B')].join('-').replace(/[^\w-]/g,'');
+    _bajarCanvas(await _rshParCanvas(), `Spread_${slug}_${(d.hasta||'').replace(/-/g,'')}.png`);
+  }catch(e){ alert('No se pudo generar la imagen: ' + e.message); }
 }
 
 // La matriz, arriba del selector de par. Se dibuja sola la primera vez.
@@ -35353,8 +35615,11 @@ function _rshMatrizHtml(){
            : (meses/12).toFixed(1).replace('.',',') + ' años')
         : meses + (meses === 1 ? ' mes' : ' meses');
       const corta = r < 250;
-      const monedas = D.otrasMonedas.length
-        ? ` Se dejaron por fuera las de ${esc(D.otrasMonedas.join(', '))}:
+      // Antes listaba las otras monedas presentes, lo que obligaba a bajar
+      // toda la tabla. La regla es del modulo y no necesita data: en RVL
+      // solo entra COP, en RVI solo USD.
+      const monedas = D.moneda
+        ? ` Solo entran las que cotizan en ${esc(D.moneda)}:
             un ratio entre monedas distintas grafica el dólar, no el valor relativo.` : '';
       if(!corta) return `<div class="field-note" style="margin-bottom:10px;">
         Ventana: <b>${esc(D.desde)} a ${esc(D.hasta)}</b> ·
@@ -35378,33 +35643,51 @@ function _rshMatrizHtml(){
     h += `</div>`;
   }
 
+  // EL CUADRO OCUPA EL ANCHO (Sergio, 06-nov: "tiene un espacio a la
+  // izquierda vacio, deberia cubrir todo el ancho como antes").
+  // --------------------------------------------------------------------
+  // Las celdas eran de 30px fijos: con 31 especies llenaban la pantalla y
+  // con 20 dejaban un hueco. Ahora la tabla es `fixed` al 100% y las
+  // columnas se reparten lo que sobra; el `min-width` conserva el scroll
+  // horizontal de siempre cuando hay muchas.
+  const ANCHO_ETIQ = 104;
+  const minTabla = ANCHO_ETIQ + D.isins.length * 30;
+  // La cabecera va en vertical y estaba clavada en 66px: "CORFICOLCF",
+  // "PFGRUPOARG" y "PFGRUPSURA" salian cortados a media palabra. Se calcula
+  // del nemo mas largo que haya en el cuadro (06-nov).
+  const ALTO_CAB = Math.min(132, Math.max(66,
+    Math.ceil(D.isins.reduce((m,i)=>Math.max(m, String(T(i)||'').length), 0) * 7.2) + 10));
   h += `<div style="overflow:auto;max-height:620px;">
-    <table style="border-collapse:separate;border-spacing:1px;font-size:10.5px;">
+    <table style="border-collapse:separate;border-spacing:1px;font-size:10.5px;
+                  table-layout:fixed;width:100%;min-width:${minTabla}px;">
       <thead><tr>
-        <th style="position:sticky;left:0;top:0;z-index:3;background:var(--bg-1,#0f1320);"></th>
+        <th style="position:sticky;left:0;top:0;z-index:3;background:var(--bg-1,#0f1320);
+                   width:${ANCHO_ETIQ}px;"></th>
         ${D.isins.map(i=>`<th style="position:sticky;top:0;z-index:2;background:var(--bg-1,#0f1320);
              padding:3px 2px;font-weight:600;opacity:.75;white-space:nowrap;
-             writing-mode:vertical-rl;transform:rotate(180deg);height:66px;">${esc(T(i))}</th>`).join('')}
+             writing-mode:vertical-rl;transform:rotate(180deg);
+             height:${ALTO_CAB}px;">${esc(T(i))}</th>`).join('')}
       </tr></thead><tbody>`;
   D.isins.forEach(fi=>{
     h += `<tr><th style="position:sticky;left:0;z-index:1;background:var(--bg-1,#0f1320);
             padding:2px 7px 2px 3px;text-align:right;font-weight:600;opacity:.75;
-            white-space:nowrap;">${esc(T(fi))}</th>`;
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+            width:${ANCHO_ETIQ}px;">${esc(T(fi))}</th>`;
     D.isins.forEach(ci=>{
       if(fi === ci){
-        h += `<td style="width:30px;height:21px;background:var(--bg-2,#161b26);opacity:.45;"></td>`;
+        h += `<td style="height:21px;background:var(--bg-2,#161b26);opacity:.45;"></td>`;
         return;
       }
       const c = D.celdas[fi+'|'+ci];
       if(!c){
         h += `<td title="${esc(T(fi))}/${esc(T(ci))} — sin días suficientes"
-              style="width:30px;height:21px;background:repeating-linear-gradient(45deg,
+              style="height:21px;background:repeating-linear-gradient(45deg,
               transparent,transparent 3px,rgba(148,163,184,.18) 3px,rgba(148,163,184,.18) 6px);"></td>`;
         return;
       }
       h += `<td onclick="rshMtzAbrir('${esc(fi)}','${esc(ci)}')"
             title="${esc(c.tA)}/${esc(c.tB)} · ${c.z>=0?'+':''}${c.z.toFixed(2)} σ · ratio ${c.hoy.toFixed(c.hoy<10?3:2)} · más alto que el ${c.pct}% de ${c.dias} días"
-            style="width:30px;height:21px;cursor:pointer;text-align:center;
+            style="height:21px;cursor:pointer;text-align:center;
                    background:${_rshMtzColor(c.z)};
                    ${Math.abs(c.z) >= 2 ? 'outline:1px solid rgba(255,255,255,.35);outline-offset:-1px;' : ''}">
             ${Math.abs(c.z) >= 1.5 ? (c.z>0?'+':'') + c.z.toFixed(1) : ''}</td>`;
@@ -35444,6 +35727,22 @@ function _rshTablaSpread(){
 
   const caro = d.z >= 1, barato = d.z <= -1;
   const col = caro ? 'var(--sell,#ef4444)' : (barato ? 'var(--buy,#22c55e)' : 'var(--text-1)');
+  // LO QUE ENTRA A LA IMAGEN QUE SE COPIA (Sergio, 06-nov).
+  // El selector de papeles y los botones quedan FUERA: lo que se pega en un
+  // correo o en el chat de Bloomberg no puede tener controles del app.
+  // Lleva su propio encabezado porque, pegada sola, nadie sabe de que par
+  // es ni de que fechas si no lo dice ahi.
+  h += `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+      <button class="btn small purple" onclick="copiarParImagen(this)">Copiar imagen</button>
+      <button class="btn small ghost" onclick="descargarParImagen()">Descargar PNG</button>
+      <span class="field-note">para pegar en un correo o en el chat de Bloomberg</span>
+    </div>
+    <div id="rshParImagen" style="background:var(--bg-0,#0b0e16);padding:12px;border-radius:9px;">
+    <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:9px;">
+      <b style="font-size:15px;">${d.tA} / ${d.tB}</b>
+      <span class="field-note">${d.desde} a ${d.hasta} · ${d.pts.length} ruedas ·
+        ${_esc(d.moneda)} · Credicorp Capital</span>
+    </div>`;
   h += `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
     <div class="card" style="padding:13px 17px;flex:1;min-width:168px;">
       <div style="font-size:11px;opacity:.7;font-weight:700;letter-spacing:.4px;">RATIO HOY</div>
@@ -35465,8 +35764,27 @@ function _rshTablaSpread(){
   </div>`;
 
   h += `<div class="section-label" style="margin:4px 0 8px;">${d.tA} / ${d.tB}
-      · línea punteada = mediana · banda = ±1 desviación</div>`;
-  h += `<div class="panel" style="padding:12px;">` + _rshSpreadSvg(d, 980, 320) + `</div>`;
+      · arriba los dos precios, cada uno en su eje · abajo el ratio con su
+      distribución al lado · línea punteada = mediana</div>`;
+  h += `<div class="panel" style="padding:12px;">
+      ${_rshPreciosSvg(d, 980, 180)}
+      <div class="field-note" style="margin:2px 0 10px;">
+        Son <b>dos escalas distintas</b>: que las líneas se crucen no significa nada.
+        Lo que se mira es la forma — si van juntas o si se abrieron.</div>
+      <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;">
+        <div style="flex:1 1 560px;min-width:320px;">${_rshSpreadSvg(d, 760, 260)}</div>
+        <div style="flex:0 1 210px;min-width:180px;">${_rshHistoSvg(d, 210, 260)}</div>
+        <div style="flex:0 1 236px;min-width:200px;">
+          <div style="font-size:11px;opacity:.7;font-weight:700;letter-spacing:.4px;
+               margin-bottom:2px;">RESUMEN DEL RATIO</div>
+          ${_rshResumenHtml(d)}
+          <div class="field-note" style="margin-top:7px;">
+            La campana naranja es la normal con esta media y esta desviación, puesta
+            de referencia. Si las barras no se le parecen —colas gordas, dos jorobas—
+            eso es justo lo que hay que ver: el σ de arriba queda flojo y el percentil
+            manda.</div>
+        </div>
+      </div></div></div>`;   // cierra #rshParImagen
 
   // La lectura, dicha con los límites que tiene.
   let lectura;
@@ -37334,7 +37652,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-06 17:45 UTC · v333';
+const BUILD_ID = '2026-11-06 20:05 UTC · v336';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
