@@ -30496,6 +30496,48 @@ function resolverPrecioNuestroRVI(clienteLinea, precioEscrito){
     }
   }
 
+  // 2.5) EJECUCION DIRECTA: LA LINEA YA ES NUESTRA (Sergio, 06-nov)
+  // -------------------------------------------------------------------
+  // *"No puedes poner tapon en lineas solo por ser el mismo Nemo, no tiene
+  //  sentido, varios clientes pueden operar misma especie lados iguales y
+  //  cantidades diferentes, o incluso diferentes lado."*
+  //
+  // Cuando se ejecuta DIRECTO a nombre del cliente —Porvenir por chat— la
+  // linea sale con Originating Firm CREDICORP. Esa linea ES nuestra
+  // ejecucion, y lo que se le cobra al cliente se escribe arriba. No hay
+  // nada que buscar en la calle.
+  //
+  // Antes esto vivia abajo (paso 5) condicionado a `!cands.length`, y
+  // `cands` son las lineas nuestras con el MISMO nemo y lado. El 06-nov
+  // Porvenir compro 4.730 ACWI y en el blotter habia otras dos lineas de
+  // ACWI Buy —el error de ejecucion y su cierre—, asi que `cands` valia 2 y
+  // la salida quedaba tapada por lineas que no tenian nada que ver.
+  //
+  // Y PEOR: las dos lineas de 1.290 pasaban por el paso 3 y se tomaban UNA A
+  // LA OTRA como contraparte ("unica coincidencia exacta"), cada una con el
+  // precio de la otra. Eso no frenaba ni avisaba.
+  //
+  // Por eso el bloque sube aca y corta: si la linea es nuestra, los pasos 3
+  // y 4 —que buscan por nemo— no deben correr. Lo que mandan siguen siendo
+  // el vinculo (1) y las lineas marcadas (0 y 2), que son decision de
+  // Sergio y van antes.
+  if(esNuestraLineaRVI(clienteLinea)){
+    const _px  = Number(clienteLinea.avgPr);
+    const _pxE = Number(precioEscrito);
+    if(_px && isFinite(_pxE) && _pxE > 0 && Math.abs(_pxE - _px) > 1e-9){
+      return { precio:_px, fuente:'la propia línea (ejecución directa)',
+               auto:true, candidatas:[], propiaLinea:true,
+               detalle:`${clienteLinea.especie} ${clienteLinea.lado} ` +
+                       `${Number(clienteLinea.qty).toLocaleString('es-CO')} @ ${_px}` +
+                       (clienteLinea.broker ? ' · ' + clienteLinea.broker : '') +
+                       ` — el ${_pxE} escrito es lo que se le da al cliente.` };
+    }
+    // Es nuestra pero falta el precio del cliente. Se devuelve vacio SIN
+    // candidatas: el aviso tiene que pedir el precio, no mandarlo a buscar
+    // una pata que no existe.
+    return { ...vacio };
+  }
+
   // 3) UNA sola línea nuestra que calce en especie, lado y CANTIDAD EXACTA.
   //    La cantidad exacta es lo que la hace inequívoca: el 30-sep había otra
   //    línea de ACWI en la calle (500 acciones, broker JRFE) y la cantidad la
@@ -37734,7 +37776,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-06 22:05 UTC · v338';
+const BUILD_ID = '2026-11-06 23:15 UTC · v339';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
