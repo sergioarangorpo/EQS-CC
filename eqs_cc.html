@@ -1868,6 +1868,17 @@
   </div>
 </div>
 
+<div class="edit-overlay" id="modalErrorRVI" style="align-items:flex-start;">
+  <div class="edit-modal" style="width:min(900px,96vw);margin-top:4vh;max-height:90vh;overflow:auto;">
+    <h3 style="font-size:15px;">Error de ejecución</h3>
+    <div id="errorRVIBody"></div>
+    <div class="edit-actions" style="margin-top:16px;">
+      <button class="btn ghost" onclick="document.getElementById('modalErrorRVI').style.display='none';">Cancelar</button>
+      <button class="btn primary" id="btnGuardarError" onclick="guardarErrorRVI()">Guardar el error</button>
+    </div>
+  </div>
+</div>
+
 <div class="edit-overlay" id="modalVinculoRVI" style="align-items:flex-start;">
 
   <div class="edit-modal" style="width:min(760px,94vw);margin-top:5vh;max-height:88vh;overflow:auto;">
@@ -2128,6 +2139,8 @@
       <span class="field-note" style="width:52px;font-size:12px;font-weight:700;">Alloc</span>
       <button class="btn small ghost modo-rvi" data-modo="espejo" data-val="si" onclick="setModoRVI('espejo','si')"
         title="Nuestras líneas de CCSI se parten igual que las del cliente, para que cada cumplimiento vaya de a uno">Espejo del cliente</button>
+      <button class="btn small ghost" onclick="abrirErrorRVI()"
+        title="Un error de ejecución: se operó algo que no era y hubo que cerrarlo. Las dos patas van al BO contra el broker, y el P&amp;G a la Planilla COP.">Error de ejecución</button>
     </div>
     <span class="field-note" id="modoRviHint" style="flex:1;min-width:200px;"></span>
   </div>
@@ -18663,6 +18676,11 @@ function filasBODeCliente(cliente){
   const kPedido = claveClienteRVI(cliente) || _dashClave(cliente);
   const norm = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
   let ops = historial.filter(h=>{
+    // Los ERRORES DE EJECUCION no son operaciones de cliente: van por
+    // `filasBOErrores`, con el broker en la columna CLIENTE y sin pata
+    // espejo. Si entraran por aca se les armaria la pata del cliente
+    // invertida y saldrian dos veces (Sergio, 06-nov).
+    if(h.esError) return false;
     if(h.cliente === cliente) return true;
     const kHist = claveClienteRVI(h.cliente) || _dashClave(h.cliente);
     if(kPedido && kHist && kPedido === kHist) return true;
@@ -18824,6 +18842,53 @@ function filasBODeCliente(cliente){
   return filas;
 }
 
+// ERRORES DE EJECUCION EN LA PLANILLA DEL BO (Sergio, 06-nov)
+// =====================================================================
+// *"Las líneas deben viajar a la planilla del BO del día, eso tiene
+//  cumplimiento, como no existe cliente se pone el broker contra el que se
+//  cerró, es como si fueran 2 líneas del broker cruzadas, recuerda que
+//  afuera somos posición propia."*
+//
+// UNA FILA POR LINEA, con SU lado de verdad —no se invierte como la pata
+// del cliente— y con SU fecha de cumplimiento, la que traiga cada una.
+//
+// A QUE PLANILLA ENTRAN. Van con el cliente que eligio la cascada, el mismo
+// al que se le suma el P&G en la Planilla COP: asi el error viaja una sola
+// vez y queda al lado del negocio con el que tiene que ver. Un error que no
+// consiguio cliente entra en TODAS, a proposito: preferible verlo repetido
+// que perderlo, y el resumen lo dice.
+function filasBOErrores(clientes){
+  if(typeof historial === 'undefined') return [];
+  const norm = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const pedidos = (clientes||[]).map(norm).filter(Boolean);
+  const fmtF = v => (v && typeof v.getFullYear === 'function') ? v
+                  : (v ? new Date(v) : new Date());
+  return historial.filter(h=>{
+    if(!h.esError) return false;
+    const c = norm(h.errorClienteCOP);
+    if(!c) return true;                        // sin cliente: no se pierde
+    return pedidos.some(p => p === c || p.includes(c) || c.includes(p));
+  }).map(h=>{
+    const qty = Number(h.qty)||0, px = Number(h.price)||0;
+    const gross = redondear(qty * px, 4);
+    // El lado va TAL CUAL se ejecuto. Aca no hay contraparte que invertir:
+    // estas dos lineas son nuestras, una contra cada broker.
+    const lado = String(h.side||'').toUpperCase().startsWith('S') ? 'VENTA' : 'COMPRA';
+    return {
+      'TIPO OP': (typeof tipoOpBO === 'function') ? tipoOpBO(h.isin) : '',
+      'CLIENTE': h.cliente || 'SIN BROKER',
+      'PORTFOLIO': '',
+      'NEMO': h.symbol || '', 'ISIN': h.isin || '', 'PP B/S': lado,
+      'TD': fmtF(h.tradeDate), 'SD': fmtF(h.settleDate),
+      'VLR/NM': qty, 'PL': px,
+      'GROSS AMOUNT': gross, 'COST': 0, 'SEC FEE': 0,
+      'NET AMOUNT': gross,
+      _esError: true,
+      _cliente: h.errorClienteCOP || '',
+    };
+  });
+}
+
 // Las filas de la planilla, separadas de la descarga, para que el botón de
 // correo mande EXACTAMENTE el mismo archivo y no una reconstrucción parecida.
 function filasPlanillaBO(clientes){
@@ -18844,6 +18909,13 @@ function filasPlanillaBO(clientes){
   // UNA sola llamada con la lista completa, no una por cliente: recorrer los
   // negocios N veces no agrega nada y deja la correccion dependiendo de que
   // `filasBORFI` respete el argumento.
+  // Los errores de ejecucion del dia, antes de RFI. Se cuentan aparte en el
+  // resumen para que se vea que ahi hay un error y no una operacion mas.
+  const fERR = (typeof filasBOErrores === 'function') ? filasBOErrores(clientes||[]) : [];
+  if(fERR.length){
+    filas = filas.concat(fERR);
+    resumen.push({ cliente:'ERRORES DE EJECUCIÓN', n:fERR.length });
+  }
   const fRFI = (typeof filasBORFI === 'function') ? filasBORFI(clientes||[]) : [];
   if(fRFI.length){
     filas = filas.concat(fRFI);
@@ -21593,8 +21665,44 @@ function filasPlanillaCOP(){
       liquidacion:parseFechaLocal(hoy), cumplimiento:sumarDiasHabiles(parseFechaLocal(hoy),2,'CO') });
   });
 
+  // ---- ERRORES DE EJECUCION: el P&G se suma al margen de UNA linea ----
+  // Sergio, 06-nov: el error no tiene cliente, pero la Planilla COP exige
+  // uno. Se le suma al margen de la linea del cliente que eligio la cascada
+  // —misma especie, y de esas la de la misma cantidad; si no, la de mayor
+  // volumen— en vez de crear una linea nueva.
+  //
+  // Se precalcula un mapa linea -> P&G para que el P&G entre UNA sola vez:
+  // sumarlo dentro del bucle, por cada linea que casara, lo multiplicaria.
+  const _normE = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const _pygErr = {};
+  (historial||[]).filter(e => e.esError && e.errorLider && Number(e.errorPyg))
+    .forEach(e=>{
+      const cli = _normE(e.errorClienteCOP);
+      const esp = _normE(e.symbol);
+      if(!cli){
+        faltan.push(`Error de ${e.symbol} — no tiene cliente al que sumarle el P&G ` +
+                    `(USD ${Number(e.errorPyg).toFixed(2)}). Asignalo a mano.`);
+        return;
+      }
+      const cands = (historial||[]).filter(x =>
+        !x.esError && _normE(x.symbol) === esp &&
+        (_normE(x.cliente) === cli || _normE(x.cliente).includes(cli) || cli.includes(_normE(x.cliente))));
+      if(!cands.length){
+        faltan.push(`Error de ${e.symbol} — ${e.errorClienteCOP} no tiene ninguna línea ` +
+                    `de esa especie hoy para sumarle el P&G (USD ${Number(e.errorPyg).toFixed(2)}).`);
+        return;
+      }
+      const exactas = cands.filter(x => Number(x.qty) === Number(e.errorQCerrada));
+      const destino = exactas.length ? exactas[0]
+                    : cands.slice().sort((a,b)=>Number(b.qty)-Number(a.qty))[0];
+      _pygErr[destino.id] = (_pygErr[destino.id] || 0) + Number(e.errorPyg);
+    });
+
   // ---- RVI: la utilidad, pasada a pesos ----
   (historial||[]).forEach(h=>{
+    // Las lineas del error no son operaciones de cliente: su "cliente" es el
+    // broker, no esta en el presupuesto, y su P&G ya viaja sumado arriba.
+    if(h.esError) return;
     const q = Number(h.qty)||0, px = Number(h.price)||0;
     if(!q || !px) return;
     if(!trm){ faltan.push(`${h.cliente} ${h.symbol} — falta la TRM para pasar la comisión a pesos`); return; }
@@ -21614,7 +21722,9 @@ function filasPlanillaCOP(){
                   `(reporte USD ${(Number(_rep.comision)||0).toFixed(2)} · planilla USD ${(Number(h.cost)||0).toFixed(2)})`);
       return;
     }
-    const utilUSD = (Number(h.cost)||0) + margen - (Number(h.ccsi)||0);
+    // + el P&G de los errores que le tocan a ESTA linea (ver el mapa arriba)
+    const utilUSD = (Number(h.cost)||0) + margen - (Number(h.ccsi)||0)
+                  + (Number(_pygErr[h.id]) || 0);
     // EL 50% ES DE AAR. Regla de Sergio: "En RVI y RFI el 50% de la comision
     // es de SAR y el 50% de AAR (Andres Agudelo)", que esta en otra mesa.
     // Hasta hoy entraba el 100% y Sergio lo corregia A MANO en cada planilla
@@ -30608,6 +30718,298 @@ function resolverPrecioNuestroRVI(clienteLinea, precioEscrito){
   return { ...vacio, candidatas:cands };
 }
 
+// =====================================================================
+// ERROR DE EJECUCION (Sergio, 06-nov)
+// =====================================================================
+// *"Necesitamos agregar un botón de errores, donde pueda escoger varias
+//  lineas al mismo tiempo... no tiene que dar utilidad, no tiene que dar
+//  pérdida, puede ser cualquier cosa, es un error, en general se pierde."*
+//
+// QUE ES. Se opero algo que no era —el 06-nov se vendieron 1.290 ACWI que
+// eran compra— y hubo que salir a cerrarlo. Afuera somos POSICION PROPIA:
+// no hay cliente, simplemente se compro y se vendio algo y queda un P&G.
+//
+// LAS REGLAS, dichas por el:
+//   1. misma especie, siempre: hay que cerrar la posicion
+//   2. tiene que haber compra Y venta
+//   3. el P&G puede ser cualquier cosa, tambien cero
+//   4. al BO van DOS FILAS, una por linea, cada una con SU broker
+//   5. a la Planilla COP va el P&G como margen, con el cliente que salga
+//      de la cascada: misma cantidad -> quien opero la especie -> el de
+//      mayor volumen
+//
+// Y LA MAS IMPORTANTE: *"yo voy a escoger las líneas que fueron error,
+// puede sugerir, asociar pero la decisión final es mía."* Por eso aca se
+// SUGIERE y nada mas. El 06-nov la sugerencia obvia era cerrar JRFE contra
+// JRFE, y Sergio eligio Flow Traders a proposito, para no quedar con un
+// loop de cumplimiento el lunes. El app no sabe eso y no tiene por que.
+let _rviErrorSel = new Set();
+
+function _rviErrorLineas(){
+  const d = (typeof emsxData !== 'undefined' ? emsxData : []);
+  return [..._rviErrorSel].map(id => d.find(r=>r.id===id)).filter(Boolean);
+}
+
+// SUGERENCIA, no decision: lado contrario, misma especie, misma cantidad y
+// cerca en el tiempo. Se propone el par mas obvio y Sergio lo cambia.
+function _rviErrorSugerencia(){
+  const d = (typeof emsxData !== 'undefined' ? emsxData : []).filter(r=>Number(r.qty)>0);
+  const esV = r => /^s/i.test(String(r.lado||''));
+  let mejor = null;
+  d.forEach(a=>{
+    d.forEach(b=>{
+      if(a.id === b.id) return;
+      if(String(a.especie) !== String(b.especie)) return;
+      if(esV(a) === esV(b)) return;                       // uno compra, otro vende
+      if(Number(a.qty) !== Number(b.qty)) return;         // misma cantidad
+      const t = x => { const m = /(\d{1,2}):(\d{2})/.exec(String(x.hora||''));
+                       return m ? Number(m[1])*60 + Number(m[2]) : null; };
+      const ta = t(a), tb = t(b);
+      const dist = (ta != null && tb != null) ? Math.abs(ta-tb) : 999;
+      // BROKERS DISTINTOS PRIMERO (Sergio, 06-nov): *"Lo sugerido que no sea
+      // contra el mismo broker para evitar loop, en este caso sería JRFE vs
+      // FLWU."* Cerrar JRFE contra JRFE deja un enredo de cumplimiento el
+      // dia que todo liquida. Pesa MAS que la cercania en el tiempo: entre
+      // dos pares igual de cercanos gana el de brokers distintos, y entre
+      // dos con brokers distintos gana el mas cercano.
+      const bA = String(a.broker||'').trim().toUpperCase();
+      const bB = String(b.broker||'').trim().toUpperCase();
+      const mismoBrk = !!bA && bA === bB;
+      const puntaje = (mismoBrk ? 100000 : 0) + dist;
+      if(!mejor || puntaje < mejor.puntaje)
+        mejor = { ids:[a.id,b.id], dist, puntaje, mismoBrk };
+    });
+  });
+  return mejor ? mejor.ids : [];
+}
+
+// El estado del grupo elegido: que falta, cuanto da, y si quedo abierto.
+function _rviErrorEstado(){
+  const ls = _rviErrorLineas();
+  const esV = r => /^s/i.test(String(r.lado||''));
+  const compras = ls.filter(r=>!esV(r)), ventas = ls.filter(esV);
+  const qC = compras.reduce((a,r)=>a+(Number(r.qty)||0),0);
+  const qV = ventas.reduce((a,r)=>a+(Number(r.qty)||0),0);
+  const pxC = qC ? compras.reduce((a,r)=>a+(Number(r.qty)||0)*(Number(r.avgPr)||0),0)/qC : 0;
+  const pxV = qV ? ventas.reduce((a,r)=>a+(Number(r.qty)||0)*(Number(r.avgPr)||0),0)/qV : 0;
+  const especies = [...new Set(ls.map(r=>String(r.especie||'')))];
+  // Lo que de verdad se cerro es lo que se cruzo. Si no calza, el resto
+  // queda ABIERTO: Sergio dijo que eso pasa y que hay que poder guardarlo.
+  const qCerrada = Math.min(qC, qV);
+  const pyg = qCerrada * (pxV - pxC);
+  const avisos = [];
+  if(ls.length < 2) avisos.push('Elegí al menos dos líneas: la equivocada y la de cierre.');
+  if(especies.length > 1)
+    avisos.push(`Hay ${especies.length} especies (${especies.join(', ')}). Un error es de UNA sola: hay que cerrar esa posición.`);
+  if(ls.length >= 2 && (!compras.length || !ventas.length))
+    avisos.push('Falta una pata: tiene que haber compra y venta.');
+  return { ls, compras, ventas, qC, qV, pxC, pxV, qCerrada, pyg,
+           especie: especies[0] || '', especies, avisos,
+           abierto: qC !== qV, saldo: qC - qV,
+           listo: ls.length >= 2 && especies.length === 1 && !!compras.length && !!ventas.length };
+}
+
+// EL CLIENTE QUE SE LE PONE EN LA PLANILLA COP. La planilla exige cliente y
+// el error no tiene: se busca, en este orden, quien opero ESA especie con
+// LA MISMA cantidad, si no cualquiera que la haya operado, y si hay varios
+// el del volumen mas grande (Sergio, 06-nov).
+function _rviErrorClienteCOP(especie, cantidad){
+  const h = (typeof historial !== 'undefined' ? historial : []);
+  const norm = t => String(t||'').toUpperCase().trim();
+  const mismos = h.filter(x => norm(x.symbol) === norm(especie));
+  if(!mismos.length) return { cliente:'', razon:'nadie operó esa especie hoy' };
+  const exactos = mismos.filter(x => Number(x.qty) === Number(cantidad));
+  if(exactos.length === 1)
+    return { cliente: exactos[0].cliente, razon:`operó ${especie} por la misma cantidad` };
+  const porCli = {};
+  (exactos.length ? exactos : mismos).forEach(x=>{
+    const c = x.cliente || '—';
+    porCli[c] = (porCli[c] || 0) + (Number(x.qty) || 0);
+  });
+  const orden = Object.keys(porCli).sort((a,b)=>porCli[b]-porCli[a]);
+  if(orden.length === 1)
+    return { cliente: orden[0], razon:`es el único que operó ${especie} hoy` };
+  return { cliente: orden[0],
+           razon: `${orden.length} clientes operaron ${especie}; va al de mayor volumen ` +
+                  `(${Number(porCli[orden[0]]).toLocaleString('es-CO')})` };
+}
+
+function abrirErrorRVI(){
+  const d = (typeof emsxData !== 'undefined' ? emsxData : []);
+  if(!d.length){ alert('No hay líneas en el blotter.'); return; }
+  if(!_rviErrorSel.size){
+    const sug = _rviErrorSugerencia();
+    sug.forEach(id=>_rviErrorSel.add(id));
+  }
+  _rviErrorPintar();
+  document.getElementById('modalErrorRVI').style.display = 'flex';
+}
+function rviErrorToggle(id){
+  const n = Number(id);
+  if(_rviErrorSel.has(n)) _rviErrorSel.delete(n); else _rviErrorSel.add(n);
+  _rviErrorPintar();
+}
+
+async function guardarErrorRVI(){
+  const E = _rviErrorEstado();
+  if(!E.listo){ alert('Faltan cosas:\n\n' + E.avisos.join('\n')); return; }
+  const cop = _rviErrorClienteCOP(E.especie, E.qCerrada);
+  const n2 = v => Number(v).toLocaleString('es-CO',{minimumFractionDigits:2, maximumFractionDigits:2});
+  if(!cop.cliente && !confirm(
+      `No hay a quién sumarle el P&G en la Planilla COP: ${cop.razon}.\n\n` +
+      'Las dos filas del BO sí quedan. ¿Guardo igual?')) return;
+  const txt =
+    `${E.especie} — error de ejecución\n\n` +
+    `   Cerrado: ${E.qCerrada.toLocaleString('es-CO')} acciones\n` +
+    `   Compra prom. ${n2(E.pxC)}  ·  Venta prom. ${n2(E.pxV)}\n` +
+    `   P&G: USD ${E.pyg >= 0 ? '+' : ''}${n2(E.pyg)}\n\n` +
+    (E.abierto ? `   QUEDA ABIERTO: ${Math.abs(E.saldo).toLocaleString('es-CO')} ` +
+                 `${E.saldo > 0 ? 'comprados de más' : 'vendidos sin cerrar'}\n\n` : '') +
+    `   Al BO: ${E.ls.length} filas, cada una con su broker\n` +
+    (cop.cliente ? `   A Planilla COP: suma al margen de ${cop.cliente}\n` : '') +
+    `\n¿Lo guardo?`;
+  if(!confirm(txt)) return;
+
+  const grupo = 'ERR' + Date.now();
+  const hoyD = new Date();
+  const tdVal = (document.getElementById('tc-trade-date')||{}).value;
+  const tradeDate = tdVal ? parseFechaLocal(tdVal) : hoyD;
+  // El ISIN se toma de lo que ya se registro hoy de esa especie; si no hay,
+  // queda vacio y el BO lo completa. No se inventa.
+  const hIsin = (typeof historial !== 'undefined' ? historial : [])
+    .find(h => String(h.symbol||'').toUpperCase() === String(E.especie||'').toUpperCase());
+  const isin = hIsin ? (hIsin.isin || '') : '';
+
+  E.ls.forEach((r, k) => {
+    const qty = Number(r.qty) || 0, px = Number(r.avgPr) || 0;
+    const gross = redondear(qty * px, 4);
+    historial.unshift({
+      id: grupo + '-' + k + Math.random(),
+      emsxId: r.id,
+      hora: r.hora || '',
+      // EL "CLIENTE" DEL BO ES EL BROKER. Afuera somos posicion propia: no
+      // hay cliente, simplemente se compro y se vendio algo contra alguien.
+      cliente: String(r.broker || '').trim() || 'SIN BROKER',
+      account: '',
+      side: r.lado, symbol: E.especie, isin,
+      qty, price: px, gross, cost: 0, secFee: 0, net: gross,
+      // cada pata con SU fecha de cumplimiento, la que traiga
+      tradeDate, settleDate: r.settleDate || null,
+      broker: r.broker || '',
+      // ---- lo que lo marca como error ----
+      esError: true,
+      errorId: grupo,
+      // El P&G va UNA sola vez, en la fila lider: si fuera en las dos, la
+      // Planilla COP lo sumaria dos veces.
+      errorPyg: k === 0 ? E.pyg : 0,
+      errorLider: k === 0,
+      errorAbierto: E.abierto, errorSaldo: E.saldo,
+      errorQCerrada: E.qCerrada,
+      // A quien se le suma el margen en la Planilla COP, y por que. La razon
+      // se guarda para que meses despues se sepa de donde salio ese cliente.
+      errorClienteCOP: cop.cliente || '',
+      errorRazonCOP: cop.razon || '',
+    });
+  });
+  try{ await guardarHistoricoRVI(); }
+  catch(e){ console.warn('guardar histórico (error de ejecución):', e.message); }
+  _rviErrorSel = new Set();
+  document.getElementById('modalErrorRVI').style.display = 'none';
+  if(typeof renderHistorial === 'function') renderHistorial();
+  if(typeof renderDashboard === 'function') renderDashboard();
+}
+
+function _rviErrorPintar(){
+  const esc0 = (typeof _esc === 'function') ? _esc : (x=>String(x==null?'':x));
+  const E = _rviErrorEstado();
+  const d = (typeof emsxData !== 'undefined' ? emsxData : []);
+  const esV = r => /^s/i.test(String(r.lado||''));
+  const n2 = v => Number(v).toLocaleString('es-CO',{minimumFractionDigits:2, maximumFractionDigits:2});
+  const sug = new Set(_rviErrorSugerencia());
+
+  // Solo las especies que tienen compra Y venta pueden ser un error. El
+  // resto del blotter no se muestra: es ruido y da clics equivocados.
+  const porEsp = {};
+  d.forEach(r=>{ const k = String(r.especie||'');
+    if(!porEsp[k]) porEsp[k] = { c:0, v:0 };
+    if(Number(r.qty) > 0) porEsp[k][esV(r) ? 'v' : 'c']++; });
+  const candidatas = d.filter(r => Number(r.qty) > 0 &&
+    porEsp[String(r.especie||'')] && porEsp[String(r.especie||'')].c && porEsp[String(r.especie||'')].v);
+
+  const filas = (candidatas.length ? candidatas : d).map(r=>`
+    <tr style="${_rviErrorSel.has(r.id)?'background:rgba(239,68,68,.10);':''}">
+      <td style="text-align:center;"><input type="checkbox" ${_rviErrorSel.has(r.id)?'checked':''}
+            onchange="rviErrorToggle(${r.id})"></td>
+      <td>${esc0(r.hora||'')}</td>
+      <td class="mono-id">${esc0(r.especie||'')}</td>
+      <td style="color:${esV(r)?'var(--sell,#ef4444)':'var(--buy,#22c55e)'};font-weight:600;">
+        ${esV(r)?'Venta':'Compra'}</td>
+      <td class="num">${Number(r.qty||0).toLocaleString('es-CO')}</td>
+      <td class="num">${(typeof fmtRateRVI === 'function')
+            ? fmtRateRVI(r.avgPr, 4) : Number(r.avgPr||0).toFixed(4)}</td>
+      <td class="mono-id">${esc0(r.broker||'—')}</td>
+      <td>${sug.has(r.id) ? '<span style="font-size:10.5px;opacity:.75;">sugerida</span>' : ''}</td>
+    </tr>`).join('');
+
+  let resumen = '';
+  if(E.listo){
+    const col = E.pyg >= 0 ? 'var(--buy,#22c55e)' : 'var(--sell,#ef4444)';
+    const cop = _rviErrorClienteCOP(E.especie, E.qCerrada);
+    resumen = `
+      <div class="card" style="padding:12px 15px;margin-top:11px;">
+        <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;">
+          <div><span class="field-note">Cerrado</span><br>
+            <b style="font-size:17px;">${E.qCerrada.toLocaleString('es-CO')}</b>
+            <span class="field-note">${esc0(E.especie)}</span></div>
+          <div><span class="field-note">Compra prom.</span><br>
+            <b style="font-size:17px;">${n2(E.pxC)}</b></div>
+          <div><span class="field-note">Venta prom.</span><br>
+            <b style="font-size:17px;">${n2(E.pxV)}</b></div>
+          <div><span class="field-note">P&amp;G del error</span><br>
+            <b style="font-size:19px;color:${col};">USD ${E.pyg>=0?'+':''}${n2(E.pyg)}</b></div>
+        </div>
+        <div class="field-note" style="margin-top:9px;">
+          Al <b>BO</b> van ${E.ls.length} fila(s), una por línea, cada una con su broker y su
+          fecha de cumplimiento. No llevan cliente: afuera somos posición propia.
+        </div>
+        <div class="field-note" style="margin-top:5px;">
+          A la <b>Planilla COP</b> el P&amp;G se suma al margen de
+          ${cop.cliente ? `<b>${esc0(cop.cliente)}</b> — ${esc0(cop.razon)}`
+                        : '<b style="color:var(--warn,#f59e0b);">ningún cliente: ' + esc0(cop.razon) + '</b>'}.
+        </div>
+      </div>`;
+  }
+  const avisos = E.avisos.map(a=>`
+    <div class="field-note" style="margin-top:7px;padding:6px 9px;border-radius:6px;
+         background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.45);">${esc0(a)}</div>`).join('');
+  // ABIERTO NO ES UN ERROR DEL APP. Sergio: *"Si pasa, es ideal que puedas
+  // hacer eso, avanza."* Se vendio por error y no se alcanzo a cerrar: el
+  // P&G es el de la parte cruzada y el saldo queda vivo para el otro dia.
+  const abierto = (E.listo && E.abierto) ? `
+    <div class="field-note" style="margin-top:7px;padding:6px 9px;border-radius:6px;
+         background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);">
+      <b style="color:var(--warn,#f59e0b);">Queda abierto:</b>
+      ${Math.abs(E.saldo).toLocaleString('es-CO')} ${esc0(E.especie)}
+      ${E.saldo > 0 ? 'comprados de más' : 'vendidos y sin cerrar'}.
+      El P&amp;G de arriba es solo de lo que sí se cruzó. Se puede guardar igual.
+    </div>` : '';
+
+  document.getElementById('errorRVIBody').innerHTML = `
+    <div class="field-note" style="margin-bottom:10px;">
+      Marcá las líneas que fueron el error: la equivocada y la de cierre.
+      <b>Misma especie</b>, y tiene que haber compra y venta.
+      La sugerencia es solo eso — la decisión es tuya.
+    </div>
+    <div class="blotter-wrap" style="max-height:300px;overflow:auto;"><table>
+      <thead><tr><th></th><th>Hora</th><th>Especie</th><th>Lado</th>
+        <th class="num">Qty</th><th class="num">Precio</th><th>Broker</th><th></th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table></div>
+    ${avisos}${abierto}${resumen}`;
+  const b = document.getElementById('btnGuardarError');
+  if(b) b.disabled = !E.listo;
+}
+
 // Abre el modal para elegir cuáles líneas de afuera (CCSI) se vinculan a la
 // línea de cliente activa. Valida que la suma sea EXACTA a la del cliente.
 function abrirVinculoRVI(){
@@ -37776,7 +38178,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-06 23:15 UTC · v339';
+const BUILD_ID = '2026-11-07 00:30 UTC · v340';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
