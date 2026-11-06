@@ -24403,18 +24403,49 @@ function armarAllocCustodio(cliente, filas){
     porEspecie[k].filas.push(f);
   });
 
+  // CONTRA QUE LINEA SE ARQUEA EL ALLOCATION (Sergio, 06-nov)
+  // -------------------------------------------------------------------
+  // Aca habia un `.find()` que se quedaba con la PRIMERA linea de ese
+  // ticker y lado, fuera de quien fuera. El 06-nov habia dos de SPYM Buy:
+  // la de Proteccion por 294.613 —que es la del cliente y la que el
+  // allocation tiene que cuadrar— y una NUESTRA por 51.613, el tramo que
+  // se hizo aparte para sacarle margen. Agarro la nuestra y aviso de una
+  // "diferencia de 243.000" que no existia: el allocation estaba perfecto.
+  //
+  // El allocation es DEL CLIENTE, asi que se busca la linea del cliente.
+  // En ese orden: la que es suya por Originating Firm; si no, la que calza
+  // en cantidad —el caso de la ejecucion directa, donde la linea sale a
+  // nombre de Credicorp—; si no, cualquiera que no sea nuestra; y de
+  // ultimo la primera, que es lo que hacia antes.
+  const _limC = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const _esDelCliente = r => {
+    const c = (typeof clienteRVIporFirm === 'function') ? clienteRVIporFirm(r.firm) : null;
+    return !!c && _limC(c) === _limC(cliente);
+  };
   const cruces = Object.values(porEspecie).map(g=>{
-    const ln = (typeof emsxData !== 'undefined' ? emsxData : []).find(r=>
+    const cands = (typeof emsxData !== 'undefined' ? emsxData : []).filter(r=>
       tickerLimpioRVI(r.especie) === g.ticker &&
       String(r.lado||'').toUpperCase() === g.lado.toUpperCase());
+    const ln = cands.find(_esDelCliente)
+            || cands.find(r => Math.abs((Number(r.qty)||0) - g.qty) < 0.5)
+            || cands.find(r => typeof esNuestraLineaRVI === 'function' && !esNuestraLineaRVI(r))
+            || cands[0] || null;
     const qEmsx = ln ? (Number(ln.qty) || Number(ln.filled) || 0) : null;
     if(!ln){
       avisos.push(`${g.ticker} ${g.lado}: no encontré línea de EMSX. ` +
                   'Se usa el precio del cliente, o sea margen cero.');
     }else if(qEmsx && Math.abs(qEmsx - g.qty) > 0.5){
+      // Si hay OTRAS lineas del mismo ticker y lado, se nombran: casi
+      // siempre la diferencia se explica porque la orden se partio.
+      const otras = cands.filter(r => r !== ln && Number(r.qty) > 0);
       avisos.push(`${g.ticker} ${g.lado}: el allocation suma ${g.qty.toLocaleString()} ` +
                   `y la línea de EMSX tiene ${qEmsx.toLocaleString()}. ` +
-                  `Diferencia de ${Math.abs(qEmsx-g.qty).toLocaleString()}.`);
+                  `Diferencia de ${Math.abs(qEmsx-g.qty).toLocaleString()}.` +
+                  (otras.length
+                    ? ` Hay ${otras.length} línea(s) más de ${g.ticker} ${g.lado} ` +
+                      `(${otras.map(r=>Number(r.qty).toLocaleString()).join(', ')}): ` +
+                      `si la orden se partió, armá nuestra ejecución en Vincular.`
+                    : ''));
     }
     return { ...g, ln, qEmsx };
   });
@@ -38328,7 +38359,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-07 01:10 UTC · v341';
+const BUILD_ID = '2026-11-07 01:45 UTC · v342';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
