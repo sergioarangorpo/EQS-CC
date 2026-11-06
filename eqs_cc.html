@@ -35018,10 +35018,30 @@ async function rshCargarMatriz(){
     const isins = (porMoneda[moneda] || [])
       .filter(i => !permitidos || permitidos.has(_rshTickerPelado(series[i].ticker)))
       .sort((x,y)=> String(series[x].ticker).localeCompare(String(series[y].ticker)));
+
+    // MARCADA PERO SIN PRECIO: el silencio peligroso.
+    // -----------------------------------------------------------------
+    // `fueraDelUniverso` cuenta las que TIENEN precio y no estan en la
+    // lista. Al reves no se veia: un nemo marcado que la base no conoce
+    // -porque esta escrito distinto, p.ej. CORFICOL contra CORFICOLCF, o
+    // porque la especie no tiene historia- simplemente no aparecia, y el
+    // cuadro se veia perfecto con una accion menos. Eso es justo lo que la
+    // REGLA DE ORO no perdona: que algo se pierda sin ruido.
+    const conPrecio = new Set((porMoneda[moneda]||[])
+      .map(i => _rshTickerPelado(series[i].ticker)));
+    const sinPrecio = permitidos
+      ? [...permitidos].filter(n => n && !conPrecio.has(n)).sort()
+      : [];
+
     if(isins.length < 2){
       _rshMtz.datos = null; _rshMtz.crudo = null; _rshMtz.modulo = _rshModulo;
       _rshMtz.msg = `No hay suficientes especies en ${moneda} para armar la matriz de `
-                  + `${_rshModulo}` + (permitidos ? ' dentro del universo del informe.' : '.');
+                  + `${_rshModulo}` + (permitidos ? ' dentro del universo del informe.' : '.')
+                  + (sinPrecio.length
+                      ? ` Estas ${sinPrecio.length} estan en la lista pero la base no tiene `
+                        + `precio en ${moneda} para ellas: ${sinPrecio.join(', ')}. `
+                        + `Revisá que el nemo esté escrito igual que en la base.`
+                      : '');
     }else{
       _rshMtz.modulo = _rshModulo;
       const todas = [].concat(...isins.map(i=>series[i].fechas));
@@ -35031,6 +35051,7 @@ async function rshCargarMatriz(){
         fueraDelUniverso: permitidos
           ? (porMoneda[moneda]||[]).filter(i=>!permitidos.has(_rshTickerPelado(series[i].ticker))).length
           : 0,
+        sinPrecio,
         otrasMonedas: Object.keys(porMoneda).filter(m=>m !== moneda),
         topeDesde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
         topeHasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '' };
@@ -35070,6 +35091,7 @@ function _rshMtzRecalcular(){
     modulo: C.modulo || '', delUniverso: C.delUniverso || 0,
     avisoUniverso: C.avisoUniverso || '',
     fueraDelUniverso: C.fueraDelUniverso || 0,
+    sinPrecio: C.sinPrecio || [],
     enConflicto: C.enConflicto || [], colapsados: C.colapsados || 0,
     desde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
     hasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '',
@@ -35307,6 +35329,13 @@ function _rshMatrizHtml(){
          border:1px solid rgba(245,158,11,.45);">
         <b style="color:var(--warn,#f59e0b);">Sin universo acotado.</b>
         ${D.avisoUniverso}</div>` : ''}
+    ${(D.sinPrecio && D.sinPrecio.length) ? `<div class="field-note" style="margin-bottom:10px;
+         padding:7px 10px;border-radius:6px;background:rgba(239,68,68,.12);
+         border:1px solid rgba(239,68,68,.45);">
+        <b style="color:var(--bad,#ef4444);">${D.sinPrecio.length} del universo no están en el
+        cuadro porque la base no tiene precio en ${esc(D.moneda)} para ellas:</b>
+        ${esc(D.sinPrecio.join(', '))}. O el nemo está escrito distinto en
+        <code>calendario_universo</code>, o esa especie no tiene historia cargada.</div>` : ''}
     ${D.fueraDelUniverso ? `<div class="field-note" style="margin-bottom:10px;">
         ${D.fueraDelUniverso} especie(s) con precio en ${esc(D.moneda)} quedaron fuera del
         cuadro por no estar en el universo del informe de ${esc(D.modulo)}. Siguen en la base
@@ -37305,7 +37334,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-06 17:10 UTC · v332';
+const BUILD_ID = '2026-11-06 17:45 UTC · v333';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
