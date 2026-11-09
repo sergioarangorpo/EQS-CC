@@ -1623,9 +1623,10 @@
           </div>
           <div class="field">
             <label>Fecha cumplimiento</label>
-            <input type="date" id="fechaCumplimiento" onchange="recalcularTodo()">
+            <input type="date" id="fechaCumplimiento" onchange="onCambioFechaCumplimiento()">
           </div>
         </div>
+        <div class="footer-note" id="notaCumplOrden" style="display:none;"></div>
 
         <div class="footer-note">Genera <b>Operaciones_CLIENTE</b> (resumen por portafolio) y agrega al <b>Detalle_operaciones_CLIENTE</b> (folio a folio, acumulado del día). Usa el botón <b>Generar reporte</b> de arriba.</div>
       </div>
@@ -6867,7 +6868,11 @@ async function generarExcelGenericoEquity(nombreCliente, filasEquity, fileBase, 
     const iva = redondear(_ivaFila(f, comision), 2);
     const neto = redondear(f.lado === 'Compra' ? gross + comision + iva : gross - comision - iva, 2);
     ws.getCell(`B${r}`).value = fileBase.tdTxt;
-    ws.getCell(`C${r}`).value = fileBase.sdTxt;
+    // EL CUMPLIMIENTO ES DE LA FILA, NO DEL ARCHIVO (Sergio, 09-nov).
+    // Antes acá iba `fileBase.sdTxt` para todas: el 09-nov CAXDAC tuvo el
+    // cruce a T+0 y el VWAP a T+2 y hubo que corregir el Excel a mano. Si la
+    // fila no trae fecha propia cae al del archivo, que es lo de siempre.
+    ws.getCell(`C${r}`).value = f.fechaCum ? fmtFechaCorta(f.fechaCum) : fileBase.sdTxt;
     ws.getCell(`D${r}`).value = f.lado === 'Compra' ? 'Buy' : 'Sell';
     ws.getCell(`E${r}`).value = f.portNombre;
     ws.getCell(`F${r}`).value = f.especie;
@@ -10749,9 +10754,105 @@ let allocations = [];
 // propio allocation, y al cambiar de orden (zoom) no se pierde el anterior.
 // { [parentOrderId]: [{portId, cantidad}] }
 let _allocPorOrden = {};
+// CUMPLIMIENTO POR ORDEN (Sergio, 09-nov): *"Las fechas se atan a la línea
+// que se esté llenando."*
+// ---------------------------------------------------------------------
+// El 09-nov CAXDAC tuvo dos órdenes con cumplimientos distintos: el cruce de
+// 270.000 ICOLCAP a T+0 y el VWAP de 122.000 a T+2. El reporte leía UNA sola
+// fecha del panel y la estampaba en todas las filas, así que hubo que
+// corregir el archivo a mano.
+//
+// Este store es el gemelo de `_allocPorOrden`: misma llave (Parent Order ID),
+// misma vida. { [parentOrderId]: 'YYYY-MM-DD' }
+//
+// ARRANCA VACÍO A PROPÓSITO. Una orden que no esté acá cae al valor del
+// panel, que es exactamente lo que pasa hoy: si nadie toca el selector con
+// una orden marcada, el archivo sale idéntico al de siempre. Eso es lo que
+// deja que esto entre sin tocar a ALLIANZ, FIDU BANCOLOMBIA, BTG, AVAL ni
+// FIDUASHMORE, que comparten este generador.
+//
+// Y el `Notes` NO se interpreta, aunque el 09-nov dijera "WOULD T+0" en las
+// dos puntas del cruce. Sergio: *"eso inclinaría a marcarlos T+0 y no es una
+// opción de fondo, eso podría o no podría llegar."* En 3.319 notas de nueve
+// días ese texto aparece 2 veces, las dos de ese día: no es una convención,
+// es texto libre.
+let _cumplPorOrden = {};
 // La orden actualmente enfocada (única en zoom). Si el zoom tiene 0 o varias
 // órdenes, no hay "orden activa" para editar reparto (se pide enfocar una).
 let _ordenActiva = null;
+
+// El cumplimiento que le corresponde a una orden: el suyo si lo tiene, y si
+// no el del panel. Un solo camino, para que el Excel, el registro, el COR y
+// la planilla no puedan decir cosas distintas.
+function _cumplDeOrden(poid){
+  const propio = _cumplPorOrden[String(poid)];
+  if(propio) return propio;
+  const el = document.getElementById('fechaCumplimiento');
+  return (el && el.value) ? el.value : '';
+}
+
+// Lo contrario: pegarle al panel la fecha de la orden que se está llenando.
+// Si esa orden no tiene fecha propia, el panel se queda como está — no se
+// pisa lo que Sergio acabe de escribir.
+function _pintarCumplDeOrden(poid){
+  const el = document.getElementById('fechaCumplimiento');
+  if(!el) return;
+  const propio = poid ? _cumplPorOrden[String(poid)] : null;
+  if(propio) el.value = propio;
+}
+
+// Se llama desde el `onchange` del selector: la fecha se ata a la línea que
+// se esté llenando. Sin orden activa no se ata a nada y sigue siendo global,
+// que es el comportamiento de siempre.
+function onCambioFechaCumplimiento(){
+  const el = document.getElementById('fechaCumplimiento');
+  if(el && el.value && _ordenActiva) _cumplPorOrden[String(_ordenActiva)] = el.value;
+  _pintarNotaCumpl();
+  if(typeof renderFidessaTradesPanel === 'function') renderFidessaTradesPanel();
+  recalcularTodo();
+}
+
+// El letrero debajo del selector: a qué orden se le está atando la fecha, o
+// que se está aplicando a todas. Sin esto no hay forma de saber cuál de las
+// dos cosas está pasando, y son muy distintas.
+function _pintarNotaCumpl(){
+  const nota = document.getElementById('notaCumplOrden');
+  if(!nota) return;
+  const propias = Object.keys(_cumplPorOrden).length;
+  if(_ordenActiva){
+    const _n = _tMasDeOrden(_ordenActiva);
+    nota.style.display = '';
+    nota.innerHTML = `Esta fecha queda atada a la orden <b class="mono-id">${_ordenActiva}</b>`
+      + (_n == null ? '' : ` (<b>T+${_n}</b>)`) + '. Las demás órdenes conservan la suya.';
+  }else if(propias){
+    nota.style.display = '';
+    nota.innerHTML = `Sin una orden marcada, esta fecha es la de todas las que `
+      + `<b>no</b> tengan la suya. ${propias} orden(es) tienen cumplimiento propio — `
+      + `se ven con su chip en Fidessa Trades.`;
+  }else{
+    nota.style.display = 'none';
+    nota.innerHTML = '';
+  }
+}
+
+// Cuántos días hábiles hay entre la operación y el cumplimiento: el "T+n" que
+// se pinta en el chip. Devuelve null si no se puede calcular.
+function _tMasDeOrden(poid){
+  const cum = _cumplDeOrden(poid);
+  const elReg = document.getElementById('fechaRegistro');
+  const reg = elReg ? elReg.value : '';
+  if(!cum || !reg) return null;
+  const a = parseFechaLocal(reg), b = parseFechaLocal(cum);
+  if(!a || !b) return null;
+  if(b < a) return null;
+  let n = 0; const d = new Date(a);
+  while(_isoLocal(d) !== _isoLocal(b)){
+    d.setDate(d.getDate() + 1);
+    if(esHabil(d, 'CO')) n++;
+    if(n > 30) return null;          // red por si las fechas no tienen sentido
+  }
+  return n;
+}
 let operacionesHistorico = [];
 let detalleHistorico = [];
 
@@ -11242,7 +11343,22 @@ function renderFidessaTradesPanel(){
       </tr></thead>
       <tbody>${filas.map(f=>`<tr class="${_tradesConsolidar.has(f.folioOrden)?'row-sel':''}">
         <td style="text-align:center;"><input type="checkbox" ${_tradesConsolidar.has(f.folioOrden)?'checked':''} onclick="toggleTradeConsolidar('${(f.folioOrden||'').replace(/'/g,"\\'")}')"></td>
-        <td class="mono-id">${f.folioOrden}</td>
+        <td class="mono-id">${f.folioOrden}${(function(){
+          // CHIP DEL CUMPLIMIENTO PROPIO (Sergio, 09-nov).
+          // Solo aparece si ESTA orden tiene fecha propia. Sin esto, una
+          // fecha por orden es invisible y se vuelve a corregir el Excel a
+          // mano, que es de donde salió todo esto. Si no hay fecha propia la
+          // orden va con la del panel y no se pinta nada: la tabla se ve
+          // igual que siempre.
+          const _c = _cumplPorOrden[String(f.folioOrden)];
+          if(!_c) return '';
+          const _n = _tMasDeOrden(f.folioOrden);
+          const _et = _n == null ? 'fecha propia' : 'T+' + _n;
+          return ` <span style="font-size:10px;padding:1px 5px;border-radius:4px;
+            background:rgba(129,140,248,.18);color:var(--accent,#818cf8);
+            border:1px solid rgba(129,140,248,.35);white-space:nowrap;"
+            title="Cumplimiento propio de esta orden: ${fmtFechaCorta(_c)}. Se usa en el reporte al cliente y en la Planilla COP.">${_et}</span>`;
+        })()}</td>
         <td class="mono-id" style="font-size:11px;" title="Notes de Fidessa. Es el mismo dato que el Account de EMSX cuando la orden llega de allá.">${f.notes || '—'}</td>
         <td class="mono-id" style="font-size:11px;${f.trailer?'':'color:var(--text-2);'}" title="Trailer de Fidessa: el trader que mandó la orden (broker + nombre). Se llena al marcar la orden, sobre todo en extranjeros, así que a media jornada muchas van vacías.">${f.trailer || '—'}</td>
         ${(function(){
@@ -11426,6 +11542,10 @@ function toggleTradeConsolidar(folioOrden){
   // para no perderlo al pasar a otra.
   if(esReparteManual && _ordenActiva){
     _allocPorOrden[_ordenActiva] = allocations.slice();
+    // Y su cumplimiento, por lo mismo: la fecha se ata a la línea que se
+    // estaba llenando y no se la lleva la siguiente (Sergio, 09-nov).
+    const _elC = document.getElementById('fechaCumplimiento');
+    if(_elC && _elC.value) _cumplPorOrden[String(_ordenActiva)] = _elC.value;
   }
 
   // SELECCIÓN MÚLTIPLE para todos. El modo "enfocar una sola orden" se quitó:
@@ -11440,6 +11560,11 @@ function toggleTradeConsolidar(folioOrden){
   if(esReparteManual){
     _ordenActiva = _tradesConsolidar.size === 1 ? [..._tradesConsolidar][0] : null;
     allocations = _ordenActiva ? (_allocPorOrden[_ordenActiva] || []).slice() : [];
+    // Al enfocar una orden, el selector muestra LA FECHA DE ESA ORDEN. Si no
+    // tiene propia se deja el panel como está: no se pisa lo que Sergio
+    // acabe de escribir ni se inventa una fecha.
+    _pintarCumplDeOrden(_ordenActiva);
+    _pintarNotaCumpl();
   }
 
   selectedFolios.clear();
@@ -21640,7 +21765,14 @@ function filasPlanillaCOP(){
         comision:Number(r.comision), mercado:'ACCIONES',
         // Anclada: estos tres números son los del archivo del cliente.
         anclada:true, ivaReportado:r.iva, netoReportado:r.neto,
-        liquidacion:parseFechaLocal(hoy), cumplimiento:sumarDiasHabiles(parseFechaLocal(hoy),2,'CO') });
+        liquidacion:parseFechaLocal(hoy),
+        // EL CUMPLIMIENTO REPORTADO MANDA (Sergio, 09-nov). Si la línea trae
+        // el suyo —el cruce de CAXDAC a T+0— se usa ese; si no, el T+2 de
+        // siempre. Mismo principio que el IVA: la planilla LEE lo que se le
+        // dijo al cliente, no lo recalcula.
+        cumplimiento: r.cumplimiento
+          ? parseFechaLocal(r.cumplimiento)
+          : sumarDiasHabiles(parseFechaLocal(hoy),2,'CO') });
     });
 
   // ---- RVL: lo que NO se reporta (brokers de tarifa cierta) ----
@@ -23073,15 +23205,35 @@ async function registrarReporte(modulo, cliente, lineas, version){
     // Reparto por portafolio, para que el módulo Reportes muestre lo que de
     // verdad se envió y no solo la línea (Sergio, 31-ago).
     portafolios: l.portafolios || null,
+    // CUMPLIMIENTO DE LA LÍNEA (Sergio, 09-nov). Null cuando la orden no
+    // tenía fecha propia: ahí la planilla sigue calculando T+2.
+    cumplimiento: l.cumplimiento || null,
     version, generado_en: new Date().toISOString(),
   }));
   try{
-    const res = await fetch(`${SUPA_URL}/rest/v1/reportes_generados?on_conflict=fecha,modulo,cliente,parent_order_id`, {
-      method:'POST',
-      headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
-                'Content-Type':'application/json', 'Prefer':'resolution=ignore-duplicates,return=representation' },
-      body: JSON.stringify(filas),
-    });
+    // LA COLUMNA PUEDE NO EXISTIR TODAVÍA, Y EL REGISTRO NO PUEDE CAERSE POR
+    // ESO (Sergio, 09-nov). `cumplimiento` se agrega con un SQL aparte; hasta
+    // que corra, PostgREST responde 400 con "column ... does not exist" y
+    // RECHAZA EL LOTE ENTERO. Un cliente reportado que no queda registrado es
+    // peor que una fecha que falta, así que se reintenta UNA vez sin la
+    // columna y se sigue. En cuanto el SQL corra, el reintento deja de pasar
+    // solo. Lo nuevo entra de forma aditiva y falla suave.
+    const _post = (cuerpo) => fetch(
+      `${SUPA_URL}/rest/v1/reportes_generados?on_conflict=fecha,modulo,cliente,parent_order_id`, {
+        method:'POST',
+        headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}`,
+                  'Content-Type':'application/json', 'Prefer':'resolution=ignore-duplicates,return=representation' },
+        body: JSON.stringify(cuerpo),
+      });
+    let res = await _post(filas);
+    if(!res.ok && res.status === 400){
+      const _txt = await res.clone().text().catch(()=>'');
+      if(/cumplimiento/i.test(_txt)){
+        console.warn('`reportes_generados` todavía no tiene la columna `cumplimiento`: '
+          + 'se registra sin ella. Corré agregar_cumplimiento_reportes.sql.');
+        res = await _post(filas.map(f=>{ const { cumplimiento, ...resto } = f; return resto; }));
+      }
+    }
     if(res.ok){
       const guardadas = await res.json().catch(()=>filas);
       _reportesGenerados = _reportesGenerados.concat(guardadas.length ? guardadas : filas);
@@ -24076,6 +24228,11 @@ function sincronizarAllocOrdenActiva(){
     // No pisar un reparto ya guardado con un arreglo vacío: al cambiar el zoom
     // `allocations` queda en blanco un instante, y si se sincroniza en ese
     // momento se borra lo que Sergio acababa de asignar.
+    // El cumplimiento se guarda SIEMPRE que haya orden activa, aunque el
+    // reparto venga vacío por el parpadeo del zoom: son dos datos distintos
+    // y la fecha no tiene por qué perderse con el reparto.
+    const _elC = document.getElementById('fechaCumplimiento');
+    if(_elC && _elC.value) _cumplPorOrden[String(_ordenActiva)] = _elC.value;
     if(allocations.length === 0 && (_allocPorOrden[_ordenActiva]||[]).length > 0) return;
     _allocPorOrden[_ordenActiva] = allocations.slice();
     return;
@@ -24174,7 +24331,10 @@ function getOrdenesConAlloc(todas){
     }
     if(allocs.length===0) return;
     const sumaAsignada = allocs.reduce((s,a)=>s+a.cantidad,0);
-    out.push({ parentOrderId:poid, qtyOrden, allocations:allocs, sumaAsignada, completa: sumaAsignada===qtyOrden });
+    out.push({ parentOrderId:poid, qtyOrden, allocations:allocs, sumaAsignada,
+               completa: sumaAsignada===qtyOrden,
+               // Su propio cumplimiento, o el del panel si no tiene (Sergio, 09-nov).
+               fechaCum: _cumplDeOrden(poid) });
   });
   return out;
 }
@@ -24182,7 +24342,12 @@ function getOrdenesConAlloc(todas){
 function inicializarAllocationsDesdeCliente(){
   allocations = [];
   _allocPorOrden = {};
+  // El cumplimiento por orden se limpia JUNTO con el reparto: si no, una
+  // fecha de CAXDAC se quedaría pegada al pasar a ALLIANZ. Misma llave, misma
+  // vida (Sergio, 09-nov).
+  _cumplPorOrden = {};
   _ordenActiva = null;
+  if(typeof _pintarNotaCumpl === 'function') _pintarNotaCumpl();
   poblarSelectorNuevoPortafolio();
   // Andes se autoasocia a su único portafolio (Larrain Vial PP): no hay que
   // agregarlo a mano cada vez. Toda la cantidad seleccionada le corresponde.
@@ -26631,7 +26796,11 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
     o.allocations.forEach(a=>{
       if(a.cantidad<=0) return;
       filasEquity.push({ lado, especie, portNombre: nomPort(a.portId), cantidad:a.cantidad,
-                         precio:precioPond, comPct:comOrden, parentOrderId:o.parentOrderId });
+                         precio:precioPond, comPct:comOrden, parentOrderId:o.parentOrderId,
+                         // CADA FILA CON EL CUMPLIMIENTO DE SU ORDEN (Sergio, 09-nov).
+                         // Vacío = la orden no tiene propio y manda el panel,
+                         // que es el comportamiento de siempre.
+                         fechaCum: o.fechaCum || '' });
     });
     // Para el COR: los folios de ESTA orden, repartidos entre sus portafolios
     // en la misma proporción. Es el detalle que va al pie del reporte.
@@ -26765,6 +26934,9 @@ async function generarGenericoEquityDesdeOrdenes(cliente){
       comMonto, ivaMonto,
       montoNeto: l.lado === 'Venta' ? bruto - comMonto - ivaMonto
                                     : bruto + comMonto + ivaMonto,
+      // El cumplimiento de SU orden, para que la Planilla COP diga lo mismo
+      // que el archivo del cliente (Sergio, 09-nov).
+      fechaCum: l.fechaCum || '',
     };
   }), version);
   const lineas = filasEquity;
@@ -28749,6 +28921,9 @@ async function registrarLoteRVL(cliente, loteOps, version){
           : (iva == null ? null
              : (o.lado === 'Compra' ? bruto + com + iva : bruto - com - iva)),
       portafolios: port,
+      // Vacío = esta orden no tenía cumplimiento propio y la planilla sigue
+      // calculando T+2, que es lo de siempre.
+      cumplimiento: o.fechaCum || null,
     };
   }).filter(l=>l.cantidad > 0);
   if(!lineas.length) return 0;
@@ -38585,7 +38760,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-09 16:20 UTC · v347';
+const BUILD_ID = '2026-11-09 17:05 UTC · v348';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
