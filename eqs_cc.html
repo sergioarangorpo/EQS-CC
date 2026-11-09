@@ -18765,7 +18765,29 @@ function reconciliarPreciosRVI(){
 function _precioNuestroRVI(h){
   const px = Number(h.price) || 0;
   const guardado = Number(h.precioNuestro) || 0;
-  if(guardado && Math.abs(guardado - px) > 1e-9) return guardado;
+  // UN MARGEN DE MENOS DE UN DOLAR NO ES UN MARGEN (Sergio, 09-nov).
+  // -------------------------------------------------------------------
+  // Aqui decia `Math.abs(guardado - px) > 1e-9`, y esa comparacion se dejo
+  // enganar todo el 09-nov. Proteccion quedo guardada asi:
+  //
+  //     price          88.56808              (el del cliente, REDONDEADO)
+  //     precioNuestro  88.56808361298349     (el del cliente, CRUDO)
+  //
+  // Los dos son el MISMO precio; lo unico que los separa es el redondeo que
+  // se le aplica al que se le cobra al cliente. Pero difieren en 3,6
+  // millonesimas, o sea mas que 1e-9, asi que esto respondia "si hay precio
+  // nuestro guardado" y devolvia el del cliente. El rescate de abajo —que
+  // habria encontrado nuestra linea— NUNCA corria. De ahi salieron el
+  // dashboard en US$276, la fila de CCSI al precio de Proteccion y que tres
+  // versiones seguidas no movieran nada.
+  //
+  // El umbral ahora es de PLATA, no de decimales: si la diferencia entre los
+  // dos precios no alcanza a mover UN DOLAR en toda la linea, es redondeo y
+  // no un margen. Para Proteccion: 0,0000036 x 83.705 = US$0,30 -> redondeo.
+  // El margen de verdad era 0,015449 x 83.705 = US$1.293 -> margen.
+  const _qFila = Math.abs(Number(h.qty) || 0) || 1;
+  const _hayMargen = guardado && Math.abs(guardado - px) * _qFila >= 1;
+  if(_hayMargen) return guardado;
   // OJO: hay que buscar NUESTRA línea, no la del cliente. Antes esto miraba
   // `h.emsxId` —que es la línea DEL CLIENTE— y después hacía un find por
   // especie y lado SIN filtrar de quién era la línea, así que volvía a caer en
@@ -18793,10 +18815,21 @@ function _precioNuestroRVI(h){
   // Se prueban las dos cantidades: la de la fila y la del LOTE, que es la
   // suma de todas las filas que comparten `loteId` — o sea la orden completa,
   // que es justo lo que ejecutamos contra el broker.
-  const _qLote = (typeof historial !== 'undefined' && Array.isArray(historial) && h.loteId)
-    ? historial.filter(x => String(x.loteId||'') === String(h.loteId))
-               .reduce((a,x)=>a + (Number(x.qty)||0), 0)
-    : 0;
+  //
+  // Y SI NO HAY `loteId`, SE ARMA EL LOTE A MANO (Sergio, 09-nov). Las filas
+  // de Proteccion del 09-nov se guardaron sin `loteId` y sin `patas`, asi que
+  // la suma por lote daba cero y volviamos al mismo punto. El respaldo es lo
+  // que de verdad define una ejecucion: mismo cliente, misma especie, mismo
+  // lado y mismo dia de operacion.
+  const _hs = (typeof historial !== 'undefined' && Array.isArray(historial)) ? historial : [];
+  const _mismoLote = h.loteId
+    ? _hs.filter(x => String(x.loteId||'') === String(h.loteId))
+    : _hs.filter(x =>
+        String(x.cliente||'')   === String(h.cliente||'') &&
+        String(x.symbol||'')    === String(h.symbol||'') &&
+        String(x.side||'').toUpperCase() === String(h.side||'').toUpperCase() &&
+        String(x.tradeDate||'') === String(h.tradeDate||''));
+  const _qLote = _mismoLote.reduce((a,x)=>a + (Number(x.qty)||0), 0);
   const exacta = nuestras.filter(r => {
     const q = Number(r.qty);
     return q === (Number(h.qty)||0) || (_qLote > 0 && q === _qLote);
@@ -39153,7 +39186,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-09 21:55 UTC · v357';
+const BUILD_ID = '2026-11-09 22:00 UTC · v358';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
