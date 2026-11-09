@@ -25266,6 +25266,9 @@ async function aplicarCanastaRVI(){
   const tradeDate = tdVal ? parseFechaLocal(tdVal) : hoyD;
   let n = 0;
 
+  // Un lote por especie, compartido por todas las filas de ese ticker.
+  const _loteBase = 'CAN' + Date.now();
+  const _lotes = {};
   alloc.forEach(a=>{
     const e = ejec[a.ticker];
     if(!e) return;
@@ -25273,11 +25276,25 @@ async function aplicarCanastaRVI(){
     const px  = Number(e.precio)||0;
     if(!qty || !px) return;
 
-    // Nuestro precio de ejecución: la línea de EMSX de esa especie.
-    const ln = (emsxData||[]).find(r=>
+    // NUESTRO precio de ejecución: NUESTRA línea, no la primera que calce.
+    // -----------------------------------------------------------------
+    // Esto decía `(emsxData||[]).find(...)` por ticker y lado, SIN exigir que
+    // la línea fuera nuestra. Con la del cliente y la nuestra en el blotter —
+    // las dos del mismo ticker y el mismo lado— agarraba la que viniera
+    // primero. El 09-nov agarró la de AFP PROTECCION y por eso
+    // `precioNuestro` quedó guardado en 88,56808361298349, que es el precio
+    // del CLIENTE sin redondear. Es el mismo defecto que el 30-sep costó
+    // USD 4.189,75 en Colfondos, en otro sitio.
+    //
+    // Una línea es NUESTRA si su Originating Firm es CREDICORP — la misma
+    // regla de `esNuestraLineaRVI`, que ya usan el panel y la planilla.
+    const _lineasTk = (emsxData||[]).filter(r=>
       tickerLimpioRVI(r.especie) === a.ticker &&
       String(r.lado||'').toUpperCase() === String(e.lado||'').toUpperCase());
-    const pxNuestro = ln ? (Number(ln.avgPr)||px) : px;
+    const _nuestraLn = _lineasTk.find(r =>
+      typeof esNuestraLineaRVI === 'function' && esNuestraLineaRVI(r));
+    const ln = _nuestraLn || _lineasTk[0];
+    const pxNuestro = _nuestraLn ? (Number(_nuestraLn.avgPr)||px) : px;
     const isin = a.isin || (ln ? ln.isin : '') || '';
     const tipo = /^(IE|LU|GB)/i.test(isin) ? 'UCIT' : (ln && ln.tipo ? ln.tipo : 'ETF');
 
@@ -25322,7 +25339,30 @@ async function aplicarCanastaRVI(){
       settleDate: settlementRVI(ln ? ln.especie : (a.ticker + ' LN Equity'), tdVal),
       broker: ln ? (ln.broker||'') : '',
       precioNuestro: pxNuestro,
-      espejo: false, comBrokerUnit: 0,
+      // EL ESPEJO Y LAS PATAS TAMBIEN POR ESTA VIA (Sergio, 09-nov).
+      // ---------------------------------------------------------------
+      // Aqui decia `espejo: false` escrito a mano, sin `patas` ni `loteId`.
+      // O sea: pegando el allocation del cliente —que es como Sergio guarda
+      // normalmente— el espejo NO viajaba NUNCA, aunque el boton estuviera
+      // puesto. *"Se supone que así como viaja al reporte del cliente viaja a
+      // la planilla si le pongo espejo del cliente, ¿o es que acaso no los
+      // tienes conectados?"* No lo estaban.
+      //
+      // De aqui salio que la planilla del BO del 09-nov mostrara UNA sola
+      // linea de CCSI en vez de cuatro, y que yo persiguiera el defecto tres
+      // versiones seguidas en el otro camino (`generarTC`), que si lo hacia
+      // bien. Las dos vias escriben ahora los mismos campos.
+      espejo: (typeof _modoRVI !== 'undefined') && _modoRVI.espejo === 'si',
+      // Un lote POR ESPECIE: cada ticker de la canasta es una ejecucion
+      // distinta contra el broker, y las patas son de la ejecucion.
+      loteId: _lotes[a.ticker] || (_lotes[a.ticker] = _loteBase + '-' + a.ticker),
+      patas: _nuestraLn ? [{
+        emsxId: _nuestraLn.id,
+        broker: String(_nuestraLn.broker||'').toUpperCase().trim(),
+        qty: Number(_nuestraLn.qty)||0,
+        px:  Number(_nuestraLn.avgPr)||0,
+      }] : [],
+      comBrokerUnit: 0,
       trader: (document.getElementById('tc-trader-rvi')||{}).value || '',
     });
     n++;
@@ -39186,7 +39226,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-09 22:00 UTC · v358';
+const BUILD_ID = '2026-11-09 22:15 UTC · v359';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
