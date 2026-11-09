@@ -1436,6 +1436,18 @@
     </div>
   </div>
 
+  <!-- ===================================================================
+       LA GUÍA DEL CLIENTE SELECCIONADO — subida acá el 09-nov-2026.
+       Vivía abajo, después de Fidessa Trades, Folios y las cuatro tarjetas
+       del arqueo. Para cuando Juan Antonio la veía, ya se había metido al
+       panel de reparto a repartir cosas que no había que repartir.
+       Sergio: *"si debajo de ese filtro vemos toda la guía de lo que ve nos
+       soluciona y le soluciona."*
+       Va pegada al filtro de Client/Book —que es lo primero que todos
+       tocan— y justo debajo del botón Generar reporte.
+       =================================================================== -->
+  <div id="panelListo" style="margin:0 24px 18px;display:none;"></div>
+
   <div id="emsxCBPanel" style="display:none;"></div>
 
   <div class="edit-overlay" id="matchOverlayRVL">
@@ -1476,8 +1488,6 @@
     </div>
   </div>
 
-  <!-- Semáforo de preparación: qué falta para poder generar -->
-  <div id="panelListo" style="margin:0 24px 18px;display:none;"></div>
   <div class="grid">
 
     <div class="col-main">
@@ -23770,18 +23780,127 @@ function renderHistoricoRVL(){
       el reparto se pierde y hay que volver a hacerlo.</div>`;
 }
 
+// EN QUÉ CASO ESTÁ UN CLIENTE (Sergio, 09-nov).
+// ---------------------------------------------------------------------
+// Juan Antonio no es de apps y hay que decirle qué botón apretar. La idea
+// de Sergio era un manual por cliente; un manual escrito a mano serían 38
+// textos que envejecen, y el día que el texto y la ficha no coincidan gana
+// el texto y lo manda por el camino viejo. Así que esto NO se redacta: se
+// DERIVA de la misma ficha que usa el generador. Si la ficha cambia, la
+// guía cambia sola y no puede mentir.
+//
+// Son tres familias y una excepción:
+//   auto     — un solo portafolio: toda la orden va ahí. 7 clientes.
+//   archivo  — el reparto viene en el Notes/Account. ~20 clientes.
+//   manual   — hay que repartir de verdad. 11 clientes.
+//   sin      — la ficha no tiene formato de reporte: no se genera desde el
+//              app. Mejor decirlo que pintar un verde mentiroso.
+function _guiaDeCliente(cliente){
+  const cfg = getClienteDB(cliente) || {};
+  // PROTECCIÓN no tiene `formatoReporte` —su generación va por la pantalla
+  // de aprobación propia— pero sí se reporta. Se trata como los demás.
+  const esProteccion = /PROTECCION/i.test(cliente);
+  if(!cfg.formatoReporte && !esProteccion){
+    return { familia:'sin', titulo:'sin formato de reporte configurado',
+             motivo:'Este cliente todavía no se genera desde el app.',
+             instruccion:'Repórtalo por el camino de siempre.' };
+  }
+  if(cfg.autoPortafolio){
+    const p = (cfg.portafolios||[]).find(x=>x.id===cfg.autoPortafolio);
+    return { familia:'auto', titulo:'no hay nada que repartir',
+             motivo:`${cfg.nombre||cliente} tiene un solo portafolio`
+                    + (p ? ` (${p.nombre})` : '') + ', toda la orden va ahí.',
+             instruccion:'Marca las líneas que vas a reportar y aprieta 📄 Generar reporte.' };
+  }
+  if(!cfg.reparteManual){
+    return { familia:'archivo', titulo:'no hay nada que repartir',
+             motivo:'El portafolio de cada línea viene en el archivo, no hay que asignarlo a mano.',
+             instruccion:'Marca las líneas que vas a reportar y aprieta 📄 Generar reporte.' };
+  }
+  return { familia:'manual', titulo:'este cliente sí necesita reparto',
+           motivo:'El archivo no dice a qué portafolio va cada línea.',
+           instruccion:'Marca UNA orden en Fidessa Trades y asígnale los portafolios abajo. '
+                     + 'Después la siguiente. Cuando no quede ninguna pendiente, 📄 Generar reporte.' };
+}
+
 function renderPanelListo(filtrados){
   try{ renderHistoricoRVL(); }catch(e){ /* informativo: nunca tumba la pantalla */ }
   const cont = document.getElementById('panelListo');
   if(!cont) return;
   const cliente = document.getElementById('filtroCliente').value;
+  // SIN CLIENTE SELECCIONADO: EL RESUMEN DEL DÍA (Sergio, 09-nov).
+  // Antes acá no había nada. Esto le da a Juan la foto completa de un golpe
+  // —qué le falta del día— sin tener que ir cliente por cliente probando.
+  if(!cliente && _fidessaTradesRaw){
+    const porCliente = {};
+    Object.keys(_fidessaTradesRaw).forEach(o=>{
+      const t = _fidessaTradesRaw[o];
+      if(!((t.qtyDone||0) > 0)) return;
+      const g = normalizarGrupo(t.grupo);
+      if(!g) return;
+      (porCliente[g] = porCliente[g] || []).push(o);
+    });
+    const nombres = Object.keys(porCliente).sort();
+    if(!nombres.length){ cont.style.display = 'none'; return; }
+    const filas = nombres.map(g=>({ g, n: porCliente[g].length, guia: _guiaDeCliente(g) }));
+    const porFam = f => filas.filter(x=>x.guia.familia === f);
+    const directos = [...porFam('auto'), ...porFam('archivo')];
+    const manuales = porFam('manual');
+    const sinFmt   = porFam('sin');
+    const chip = (col, txt) => `<span style="font-size:11px;padding:2px 8px;border-radius:10px;
+      background:rgba(${col},.16);color:rgb(${col});border:1px solid rgba(${col},.4);
+      white-space:nowrap;">${txt}</span>`;
+    const lista = arr => arr.map(x=>`<b>${_esc(x.g)}</b> <span class="field-note">(${x.n})</span>`).join(' · ');
+    cont.style.display = 'block';
+    cont.innerHTML = `
+      <div style="background:rgba(129,140,248,.08);border:1px solid rgba(129,140,248,.40);
+                  border-left:4px solid var(--accent,#818cf8);border-radius:8px;padding:14px 18px;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+          <span style="font-size:20px;">📋</span>
+          <span style="font-size:15px;font-weight:700;color:var(--accent,#818cf8);">
+            Resumen del día — ${nombres.length} cliente(s) con operaciones</span>
+          ${directos.length ? chip('34,197,94',  directos.length + ' directo(s)') : ''}
+          ${manuales.length ? chip('245,158,11', manuales.length + ' con reparto') : ''}
+          ${sinFmt.length   ? chip('148,163,184', sinFmt.length + ' fuera del app') : ''}
+        </div>
+        ${directos.length ? `<div style="font-size:12.5px;margin-bottom:4px;">
+          <b style="color:var(--buy,#22c55e);">Generan directo —</b> ${lista(directos)}</div>` : ''}
+        ${manuales.length ? `<div style="font-size:12.5px;margin-bottom:4px;">
+          <b style="color:var(--amber,#f59e0b);">Hay que repartir —</b> ${lista(manuales)}</div>` : ''}
+        ${sinFmt.length ? `<div style="font-size:12.5px;margin-bottom:4px;">
+          <b style="color:#94a3b8;">No se generan desde el app —</b> ${lista(sinFmt)}</div>` : ''}
+        <div class="field-note" style="margin-top:8px;">
+          Elige un <b>Client/Book</b> arriba para ver qué falta en ese cliente.
+          El número entre paréntesis son las líneas del día.</div>
+      </div>`;
+    return;
+  }
   if(!cliente || !_fidessaTradesRaw){ cont.style.display = 'none'; return; }
   const cfg = getClienteDB(cliente) || {};
   // PROTECCIÓN no tiene `formatoReporte` (su generación va por la pantalla de
   // aprobación propia), así que el panel no aparecía. Se incluye igual: tiene
   // órdenes que reportar y el semáforo sirve lo mismo (Sergio, 19-ago).
   const esProteccion = /PROTECCION/i.test(cliente);
-  if(!cfg.formatoReporte && !esProteccion){ cont.style.display = 'none'; return; }
+  const guia = _guiaDeCliente(cliente);
+  // ANTES ACÁ SE ESCONDÍA EL PANEL (Sergio, 09-nov).
+  // `if(!cfg.formatoReporte && !esProteccion) return;` dejaba a FIDUDAVIVIENDA,
+  // SEGUROS BOLIVAR y SURAMERICANA sin ninguna guía: el filtro no decía nada y
+  // no había forma de saber si era que estaba todo bien o que el panel no
+  // aplicaba. Ahora lo dice. Esconder no es informar.
+  if(guia.familia === 'sin'){
+    cont.style.display = 'block';
+    cont.innerHTML = `
+      <div style="background:rgba(148,163,184,.10);border:1px solid rgba(148,163,184,.45);
+                  border-left:4px solid #94a3b8;border-radius:8px;padding:14px 18px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:20px;">○</span>
+          <span style="font-size:15px;font-weight:700;color:#94a3b8;">
+            ${_esc(cfg.nombre || cliente)} · ${guia.titulo}</span>
+        </div>
+        <div style="font-size:12.5px;margin-top:6px;">${guia.motivo} ${guia.instruccion}</div>
+      </div>`;
+    return;
+  }
 
   sincronizarAllocOrdenActiva();
   const ordenes = Object.keys(_fidessaTradesRaw).filter(o=>{
@@ -23957,6 +24076,17 @@ function renderPanelListo(filtrados){
           ${todoListo ? 'Listo para generar'
             : (faltantes.length ? `Falta distribuir ${faltantes.length} línea(s)` : 'Revisa antes de generar')}</span>
         <span class="field-note">${ordenes.length} línea(s) de ${cfg.nombre || cliente}</span>
+      </div>
+      <!-- LA GUÍA. Es la razón de todo esto (Sergio, 09-nov): cuando estaba
+           todo bien el panel se quedaba CALLADO, y ese silencio es justo el
+           momento en que Juan Antonio se metía a repartir lo que no tocaba.
+           Ahora el verde también habla y dice qué apretar. -->
+      <div style="font-size:12.5px;margin-bottom:10px;padding:8px 12px;border-radius:6px;
+                  background:rgba(148,163,184,.10);line-height:1.5;">
+        <b style="color:${guia.familia === 'manual' ? 'var(--amber,#f59e0b)' : 'var(--buy,#22c55e)'};">
+          ${guia.familia === 'manual' ? '✎' : '✓'} ${guia.titulo.charAt(0).toUpperCase() + guia.titulo.slice(1)}.</b>
+        ${guia.motivo}
+        <span style="display:block;margin-top:3px;">${guia.instruccion}</span>
       </div>
       ${listas.length ? `<div style="font-size:12.5px;margin-bottom:4px;">
         <b style="color:var(--buy,#22c55e);">${listas.length} con portafolio definido:</b>
@@ -26219,7 +26349,22 @@ function pintarAllocList(){
   const wrap = document.getElementById('allocList');
   if(!wrap) return;
   if(!cliente || allocations.length===0){
-    wrap.innerHTML = '<div class="field-note">Aún no se ha asignado ningún portafolio.</div>';
+    // APAGADO, CON EL MOTIVO (Sergio, 09-nov: *"Apagado informando el motivo"*).
+    // Antes decía siempre "Aún no se ha asignado ningún portafolio", que en un
+    // cliente de reparto automático es una INVITACIÓN a repartir lo que no hay
+    // que repartir — justo lo que hacía Juan Antonio con CREDICORPFFMM. El
+    // texto ahora sale de la ficha, igual que la franja de arriba.
+    let msg = 'Aún no se ha asignado ningún portafolio.';
+    if(cliente){
+      const g = (typeof _guiaDeCliente === 'function') ? _guiaDeCliente(cliente) : null;
+      if(g && g.familia !== 'manual'){
+        msg = `<b style="color:var(--buy,#22c55e);">No hay nada que repartir acá.</b> `
+            + `${g.motivo} ${g.instruccion}`;
+      }else if(g){
+        msg = `Todavía no has asignado ningún portafolio. ${g.instruccion}`;
+      }
+    }
+    wrap.innerHTML = `<div class="field-note" style="line-height:1.5;">${msg}</div>`;
     return;
   }
   const ports = getClienteDB(cliente).portafolios;
@@ -38760,7 +38905,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-09 17:05 UTC · v348';
+const BUILD_ID = '2026-11-09 19:40 UTC · v349';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
