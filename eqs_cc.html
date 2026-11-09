@@ -7683,6 +7683,12 @@ const PRESUPUESTO_DB = [{"grupo":"ALLIANZ SEGUROS DE VIDA S.A.","trader":"SAR","
 // para que el filtro por cliente reconozca esas líneas. Igual para otros
 // clientes de reporte genérico cuyo nombre en EMSX/Fidessa difiere del grupo.
 const ALIAS_GRUPO = {
+  // CAXDC es CAXDAC con una letra menos: asi llega el Client/Book desde
+  // Fidessa. El 09-nov salio como un cliente aparte, con $2.975,9 MM de
+  // volumen propio, y el dashboard lo dejaba "por reportar" para siempre
+  // porque no encontraba ningun reporte a ese nombre. Sergio confirmo que
+  // ese volumen SI se reporto, dentro de CAXDAC (09-nov).
+  CAXDC: 'CAXDAC',
   LV_CO: 'LARRAIN VIAL PP',
   // En Fidessa llega como FIDUSURA y el cliente con sus portafolios se llama
   // FIDUCIARIA SURA: sin esto el Client/Book no mostraba nada (Sergio, 16-sep).
@@ -19942,7 +19948,8 @@ async function descargarCOR(seleccion){
 // "COLFONDOS", el registro de reportes "COLFONDOS SA" y RVI "AFP PROTECCION SA".
 // `normalizarGrupo` resuelve los códigos pero no los nombres largos, así que
 // aparecían dos filas del mismo cliente (Sergio, 02-sep).
-function _dashClave(nombre){
+function _dashClave(nombre, _prof){
+  _prof = Number(_prof) || 0;
   const n = String(nombre||'').toUpperCase().trim();
   if(!n) return '';
   const g = normalizarGrupo(n);
@@ -19955,8 +19962,32 @@ function _dashClave(nombre){
     if(k) return k;
   }
   // Y si no, se limpian los sufijos que no identifican a nadie.
-  return String(g||n).replace(/\s+(S\.?A\.?S?|LTDA|INC|SAS)\.?$/i,'')
-                     .replace(/^AFP\s+/i,'').trim();
+  const _limpio = String(g||n).replace(/\s+(S\.?A\.?S?|LTDA|INC|SAS)\.?$/i,'')
+                              .replace(/^AFP\s+/i,'').trim();
+  // UN ALIAS DE PANTALLA TAMBIEN SIRVE DE LLAVE (Sergio, 09-nov).
+  // -------------------------------------------------------------------
+  // `DASH_ABREVIA` ya sabe que 'SKANDIA ADMINISTRADORA FU PE CE SA' es
+  // 'SKANDIA AFP', pero se usaba SOLO para pintar. La llave con la que se
+  // cruza el blotter contra el registro salia de arriba, y ahi el `SA` se
+  // recorta: quedaba 'SKANDIA ADMINISTRADORA FU PE CE' de un lado y
+  // 'SKANDIA AFP' del otro. Nunca se encontraban, asi que el dashboard no
+  // podia confirmar la comision y lo dejaba "falta por reportar" para
+  // siempre — con el reporte hecho y bien hecho.
+  //
+  // Se consulta ANTES y DESPUES de limpiar el sufijo, porque el nombre puede
+  // llegar de las dos formas. Si los dos lados pasan por aqui, los dos caen
+  // en la misma llave, que es lo unico que importa para cruzarlos.
+  // Y el resultado del alias se vuelve a resolver, porque todavia puede ser
+  // un nombre y no una llave: 'SKANDIA ADMINISTRADORA FU PE CE SA' da
+  // 'SKANDIA AFP', que a su vez es el NOMBRE de la ficha cuya llave es
+  // 'SKANDIA'. Sin este segundo salto quedaban 'SKANDIA AFP' de un lado y
+  // 'SKANDIA' del otro, y seguian sin cruzarse. `_prof` corta cualquier ciclo.
+  if(typeof DASH_ABREVIA !== 'undefined' && DASH_ABREVIA && _prof < 3){
+    const _al = DASH_ABREVIA[n] || DASH_ABREVIA[_limpio];
+    if(_al && String(_al).toUpperCase().trim() !== n) return _dashClave(_al, _prof + 1);
+    if(_al) return _al;
+  }
+  return _limpio;
 }
 
 // Nombres largos que no caben en las barras. Solo afecta lo que se VE.
@@ -22132,7 +22163,21 @@ function filasPlanillaCOP(){
     const q = Number(h.qty)||0, px = Number(h.price)||0;
     if(!q || !px) return;
     if(!trm){ faltan.push(`${h.cliente} ${h.symbol} — falta la TRM para pasar la comisión a pesos`); return; }
-    const pxNos = Number(h.precioNuestro) || px;
+    // NUESTRO PRECIO SALE DE LA FUNCION CANONICA (Sergio, 09-nov).
+    // -----------------------------------------------------------------
+    // Aqui decia `Number(h.precioNuestro) || px`, leyendo el campo crudo. Y
+    // ese campo puede venir con el precio del CLIENTE —asi quedo Proteccion
+    // el 09-nov— con lo que el margen daba cero y la utilidad se reducia al
+    // spread de comision.
+    //
+    // La planilla del BO y el dashboard ya pasaban por `_precioNuestroRVI`,
+    // que sabe rescatar nuestra linea del blotter cuando lo guardado no
+    // sirve. Esta no, y por eso el arqueo del 09-nov mostraba el dashboard en
+    // $7,5 M y la planilla en $501 K: US$4.579 contra US$307, los mismos
+    // datos leidos por dos caminos distintos.
+    const pxNos = (typeof _precioNuestroRVI === 'function')
+      ? (Number(_precioNuestroRVI(h)) || px)
+      : (Number(h.precioNuestro) || px);
     const margen = String(h.side||'').toUpperCase()==='SELL' ? (pxNos-px)*q : (px-pxNos)*q;
     // ARQUEO contra lo reportado. La comisión del cliente (`cost`) es lo único
     // de esta línea que viajó en su archivo; el margen y el CCSI son nuestros y
@@ -39226,7 +39271,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-09 22:15 UTC · v359';
+const BUILD_ID = '2026-11-09 22:30 UTC · v360';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
