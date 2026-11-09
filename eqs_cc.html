@@ -10543,6 +10543,31 @@ const FORMATO_GRUPOS_AUTO = {
   // decision que vino a pedir.
   'CAXDAC': { formatoReporte:'generico_equity', reparteManual:true, fileNombre:'Caxdac',
               comisionBloque:0.0015, comisionPantalla:0.001 },
+
+  // FIDUDAVIVIENDA: genérico con reparto manual (Sergio, 09-nov).
+  //
+  // Hasta hoy no tenía formato, así que no se generaba desde el app y la
+  // franja guía lo mostraba como "no se genera desde el app". Sergio lo pidió
+  // *"genérico como Fiduashmore"*, pero con una diferencia que confirmó
+  // después: en FIDUASHMORE el portafolio viene en el archivo y acá NO —
+  // los folios llegan sin Notes, así que el reparto es a mano.
+  //
+  // NO se le ponen `comisionBloque` ni `comisionPantalla` a propósito: la
+  // ficha ya se arma con 0,15% y 0,08% desde GRUPO_COMISIONES_DB, que es la
+  // tarifa pactada. Escribirlas acá iguales prendería la `tarifaUnica` y
+  // volvería a pasar lo de CAXDAC del 06-nov.
+  //
+  // OJO, NO ES IGUAL QUE CAXDAC: FIDUDAVIVIENDA es de tarifa VARIABLE
+  // (`variable: true` con tabla de bloque por especie), así que:
+  //     pantalla -> manda el selector "Comisión Pantalla"
+  //     bloque   -> manda LA TABLA, fija en 0,15%; el selector de Cruce NO
+  //                 lo mueve
+  // Es el mismo comportamiento de COLFONDOS y PROTECCIÓN, y es el que ya
+  // tenía antes de este cambio: la tabla no se tocó. Si algún día hay que
+  // reportarle un bloque a otra tarifa, se marca el folio a mano — el
+  // selector no alcanza.
+  'FIDUDAVIVIENDA': { formatoReporte:'generico_equity', reparteManual:true,
+                      fileNombre:'Fidudavivienda' },
 };
 
 function construirClientesDBDesdeCategorias(){
@@ -38905,7 +38930,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-09 19:40 UTC · v349';
+const BUILD_ID = '2026-11-09 19:55 UTC · v350';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
