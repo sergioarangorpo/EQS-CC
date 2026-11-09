@@ -10505,15 +10505,29 @@ const VALORES_AM_NUEVOS = [
 // PENDIENTES DE CONFIRMAR, siguen con el viejo y con aviso:
 //   SURAMERICANA · SEGUROS BOLIVAR · FIDUDAVIVIENDA
 const FORMATO_GRUPOS_AUTO = {
-  // CAXDAC: 0,1% EN TODO, bloque y pantalla (Sergio, 06-nov). Venia con
-  // bloque 0,15% y pantalla 0,08%, que eran el placeholder de COLFONDOS.
-  // Poner los dos IGUALES no es cosmetico: activa la `tarifaUnica` que ya
-  // usan Alianza, BTG y Fiduashmore, y esa manda sobre los selectores de
-  // "Comisión del día". Si quedaran distintos, el reporte volveria a tomar
-  // lo que tenga puesto el selector, que es lo que haya dejado el cliente
-  // anterior.
+  // CAXDAC: BLOQUE 0,15% · PANTALLA 0,1% (Sergio, 06-nov y 09-nov).
+  //
+  // El 06-nov quedaron los dos en 0,1% y eso estuvo MAL. Sergio dijo
+  // *"Caxdac comisión bloque 0.15%, pantalla 0.1%, todo es con 0.1% porfa"*:
+  // la primera mitad es la TARIFA, la segunda era lo que pasaba ESE DIA. Yo
+  // guarde el dia como si fuera la tarifa.
+  //
+  // El dano no fue el numero sino la `tarifaUnica`: poner bloque y pantalla
+  // IGUALES la activa, y esa hace DOS cosas —manda sobre los selectores de
+  // "Comisión del día" y ademas APAGA el aviso de decidir bloque/cruce—. El
+  // 09-nov, con un cruce de 270.000 ICOLCAP que iba a 0,15%, el app no dejaba
+  // ponerlo y tampoco preguntaba. *"No deja poner comisión 0.15% en bloque."*
+  //
+  // Con los dos distintos la tarifa unica se apaga y mandan los selectores,
+  // que es lo que hacen los demas clientes de tarifa negociada: pantalla sale
+  // de "Comisión Pantalla" y bloque de "Comisión Cruce". Asi el dia que todo
+  // vaya a 0,1% —como el 06-nov— se baja el selector de cruce y ya.
+  //
+  // NO se pone `variable: true` en GRUPO_COMISIONES_DB a proposito: eso
+  // clavaria el bloque en 0,15% SIEMPRE y le quitaria a Sergio justamente la
+  // decision que vino a pedir.
   'CAXDAC': { formatoReporte:'generico_equity', reparteManual:true, fileNombre:'Caxdac',
-              comisionBloque:0.001, comisionPantalla:0.001 },
+              comisionBloque:0.0015, comisionPantalla:0.001 },
 };
 
 function construirClientesDBDesdeCategorias(){
