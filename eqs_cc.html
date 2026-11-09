@@ -18740,7 +18740,11 @@ function filasBODeCliente(cliente){
     const _pt = Array.isArray(h.patas) ? h.patas.filter(p=>Number(p.qty) > 0) : [];
     if(_pt.length > 1){
       const lote = String(h.loteId || h.emsxId || h.id);
-      if(!_porLote.has(lote)) _porLote.set(lote, { h, patas:_pt });
+      // Se guardan TODAS las operaciones del lote, no solo la primera: con
+      // espejo, nuestra pata se parte por ALLOC DEL CLIENTE y hacen falta
+      // todas. Antes se descartaban con el `return` y se perdian (06-nov).
+      if(!_porLote.has(lote)) _porLote.set(lote, { h, patas:_pt, ops:[] });
+      _porLote.get(lote).ops.push(h);
       return;                        // esta operación la arma el bloque de patas
     }
     // DE DÓNDE SALE EL BROKER DE NUESTRA PATA (Sergio, 29-oct)
@@ -18820,8 +18824,51 @@ function filasBODeCliente(cliente){
   // ---- Una fila POR PATA cuando la orden se ejecutó contra varios brokers ----
   // Cada broker con SU cantidad, SU precio y SU comisión —mínimo incluido, que
   // es por pata (ver `comisionPataRVI`, el mismo que muestra el panel de RVI).
-  _porLote.forEach(({h, patas})=>{
+  _porLote.forEach(({h, patas, ops})=>{
     const lado = String(h.side||'').toUpperCase() === 'SELL' ? 'VENTA' : 'COMPRA';
+
+    // ESPEJO CON VARIAS PATAS (Sergio, 09-nov)
+    // -----------------------------------------------------------------
+    // *"Protección RVI fue seleccionado como Espejo del cliente, cuando
+    //  generaste la planilla no lo hiciste así y dejaste una sola línea
+    //  para CCSI, gran error, tuvimos que corregir a mano."*
+    //
+    // Este bloque emitia UNA FILA POR TRAMO DE EJECUCION e ignoraba el
+    // espejo. Con el espejo puesto, el BO quiere lo contrario: una fila por
+    // ALLOC DEL CLIENTE, con la cantidad de ese alloc y el PRECIO PONDERADO
+    // de nuestra ejecucion. Asi quedo la planilla que Miguel y Sergio
+    // corrigieron a mano el 06-nov: cinco lineas de CCSI —16.515, 23.246,
+    // 29.584, 84.256 y 141.012— todas a 86,8285.
+    //
+    // Solo se parte asi cuando TODOS los tramos son del mismo broker. Con
+    // brokers distintos no hay forma de decir cual alloc va contra cual, y
+    // repartirlo a dedo seria inventar: ahi se emite por tramo, como antes.
+    const _brks = [...new Set(patas.map(p=>String(p.broker||'').toUpperCase() || 'CCSI'))];
+    const _qPat = patas.reduce((a,p)=>a + (Number(p.qty)||0), 0);
+    const _pxPond = _qPat
+      ? patas.reduce((a,p)=>a + (Number(p.qty)||0)*(Number(p.px)||0), 0) / _qPat : 0;
+    const _ops = (ops && ops.length) ? ops : [h];
+    if(h.espejo && _brks.length === 1 && _ops.length > 1 && _pxPond > 0){
+      const brk = _brks[0];
+      _ops.forEach(o=>{
+        const q = Number(o.qty)||0;
+        if(!q) return;
+        const gross = redondear(q * _pxPond, 4);
+        const cost = redondear(comisionPataRVI(brk, o.tipo || h.tipo, q, _pxPond, o.isin || h.isin), 4);
+        const secFee = redondear(secFeeRVI(o.tipo || h.tipo, o.side || h.side, gross, o.isin || h.isin), 4);
+        const neto = lado === 'VENTA' ? redondear(gross - cost - secFee, 4)
+                                      : redondear(gross + cost + secFee, 4);
+        filas.push({
+          'TIPO OP': tipoOpBO(o.isin || h.isin), 'CLIENTE': brk, 'PORTFOLIO': brk,
+          'NEMO': o.symbol || h.symbol || '', 'ISIN': o.isin || h.isin || '', 'PP B/S': lado,
+          'TD': fmtF(o.tradeDate || h.tradeDate), 'SD': fmtF(o.settleDate || h.settleDate),
+          'VLR/NM': q, 'PL': _pxPond,
+          'GROSS AMOUNT': gross, 'COST': cost, 'SEC FEE': secFee, 'NET AMOUNT': neto,
+        });
+      });
+      return;
+    }
+
     patas.forEach(p=>{
       const q = Number(p.qty)||0, px = Number(p.px)||0;
       const gross = redondear(q * px, 4);
@@ -21325,10 +21372,45 @@ function grupoDeOperacion(cliente, account, deceval, _sinHermanos){
   return null;
 }
 
+// LA TASA SE ESCRIBE COMO SE ESCRIBE, EN CUALQUIER FORMATO (09-nov)
+// Sergio, 09-nov: *"Nosotros nunca trabajamos con la TRM del día, trabajamos
+// con el dólar spot... quita de tu mente TRM."* Es la tasa de cierre del
+// mercado, y el la escribe en formato ingles: 3,240.00.
+// =====================================================================
+// `parseNum` no entiende nuestro formato y en la TRM eso es catastrofico:
+//     "3318.6"    ->  3.318,6    bien
+//     "3.318,60"  ->  3,3186     <- mil veces mas chica
+//     "3318,60"   ->  331.860    <- cien veces mas grande
+// Como la TRM multiplica TODAS las lineas de RVI, escribirla como la
+// escribe cualquiera aca dejaba la planilla entera mal. Y justo ahora se
+// le empezo a pedir que la escriba a mano, asi que el riesgo era seguro.
+//
+// No se toca `parseNum`, que lo usa medio app: se parsea aparte.
+// Regla: el ULTIMO separador que aparezca es el decimal; si el unico
+// separador es un punto con tres digitos detras y pocos adelante
+// ("3.318"), es separador de miles, que es como se escribe aca.
+function _trmDeTexto(v){
+  let t = String(v == null ? '' : v).trim().replace(/[^\d.,\-]/g, '');
+  if(!t) return 0;
+  const ic = t.lastIndexOf(','), ip = t.lastIndexOf('.');
+  const dec = Math.max(ic, ip);
+  if(dec >= 0){
+    const ent  = t.slice(0, dec).replace(/[.,]/g, '');
+    const frac = t.slice(dec + 1).replace(/[.,]/g, '');
+    const soloUnPunto = ic === -1 && (t.match(/\./g) || []).length === 1;
+    if(soloUnPunto && frac.length === 3 && ent.replace('-','').length <= 3){
+      t = ent + frac;                 // "3.318" son tres mil trescientos
+    }else{
+      t = ent + '.' + frac;
+    }
+  }
+  const n = Number(t);
+  return isFinite(n) ? n : 0;
+}
 function _trmPlanilla(){
-  const manual = parseNum((document.getElementById('planillaTRM')||{}).value);
+  const manual = _trmDeTexto((document.getElementById('planillaTRM')||{}).value);
   if(manual > 0) return manual;
-  const informe = parseNum((document.getElementById('usdcopAyudas')||{}).value);
+  const informe = _trmDeTexto((document.getElementById('usdcopAyudas')||{}).value);
   return informe > 0 ? informe : 0;
 }
 
@@ -21427,6 +21509,41 @@ function filasPlanillaCOP(){
   const filas = [], faltan = [];
   const trm = _trmPlanilla();
   const hoy = _hoyISO();
+
+  // LA TASA SE ESCRIBE, NO SE ADIVINA (Sergio, 09-nov)
+  // -------------------------------------------------------------------
+  // *"Depende del día: se escribe a mano al cerrar y el app debería pedirla
+  //  en vez de buscarla."*
+  //
+  // `_trmPlanilla()` cae a la tasa del informe de Ayudas cuando el campo
+  // esta vacio, y lo hacia EN SILENCIO. El 06-nov Sergio cerro con 3.240 y
+  // el app tomo otra del informe: un 0,17% que se metio en TODAS las lineas
+  // —Sura, Aval, Metlife, Porvenir— y nadie lo vio hasta cuadrar contra la
+  // planilla buena. Un numero que multiplica cada fila no puede salir de un
+  // campo que el usuario no miro.
+  //
+  // Solo frena si hay RVI: en un dia de puro RVL la TRM no se usa.
+  const _hayRVI = (typeof historial !== 'undefined' ? historial : [])
+    .some(h => Number(h.qty) > 0 && Number(h.price) > 0);
+  const _trmMan = _trmDeTexto((document.getElementById('planillaTRM')||{}).value);
+  // RANGO DE CORDURA. Es la red por debajo del parseo: aunque algun dia el
+  // texto se lea mal, una TRM de 3,3186 o de 331.860 no pasa. Se escogio
+  // ancho a proposito —la TRM lleva anios entre 3.000 y 5.000— para que
+  // frene solo cuando de verdad es un error de dedo.
+  if(_hayRVI && trm > 0 && (trm < 1000 || trm > 20000)){
+    faltan.push(`La tasa dice ${trm.toLocaleString('es-CO')} y eso no es una tasa. `
+      + 'Revisá cómo la escribiste: sirven 3,240.00 — como la escribís vos —, '
+      + '3240.00 y también 3.240,00.');
+  }
+  if(_hayRVI && !(_trmMan > 0)){
+    const _deAyudas = _trmDeTexto((document.getElementById('usdcopAyudas')||{}).value);
+    faltan.push('Falta la tasa del día. Escribila en la Planilla COP: '
+      + 'multiplica todas las líneas de RVI y no puede salir de un valor que no miraste.'
+      + (_deAyudas > 0
+          ? ` El informe de Ayudas trae ${_deAyudas.toLocaleString('es-CO')} — si es la buena, `
+            + 'escribila ahí para dejarlo dicho.'
+          : ' El informe de Ayudas tampoco la tiene.'));
+  }
   const ancRVI = _ancladoHoy('RVI'), ancFX = _ancladoHoy('FX');
   // Diferencia que se tolera antes de frenar. Un peso es redondeo; más que eso
   // es que dos caminos están calculando cosas distintas, y eso hay que mirarlo
@@ -21665,38 +21782,49 @@ function filasPlanillaCOP(){
       liquidacion:parseFechaLocal(hoy), cumplimiento:sumarDiasHabiles(parseFechaLocal(hoy),2,'CO') });
   });
 
-  // ---- ERRORES DE EJECUCION: el P&G se suma al margen de UNA linea ----
-  // Sergio, 06-nov: el error no tiene cliente, pero la Planilla COP exige
-  // uno. Se le suma al margen de la linea del cliente que eligio la cascada
-  // —misma especie, y de esas la de la misma cantidad; si no, la de mayor
-  // volumen— en vez de crear una linea nueva.
+  // ---- ERRORES DE EJECUCION: UNA LINEA PROPIA ----
+  // Sergio, 09-nov, cuadrando contra la planilla buena del 06-nov:
+  // *"El error de Porvenir nunca llegó a Planilla COP."*
   //
-  // Se precalcula un mapa linea -> P&G para que el P&G entre UNA sola vez:
-  // sumarlo dentro del bucle, por cada linea que casara, lo multiplicaria.
-  const _normE = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-  const _pygErr = {};
-  (historial||[]).filter(e => e.esError && e.errorLider && Number(e.errorPyg))
-    .forEach(e=>{
-      const cli = _normE(e.errorClienteCOP);
-      const esp = _normE(e.symbol);
-      if(!cli){
-        faltan.push(`Error de ${e.symbol} — no tiene cliente al que sumarle el P&G ` +
-                    `(USD ${Number(e.errorPyg).toFixed(2)}). Asignalo a mano.`);
-        return;
-      }
-      const cands = (historial||[]).filter(x =>
-        !x.esError && _normE(x.symbol) === esp &&
-        (_normE(x.cliente) === cli || _normE(x.cliente).includes(cli) || cli.includes(_normE(x.cliente))));
-      if(!cands.length){
-        faltan.push(`Error de ${e.symbol} — ${e.errorClienteCOP} no tiene ninguna línea ` +
-                    `de esa especie hoy para sumarle el P&G (USD ${Number(e.errorPyg).toFixed(2)}).`);
-        return;
-      }
-      const exactas = cands.filter(x => Number(x.qty) === Number(e.errorQCerrada));
-      const destino = exactas.length ? exactas[0]
-                    : cands.slice().sort((a,b)=>Number(b.qty)-Number(a.qty))[0];
-      _pygErr[destino.id] = (_pygErr[destino.id] || 0) + Number(e.errorPyg);
+  // El viernes se habia hecho sumandolo al margen de la linea del cliente.
+  // La planilla que la mesa usa de verdad lo tiene de otra forma, y es
+  // mejor: una FILA PROPIA, con el fondo fijo "ERROR DE EJECUCIÓN", el
+  // grupo del cliente, tipo "Neto", y precio y bruto en CERO. Asi se ve,
+  // se filtra y nadie tiene que adivinar por que el margen de una linea no
+  // da contra su propio precio.
+  //
+  // El cliente ya NO se busca: lo elige Sergio en el modal. *"Se me ocurre
+  // para facilidad no tener a la app buscando qué cliente fue... si fueron
+  // más clientes entonces el grande, eso dificulta y puede generar aún más
+  // errores."*
+  (historial||[]).filter(e => e.esError && e.errorLider).forEach(e=>{
+    const pyg = Number(e.errorPyg) || 0;
+    const cli = String(e.errorClienteCOP || '').trim();
+    if(!cli){
+      faltan.push(`Error de ${e.symbol} — no tiene cliente. Abrí el error y elegilo: ` +
+                  `la Planilla COP necesita uno y el app ya no lo adivina.`);
+      return;
+    }
+    const g = grupoDeOperacion(cli, '', '');
+    if(!g || !g.trader){
+      faltan.push(`Error de ${e.symbol} — ${cli} no está en el presupuesto (falta trader).`);
+      return;
+    }
+    const comCOP = pyg * RVI_PARTE_EQS * trm;
+    filas.push({
+      fondo: 'ERROR DE EJECUCIÓN', grupo: g.grupo, tipo: 'Neto',
+      nemo: e.symbol || '',
+      cantidad: Number(e.errorQCerrada) || 0,
+      // precio y bruto en CERO: no es una operacion de cliente, es un P&G.
+      precio: 0, bruto: 0,
+      comision: comCOP, comisionPct: 0, iva: 0, giro: 0,
+      trader: g.trader,
+      mercado: e.tipoInstr || 'ETF',
+      categoria: g.categoria,
+      liquidacion: e.tradeDate, cumplimiento: e.settleDate,
+      generadoPor: e.trader || '',
     });
+  });
 
   // ---- RVI: la utilidad, pasada a pesos ----
   (historial||[]).forEach(h=>{
@@ -21722,9 +21850,7 @@ function filasPlanillaCOP(){
                   `(reporte USD ${(Number(_rep.comision)||0).toFixed(2)} · planilla USD ${(Number(h.cost)||0).toFixed(2)})`);
       return;
     }
-    // + el P&G de los errores que le tocan a ESTA linea (ver el mapa arriba)
-    const utilUSD = (Number(h.cost)||0) + margen - (Number(h.ccsi)||0)
-                  + (Number(_pygErr[h.id]) || 0);
+    const utilUSD = (Number(h.cost)||0) + margen - (Number(h.ccsi)||0);
     // EL 50% ES DE AAR. Regla de Sergio: "En RVI y RFI el 50% de la comision
     // es de SAR y el 50% de AAR (Andres Agudelo)", que esta en otra mesa.
     // Hasta hoy entraba el 100% y Sergio lo corregia A MANO en cada planilla
@@ -30811,6 +30937,28 @@ function resolverPrecioNuestroRVI(clienteLinea, precioEscrito){
 // JRFE, y Sergio eligio Flow Traders a proposito, para no quedar con un
 // loop de cumplimiento el lunes. El app no sabe eso y no tiene por que.
 let _rviErrorSel = new Set();
+// EL CLIENTE LO ELIGE SERGIO, NO LO BUSCA EL APP (09-nov)
+// *"Se me ocurre para facilidad no tener a la app buscando qué cliente fue,
+//  simplemente en la vinculación de ambas líneas del error debemos poner un
+//  menú en la selección que nos permite escoger qué cliente fue, sencillo,
+//  así eliminamos el error de ir a buscar el nemo. Si fueron más clientes
+//  entonces el grande, eso dificulta y puede generar aún más errores."*
+let _rviErrorCliente = '';
+
+// Los clientes que operaron hoy, para el menu. Se ordenan por volumen para
+// que el que mas movio quede arriba, pero NO se elige solo.
+function _rviErrorClientesDelDia(){
+  const h = (typeof historial !== 'undefined' ? historial : []);
+  const por = {};
+  h.forEach(x=>{
+    if(x.esError) return;
+    const c = String(x.cliente||'').trim();
+    if(!c) return;
+    por[c] = (por[c] || 0) + (Number(x.qty) || 0);
+  });
+  return Object.keys(por).sort((a,b)=>por[b]-por[a]);
+}
+function rviErrorSetCliente(v){ _rviErrorCliente = String(v||''); _rviErrorPintar(); }
 
 function _rviErrorLineas(){
   const d = (typeof emsxData !== 'undefined' ? emsxData : []);
@@ -30870,10 +31018,15 @@ function _rviErrorEstado(){
     avisos.push(`Hay ${especies.length} especies (${especies.join(', ')}). Un error es de UNA sola: hay que cerrar esa posición.`);
   if(ls.length >= 2 && (!compras.length || !ventas.length))
     avisos.push('Falta una pata: tiene que haber compra y venta.');
+  if(ls.length >= 2 && especies.length === 1 && compras.length && ventas.length
+     && !String(_rviErrorCliente||'').trim())
+    avisos.push('Elegí a qué cliente va el P&G: la Planilla COP necesita uno.');
   return { ls, compras, ventas, qC, qV, pxC, pxV, qCerrada, pyg,
            especie: especies[0] || '', especies, avisos,
+           cliente: String(_rviErrorCliente||'').trim(),
            abierto: qC !== qV, saldo: qC - qV,
-           listo: ls.length >= 2 && especies.length === 1 && !!compras.length && !!ventas.length };
+           listo: ls.length >= 2 && especies.length === 1 && !!compras.length
+                  && !!ventas.length && !!String(_rviErrorCliente||'').trim() };
 }
 
 // EL CLIENTE QUE SE LE PONE EN LA PLANILLA COP. La planilla exige cliente y
@@ -30882,7 +31035,14 @@ function _rviErrorEstado(){
 // el del volumen mas grande (Sergio, 06-nov).
 function _rviErrorClienteCOP(especie, cantidad){
   const h = (typeof historial !== 'undefined' ? historial : []);
-  const norm = t => String(t||'').toUpperCase().trim();
+  // EL TICKER VA LIMPIO. En el blotter la especie es "ACWI US Equity" y en
+  // el historico se guarda "ACWI": comparar los dos textos crudos no casa
+  // nunca, y el error decia "nadie operó esa especie hoy" con el cliente
+  // ahi mismo (Sergio, 06-nov, con el modal abierto).
+  const norm = t => {
+    const lim = (typeof tickerLimpioRVI === 'function') ? tickerLimpioRVI(t) : t;
+    return String(lim||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  };
   const mismos = h.filter(x => norm(x.symbol) === norm(especie));
   if(!mismos.length) return { cliente:'', razon:'nadie operó esa especie hoy' };
   const exactos = mismos.filter(x => Number(x.qty) === Number(cantidad));
@@ -30920,11 +31080,8 @@ function rviErrorToggle(id){
 async function guardarErrorRVI(){
   const E = _rviErrorEstado();
   if(!E.listo){ alert('Faltan cosas:\n\n' + E.avisos.join('\n')); return; }
-  const cop = _rviErrorClienteCOP(E.especie, E.qCerrada);
+  const cop = { cliente: E.cliente, razon: 'elegido a mano' };
   const n2 = v => Number(v).toLocaleString('es-CO',{minimumFractionDigits:2, maximumFractionDigits:2});
-  if(!cop.cliente && !confirm(
-      `No hay a quién sumarle el P&G en la Planilla COP: ${cop.razon}.\n\n` +
-      'Las dos filas del BO sí quedan. ¿Guardo igual?')) return;
   const txt =
     `${E.especie} — error de ejecución\n\n` +
     `   Cerrado: ${E.qCerrada.toLocaleString('es-CO')} acciones\n` +
@@ -30933,7 +31090,7 @@ async function guardarErrorRVI(){
     (E.abierto ? `   QUEDA ABIERTO: ${Math.abs(E.saldo).toLocaleString('es-CO')} ` +
                  `${E.saldo > 0 ? 'comprados de más' : 'vendidos sin cerrar'}\n\n` : '') +
     `   Al BO: ${E.ls.length} filas, cada una con su broker\n` +
-    (cop.cliente ? `   A Planilla COP: suma al margen de ${cop.cliente}\n` : '') +
+    `   A Planilla COP: línea propia a nombre de ${cop.cliente}\n` +
     `\n¿Lo guardo?`;
   if(!confirm(txt)) return;
 
@@ -30943,8 +31100,13 @@ async function guardarErrorRVI(){
   const tradeDate = tdVal ? parseFechaLocal(tdVal) : hoyD;
   // El ISIN se toma de lo que ya se registro hoy de esa especie; si no hay,
   // queda vacio y el BO lo completa. No se inventa.
+  const _limT = t => {
+    const l = (typeof tickerLimpioRVI === 'function') ? tickerLimpioRVI(t) : t;
+    return String(l||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  };
   const hIsin = (typeof historial !== 'undefined' ? historial : [])
-    .find(h => String(h.symbol||'').toUpperCase() === String(E.especie||'').toUpperCase());
+    .find(h => _limT(h.symbol) === _limT(E.especie))
+    || { isin: (typeof isinTickerRVI === 'function') ? isinTickerRVI(E.especie) : '' };
   const isin = hIsin ? (hIsin.isin || '') : '';
 
   E.ls.forEach((r, k) => {
@@ -30958,7 +31120,10 @@ async function guardarErrorRVI(){
       // hay cliente, simplemente se compro y se vendio algo contra alguien.
       cliente: String(r.broker || '').trim() || 'SIN BROKER',
       account: '',
-      side: r.lado, symbol: E.especie, isin,
+      side: r.lado,
+      // mismo formato que el resto del historial: "ACWI", no "ACWI US Equity"
+      symbol: (typeof tickerLimpioRVI === 'function') ? tickerLimpioRVI(E.especie) : E.especie,
+      isin,
       qty, price: px, gross, cost: 0, secFee: 0, net: gross,
       // cada pata con SU fecha de cumplimiento, la que traiga
       tradeDate, settleDate: r.settleDate || null,
@@ -30966,6 +31131,11 @@ async function guardarErrorRVI(){
       // ---- lo que lo marca como error ----
       esError: true,
       errorId: grupo,
+      // Para la columna Mercado de la Planilla COP. Se toma de la linea de
+      // esa misma especie que ya esta en el historial; si no hay, del ISIN,
+      // que es como lo deduce el resto del app.
+      tipoInstr: (hIsin && hIsin.tipo) ? hIsin.tipo
+                 : (/^(IE|LU|GB)/i.test(String(isin||'')) ? 'UCIT' : 'ETF'),
       // El P&G va UNA sola vez, en la fila lider: si fuera en las dos, la
       // Planilla COP lo sumaria dos veces.
       errorPyg: k === 0 ? E.pyg : 0,
@@ -30980,7 +31150,7 @@ async function guardarErrorRVI(){
   });
   try{ await guardarHistoricoRVI(); }
   catch(e){ console.warn('guardar histórico (error de ejecución):', e.message); }
-  _rviErrorSel = new Set();
+  _rviErrorSel = new Set(); _rviErrorCliente = '';
   document.getElementById('modalErrorRVI').style.display = 'none';
   if(typeof renderHistorial === 'function') renderHistorial();
   if(typeof renderDashboard === 'function') renderDashboard();
@@ -31021,13 +31191,13 @@ function _rviErrorPintar(){
   let resumen = '';
   if(E.listo){
     const col = E.pyg >= 0 ? 'var(--buy,#22c55e)' : 'var(--sell,#ef4444)';
-    const cop = _rviErrorClienteCOP(E.especie, E.qCerrada);
     resumen = `
       <div class="card" style="padding:12px 15px;margin-top:11px;">
         <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;">
           <div><span class="field-note">Cerrado</span><br>
             <b style="font-size:17px;">${E.qCerrada.toLocaleString('es-CO')}</b>
-            <span class="field-note">${esc0(E.especie)}</span></div>
+            <span class="field-note">${esc0((typeof tickerLimpioRVI === 'function')
+                ? tickerLimpioRVI(E.especie) : E.especie)}</span></div>
           <div><span class="field-note">Compra prom.</span><br>
             <b style="font-size:17px;">${n2(E.pxC)}</b></div>
           <div><span class="field-note">Venta prom.</span><br>
@@ -31040,9 +31210,9 @@ function _rviErrorPintar(){
           fecha de cumplimiento. No llevan cliente: afuera somos posición propia.
         </div>
         <div class="field-note" style="margin-top:5px;">
-          A la <b>Planilla COP</b> el P&amp;G se suma al margen de
-          ${cop.cliente ? `<b>${esc0(cop.cliente)}</b> — ${esc0(cop.razon)}`
-                        : '<b style="color:var(--warn,#f59e0b);">ningún cliente: ' + esc0(cop.razon) + '</b>'}.
+          A la <b>Planilla COP</b> va como una <b>línea propia</b> —fondo
+          ERROR DE EJECUCIÓN, tipo Neto, precio y bruto en cero— a nombre de
+          <b>${esc0(E.cliente)}</b>.
         </div>
       </div>`;
   }
@@ -31066,6 +31236,14 @@ function _rviErrorPintar(){
       Marcá las líneas que fueron el error: la equivocada y la de cierre.
       <b>Misma especie</b>, y tiene que haber compra y venta.
       La sugerencia es solo eso — la decisión es tuya.
+    </div>
+    <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:11px;">
+      <span class="field-note">¿De qué cliente fue el error?</span>
+      <select style="min-width:280px;" onchange="rviErrorSetCliente(this.value)">
+        <option value="">— elegí el cliente —</option>
+        ${_rviErrorClientesDelDia().map(c=>`<option value="${esc0(c)}"
+            ${c === _rviErrorCliente ? 'selected' : ''}>${esc0(c)}</option>`).join('')}
+      </select>
     </div>
     <div class="blotter-wrap" style="max-height:300px;overflow:auto;"><table>
       <thead><tr><th></th><th>Hora</th><th>Especie</th><th>Lado</th>
@@ -32882,6 +33060,40 @@ function generarTC(){
   // NUESTRAS patas de ejecución, una por línea marcada. Se leen UNA vez y
   // quedan guardadas en cada fila del histórico: son la materia prima de la
   // planilla del BO, que las abre en una fila por broker.
+  // EL ESPEJO NO SE ARRASTRA, PERO SE AVISA (Sergio, 09-nov)
+  // -------------------------------------------------------------------
+  // Los tres modos se borran despues de cada operacion, y con razon: *"cada
+  // operación se decide por separado y arrastrar el de la anterior es justo
+  // lo que lleva a arquear mal"* (31-ago). Pero el 06-nov eso tuvo un costo:
+  // Proteccion se reporto con espejo, hubo que borrar las cinco lineas para
+  // corregir el precio nuestro, y al volver a guardar el espejo ya no estaba
+  // marcado. Salio una sola linea de CCSI y la planilla del BO se corrigio a
+  // mano.
+  //
+  // No se arrastra: se AVISA. Si hoy ya hubo una operacion de este mismo
+  // cliente y esta misma especie que iba con espejo y esta vez no lo tiene,
+  // se pregunta antes de guardar. Regenerar algo que ya estaba reportado es
+  // exactamente cuando se olvida.
+  if(_modoRVI.espejo !== 'si'){
+    const _sym = String((document.getElementById('tc-symbol')||{}).value || '').toUpperCase();
+    const _mismo = (typeof historial !== 'undefined' ? historial : []).filter(x=>{
+      if(!x || !x.espejo || x.esError) return false;
+      const _esEste = String(x.cliente||'') === String(clienteKey||'')
+                   || String(x.cliente||'') === String(db.nombre||'');
+      return _esEste && String(x.symbol||'').toUpperCase() === _sym;
+    });
+    if(_mismo.length){
+      const _cu = _mismo.reduce((a,x)=>a + (Number(x.qty)||0), 0);
+      if(!confirm(
+        `Hoy ya reportaste ${_mismo[0].symbol} de este cliente CON "Espejo del cliente" ` +
+        `(${_mismo.length} línea(s), ${_cu.toLocaleString('es-CO')} acciones) y esta vez ` +
+        `el espejo NO está marcado.\n\n` +
+        `Sin espejo, nuestra pata va consolidada en vez de partirse igual que la del ` +
+        `cliente, y al BO le llega una sola línea del broker.\n\n` +
+        `¿Guardo así de todos modos?`)) return;
+    }
+  }
+
   const _patasLote = (typeof _rviPatasEjecutadas === 'function') ? _rviPatasEjecutadas() : [];
 
   distribuciones.forEach(d=>{
@@ -38359,7 +38571,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-07 01:45 UTC · v342';
+const BUILD_ID = '2026-11-09 15:10 UTC · v346';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
