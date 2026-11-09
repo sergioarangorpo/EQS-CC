@@ -13680,8 +13680,10 @@ async function generarExcelCrucePendiente(){
   // BNP AGENCY y CREDIBOLSA usan el MISMO formato y no llevan trader. La
   // comisión YA NO es la misma: BNP sigue en 0,1% all in y CREDIBOLSA pasó a
   // 0,15% + IVA — la decide tarifaCruce(), no este if (Sergio, 25-sep).
-  if(/^(MLI|CITI|CREDIBOLSA|BNPA)/i.test(String(cli)) ||
-     /MERRILL|CITIGROUP|CREDIBOLSA|BNP AGENCY/i.test(String((getClienteDB(cli)||{}).nombre||''))){
+  // La condición se sacó a `_usaFormatoDeBroker` el 09-nov: la franja guía
+  // también tiene que saber qué formato le toca a cada contraparte, y dos
+  // copias del mismo regex se desincronizan. Un solo camino por decisión.
+  if(_usaFormatoDeBroker(cli)){
     generarExcelCruceMLI(cli, reg, trader);
   }else{
     generarExcelCruce(cli, reg, trader);
@@ -23841,12 +23843,46 @@ function renderHistoricoRVL(){
 //   manual   — hay que repartir de verdad. 11 clientes.
 //   sin      — la ficha no tiene formato de reporte: no se genera desde el
 //              app. Mejor decirlo que pintar un verde mentiroso.
+// ¿Esta contraparte usa el formato que pidió el broker, o el estándar?
+// MLI y CITI lo pidieron propio; BNP AGENCY y CREDIBOLSA usan ese mismo y no
+// llevan trader. La TARIFA no la decide esta función —eso es `tarifaCruce()`—,
+// solo la plantilla. Vive acá y no adentro de `generarExcelCrucePendiente`
+// porque la franja guía también lo necesita (Sergio, 09-nov).
+function _usaFormatoDeBroker(cli){
+  const nom = String((getClienteDB(cli)||{}).nombre || '');
+  return /^(MLI|CITI|CREDIBOLSA|BNPA)/i.test(String(cli)) ||
+         /MERRILL|CITIGROUP|CREDIBOLSA|BNP AGENCY/i.test(nom);
+}
+
 function _guiaDeCliente(cliente){
   const cfg = getClienteDB(cliente) || {};
   // PROTECCIÓN no tiene `formatoReporte` —su generación va por la pantalla
   // de aprobación propia— pero sí se reporta. Se trata como los demás.
   const esProteccion = /PROTECCION/i.test(cliente);
   if(!cfg.formatoReporte && !esProteccion){
+    // ACÁ ESTABA MAL HASTA EL 09-NOV. Todo lo que no tuviera `formatoReporte`
+    // salía como "no se genera desde el app", y Sergio lo cachó enseguida:
+    // *"MLI sí se genera desde la app"*. Y es cierto — lo que pasa es que MLI
+    // no se reporta por RVL sino por el CRUCE DE FX, que es otro camino y otro
+    // botón. Decirle a Juan que lo reporte "por fuera" lo manda a hacerlo a
+    // mano teniendo el botón al lado.
+    //
+    // Los dos casos se distinguen por `reporte` en GRUPO_COMISIONES_DB:
+    //   reporte: true  -> es un CLIENTE y de verdad le falta configurar el
+    //                     formato. Hoy son dos: SEGUROS BOLIVAR y SURAMERICANA.
+    //   reporte: false -> es una CONTRAPARTE (MLI, CITI, GOLDMAN, HSBC...).
+    //                     No se reporta por RVL: se cierra por el cruce de FX.
+    const gc = (typeof GRUPO_COMISIONES_DB !== 'undefined')
+      ? GRUPO_COMISIONES_DB.find(x=>x.grupo === cliente) : null;
+    if(!gc || gc.reporte !== true){
+      const propio = _usaFormatoDeBroker(cliente);
+      return { familia:'cruce', titulo:'se reporta por el cruce de FX',
+               motivo: 'Es una contraparte, no se reporta por RVL. '
+                     + (propio ? 'Sale con el formato que pidió el broker.'
+                               : 'Sale con el formato estándar de cruce.'),
+               instruccion:'Ciérralo en el módulo FX, o acá mismo con '
+                         + '"Registrar FX y generar Excel".' };
+    }
     return { familia:'sin', titulo:'sin formato de reporte configurado',
              motivo:'Este cliente todavía no se genera desde el app.',
              instruccion:'Repórtalo por el camino de siempre.' };
@@ -23892,6 +23928,7 @@ function renderPanelListo(filtrados){
     const porFam = f => filas.filter(x=>x.guia.familia === f);
     const directos = [...porFam('auto'), ...porFam('archivo')];
     const manuales = porFam('manual');
+    const cruces   = porFam('cruce');
     const sinFmt   = porFam('sin');
     const chip = (col, txt) => `<span style="font-size:11px;padding:2px 8px;border-radius:10px;
       background:rgba(${col},.16);color:rgb(${col});border:1px solid rgba(${col},.4);
@@ -23907,14 +23944,17 @@ function renderPanelListo(filtrados){
             Resumen del día — ${nombres.length} cliente(s) con operaciones</span>
           ${directos.length ? chip('34,197,94',  directos.length + ' directo(s)') : ''}
           ${manuales.length ? chip('245,158,11', manuales.length + ' con reparto') : ''}
-          ${sinFmt.length   ? chip('148,163,184', sinFmt.length + ' fuera del app') : ''}
+          ${cruces.length   ? chip('129,140,248', cruces.length + ' por FX') : ''}
+          ${sinFmt.length   ? chip('148,163,184', sinFmt.length + ' sin formato') : ''}
         </div>
         ${directos.length ? `<div style="font-size:12.5px;margin-bottom:4px;">
           <b style="color:var(--buy,#22c55e);">Generan directo —</b> ${lista(directos)}</div>` : ''}
         ${manuales.length ? `<div style="font-size:12.5px;margin-bottom:4px;">
           <b style="color:var(--amber,#f59e0b);">Hay que repartir —</b> ${lista(manuales)}</div>` : ''}
+        ${cruces.length ? `<div style="font-size:12.5px;margin-bottom:4px;">
+          <b style="color:var(--accent,#818cf8);">Se cierran por el cruce de FX —</b> ${lista(cruces)}</div>` : ''}
         ${sinFmt.length ? `<div style="font-size:12.5px;margin-bottom:4px;">
-          <b style="color:#94a3b8;">No se generan desde el app —</b> ${lista(sinFmt)}</div>` : ''}
+          <b style="color:#94a3b8;">Sin formato configurado —</b> ${lista(sinFmt)}</div>` : ''}
         <div class="field-note" style="margin-top:8px;">
           Elige un <b>Client/Book</b> arriba para ver qué falta en ese cliente.
           El número entre paréntesis son las líneas del día.</div>
@@ -23933,14 +23973,18 @@ function renderPanelListo(filtrados){
   // SEGUROS BOLIVAR y SURAMERICANA sin ninguna guía: el filtro no decía nada y
   // no había forma de saber si era que estaba todo bien o que el panel no
   // aplicaba. Ahora lo dice. Esconder no es informar.
-  if(guia.familia === 'sin'){
+  if(guia.familia === 'sin' || guia.familia === 'cruce'){
+    // El de cruce va en morado y no en gris: NO es un "no se puede", es otro
+    // camino que sí existe y está a un botón (Sergio, 09-nov).
+    const esCruce = guia.familia === 'cruce';
+    const col = esCruce ? '129,140,248' : '148,163,184';
     cont.style.display = 'block';
     cont.innerHTML = `
-      <div style="background:rgba(148,163,184,.10);border:1px solid rgba(148,163,184,.45);
-                  border-left:4px solid #94a3b8;border-radius:8px;padding:14px 18px;">
+      <div style="background:rgba(${col},.10);border:1px solid rgba(${col},.45);
+                  border-left:4px solid rgb(${col});border-radius:8px;padding:14px 18px;">
         <div style="display:flex;align-items:center;gap:10px;">
-          <span style="font-size:20px;">○</span>
-          <span style="font-size:15px;font-weight:700;color:#94a3b8;">
+          <span style="font-size:20px;">${esCruce ? '💱' : '○'}</span>
+          <span style="font-size:15px;font-weight:700;color:rgb(${col});">
             ${_esc(cfg.nombre || cliente)} · ${guia.titulo}</span>
         </div>
         <div style="font-size:12.5px;margin-top:6px;">${guia.motivo} ${guia.instruccion}</div>
@@ -38951,7 +38995,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-09 20:05 UTC · v351';
+const BUILD_ID = '2026-11-09 20:55 UTC · v352';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
