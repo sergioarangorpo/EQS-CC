@@ -32461,8 +32461,25 @@ function _rviPatasEjecutadas(){
       aMano: true,
     }));
   }
-  const marcadas = (typeof getFiltradas === 'function' ? getFiltradas() : [])
+  // LA LINEA ACTIVA TAMBIEN CUENTA (Sergio, 09-nov).
+  // -------------------------------------------------------------------
+  // `lineaActiva` —la que se CLICO— y `_rviMarcadas` —las que se TILDARON—
+  // no son lo mismo. Hasta hoy esto miraba solo las tildadas.
+  //
+  // El 09-nov eso partio a Proteccion en dos: el resolvedor de precio ya
+  // miraba las dos cosas (v353), asi que el panel de RVI mostro la utilidad
+  // correcta —*"En RVI si me mostro los 4mil y pico USD"*—, pero las PATAS
+  // salian de aca y se caian a la linea del cliente. Y de las patas viven la
+  // planilla del BO y el dashboard: por eso el dashboard siguio en US$276
+  // con el panel diciendo 4.548.
+  //
+  // Dos funciones que deciden sobre lo mismo tienen que mirar lo mismo. Si
+  // la linea activa es NUESTRA, es nuestra ejecucion este tildada o no.
+  const _marc = (typeof getFiltradas === 'function' ? getFiltradas() : [])
     .filter(r => (typeof _rviMarcadas !== 'undefined') && _rviMarcadas.has(r.id));
+  const _act = (typeof lineaActiva !== 'undefined' && typeof emsxData !== 'undefined')
+    ? emsxData.find(r => r.id === lineaActiva) : null;
+  const marcadas = (_act && !_marc.some(r => r.id === _act.id)) ? _marc.concat([_act]) : _marc;
   return _rviLineasEjec(marcadas).map(r=>({
     emsxId: r.id,
     broker: String(r.broker||'').toUpperCase().trim(),
@@ -39088,7 +39105,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-09 21:25 UTC · v354';
+const BUILD_ID = '2026-11-09 21:35 UTC · v355';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
