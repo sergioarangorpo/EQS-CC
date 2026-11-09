@@ -18779,7 +18779,28 @@ function _precioNuestroRVI(h){
     String(r.lado||'').toUpperCase() === String(h.side||'').toUpperCase() &&
     Number(r.avgPr));
   // Primero la que calza en cantidad exacta; si hay una sola candidata, esa.
-  const exacta = nuestras.filter(r => Number(r.qty) === (Number(h.qty)||0));
+  //
+  // LA CANTIDAD DEL LOTE, NO LA DEL ALLOC (Sergio, 09-nov).
+  // -------------------------------------------------------------------
+  // `h.qty` es el PEDAZO del cliente —Proteccion 09-nov: 83.705, 29.440,
+  // 23.115 y 140.276— mientras que nuestra linea es la ejecucion ENTERA:
+  // 276.536. Asi que la cantidad exacta no calzaba NUNCA, y el rescate solo
+  // funcionaba de milagro, cuando por casualidad habia una sola linea nuestra
+  // de esa especie y lado en todo el blotter. El 09-nov habia dos y devolvio
+  // el precio del cliente: el dashboard se quedo en US$276 con el v356 ya
+  // cargado.
+  //
+  // Se prueban las dos cantidades: la de la fila y la del LOTE, que es la
+  // suma de todas las filas que comparten `loteId` — o sea la orden completa,
+  // que es justo lo que ejecutamos contra el broker.
+  const _qLote = (typeof historial !== 'undefined' && Array.isArray(historial) && h.loteId)
+    ? historial.filter(x => String(x.loteId||'') === String(h.loteId))
+               .reduce((a,x)=>a + (Number(x.qty)||0), 0)
+    : 0;
+  const exacta = nuestras.filter(r => {
+    const q = Number(r.qty);
+    return q === (Number(h.qty)||0) || (_qLote > 0 && q === _qLote);
+  });
   const elegida = exacta.length === 1 ? exacta[0] : (nuestras.length === 1 ? nuestras[0] : null);
   const avg = elegida ? Number(elegida.avgPr) : 0;
   return (avg && Math.abs(avg - px) > 1e-9) ? avg : (guardado || px);
@@ -39132,7 +39153,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-09 21:45 UTC · v356';
+const BUILD_ID = '2026-11-09 21:55 UTC · v357';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
