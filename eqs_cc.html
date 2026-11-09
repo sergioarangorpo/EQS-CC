@@ -18914,7 +18914,20 @@ function filasBODeCliente(cliente){
   const _porLote = new Map();        // un lote = una ejecución, no una por alloc
   ops.forEach(h=>{
     const _pt = Array.isArray(h.patas) ? h.patas.filter(p=>Number(p.qty) > 0) : [];
-    if(_pt.length > 1){
+    // EL ESPEJO TAMBIEN CON UNA SOLA PATA (Sergio, 09-nov).
+    // -----------------------------------------------------------------
+    // Este porton decia solo `_pt.length > 1`, y el bloque que parte el
+    // espejo vive adentro. O sea: el espejo solo funcionaba cuando la orden
+    // se habia ejecutado contra VARIOS brokers.
+    //
+    // El 09-nov Proteccion se ejecuto contra UNO solo —CCSI, 276.536— con
+    // espejo puesto, y la planilla del BO saco UNA fila consolidada en vez
+    // de las cuatro del cliente. *"No funcionó tampoco el espejo del cliente
+    // en proteccion."* No era el espejo: era este `> 1`.
+    //
+    // El caso de UNA pata es el normal; el de varias es la excepcion. Que el
+    // espejo dependiera de la excepcion es justo al reves.
+    if(_pt.length > 1 || (h.espejo && _pt.length === 1)){
       const lote = String(h.loteId || h.emsxId || h.id);
       // Se guardan TODAS las operaciones del lote, no solo la primera: con
       // espejo, nuestra pata se parte por ALLOC DEL CLIENTE y hacen falta
@@ -31249,6 +31262,49 @@ function resolverPrecioNuestroRVI(clienteLinea, precioEscrito){
   // el vinculo (1) y las lineas marcadas (0 y 2), que son decision de
   // Sergio y van antes.
   if(esNuestraLineaRVI(clienteLinea)){
+    // PERO NO SI LA PATA DEL CLIENTE ESTA MARCADA AHI AL LADO (Sergio, 09-nov).
+    // -----------------------------------------------------------------
+    // El 09-nov Proteccion compro 276.536 SPYM. En el blotter habia DOS lineas
+    // exactas: la nuestra (CREDICORP CAPITAL COLOMBIA SA @ 88,552635) y la del
+    // cliente (AFP PROTECCION SA @ 88,568084). Miguel marco las dos y guardo
+    // con margen. La utilidad salio en US$276 —solo el spread de comision— en
+    // vez de US$4.548,74: el margen quedo en CERO.
+    //
+    // La causa es este mismo bloque. `clienteLinea` es LA ULTIMA LINEA EN LA
+    // QUE SE HIZO CLIC. Si la que quedo activa fue la NUESTRA, el paso 2 la
+    // excluye (`r.id !== clienteLinea.id`) y no encuentra ninguna otra nuestra
+    // marcada, cae aca, ve que es nuestra, declara "ejecucion directa" y DEJA
+    // DE BUSCAR LA CONTRAPARTE — con la del cliente marcada ahi mismo.
+    //
+    // La ejecucion directa es real, pero solo cuando NO hay pata de cliente a
+    // la vista (Porvenir por chat: una sola linea, a nombre del cliente). Si
+    // hay una marcada que no es nuestra, esto es un PAR y los papeles estan
+    // invertidos: la del cliente es la otra y la nuestra es esta.
+    //
+    // Asi deja de depender del ORDEN DE LOS CLICS, que es lo que no puede ser.
+    const _marcNoNuestras = (typeof getFiltradas === 'function' ? getFiltradas() : [])
+      .filter(r => (typeof _rviMarcadas !== 'undefined' && _rviMarcadas.has(r.id)) &&
+                   r.id !== clienteLinea.id && !esNuestraLineaRVI(r) && Number(r.avgPr));
+    if(_marcNoNuestras.length === 1){
+      const _cli  = _marcNoNuestras[0];
+      const _pxN  = Number(clienteLinea.avgPr);     // el nuestro: la linea activa
+      const _pxCl = Number(_cli.avgPr);             // el del cliente: la otra
+      // Y si el precio escrito es EL NUESTRO, el panel se lleno con la linea
+      // equivocada y el margen iba a salir en cero sin que nadie lo notara.
+      // Se dice con nombre propio en vez de devolver un cero silencioso.
+      const _escritoEsNuestro = isFinite(Number(precioEscrito)) &&
+        Math.abs(Number(precioEscrito) - _pxN) < 1e-9 && Math.abs(_pxCl - _pxN) > 1e-9;
+      return { precio:_pxN, fuente:'nuestra línea marcada (la del cliente es la otra)',
+               auto:true, candidatas:[], parInvertido:true,
+               detalle:`${clienteLinea.especie} ${clienteLinea.lado} ` +
+                       `${Number(clienteLinea.qty).toLocaleString('es-CO')} @ ${_pxN}` +
+                       ` — la del cliente es ${_cli.firm || 'la otra marcada'} @ ${_pxCl}.` +
+                       (_escritoEsNuestro
+                         ? ` <b style="color:#f59e0b;">OJO: el precio escrito (${precioEscrito}) `
+                           + `es el NUESTRO, no el del cliente. El del cliente es ${_pxCl} — `
+                           + `corrígelo o el margen queda en cero.</b>`
+                         : '') };
+    }
     const _px  = Number(clienteLinea.avgPr);
     const _pxE = Number(precioEscrito);
     if(_px && isFinite(_pxE) && _pxE > 0 && Math.abs(_pxE - _px) > 1e-9){
@@ -33440,6 +33496,43 @@ function generarTC(){
   // del bug del 30-sep que advierte el comentario de arriba: un número, un
   // camino, y las tres llamadas con los mismos argumentos (Sergio, 15-oct).
   const _nuestro   = resolverPrecioNuestroRVI(emsxData.find(r=>r.id===lineaActiva), price);
+
+  // FRENO: "CON MARGEN" PERO SIN NUESTRA EJECUCION (Sergio, 09-nov)
+  // -------------------------------------------------------------------
+  // El 09-nov Proteccion se guardo DOS veces con margen cero. La planilla del
+  // BO lo dejo ver: la fila de CCSI salio en 24.492.263,57, que es
+  // 276.536 x 88,568084 —EL PRECIO DEL CLIENTE—. Con el nuestro (88,552635)
+  // serian 24.487.991,47. O sea nuestra linea no estaba marcada al guardar y
+  // las patas se cayeron a la del cliente (`_rviLineasEjec` devuelve todas las
+  // marcadas cuando ninguna es nuestra). De ahi salieron LOS DOS sintomas: el
+  // margen en cero y el espejo sin partir, porque las dos cosas leen `patas`.
+  //
+  // Si se eligio CON MARGEN, nuestro precio NO puede ser el del cliente: eso
+  // no es un margen de cero, es que no se capturo la ejecucion. Un control
+  // cuyos dos lados salen del mismo lugar no es un control.
+  //
+  // Frena con salida: se puede seguir igual, pero a sabiendas y escribiendolo.
+  if(_modoRVI.margen === 'con'){
+    const _pxN = Number(_nuestro.precio);
+    const _igual = _pxN && Math.abs(_pxN - Number(price)) < 1e-9;
+    if(!_pxN || _igual){
+      const _patas = (typeof _rviPatasEjecutadas === 'function') ? _rviPatasEjecutadas() : [];
+      const _hayNuestra = _patas.some(p => p.px && Math.abs(p.px - Number(price)) > 1e-9);
+      if(!_hayNuestra){
+        const _msg =
+          'Elegiste CON MARGEN pero no se encontró NUESTRA ejecución.\n\n' +
+          (_pxN ? `Nuestro precio salió ${_pxN}, igual al del cliente (${price}).\n`
+                : `No hay precio nuestro: se usaría el del cliente (${price}).\n`) +
+          '\nAsí el margen queda en CERO y la fila de CCSI en la planilla del BO ' +
+          'sale con el precio del cliente.\n\n' +
+          'Marcá también nuestra línea en el blotter (la de Originating Firm ' +
+          'CREDICORP) y volvé a guardar.\n\n' +
+          '¿Guardar igual, con margen cero?';
+        if(!confirm(_msg)) return;
+      }
+    }
+  }
+
   const vincPrecio = _nuestro.precio;
   const c          = calcularComisiones(clienteKey, tipo, qty, price, {
     comCCSI: parseNum(document.getElementById('tc-com-ccsi').value),
@@ -38995,7 +39088,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-09 20:55 UTC · v352';
+const BUILD_ID = '2026-11-09 21:25 UTC · v354';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
