@@ -18913,7 +18913,34 @@ function filasBODeCliente(cliente){
   const porBroker = {};
   const _porLote = new Map();        // un lote = una ejecución, no una por alloc
   ops.forEach(h=>{
-    const _pt = Array.isArray(h.patas) ? h.patas.filter(p=>Number(p.qty) > 0) : [];
+    // SE CURA AL LEER LO QUE SE GUARDO MAL (Sergio, 09-nov).
+    // -----------------------------------------------------------------
+    // Las operaciones guardadas antes del v355 pueden traer las patas con EL
+    // PRECIO DEL CLIENTE: `_rviPatasEjecutadas` miraba solo las lineas
+    // tildadas y no la activa, asi que si nuestra linea estaba activa sin
+    // tilde, la pata se caia a la del cliente. Proteccion quedo asi el 09-nov.
+    //
+    // Pero esas MISMAS filas tienen `precioNuestro` bien —el resolvedor si
+    // miraba las dos—, y ahi esta la salida: si una pata viene exactamente al
+    // precio del cliente y la operacion guardo un `precioNuestro` distinto,
+    // manda `precioNuestro`. Es el mismo truco con el que el 29-oct se
+    // arreglaron las operaciones ya guardadas sin regenerarlas.
+    //
+    // Es conservador a proposito: solo toca la pata cuando su precio es
+    // IDENTICO al del cliente y hay un precio nuestro distinto guardado. Una
+    // pata que de verdad se ejecuto al mismo precio del cliente no tiene
+    // margen que perder, asi que el cambio no le mueve la plata a nadie.
+    // Se usa `_precioNuestroRVI`, que ya es LA fuente de nuestro precio al
+    // leer —mira el guardado y si no sale a buscar nuestra linea—, en vez de
+    // volver a escribir la regla aca.
+    const _pxClienteFila = Number(h.price) || 0;
+    const _pxNuestroFila = (typeof _precioNuestroRVI === 'function')
+      ? (Number(_precioNuestroRVI(h)) || 0) : (Number(h.precioNuestro) || 0);
+    const _curable = _pxNuestroFila && _pxClienteFila &&
+                     Math.abs(_pxNuestroFila - _pxClienteFila) > 1e-9;
+    const _pt = (Array.isArray(h.patas) ? h.patas.filter(p=>Number(p.qty) > 0) : [])
+      .map(p => (_curable && Math.abs((Number(p.px)||0) - _pxClienteFila) < 1e-9)
+        ? { ...p, px: _pxNuestroFila, curada: true } : p);
     // EL ESPEJO TAMBIEN CON UNA SOLA PATA (Sergio, 09-nov).
     // -----------------------------------------------------------------
     // Este porton decia solo `_pt.length > 1`, y el bloque que parte el
@@ -39105,7 +39132,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-09 21:35 UTC · v355';
+const BUILD_ID = '2026-11-09 21:45 UTC · v356';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
