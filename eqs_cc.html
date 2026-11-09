@@ -20129,7 +20129,28 @@ function _dashDatos(){
   const emsxRegistrados = new Set((historial||[])
     .map(h=>String(h.emsxId != null ? h.emsxId : h.emsx_id || '')).filter(x=>x && x!=='null'));
   (typeof emsxData !== 'undefined' ? emsxData : []).forEach(r=>{
-    if(String(r.status||'').toUpperCase() !== 'FILLED') return;
+    // ANTES ACÁ DECÍA `if(r.status !== 'FILLED') return;` Y ESTABA MAL.
+    // ---------------------------------------------------------------
+    // El 09-nov Sergio tenía una orden de PROTECCIÓN de 25 MM USD con 20 MM
+    // ya ejecutados y el Dashboard mostraba cero: *"la orden está working, no
+    // veo ese volumen, ¿no lo actualizas hasta que no acabe?"*. No era que se
+    // esperara al final — la orden estaba WORKING, no FILLED, y se descartaba
+    // ENTERA con los 20 MM adentro.
+    //
+    // Y el dato estaba a la mano: en `emsxData`, `qty` es `row.filled` —lo
+    // EJECUTADO—, no el tamaño de la orden, que es `qtyOrden`. O sea el
+    // Dashboard tenía los 20 MM y los botaba por el nombre del estado.
+    //
+    // La regla correcta ya existía escrita en `esEstadoActivo`: *"si tiene
+    // ejecución, se muestra — salvo que esté cancelada Y sin ejecutar"*. Se
+    // reusa esa en vez de inventar otra, así hay UN SOLO camino para decidir
+    // si una línea de EMSX cuenta. Una orden cancelada con ejecución parcial
+    // también cuenta: ese volumen se operó de verdad.
+    //
+    // Lo que no cambia: el anti-duplicado de más abajo sigue descontando por
+    // `emsxId` y por cantidad acumulada en el histórico, así que una orden que
+    // crece de parcial a completa no se cuenta dos veces — se cuenta el saldo.
+    if(typeof esEstadoActivo === 'function' && !esEstadoActivo(r.status, r.qty)) return;
     const q = Number(r.qty)||0, px = Number(r.avgPr)||0;
     if(!q || !px) return;
     const sym = tickerLimpioRVI(r.especie).toUpperCase();
@@ -38930,7 +38951,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-09 19:55 UTC · v350';
+const BUILD_ID = '2026-11-09 20:05 UTC · v351';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
