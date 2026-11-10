@@ -20654,7 +20654,7 @@ function renderDashboard(){
         <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border,#232938);">
           <div style="font-size:15px;font-weight:700;color:var(--buy,#22c55e);">${mm(m.com, m.moneda)}</div>
           <div class="field-note" style="font-size:11px;">
-            ${k==='RVI' ? 'utilidad' : 'comisión'}${hayPend ? ' · <span style="color:var(--amber,#f59e0b);">falta por reportar</span>' : ''}</div>
+            ${k==='RVI' ? 'utilidad' : 'comisión'}${hayPend ? ' · <span style="color:var(--amber,#f59e0b);">falta confirmar</span>' : ''}</div>
         </div>
       </div>`;
   }).join('');
@@ -20804,6 +20804,18 @@ function renderDashBarras(M){
   renderDashTotales(M, 'vol', 'dashTotalesVol');
 }
 
+// Por qué la comisión de un cliente sigue sin confirmar. Se deduce con las
+// mismas reglas de `_dashDatos`, para que el motivo no diga otra cosa.
+function _dashMotivoPendiente(mkt, cli){
+  if(mkt === 'RVI') return 'ejecutado en EMSX, sin registrar';
+  if(mkt === 'RVL'){
+    const g = (typeof _filaComisionDe === 'function') ? _filaComisionDe(cli) : null;
+    if(!g) return 'sin ficha de comisión';
+    return 'tarifa variable, falta el reporte';
+  }
+  return 'sin confirmar';
+}
+
 // Cuánto llevamos ganado hoy, por moneda y por mercado. Los pesos y los
 // dólares NO se suman entre sí: cada uno va en su propia tarjeta.
 function renderDashTotales(M, campo, destino){
@@ -20812,7 +20824,12 @@ function renderDashTotales(M, campo, destino){
   if(!cont) return;
   const esVol = campo === 'vol';
 
-  const acum = { COP:{ total:0, por:{}, pend:0 }, USD:{ total:0, por:{}, pend:0 } };
+  // `quien` guarda NOMBRE y MOTIVO de cada pendiente (Sergio, 10-nov).
+  // El aviso decía "falta 3 cliente(s) por reportar" y la franja de arriba
+  // mostraba dos: no miden lo mismo. Arriba son ÓRDENES sin reporte; acá son
+  // clientes cuya COMISIÓN no se puede calcular todavía. Un número sin
+  // nombres nos tuvo adivinando dos días seguidos (el 09-nov dije CAXDAC).
+  const acum = { COP:{ total:0, por:{}, pend:0, quien:[] }, USD:{ total:0, por:{}, pend:0, quien:[] } };
   Object.keys(M).forEach(k=>{
     if(_dashMercado && k !== _dashMercado) return;
     const m = M[k];
@@ -20824,7 +20841,10 @@ function renderDashTotales(M, campo, destino){
       a.por[k] = (a.por[k] || 0) + cl[campo];
       // El aviso de "falta por reportar" solo aplica a la comisión: el volumen
       // ya se conoce desde que se opera.
-      if(!esVol && cl.pendiente) a.pend++;
+      if(!esVol && cl.pendiente){
+        a.pend++;
+        a.quien.push({ mkt:k, cli:c, motivo:_dashMotivoPendiente(k, c) });
+      }
     });
   });
 
@@ -20858,8 +20878,10 @@ function renderDashTotales(M, campo, destino){
         <div style="font-size:26px;font-weight:800;color:${col};line-height:1.25;margin-top:2px;">
           ${fmt(a.total, moneda)}</div>
         <div style="font-size:11px;margin-top:4px;">${detalle || '<span style="opacity:.5;">—</span>'}</div>
-        ${a.pend ? `<div style="font-size:10.5px;margin-top:5px;color:var(--amber,#f59e0b);">
-          ⚠ falta ${a.pend} cliente(s) por reportar</div>` : ''}
+        ${a.pend ? `<div style="font-size:10.5px;margin-top:5px;color:var(--amber,#f59e0b);line-height:1.5;">
+          ⚠ falta confirmar la ${moneda === 'USD' ? 'utilidad' : 'comisión'} de ${a.pend} cliente(s):<br>
+          ${a.quien.map(q=>`<b>${_esc(_dashCorto(q.cli))}</b> <span style="opacity:.8;">(${_esc(q.mkt)} · ${_esc(q.motivo)})</span>`).join(' · ')}
+          </div>` : ''}
       </div>`;
   };
 
@@ -40347,7 +40369,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-10 20:45 UTC · v370';
+const BUILD_ID = '2026-11-10 20:40 UTC · v371';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
