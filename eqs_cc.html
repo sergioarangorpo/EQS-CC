@@ -35737,6 +35737,9 @@ async function rshCargarCalendario(){
   }
   _rshCal.cargando = false;
   rshPintar();
+  // La semana va aparte y NO sigue la navegación de mes: se carga una vez
+  // por módulo y se queda. Va después para no demorar el calendario.
+  rshCargarSemana();
 }
 
 // El nemo con el que se compara contra el universo. La vista arma
@@ -35819,13 +35822,244 @@ function rshCalSelTodo(cuales){
   rshPintar();
 }
 
+// ===================================================================
+// EL CUADRO DE LA SEMANA (Sergio, 10-nov)
+// -------------------------------------------------------------------
+// *"Quisiera un cuadro de la semana con los principales eventos
+//  resumido. Ex dividendo CIBEST martes, Resultados ISA miércoles,
+//  Publicación MSCI miércoles. Es adicional a lo que tenemos, que es
+//  más detalle; es más zoom. Esta semana, es para mirar los lunes y
+//  decir: ok, esto es lo importante."*
+//
+// SIEMPRE LA SEMANA EN CURSO, pase lo que pase con la navegación de
+// mes de abajo. Si uno está mirando diciembre y el cuadro de arriba se
+// fuera con él, dejaría de servir para lo que se pidió. Por eso tiene
+// su propia carga, acotada a siete días: es barata y no depende del
+// mes que se esté viendo.
+//
+// TRES FUENTES, y la tercera no existía: `eventos_calendario`, que
+// Sergio edita a mano, es donde viven las revisiones de índice (MSCI,
+// FTSE, S&P, WisdomTree) y lo macro. Su propio ejemplo traía tres
+// cosas y solo dos estaban en la base.
+// ===================================================================
+let _rshSem = { cargando:false, cargado:false, modulo:'', msg:'',
+                res:[], div:[], ev:[], uni:null };
+
+// Lunes a domingo de la semana en curso. El lunes es el día que se
+// mira, así que la semana empieza ahí y no en domingo.
+function _rshSemanaRango(){
+  const h = new Date(); h.setHours(0,0,0,0);
+  const lun = new Date(h);
+  lun.setDate(lun.getDate() - ((h.getDay() + 6) % 7));
+  const dom = new Date(lun); dom.setDate(dom.getDate() + 6);
+  return { lun, dom, a:_rshISO(lun), b:_rshISO(dom) };
+}
+
+async function rshCargarSemana(forzar){
+  if(_rshSem.cargando) return;
+  if(_rshSem.cargado && _rshSem.modulo === _rshModulo && !forzar) return;
+  _rshSem.cargando = true; _rshSem.msg = ''; _rshSem.modulo = _rshModulo;
+  const { a, b } = _rshSemanaRango();
+  try{
+    // Un rango ex puede haber EMPEZADO antes del lunes y seguir vivo
+    // esta semana. Se pide con holgura y el solape se decide acá.
+    const antes = _rshISO(new Date(new Date(a+'T12:00:00').getTime() - 40*864e5));
+    const [res, div, ev, uni] = await Promise.all([
+      supaFetchTodo('resultados_calendario', `modulo=eq.${_rshModulo}&fecha=gte.${a}&fecha=lte.${b}`),
+      supaFetchTodo('dividendos_calendario', `ex_date=gte.${antes}&ex_date=lte.${b}`),
+      // `eventos_calendario` puede no existir todavía: si falla, el cuadro
+      // sale igual con las dos fuentes de siempre y lo dice. No se cae.
+      supaFetchTodo('eventos_calendario',
+        `activo=is.true&fecha=gte.${a}&fecha=lte.${b}`).catch(()=>null),
+      _rshCal.uni ? Promise.resolve(_rshCal.uni)
+                  : supaFetchTodo('calendario_universo', `modulo=eq.${_rshModulo}&activo=is.true`),
+    ]);
+    _rshSem.res = res || [];
+    _rshSem.div = div || [];
+    _rshSem.uni = (uni && uni.length) ? uni : null;
+    if(ev === null){
+      _rshSem.ev = [];
+      _rshSem.msg = 'No pude leer <code>eventos_calendario</code> — ahí van las '
+                  + 'revisiones de índice y lo macro. ¿Corriste <code>eventos_calendario.sql</code>?';
+    }else{
+      _rshSem.ev = (ev || []).filter(x =>
+        x.modulo === 'AMBOS' || x.modulo === _rshModulo);
+    }
+    _rshSem.cargado = true;
+  }catch(e){
+    _rshSem.res = []; _rshSem.div = []; _rshSem.ev = [];
+    _rshSem.cargado = true;
+    _rshSem.msg = 'No se pudo leer la semana: ' + e.message;
+  }
+  _rshSem.cargando = false;
+  rshPintar();
+}
+
+// Los eventos de la semana, aplanados a { dia, tipo, titulo, detalle }.
+function _rshSemanaEventos(){
+  const { a, b } = _rshSemanaRango();
+  const out = [];
+  const enUni = x => {
+    if(!_rshSem.uni) return true;
+    const n = _rshCalNemo(x);
+    return !!n && _rshSem.uni.some(u => String(u.nemo).toUpperCase() === n);
+  };
+
+  (_rshSem.res||[]).forEach(r=>{
+    const f = String(r.fecha||'').slice(0,10);
+    if(f < a || f > b) return;
+    // 'en la ' + hora daba "en la cierre". Son dos preposiciones distintas.
+    const _cuando = r.hora === 'apertura' ? 'en la apertura'
+                  : (r.hora === 'cierre' ? 'al cierre' : null);
+    out.push({ dia:f, tipo:'res', titulo:`Resultados ${r.emisor}`,
+      detalle:[r.trimestre, r.estado === 'aproximada' ? 'fecha aproximada' : null,
+               _cuando].filter(Boolean).join(' · ') });
+  });
+
+  (_rshSem.div||[]).forEach(d=>{
+    if(!enUni(d)) return;
+    const nemo = _rshCalNemo(d) || d.isin;
+    const ex0 = String(d.ex_date||'').slice(0,10);
+    const ex1 = String(d.ex_date_fin || d.ex_date || '').slice(0,10);
+    // DEL RANGO EX SOLO ENTRA EL PRIMER DÍA. En el calendario del mes el
+    // rango se pinta entero porque ahí se ve dónde se amontona; acá se
+    // viene a leer "qué pasa el martes", y repetir CIBEST cinco días
+    // seguidos es ruido, no información.
+    if(ex0 && ex0 >= a && ex0 <= b){
+      out.push({ dia:ex0, tipo:'ex', titulo:`Ex dividendo ${nemo}`,
+        detalle: (ex1 && ex1 !== ex0) ? `rango hasta el ${ex1.slice(8,10)}` : '' });
+    }else if(ex0 && ex1 >= a && ex0 < a){
+      // Empezó antes del lunes y sigue corriendo: se dice una sola vez.
+      out.push({ dia:a, tipo:'ex', titulo:`Ex dividendo ${nemo}`,
+        detalle:`viene corriendo desde el ${ex0.slice(8,10)}`, arrastre:true });
+    }
+    const pg = String(d.pago_date||'').slice(0,10);
+    if(pg && pg >= a && pg <= b){
+      out.push({ dia:pg, tipo:'pago', titulo:`Pago ${nemo}`, detalle:'' });
+    }
+  });
+
+  (_rshSem.ev||[]).forEach(e=>{
+    const f = String(e.fecha||'').slice(0,10);
+    if(f < a || f > b) return;
+    out.push({ dia:f, tipo:e.tipo === 'macro' ? 'macro' : 'indice',
+               titulo:e.titulo || '', detalle:e.detalle || '', fuente:e.fuente || '' });
+  });
+
+  // Por día, y dentro del día: índice y macro primero —mueven el mercado
+  // entero— después resultados, después dividendos.
+  const peso = { indice:0, macro:1, res:2, ex:3, pago:4 };
+  return out.sort((x,y)=> (x.dia < y.dia ? -1 : x.dia > y.dia ? 1 : 0)
+                       || (peso[x.tipo] - peso[y.tipo])
+                       || String(x.titulo).localeCompare(String(y.titulo)));
+}
+
+const _SEM_COL = { res:'#a855f7', ex:'#f59e0b', pago:'#22c55e',
+                   indice:'#38bdf8', macro:'#38bdf8' };
+const _SEM_ET  = { res:'RESULTADOS', ex:'EX DIV', pago:'PAGO',
+                   indice:'ÍNDICE', macro:'MACRO' };
+const _DIA_SEM = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+
+function _rshSemanaHtml(){
+  const esc = _esc;
+  const { lun, dom, a, b } = _rshSemanaRango();
+  const hoy = _rshISO(new Date());
+
+  let h = `<div class="card" style="padding:12px 14px;margin-bottom:12px;
+       border:1px solid rgba(56,189,248,.35);background:rgba(56,189,248,.05);">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:9px;">
+      <b style="font-size:14px;">Esta semana</b>
+      <span class="field-note">${lun.getDate()} al ${dom.getDate()} de
+        ${_MES_LARGO[dom.getMonth()]}${
+          lun.getMonth() !== dom.getMonth() ? ` · empieza en ${_MES_LARGO[lun.getMonth()]}` : ''}</span>
+      <span style="flex:1;"></span>
+      <button class="btn small ghost" style="font-size:11px;"
+              onclick="copiarSemanaTexto(this)">copiar</button>
+      <button class="btn small ghost" style="font-size:11px;"
+              onclick="rshCargarSemana(true)">↻</button>
+    </div>`;
+
+  if(_rshSem.cargando && !_rshSem.cargado)
+    return h + `<span class="field-note">armando la semana…</span></div>`;
+
+  if(_rshSem.msg)
+    h += `<div class="field-note" style="margin-bottom:9px;padding:6px 9px;border-radius:6px;
+          background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);">
+          ${_rshSem.msg}</div>`;
+
+  const ev = _rshSemanaEventos();
+  if(!ev.length){
+    return h + `<span class="field-note">Sin eventos esta semana en ${esc(_rshModulo)}.</span></div>`;
+  }
+
+  // Un bloque por día CON eventos. Un día vacío no se pinta: el cuadro es
+  // para leer de un vistazo, no para contemplar casillas en blanco.
+  const porDia = {};
+  ev.forEach(x=>{ (porDia[x.dia] = porDia[x.dia] || []).push(x); });
+
+  h += `<div style="display:flex;flex-direction:column;gap:7px;">`;
+  Object.keys(porDia).sort().forEach(d=>{
+    const f = new Date(d + 'T12:00:00');
+    const esHoy = d === hoy;
+    h += `<div style="display:flex;gap:10px;align-items:flex-start;
+           ${esHoy ? 'background:rgba(56,189,248,.10);border-radius:6px;padding:4px 6px;margin:-4px -6px;' : ''}">
+      <div style="min-width:106px;font-size:12px;${esHoy?'font-weight:700;':'opacity:.8;'}">
+        ${_DIA_SEM[f.getDay()]} ${f.getDate()}${esHoy?' · hoy':''}</div>
+      <div style="flex:1;display:flex;flex-direction:column;gap:3px;">`;
+    porDia[d].forEach(x=>{
+      const col = _SEM_COL[x.tipo] || '#94a3b8';
+      h += `<div style="font-size:12px;display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;"
+             title="${esc(x.detalle || '')}${x.fuente ? ' — ' + esc(x.fuente) : ''}">
+        <span style="font-size:9px;font-weight:700;letter-spacing:.4px;color:${col};
+              border:1px solid ${col};border-radius:3px;padding:0 4px;white-space:nowrap;
+              opacity:.9;">${_SEM_ET[x.tipo]}</span>
+        <b>${esc(x.titulo)}</b>
+        ${x.detalle ? `<span class="field-note" style="font-size:11px;">${esc(x.detalle)}</span>` : ''}
+      </div>`;
+    });
+    h += `</div></div>`;
+  });
+  h += `</div>`;
+
+  return h + `</div>`;
+}
+
+// El texto plano, para pegarlo en un correo o en el chat el lunes.
+function _rshSemanaTexto(){
+  const ev = _rshSemanaEventos();
+  if(!ev.length) return `Sin eventos esta semana en ${_rshModulo}.`;
+  const { lun, dom } = _rshSemanaRango();
+  const porDia = {};
+  ev.forEach(x=>{ (porDia[x.dia] = porDia[x.dia] || []).push(x); });
+  const L = [`ESTA SEMANA · ${_rshModulo} · ${lun.getDate()} al ${dom.getDate()} de ${_MES_LARGO[dom.getMonth()]}`, ''];
+  Object.keys(porDia).sort().forEach(d=>{
+    const f = new Date(d + 'T12:00:00');
+    L.push(`${_DIA_SEM[f.getDay()].toUpperCase()} ${f.getDate()}`);
+    porDia[d].forEach(x=>{
+      L.push('  · ' + x.titulo + (x.detalle ? ` (${x.detalle})` : ''));
+    });
+    L.push('');
+  });
+  return L.join('\n').trim();
+}
+
+async function copiarSemanaTexto(btn){
+  try{
+    await navigator.clipboard.writeText(_rshSemanaTexto());
+    if(btn){ const p = btn.innerHTML; btn.innerHTML = '✓';
+             setTimeout(()=>{ btn.innerHTML = p; }, 1300); }
+  }catch(e){ alert('No se pudo copiar: ' + e.message); }
+}
+
 // --- pintar --------------------------------------------------------
 const _CAL_COL = { res:'#a855f7', ex:'#f59e0b', pago:'#22c55e' };
 
 function _rshCalendario(){
   const { ini, fin, a, b } = _rshCalRango();
   const esc = _esc;
-  let h = '';
+  // EL CUADRO DE LA SEMANA VA PRIMERO. Es lo que se mira el lunes; el
+  // detalle del mes queda abajo y no se movió.
+  let h = _rshSemanaHtml();
 
   // Barra: mes, navegación, atajos y copiar.
   h += `<div class="card" style="padding:12px 14px;margin-bottom:12px;">
@@ -36817,18 +37051,136 @@ function _rshTickerPelado(x){
     .replace(/\s+[A-Z0-9]{0,3}\s*(EQUITY|INDEX)$/,'').trim();
 }
 
+// =====================================================================
+// UN Z GRANDE NO ES UNA OPORTUNIDAD (Sergio, 10-nov)
+// ---------------------------------------------------------------------
+// *"Tenemos una alerta que dice dónde están las mayores desviaciones, pero
+//  esas desviaciones no tienen en cuenta el sector de cada ETF. Podría ser
+//  que compares IBIT con XLF, no tiene mucho sentido. Alertas sin
+//  correlación o sin mismo sector no dicen nada ni las puedo proponer."*
+//
+// Tiene razón, y el problema empieza antes del sector. La alerta ordenaba
+// TODOS los pares por |z| y mostraba los seis primeros. Con 30 especies son
+// 435 pares, y el máximo |z| de cientos de series ruidosas está alrededor
+// de 3 POR PURO AZAR. O sea que el top no mostraba los pares más
+// interesantes: mostraba los más ruidosos. De ahí IBIT contra XLF.
+//
+// Tres cosas que un z no dice y que ahora se calculan:
+//
+//   CORRELACIÓN de los retornos. Si dos ETFs no se mueven juntos, el ratio
+//     no es un spread: son dos caminatas aleatorias dividiéndose y el z no
+//     significa nada.
+//
+//   VIDA MEDIA de la reversión. Un z de +2,5 que NO vuelve no es una
+//     oportunidad: es una tendencia, y venderle a una tendencia es la forma
+//     cara de equivocarse. Se saca con un AR(1) sobre el log del ratio
+//     —Δy = a + b·y₍₋₁₎— y da un número en días.
+//
+//   SECTOR, que sale del `bloque` del universo de RVI.
+//
+// Ojo que correlación y reversión NO son lo mismo: dos papeles pueden estar
+// correlacionadísimos y el ratio irse de largo igual si uno crece más
+// rápido. Por eso van los dos.
+// =====================================================================
+
+// Correlación de Pearson. Devuelve null si no hay varianza en alguno de los
+// dos: una serie plana no se correlaciona con nada, y un 0 ahí mentiría
+// diciendo "no se mueven juntos" cuando lo cierto es "no se sabe".
+function _rshCorr(x, y){
+  const n = Math.min(x.length, y.length);
+  if(n < 20) return null;
+  let sx=0, sy=0;
+  for(let i=0;i<n;i++){ sx+=x[i]; sy+=y[i]; }
+  const mx = sx/n, my = sy/n;
+  let sxy=0, sxx=0, syy=0;
+  for(let i=0;i<n;i++){
+    const dx = x[i]-mx, dy = y[i]-my;
+    sxy += dx*dy; sxx += dx*dx; syy += dy*dy;
+  }
+  if(!(sxx > 0) || !(syy > 0)) return null;
+  return sxy / Math.sqrt(sxx*syy);
+}
+
+// Vida media de la reversión, en días hábiles.
+// Se ajusta Δy_t = a + b·y_{t−1} sobre y = log(ratio).
+//   b < 0  -> revierte. Vida media = ln2 / −ln(1+b).
+//   b >= 0 -> NO revierte: el ratio se va de largo.
+//
+// NO ALCANZA CON QUE b SEA NEGATIVO (medido el 10-nov).
+// ---------------------------------------------------------------------
+// Sobre una CAMINATA ALEATORIA —o sea, sin reversión ninguna— este ajuste
+// devuelve b ligeramente negativo por puro sesgo de muestra finita: el
+// sesgo es del orden de −4/T, así que con 600 ruedas da b ≈ −0,007 y una
+// "vida media" de ~100 días que no existe. Probado: de cuatro caminatas
+// simuladas, una devolvía 77 días con cara de dato.
+//
+// Eso es exactamente lo que el test de Dickey-Fuller mide: hay que ver si
+// b es negativo MÁS ALLÁ DEL RUIDO. Se calcula el estadístico t de b y se
+// compara contra el valor crítico de DF con constante, −2,86 al 5%. Ojo
+// que NO es el −1,96 de una t normal: bajo raíz unitaria el estadístico
+// no se distribuye como una t, y usar 1,96 dejaría pasar caminatas.
+//
+// Si no se rechaza la raíz unitaria, se devuelve null: el par no entra a
+// las alertas por más estirado que esté.
+const RSH_DF_CRITICO = -2.86;      // Dickey-Fuller con constante, 5%
+
+function _rshVidaMedia(ratios){
+  const n = ratios.length;
+  if(n < 30) return null;
+  const y = [];
+  for(let i=0;i<n;i++){ const v = ratios[i]; if(!(v > 0)) return null; y.push(Math.log(v)); }
+  const N = n-1;
+  if(N < 25) return null;
+  let sx=0, sd=0;
+  for(let i=1;i<n;i++){ sx += y[i-1]; sd += (y[i]-y[i-1]); }
+  const mx = sx/N, md = sd/N;
+  let sxy=0, sxx=0;
+  for(let i=1;i<n;i++){
+    const dx = y[i-1]-mx;
+    sxy += dx * ((y[i]-y[i-1]) - md);
+    sxx += dx*dx;
+  }
+  if(!(sxx > 0)) return null;
+  const b = sxy/sxx;
+  if(b >= 0) return null;                 // ni siquiera apunta a reversión
+
+  // Error estándar de b, y el estadístico t.
+  const a = md - b*mx;
+  let rss = 0;
+  for(let i=1;i<n;i++){
+    const r = (y[i]-y[i-1]) - (a + b*y[i-1]);
+    rss += r*r;
+  }
+  const s2 = rss / (N - 2);
+  if(!(s2 > 0)) return null;
+  const se = Math.sqrt(s2 / sxx);
+  if(!(se > 0)) return null;
+  const t = b / se;
+  if(t > RSH_DF_CRITICO) return null;     // no se distingue de una caminata
+
+  if(b <= -1) return 1;                   // oscila cada día: vida media < 1
+  const vm = Math.LN2 / -Math.log(1+b);
+  if(!isFinite(vm) || vm <= 0) return null;
+  return vm;
+}
+
 // El ratio A/B y B/A son el mismo par visto al derecho y al revés: el z de
 // uno es el del otro con el signo cambiado. Se calcula media matriz.
-function _rshMtzCalcular(series, isins, minDias){
+// `sectorDe` es ticker -> sector; si no hay, el filtro de sector no aplica.
+function _rshMtzCalcular(series, isins, minDias, sectorDe){
   const celdas = {}, pares = [];
+  const sec = t => sectorDe ? (sectorDe[String(t||'').toUpperCase()] || null) : null;
   for(let i = 0; i < isins.length; i++){
     for(let j = i+1; j < isins.length; j++){
       const A = series[isins[i]], B = series[isins[j]];
       if(!A || !B) continue;
-      const rs = [];
+      // Los PRECIOS de los días en común, no solo el ratio: la correlación
+      // se calcula sobre los retornos de cada uno, y para eso hacen falta
+      // las dos series alineadas.
+      const rs = [], pa = [], pb = [];
       A.fechas.forEach((f, k)=>{
         const vb = B.porFecha[f], va = A.cierres[k];
-        if(vb > 0 && va > 0) rs.push(va/vb);
+        if(vb > 0 && va > 0){ rs.push(va/vb); pa.push(va); pb.push(vb); }
       });
       if(rs.length < minDias) continue;
       const hoy = rs[rs.length-1];
@@ -36836,16 +37188,49 @@ function _rshMtzCalcular(series, isins, minDias){
       const sd = Math.sqrt(rs.reduce((s,v)=>s+(v-prom)*(v-prom),0)/rs.length) || 0;
       const z = sd ? (hoy-prom)/sd : 0;
       const pct = Math.round(rs.filter(v=>v<hoy).length/rs.length*100);
+
+      // Retornos log de cada pata, sobre los mismos días.
+      const ra = [], rb = [];
+      for(let k=1;k<pa.length;k++){
+        ra.push(Math.log(pa[k]/pa[k-1]));
+        rb.push(Math.log(pb[k]/pb[k-1]));
+      }
+      const corr = _rshCorr(ra, rb);
+      const vm   = _rshVidaMedia(rs);
+      const secA = sec(A.ticker), secB = sec(B.ticker);
+
       const c = { a:isins[i], b:isins[j], z, pct, hoy, prom, dias:rs.length,
-                  tA:A.ticker, tB:B.ticker };
+                  tA:A.ticker, tB:B.ticker,
+                  corr, vm, secA, secB,
+                  mismoSector: !!(secA && secB && secA === secB) };
       celdas[isins[i]+'|'+isins[j]] = c;
       celdas[isins[j]+'|'+isins[i]] = { ...c, a:isins[j], b:isins[i], z:-z, pct:100-pct,
                                         hoy: hoy ? 1/hoy : 0, prom: prom ? 1/prom : 0,
-                                        tA:B.ticker, tB:A.ticker };
+                                        tA:B.ticker, tB:A.ticker,
+                                        secA:secB, secB:secA };
       pares.push(c);
     }
   }
   return { celdas, pares };
+}
+
+// Los filtros de la alerta. Se guardan acá para que el cuadro los muestre y
+// Sergio los pueda mover sin volver a bajar la data.
+const RSH_ALERTA = { corr:0.5, vm:30, sector:true, n:6 };
+
+// Un par solo entra a la alerta si pasa las tres puertas. `motivo` dice cuál
+// no pasó, porque una lista vacía sin explicación es peor que ninguna.
+function _rshAlertaFiltro(c, f){
+  if(f.sector && c.secA && c.secB && !c.mismoSector) return 'otro sector';
+  if(f.corr > 0){
+    if(c.corr == null) return 'sin correlación medible';
+    if(Math.abs(c.corr) < f.corr) return `corr ${c.corr.toFixed(2)}`;
+  }
+  if(f.vm > 0){
+    if(c.vm == null) return 'no revierte';
+    if(c.vm > f.vm) return `vuelve en ${Math.round(c.vm)} días`;
+  }
+  return null;
 }
 
 async function rshCargarMatriz(){
@@ -36953,13 +37338,34 @@ async function rshCargarMatriz(){
           + _m + '), así que no se filtró nada.';
       }
     }
+    // EL SECTOR SALE DEL `bloque` DEL UNIVERSO (Sergio, 10-nov: "bloque
+    // sirve como sector").
+    // -----------------------------------------------------------------
+    // `rvi_universo.bloque` (US INDEX, ASIA EQUITY, …) está armado para
+    // cómo se ve el monitor de RVI, pero agrupa por lo mismo que uno
+    // querría comparar, así que se reusa. No se inventa una tabla nueva
+    // para repetir lo que ya está curado.
+    //
+    // En RVL no hay equivalente y tampoco hace falta: ahí el universo son
+    // las del COLCAP, todas acciones colombianas. Sin mapa, el filtro de
+    // sector simplemente no aplica y el cuadro lo dice.
+    let sectorDe = null, sinSector = 0;
     if(_rshModulo === 'RVI'){
       try{
         let uni = (typeof _rviUniverso !== 'undefined' && _rviUniverso.length)
           ? _rviUniverso
           : (await supaFetch('rvi_universo', 'activo=eq.true&limit=500') || []);
         if(!uni.length) universoFallo = true;
-        else permitidos = new Set(uni.map(u=>_rshTickerPelado(u.nemo)).filter(Boolean));
+        else{
+          permitidos = new Set(uni.map(u=>_rshTickerPelado(u.nemo)).filter(Boolean));
+          sectorDe = {};
+          uni.forEach(u=>{
+            const t = _rshTickerPelado(u.nemo);
+            const b = String(u.bloque || '').trim();
+            if(t && b) sectorDe[t] = b; else if(t) sinSector++;
+          });
+          if(!Object.keys(sectorDe).length) sectorDe = null;
+        }
       }catch(e){ universoFallo = true; }
     }
     if(universoFallo){
@@ -37014,7 +37420,7 @@ async function rshCargarMatriz(){
         fueraDelUniverso: permitidos
           ? (porMoneda[moneda]||[]).filter(i=>!permitidos.has(_rshTickerPelado(series[i].ticker))).length
           : 0,
-        sinPrecio,
+        sinPrecio, sectorDe, sinSector,
         otrasMonedas: Object.keys(porMoneda).filter(m=>m !== moneda),
         topeDesde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
         topeHasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '' };
@@ -37055,7 +37461,7 @@ function _rshMtzRecalcular(){
     recorte[i] = r;
   });
   const vivos = C.isins.filter(i=>recorte[i].fechas.length > 0);
-  const { celdas, pares } = _rshMtzCalcular(recorte, vivos, _rshMtz.min);
+  const { celdas, pares } = _rshMtzCalcular(recorte, vivos, _rshMtz.min, C.sectorDe);
   const todas = [].concat(...vivos.map(i=>recorte[i].fechas));
   _rshMtz.datos = { series: recorte, isins: vivos, celdas, pares,
     moneda: C.moneda, otrasMonedas: C.otrasMonedas,
@@ -37063,6 +37469,7 @@ function _rshMtzRecalcular(){
     avisoUniverso: C.avisoUniverso || '',
     fueraDelUniverso: C.fueraDelUniverso || 0,
     sinPrecio: C.sinPrecio || [],
+    sectorDe: C.sectorDe || null, sinSector: C.sinSector || 0,
     enConflicto: C.enConflicto || [], colapsados: C.colapsados || 0,
     desde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
     hasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '',
@@ -37071,6 +37478,17 @@ function _rshMtzRecalcular(){
     recortado: !!(d0 || d1),
     posibles: vivos.length*(vivos.length-1)/2 };
   _rshMtz.msg = '';
+}
+
+// Mover un filtro de la alerta NO recalcula nada: los pares ya traen la
+// correlación y la vida media, solo cambia cuáles pasan.
+function rshAlertaSet(campo, v){
+  if(campo === 'sector') RSH_ALERTA.sector = !!v;
+  else{
+    const n = Number(String(v).replace(',','.'));
+    if(isFinite(n) && n >= 0) RSH_ALERTA[campo] = n;
+  }
+  rshPintar();
 }
 
 // Cambiar el rango NO vuelve a consultar: recorta lo que ya está en memoria.
@@ -37487,8 +37905,19 @@ function _rshMatrizHtml(){
   const T = i => (D.series[i] && D.series[i].ticker) || i;
   const n = D.isins.length;
 
-  // Los más tensionados, arriba: es lo que se mira primero.
-  const top = [...D.pares].sort((x,y)=>Math.abs(y.z)-Math.abs(x.z)).slice(0, 6);
+  // LOS QUE PASAN LAS TRES PUERTAS, arriba. Antes era `sort por |z|` a secas
+  // y el top salía lleno de pares que no se podían proponer.
+  const _fAl = RSH_ALERTA;
+  const _candidatos = [...D.pares].sort((x,y)=>Math.abs(y.z)-Math.abs(x.z));
+  const _pasan = [], _caidos = [];
+  _candidatos.forEach(c=>{
+    const motivo = _rshAlertaFiltro(c, _fAl);
+    if(motivo) _caidos.push({ c, motivo }); else _pasan.push(c);
+  });
+  const top = _pasan.slice(0, _fAl.n);
+  // Si las puertas dejan la lista vacía, se muestran los descartados con el
+  // motivo: una lista vacía sin explicación es peor que ninguna.
+  const _topCaidos = _caidos.slice(0, 4);
 
   let h = `<div class="panel" style="margin-bottom:12px;">
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
@@ -37579,16 +38008,79 @@ function _rshMatrizHtml(){
         está históricamente barato.${monedas}</div>`;
     })()}`;
 
+  // ===== LA ALERTA ACOTADA =====
+  h += `<div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;
+         background:rgba(168,85,247,.08);border:1px solid rgba(168,85,247,.32);">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+      <b style="font-size:12.5px;">Pares proponibles</b>
+      <span class="field-note">de ${D.pares.length} pares, ${_pasan.length} pasan los filtros</span>
+      <span style="flex:1;"></span>
+      <label class="field-note" style="display:flex;gap:4px;align-items:center;">corr ≥
+        <input type="number" min="0" max="1" step="0.05" value="${_fAl.corr}"
+               style="width:62px;" onchange="rshAlertaSet('corr', this.value)"></label>
+      <label class="field-note" style="display:flex;gap:4px;align-items:center;">vuelve en ≤
+        <input type="number" min="0" step="5" value="${_fAl.vm}"
+               style="width:62px;" onchange="rshAlertaSet('vm', this.value)"> días</label>
+      <label class="field-note" style="display:flex;gap:4px;align-items:center;cursor:pointer;">
+        <input type="checkbox" ${_fAl.sector?'checked':''}
+               ${D.sectorDe ? '' : 'disabled'}
+               onchange="rshAlertaSet('sector', this.checked)"> mismo sector</label>
+    </div>`;
+
+  if(!D.sectorDe){
+    h += `<div class="field-note" style="margin-bottom:8px;">
+      Sin sectores para este módulo: el filtro de sector no aplica y la alerta
+      se apoya solo en correlación y reversión.</div>`;
+  }
+
   if(top.length){
-    h += `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:11px;">`;
+    h += `<div style="display:flex;flex-direction:column;gap:5px;">`;
     top.forEach(c=>{
       const col = c.z >= 0 ? 'var(--sell,#ef4444)' : 'var(--buy,#22c55e)';
-      h += `<button class="btn small ghost" style="font-size:11.5px;border-color:${col};"
-             onclick="rshMtzAbrir('${esc(c.a)}','${esc(c.b)}')">
-             ${esc(c.tA)}/${esc(c.tB)} <b style="color:${col};">${c.z>=0?'+':''}${c.z.toFixed(1)}σ</b></button>`;
+      // El z es del ratio fila/columna: positivo = la primera está CARA.
+      const quien = c.z >= 0 ? `${esc(c.tA)} cara contra ${esc(c.tB)}`
+                             : `${esc(c.tA)} barata contra ${esc(c.tB)}`;
+      h += `<div onclick="rshMtzAbrir('${esc(c.a)}','${esc(c.b)}')"
+             style="cursor:pointer;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;
+                    padding:5px 8px;border-radius:6px;background:rgba(255,255,255,.03);
+                    border-left:3px solid ${col};font-size:11.5px;">
+        <b style="min-width:122px;">${esc(c.tA)}/${esc(c.tB)}</b>
+        <b style="color:${col};min-width:52px;">${c.z>=0?'+':''}${c.z.toFixed(1)}σ</b>
+        <span class="field-note">${c.mismoSector && c.secA ? esc(c.secA) + ' · ' : ''}corr ${
+          c.corr == null ? '—' : c.corr.toFixed(2)} · vuelve en ~${
+          c.vm == null ? '—' : Math.round(c.vm)} días</span>
+        <span style="flex:1;"></span>
+        <span class="field-note">${quien}</span>
+      </div>`;
     });
     h += `</div>`;
+  }else{
+    h += `<div class="field-note">
+      <b>Ningún par pasa los filtros con esta ventana.</b>
+      No es un error: quiere decir que lo que está estirado no es comparable,
+      o no vuelve. ${_topCaidos.length ? 'Los más estirados, y por qué se caen:' : ''}</div>`;
+    if(_topCaidos.length){
+      h += `<div style="display:flex;flex-direction:column;gap:3px;margin-top:6px;">`;
+      _topCaidos.forEach(({c, motivo})=>{
+        h += `<div onclick="rshMtzAbrir('${esc(c.a)}','${esc(c.b)}')"
+               style="cursor:pointer;font-size:11px;opacity:.72;padding:3px 8px;">
+          <b>${esc(c.tA)}/${esc(c.tB)}</b> ${c.z>=0?'+':''}${c.z.toFixed(1)}σ
+          — <span style="color:var(--warn,#f59e0b);">${esc(motivo)}</span></div>`;
+      });
+      h += `</div>`;
+    }
   }
+
+  // La frase del azar solo cuando hay pares de sobra para que sea cierta:
+  // con cinco pares, decir "el máximo por puro azar ronda las 3σ" sería
+  // inventar una estadística.
+  h += `<div class="field-note" style="margin-top:8px;font-size:10.5px;opacity:.7;">
+    Un z grande no es una oportunidad.${D.pares.length >= 100 ? `
+    Con ${D.pares.length} pares, el máximo por puro azar ronda las 3σ, así que
+    ordenar por σ a secas devuelve los más ruidosos.` : ''}
+    <b>Correlación</b>: si no se mueven juntos, el ratio no es un spread.
+    <b>Vuelve en</b>: vida media de la reversión, medida con Dickey-Fuller;
+    si no revierte, es una tendencia y no sale en la lista.</div></div>`;
 
   // EL CUADRO OCUPA EL ANCHO (Sergio, 06-nov: "tiene un espacio a la
   // izquierda vacio, deberia cubrir todo el ancho como antes").
@@ -37632,8 +38124,19 @@ function _rshMatrizHtml(){
               transparent,transparent 3px,rgba(148,163,184,.18) 3px,rgba(148,163,184,.18) 6px);"></td>`;
         return;
       }
+      // El tooltip trae ahora las tres cosas que deciden si el par sirve.
+      // Una celda roja que no revierte se ve igual de roja que una que sí, y
+      // esa es justo la confusión que había (Sergio, 10-nov).
+      const _tit = `${c.tA}/${c.tB} · ${c.z>=0?'+':''}${c.z.toFixed(2)} σ`
+        + ` · ratio ${c.hoy.toFixed(c.hoy<10?3:2)}`
+        + ` · más alto que el ${c.pct}% de ${c.dias} días`
+        + `\ncorr ${c.corr == null ? '—' : c.corr.toFixed(2)}`
+        + ` · ${c.vm == null ? 'NO revierte' : 'vuelve en ~' + Math.round(c.vm) + ' días'}`
+        + (c.secA || c.secB
+            ? `\n${c.secA || '—'} vs ${c.secB || '—'}${c.mismoSector ? ' (mismo sector)' : ''}`
+            : '');
       h += `<td onclick="rshMtzAbrir('${esc(fi)}','${esc(ci)}')"
-            title="${esc(c.tA)}/${esc(c.tB)} · ${c.z>=0?'+':''}${c.z.toFixed(2)} σ · ratio ${c.hoy.toFixed(c.hoy<10?3:2)} · más alto que el ${c.pct}% de ${c.dias} días"
+            title="${esc(_tit)}"
             style="height:21px;cursor:pointer;text-align:center;
                    background:${_rshMtzColor(c.z)};
                    ${Math.abs(c.z) >= 2 ? 'outline:1px solid rgba(255,255,255,.35);outline-offset:-1px;' : ''}">
@@ -39599,7 +40102,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-10 16:45 UTC · v364';
+const BUILD_ID = '2026-11-10 18:40 UTC · v366';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
