@@ -1214,6 +1214,15 @@
           </div>
         </div>
 
+        <!-- EL AVISO DE LA FECHA MOVIDA (Sergio, 10-nov).
+             Cuando un festivo en Estados Unidos corre el cumplimiento de los
+             dólares, hay que decírselo al cliente. El 10-nov tocó avisarle a
+             cada uno a mano porque la app lo movía —o no lo movía— en
+             silencio. Lo llena `_avisoCumplFX`. -->
+        <div id="avisoCumplFX" style="display:none;margin:-4px 0 12px;padding:10px 12px;
+             border-radius:8px;background:var(--amber-dim);color:var(--amber);
+             border-left:4px solid var(--amber);font-size:13px;line-height:1.45;"></div>
+
         <div class="field-row">
           <div class="field">
             <label>Tipo de operación</label>
@@ -1226,7 +1235,11 @@
           </div>
           <div class="field">
             <label id="labelSide">Lado (desde Andes)</label>
-            <select id="side" onchange="calcular()">
+            <!-- El lado DECIDE la fecha de cumplimiento (ventas un día antes,
+                 compras el día del equity), así que al cambiarlo hay que
+                 recalcularla. Antes solo llamaba a `calcular()` y la fecha
+                 quedaba la del lado anterior (Sergio, 10-nov). -->
+            <select id="side" onchange="onCambioLadoFX()">
               <option value="BUY">Compra USD</option>
               <option value="SELL">Vende USD</option>
             </select>
@@ -3793,6 +3806,25 @@ function cumplimientoFX(fechaBase, lado, cliente){
   }else{
     base = parseFechaLocal(String(fechaBase || _hoyISO()));
   }
+  // EL CUMPLIMIENTO ES POR ACTIVO, NO POR CLIENTE (Sergio, 10-nov).
+  // -------------------------------------------------------------------
+  // Acá había una rama de ANDES con T+3 fijo, de la regla del 03-sep.
+  // Sergio, cuando le mostré que las compras coincidían pero las ventas no:
+  //
+  //     *"Andes quedaría T+3 para las compras hechas ayer, sería
+  //      cumplimiento 12 de noviembre, y así debe quedar en archivos,
+  //      reportes, updates del modulo de fx, todo, pero en el fondo es la
+  //      MISMA LÓGICA: todo el que compró ayer dólares va para el jueves,
+  //      todo el que vendió dólares para hoy."*
+  //
+  // O sea el T+3 nunca fue la regla: es una CONSECUENCIA. Una compra del
+  // 09-nov cumple el día del equity (11-nov), que está cerrado allá, y cae
+  // al 12-nov — tres días. Pero una VENTA del 09-nov va al 10-nov, y con
+  // el T+3 fijo salía al 12-nov, un día tarde y en silencio.
+  //
+  // `esAndes` se queda SOLO para el texto del aviso, porque los correos de
+  // Andes se confirman con su propia redacción. La FECHA la decide el
+  // activo, igual para todos.
   const esAndes = /ANDES|LARRAIN/i.test(String(cliente||''));
   const compra = String(lado||'').toUpperCase().startsWith('B') ||
                  /COMPRA/i.test(String(lado||''));
@@ -3804,45 +3836,95 @@ function cumplimientoFX(fechaBase, lado, cliente){
   //   - Cliente COMPRA USD (vendió acciones): la plata le entra el día que
   //     cumple el equity, así que se lleva los dólares ESE MISMO día — y si
   //     Estados Unidos está cerrado, el siguiente hábil allá.
-  //   - ANDES: siempre T+3.
+  // Sin excepciones por cliente: la fecha la decide el activo.
   // Antes se contaba T+2 en días hábiles de US, y con un festivo colombiano
   // que no lo es en US (2-nov) daba los dólares un día ANTES de que llegara la
   // plata de las acciones (Sergio, 04-sep).
   const cumpleEquity = sumarDiasHabiles(base, 2, 'CO');
 
-  let d, dias;
-  if(esAndes){
-    dias = 3;
-    d = sumarDiasHabiles(base, 3, 'CO');
-    while(!esHabil(d, 'US')) d.setDate(d.getDate() + 1);
-  }else if(compra){
-    dias = 2;
+  let d;
+  if(compra){
     // El mismo día del cumplimiento del equity, corrido si US está cerrado.
     d = new Date(cumpleEquity);
     while(!esHabil(d, 'US')) d.setDate(d.getDate() + 1);
   }else{
-    dias = 1;
     // El día hábil anterior al cumplimiento del equity.
     d = new Date(cumpleEquity);
     do { d.setDate(d.getDate() - 1); } while(!esHabil(d, 'CO') || !esHabil(d, 'US'));
   }
   const natural = _isoLocal(d);
+  // Los días hábiles que de verdad quedaron entre la operación y el
+  // cumplimiento. Ya no es un número fijo por rama: una compra del 09-nov da
+  // 3 y una del 10-nov da 2, y es la etiqueta T+ que ve el cliente.
+  let dias = 0;
+  { let k = new Date(base);
+    while(_isoLocal(k) < natural){ k.setDate(k.getDate()+1); if(esHabil(k,'CO')) dias++; } }
 
   // Aviso solo cuando la fecha se movió por un festivo en Estados Unidos, que
   // es lo que hay que explicarle al cliente.
   let alerta = '';
   const dd = iso => { const [y,m,x] = String(iso).split('-'); return `${x}/${m}/${y}`; };
   const isoEquity = _isoLocal(cumpleEquity);
-  if(compra && !esAndes && natural !== isoEquity){
+  // Sin `!esAndes`: Andes sigue la misma regla, así que también avisa. Con la
+  // rama vieja de T+3, un cliente de Andes nunca se enteraba de que la fecha
+  // se había movido.
+  if(compra && natural !== isoEquity){
     alerta = `El ${dd(isoEquity)} —cuando cumple el equity— está cerrado en Estados Unidos: ` +
              `el cumplimiento de los dólares se corre al ${dd(natural)}.`;
-  }else if(esAndes){
-    const t3 = _isoLocal(sumarDiasHabiles(base, 3, 'CO'));
-    if(t3 !== natural){
-      alerta = `El ${dd(t3)} es festivo en Estados Unidos: el cumplimiento se corre al ${dd(natural)}.`;
+  }else if(!compra){
+    // LA VENTA DE DÓLARES TAMBIÉN AVISA (Sergio, 10-nov).
+    // El día natural es el hábil colombiano anterior al cumplimiento del
+    // equity. Si ESE día está cerrado en Estados Unidos, la venta se
+    // adelanta otro día — y hasta hoy eso pasaba en silencio.
+    //
+    // El 10-nov: equity 12-nov, el anterior es 11-nov (Veterans Day), así
+    // que la venta se adelanta al 10-nov. Hubo que avisarle a cada cliente
+    // a mano porque la app no lo decía.
+    let previo = new Date(cumpleEquity);
+    do { previo.setDate(previo.getDate() - 1); } while(!esHabil(previo, 'CO'));
+    const isoPrevio = _isoLocal(previo);
+    if(isoPrevio !== natural){
+      alerta = `El ${dd(isoPrevio)} es festivo en Estados Unidos: ` +
+               `la venta de los dólares se adelanta al ${dd(natural)}.`;
     }
   }
+  // `esAndes` se sigue devolviendo —hay quien lo lee para la redacción del
+  // correo— pero ya NO decide la fecha.
   return { fecha: d, iso: natural, alerta, dias, esAndes, cumpleEquity: isoEquity };
+}
+
+// LO QUE HAY EN LA CALCULADORA, PARA NO ADIVINARLO EN CINCO LADOS.
+// ---------------------------------------------------------------------
+// `cumplimientoFX` necesita el lado y el cliente. Antes cada sitio los
+// sacaba (o no los sacaba) a su manera, y de ahí salían las fechas
+// distintas para la misma operación.
+//
+// Ojo con el vocabulario: acá 'BUY'/'SELL' es el lado del DÓLAR —el del
+// <select id="side">— no el de la acción.
+function _ladoFXCalculadora(){
+  const el = document.getElementById('side');
+  const v = String((el && el.value) || '').toUpperCase();
+  return v.startsWith('B') ? 'BUY' : 'SELL';
+}
+function _clienteCalculadora(){
+  const sel = document.getElementById('cliente');
+  if(!sel) return '';
+  const opt = sel.options ? sel.options[sel.selectedIndex] : null;
+  // El valor ('ANDES', 'ANDES_MANUAL') y el texto visible, los dos: la
+  // regla de ANDES mira el nombre y cualquiera de los dos puede traerlo.
+  return String(sel.value || '') + ' ' + String((opt && opt.textContent) || '');
+}
+
+// El aviso en pantalla cuando la fecha se movió por un festivo gringo. Se
+// pinta con lo que devuelve `cumplimientoFX`; si no hay nada que avisar, se
+// esconde. No decide nada: solo muestra.
+function _avisoCumplFX(cum){
+  const el = document.getElementById('avisoCumplFX');
+  if(!el) return;
+  const txt = cum && cum.alerta ? String(cum.alerta) : '';
+  if(!txt){ el.style.display = 'none'; el.textContent = ''; return; }
+  el.textContent = '⚠ ' + txt + '  Avísale al cliente.';
+  el.style.display = '';
 }
 
 // Siguiente día hábil según el calendario que se le pase.
@@ -3949,11 +4031,25 @@ function consolidarSeleccion(){
   document.getElementById('side').value = side==='BUY'?'BUY':'SELL';
   document.getElementById('amount').value = totalAmt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   document.getElementById('rate').value = weightedRate.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4});
-  // Asegurar fechas correctas: operación hoy, cumplimiento T+2 hábil
-  const hoy = new Date();
-  document.getElementById('tradeDate').value = hoy.toISOString().slice(0,10);
-  const settle = sumarDiasHabiles(hoy, 2);
-  document.getElementById('settleDate').value = settle.toISOString().slice(0,10);
+  // EL INBOX DE ANDES TAMBIÉN VA POR LA REGLA ÚNICA (Sergio, 10-nov).
+  // ------------------------------------------------------------------
+  // Acá había un `sumarDiasHabiles(hoy, 2)` plano, sin mirar el lado ni el
+  // calendario gringo. Desde el 09-nov eso daba 11-nov para TODO, y el
+  // 11-nov es Veterans Day: no cumple nada. De ahí que *"TODOS los
+  // reportes que traían FX estaban malos en la fecha de cumplimiento"*.
+  //
+  // Lo frené un rato porque `cumplimientoFX` tenía a ANDES en T+3 fijo y
+  // enrutarlo le cambiaba la fecha que se le confirma al cliente. Sergio
+  // lo resolvió: el T+3 era una consecuencia, no la regla — *"en el fondo
+  // es la misma lógica, no es por cliente, es por activo"*. Con la rama de
+  // ANDES fuera, una compra del 09-nov sigue dando 12-nov (tres días,
+  // porque el 11 está cerrado allá) y una venta da 10-nov, que antes salía
+  // al 12 y en silencio.
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  document.getElementById('tradeDate').value = _isoLocal(hoy);
+  const cum = cumplimientoFX(hoy, side === 'BUY' ? 'BUY' : 'SELL', _clienteCalculadora());
+  document.getElementById('settleDate').value = cum.iso;
+  _avisoCumplFX(cum);
   calcular();
 }
 
@@ -4035,14 +4131,41 @@ function cambiarTipoOperacion(){
     const tdTxt = tradeDateInput.value;
     const td = tdTxt ? new Date(Number(tdTxt.slice(0,4)), Number(tdTxt.slice(5,7))-1,
                                 Number(tdTxt.slice(8,10))) : hoy;
-    sdEl.value = settleDateCruce(td, _cruceActivo.ladoAccion).toISOString().slice(0,10);
+    const compraAccion = /^(C|B)/i.test(String(_cruceActivo.ladoAccion || '').trim());
+    const cumCruce = cumplimientoFX(td, compraAccion ? 'SELL' : 'BUY', _cruceActivo.cliente);
+    sdEl.value = cumCruce.iso;
+    _avisoCumplFX(cumCruce);
   }else{
-    const settle = sumarDiasHabiles(hoy, 2);
-    sdEl.value = settle.toISOString().slice(0,10);
+    // SIN CRUCE TAMPOCO ES UN T+2 PLANO (Sergio, 10-nov).
+    // ----------------------------------------------------------------
+    // Una venta o una compra DIRECCIONAL de dólares sigue la misma regla
+    // que el cruce: *"si son ventas o compras de usd direccionales lo
+    // mismo, ventas para hoy compras para el jueves."* Acá había un
+    // `sumarDiasHabiles(hoy, 2)` que daba el jueves PARA LAS DOS, y por
+    // eso las ventas direccionales del 10-nov salieron con la fecha del
+    // cumplimiento del equity en vez de la del día anterior hábil.
+    const cumSuelto = cumplimientoFX(hoy, _ladoFXCalculadora(), _clienteCalculadora());
+    sdEl.value = cumSuelto.iso;
+    _avisoCumplFX(cumSuelto);
   }
 
   validarFechaOperacion();
   cambiarCliente();
+}
+
+// El lado cambió: la fecha de cumplimiento se recalcula sola, porque depende
+// de él. En un cruce no se toca —ahí el lado lo manda la acción— y el campo
+// sigue siendo editable después, como siempre.
+function onCambioLadoFX(){
+  const sdEl = document.getElementById('settleDate');
+  if(sdEl && !(typeof _cruceActivo !== 'undefined' && _cruceActivo)){
+    const tdTxt = document.getElementById('tradeDate').value;
+    const base = tdTxt ? parseFechaLocal(tdTxt.slice(0,10)) : new Date();
+    const cum = cumplimientoFX(base, _ladoFXCalculadora(), _clienteCalculadora());
+    sdEl.value = cum.iso;
+    _avisoCumplFX(cum);
+  }
+  calcular();
 }
 
 function onTradeDateChange(){
@@ -11740,24 +11863,38 @@ function consolidarTradesParaFX(){
   return bloques;
 }
 
-// SD del cruce: T+2 hábiles contra acciones. Si en la ventana T→T+2 cae un
-// festivo US, se ajusta: comprando acciones (vendo USD) el SD es un día antes;
-// vendiendo acciones (compro USD) el SD es un día después. (Confirmado con
-// Sergio.) El festivo CO ya lo maneja sumarDiasHabiles.
-function settleDateCruce(tradeDate, ladoAccion){
-  const base = sumarDiasHabiles(tradeDate, 2); // T+2 contra acciones
-  // ¿Cayó un festivo US dentro de la ventana [tradeDate, base]?
-  let cayoFestivoUS = false;
-  const cur = new Date(tradeDate);
-  while(cur < base){
-    cur.setDate(cur.getDate()+1);
-    if(festivosUS.includes(cur.toISOString().slice(0,10))) cayoFestivoUS = true;
-  }
-  if(!cayoFestivoUS) return base;
-  const ajustada = new Date(base);
-  if(ladoAccion === 'Compra') ajustada.setDate(ajustada.getDate()-1); // vendo USD -> un día antes
-  else ajustada.setDate(ajustada.getDate()+1);                        // compro USD -> un día después
-  return ajustada;
+// UN SOLO CAMINO PARA EL CUMPLIMIENTO DE FX (Sergio, 10-nov).
+// =====================================================================
+// Esta función llevaba su PROPIA cuenta, y estaba mal: miraba si había un
+// festivo US en la ventana T→T+2 y entonces corría el T+2 un día — sin
+// volver a mirar si ESE día estaba abierto.
+//
+//   Cruce del 10-nov, compra de acciones (el cliente vende USD):
+//     T+2 = 12-nov · festivo en la ventana → 11-nov … que ES el festivo.
+//     Correcto: 10-nov.
+//   Cruce del 10-nov, venta de acciones (el cliente compra USD):
+//     T+2 = 12-nov → 13-nov. Correcto: 12-nov, que allá está abierto.
+//
+// El 09-nov daba bien POR CASUALIDAD (11-nov − 1 = 10-nov), y por eso el
+// ajuste del 03-nov pareció servir. El 10-nov salió mal TODO reporte que
+// llevara FX, y hubo que avisarle a los clientes a mano.
+//
+// Encima leía `festivosUS` —el arreglo escrito en el código— y no
+// `_festivosUS`, que es el que trae Supabase: un festivo agregado allá no
+// movía nada acá.
+//
+// Ahora delega en `cumplimientoFX`, que es la única que sabe la regla:
+// el calendario COLOMBIANO cuenta los días hábiles del equity (T+2); solo
+// un festivo en ESTADOS UNIDOS mueve la pata de dólares, adelante para las
+// compras y atrás para las ventas, caminando hasta un día hábil de verdad.
+//
+// `ladoAccion` es el lado de la ACCIÓN, no del dólar: compro acciones → el
+// cliente VENDE USD; vendo acciones → COMPRA USD. La traducción se hace
+// acá y explícita, porque `cumplimientoFX` lee "COMPRA" como compra de
+// DÓLARES — el mismo texto con el sentido contrario.
+function settleDateCruce(tradeDate, ladoAccion, cliente){
+  const compraAccion = /^(C|B)/i.test(String(ladoAccion || '').trim());
+  return cumplimientoFX(tradeDate, compraAccion ? 'SELL' : 'BUY', cliente).fecha;
 }
 
 // Cola de lados pendientes de registrar en la calculadora FX. Cuando Sergio
@@ -11784,7 +11921,8 @@ function continuarConsolidarFX(){
   const hoy = new Date(); hoy.setHours(0,0,0,0);
   _cruceFXPendiente = {
     cliente: clientes[0],
-    bloques: bloques.map(b => ({ ...b, tradeDate: hoy, settleDate: settleDateCruce(hoy, b.ladoAccion) })),
+    bloques: bloques.map(b => ({ ...b, tradeDate: hoy,
+                                 settleDate: settleDateCruce(hoy, b.ladoAccion, b.cliente) })),
     idx: 0,
     registrados: [],
     modoCierre: null,
@@ -12431,8 +12569,24 @@ function _loteFXFechas(bloque, tipo){
   // acción, y con el ajuste si cae un festivo gringo en la ventana. Sin
   // acciones no hay de dónde colgarse: T+2 hábil, que es lo que pone la
   // calculadora para una operación suelta.
-  const sd = bloque && bloque.ladoAccion
-    ? settleDateCruce(td, bloque.ladoAccion)
+  //
+  // UN SOLO CAMINO (Sergio, 10-nov). Las dos ramas pasan ahora por
+  // `cumplimientoFX`. El lado sale de la acción si la hay, y si no del lado
+  // del FX que ya trae el bloque; solo cuando no se sabe el lado queda el
+  // T+2 plano, porque sin lado la regla no se puede aplicar.
+  //
+  // Las fechas BASE se dejan como estaban a propósito —`td` con acción
+  // detrás, `hoy` sin ella— para no cambiar nada más de lo que se pidió.
+  // Que difieran en NEXT_DAY está anotado como pendiente.
+  let _ladoB = null;
+  if(bloque && bloque.ladoAccion){
+    _ladoB = /^(C|B)/i.test(String(bloque.ladoAccion).trim()) ? 'SELL' : 'BUY';
+  }else if(bloque && bloque.ladoFX){
+    _ladoB = String(bloque.ladoFX).toUpperCase().startsWith('B') ? 'BUY' : 'SELL';
+  }
+  const _baseB = (bloque && bloque.ladoAccion) ? td : hoy;
+  const sd = _ladoB
+    ? cumplimientoFX(_baseB, _ladoB, bloque && bloque.cliente).fecha
     : sumarDiasHabiles(hoy, 2);
   const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   // LAS DOS FORMAS. El texto va a los campos de la calculadora; los OBJETOS
@@ -21124,17 +21278,116 @@ function renderListasCorreo(){
       ${existe && !on ? '<span style="opacity:.45;font-size:10px;">●</span>' : ''}</td>`;
   };
 
+  // EL LÁPIZ (Sergio, 10-nov).
+  // -------------------------------------------------------------------
+  // *"Nos falta el lápiz al lado de cada cliente para poder moverlos.
+  //   No tengo cómo cambiar manual tampoco."*
+  //
+  // Hasta hoy esta tabla solo sabía AGREGAR gente y marcar o desmarcar
+  // listas. Un correo mal escrito, o un dominio que cambia —fidubogota.com
+  // se volvió avalfiduciaria.com— no se podía corregir desde el app: tocaba
+  // SQL. Ahora se edita nombre y correo, y el cambio va a TODAS las filas
+  // de esa persona, que son una por lista.
+  const lapiz = p => !editable ? '' :
+    `<td style="padding:4px 6px;text-align:center;">
+       <button class="btn-mini" title="Editar nombre y correo"
+         style="background:none;border:none;cursor:pointer;opacity:.55;font-size:13px;padding:2px 4px;"
+         onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.55"
+         onclick="editarCorreoPersona('${p.email.replace(/'/g,"\\'")}')">✏️</button></td>`;
+
   cont.innerHTML = `<table style="width:100%;font-size:12px;border-collapse:collapse;">
     <thead><tr style="background:var(--bg-2,#0f1116);text-align:left;position:sticky;top:0;">
       <th style="padding:6px 8px;">NOMBRE</th>
       <th style="padding:6px 8px;">CORREO</th>
       ${LC_LISTAS.map(l=>`<th style="padding:6px 8px;text-align:right;">${l}</th>`).join('')}
+      ${editable ? '<th style="padding:6px 6px;"></th>' : ''}
     </tr></thead>
     <tbody>${gente.map(p=>`<tr>
       <td style="padding:4px 8px;">${p.nombre || '<span style="opacity:.5;">—</span>'}</td>
       <td style="padding:4px 8px;" class="mono-id">${p.email}</td>
       ${LC_LISTAS.map(l=>chk(p,l)).join('')}
+      ${lapiz(p)}
     </tr>`).join('')}</tbody></table>`;
+}
+
+// Editar nombre y correo de alguien que YA está en la tabla.
+//
+// Una persona tiene UNA FILA POR LISTA (RVL, RVI, FLUJOS), así que el cambio
+// se aplica a todas: si se corrige el correo en una sola, la misma persona
+// queda partida en dos y el app la cuenta como dos.
+//
+// Las validaciones son las mismas de `abrirCorreoNuevo`, y por la misma
+// razón: esta es la única pantalla donde un error se va para afuera. Un
+// correo mal escrito no rebota — ese cliente simplemente deja de recibir y
+// nadie se entera.
+async function editarCorreoPersona(email){
+  if(!puedeEditarListas()){ alert('Solo Sergio y Miguel pueden editar las listas.'); return; }
+  const persona = _lcPersonas().find(p=>p.email.toLowerCase() === String(email).toLowerCase());
+  if(!persona){ alert('No encontré a ' + email + ' en la tabla.'); return; }
+
+  const filas = LC_LISTAS.map(l=>persona.filas[l]).filter(Boolean);
+  if(!filas.length){ alert('Esa persona no tiene filas que editar.'); return; }
+
+  const nombre = String(prompt('Nombre:', persona.nombre || '') || '').trim();
+  const nuevo  = String(prompt('Correo:', persona.email) || '').trim();
+  if(!nuevo) return;
+
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(nuevo)){
+    alert('Eso no tiene forma de correo: ' + nuevo); return;
+  }
+  const cambiaCorreo = nuevo.toLowerCase() !== persona.email.toLowerCase();
+
+  if(cambiaCorreo){
+    // Que no choque con OTRA persona: dos filas con el mismo correo se
+    // juntarían en una sola y las listas de las dos se mezclarían.
+    const choca = _lcPersonas().find(p=>
+      p.email.toLowerCase() === nuevo.toLowerCase() &&
+      p.email.toLowerCase() !== persona.email.toLowerCase());
+    if(choca){
+      alert(`${nuevo} ya está en la tabla` + (choca.nombre ? ` (${choca.nombre})` : '') +
+            '.\n\nSi son la misma persona, marca sus listas ahí y saca esta.');
+      return;
+    }
+    // El dominio nuevo, igual que al agregar: un dominio que nadie más tiene
+    // es casi siempre un error de dedo.
+    const dom = nuevo.split('@')[1].toLowerCase();
+    const otros = _lcPersonas().filter(p=>
+      p.email.toLowerCase().endsWith('@' + dom) &&
+      p.email.toLowerCase() !== persona.email.toLowerCase()).length;
+    if(!otros && !confirm(`El dominio @${dom} no lo tiene nadie más en la lista.\n\n` +
+        'Si es un error de dedo, ese cliente nunca va a recibir nada y no va a ' +
+        'rebotar.\n\n¿Está bien escrito?')) return;
+  }
+
+  if(nombre === (persona.nombre||'') && !cambiaCorreo){ return; }   // nada que hacer
+
+  // Se confirma el alcance: el cambio toca varias filas y eso hay que decirlo.
+  if(!confirm(`${persona.email}\n` + (cambiaCorreo ? `  →  ${nuevo}\n` : '') +
+      (nombre !== (persona.nombre||'') ? `Nombre: "${persona.nombre||'—'}" → "${nombre||'—'}"\n` : '') +
+      `\nSe actualizan ${filas.length} fila(s): ${filas.map(f=>f.informe).join(', ')}.\n\n¿Sigo?`)){
+    return;
+  }
+
+  // Fila por fila, y si una falla se dice CUÁL: dejar la mitad cambiada en
+  // silencio partiría a la persona en dos.
+  const fallidas = [];
+  for(const f of filas){
+    try{
+      await _lcPatch(f.id, { nombre, email: nuevo });
+      f.nombre = nombre; f.email = nuevo;
+      const ref = (_listaCorreo||[]).find(x=>x.id === f.id);
+      if(ref){ ref.nombre = nombre; ref.email = nuevo; }
+    }catch(e){ fallidas.push(`${f.informe}: ${e.message}`); }
+  }
+
+  renderListasCorreo();
+  if(fallidas.length){
+    alert('Quedaron filas sin cambiar — la persona está PARTIDA en dos ahora:\n\n' +
+          fallidas.join('\n') + '\n\nVuelve a intentarlo.');
+  }else{
+    const b = document.getElementById('lcBuscar');
+    if(b){ b.value = nuevo; renderListasCorreo(); }
+  }
 }
 
 // Marcar o desmarcar una lista para una persona.
@@ -25095,6 +25348,27 @@ function armarAllocCustodio(cliente, filas){
             || cands.find(r => typeof esNuestraLineaRVI === 'function' && !esNuestraLineaRVI(r))
             || cands[0] || null;
     const qEmsx = ln ? (Number(ln.qty) || Number(ln.filled) || 0) : null;
+
+    // Y APARTE, NUESTRA LÍNEA (Sergio, 10-nov).
+    // -----------------------------------------------------------------
+    // `ln` es —a propósito— la línea DEL CLIENTE: es contra esa que se
+    // arquea el allocation. Pero de `ln` salía también `precioNuestro`, o
+    // sea el precio del cliente, y con eso el margen quedaba en cero.
+    //
+    // El 09-nov Protección quedó guardado con precioNuestro
+    // 88,56808361298349 —el del cliente, sin redondear— cuando el nuestro
+    // era 88,552635. La planilla del BO salió con UNA sola línea de CCSI y
+    // la utilidad en US$276 en vez de US$4.548.
+    //
+    // Son dos líneas distintas y cada una sirve para una cosa: la del
+    // cliente para cuadrar cantidades, la nuestra para la utilidad. Si una
+    // está tildada en el panel, esa manda: Sergio la marcó por algo.
+    const _marcadas = (typeof _rviMarcadas !== 'undefined')
+      ? cands.filter(r => _rviMarcadas.has(r.id)) : [];
+    const _nuestraLn =
+         _marcadas.find(r => typeof esNuestraLineaRVI === 'function' && esNuestraLineaRVI(r))
+      || cands.find(r => typeof esNuestraLineaRVI === 'function' && esNuestraLineaRVI(r))
+      || null;
     if(!ln){
       avisos.push(`${g.ticker} ${g.lado}: no encontré línea de EMSX. ` +
                   'Se usa el precio del cliente, o sea margen cero.');
@@ -25111,10 +25385,33 @@ function armarAllocCustodio(cliente, filas){
                       `si la orden se partió, armá nuestra ejecución en Vincular.`
                     : ''));
     }
-    return { ...g, ln, qEmsx };
+    // SOLO SI SE PIDIÓ MARGEN. Sin margen no hay margen que perder, y el
+    // aviso sería ruido en el caso normal —la ejecución directa, donde hay
+    // UNA línea que calza y no hay nada que rescatar—. Un aviso que sale
+    // siempre deja de avisar: tapa los que sí importan.
+    const _pidioMargen = (typeof _modoRVI !== 'undefined') && _modoRVI.margen === 'con';
+    if(_pidioMargen && !_nuestraLn && ln &&
+       typeof esNuestraLineaRVI === 'function' && !esNuestraLineaRVI(ln)){
+      // Conducir antes que bloquear: se guarda igual, pero se avisa que la
+      // planilla va a salir sin margen, que es la mitad del trabajo.
+      avisos.push(`${g.ticker} ${g.lado}: pediste margen y no encontré NUESTRA línea ` +
+                  'en el blotter. La planilla del BO va a salir sin margen (precio del ' +
+                  'cliente). Si la ejecución fue partida, ármala en Vincular.');
+    }
+    return { ...g, ln, qEmsx, nuestraLn: _nuestraLn };
   });
 
+  // Una llave de lote por especie y lado: las patas son de la EJECUCIÓN, no
+  // de cada allocation, y sin esta llave se repetirían una vez por
+  // portafolio distribuido. `generarTC` usa el id del registro para lo mismo.
+  const _loteBase = 'ALC' + Date.now();
+
   cruces.forEach(g=>{
+    const _lote = _loteBase + '-' + g.ticker + '-' + g.lado;
+    // El broker de NUESTRA pata. Si no se encontró nuestra línea se cae al de
+    // la del cliente, que es lo que hacía antes: sin pata no hay nada mejor.
+    const _brokerNuestro = String(
+      (g.nuestraLn && g.nuestraLn.broker) || (g.ln && g.ln.broker) || '').toUpperCase().trim();
     g.filas.forEach(f=>{
       const gross = f.qty * f.precio;
       const tipo  = /^(IE|LU|GB)/i.test(f.isin) ? 'UCIT'
@@ -25168,17 +25465,48 @@ function armarAllocCustodio(cliente, filas){
         // reportada en el dashboard y en la planilla del BO.
         // `comisionContraparteRVI` ya sabe la regla: devuelve 0 para los
         // market makers y calcula para los tres brokers (Sergio, 15-oct).
+        // El broker que nos cobra es el de NUESTRA ejecución, no el de la
+        // línea del cliente. Casi siempre son el mismo, pero cuando no lo
+        // son esto infla o desaparece el costo (mismo defecto del 29-oct
+        // en `generarTC`).
         ccsi: (typeof comisionContraparteRVI === 'function')
-          ? comisionContraparteRVI(g.ln ? (g.ln.broker||'') : '', tipo, f.qty, gross, f.isin)
+          ? comisionContraparteRVI(_brokerNuestro, tipo, f.qty, gross, f.isin)
           : 0,
         tradeDate: f.fechaOp ? parseFechaLocal(f.fechaOp) : new Date(),
         // La fecha de cumplimiento viene EN EL CUADRO: se usa esa y no la
         // calculada. Es la del cliente, que es contra la que se arquea.
         settleDate: f.fechaCum ? parseFechaLocal(f.fechaCum)
                   : settlementRVI(g.ln ? g.ln.especie : (f.ticker + ' US Equity'), f.fechaOp),
-        broker: g.ln ? (g.ln.broker || '') : '',
-        precioNuestro: g.ln ? (Number(g.ln.avgPr) || f.precio) : f.precio,
-        espejo: false, comBrokerUnit: 0,
+        // ===== LOS CINCO CAMPOS DE NUESTRA PATA (Sergio, 10-nov) =====
+        // Acá decía:
+        //     broker: g.ln ? (g.ln.broker || '') : '',
+        //     precioNuestro: g.ln ? (Number(g.ln.avgPr) || f.precio) : f.precio,
+        //     espejo: false, comBrokerUnit: 0,
+        //
+        // O sea: el broker y el precio de la línea DEL CLIENTE, el espejo
+        // clavado en false y nada de patas ni de lote. Este es el botón que
+        // Sergio usa siempre con Protección —*"Protección nos envía toda la
+        // pre confirmación y la nuestra debe salir igual, por eso creamos
+        // ese botón"*— así que el espejo no viajaba NUNCA por esta vía, con
+        // el botón puesto o no.
+        //
+        // El 09-nov persiguí este defecto en `generarTC` (v354, v355, v357),
+        // que lo hacía bien, y el 10-nov lo arreglé en `aplicarCanastaRVI`
+        // (v359), que es el OTRO botón. Este es el tercero y el que de
+        // verdad se usa. Ahora los tres escriben los mismos campos; el test
+        // `t_alloc_custodio_espejo.js` lo comprueba para que no vuelva a
+        // quedar uno atrás.
+        broker: _brokerNuestro,
+        precioNuestro: g.nuestraLn ? (Number(g.nuestraLn.avgPr) || f.precio) : f.precio,
+        espejo: (typeof _modoRVI !== 'undefined') && _modoRVI.espejo === 'si',
+        patas: g.nuestraLn ? [{
+          emsxId: g.nuestraLn.id,
+          broker: String(g.nuestraLn.broker || '').toUpperCase().trim(),
+          qty: Number(g.nuestraLn.qty) || g.qty,
+          px: Number(g.nuestraLn.avgPr) || f.precio,
+        }] : [],
+        loteId: _lote,
+        comBrokerUnit: 0,
         trader: (document.getElementById('tc-trader-rvi')||{}).value || '',
         _calcApp: calc, _comDeclarada: f.comision, _netoDeclarado: f.neto,
       });
@@ -39271,7 +39599,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-09 22:30 UTC · v360';
+const BUILD_ID = '2026-11-10 16:45 UTC · v364';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
