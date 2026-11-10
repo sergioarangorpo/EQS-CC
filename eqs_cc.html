@@ -35121,6 +35121,28 @@ function rshIrA(mod){
     _rshMtz.crudo = null; _rshMtz.datos = null; _rshMtz.modulo = '';
     _rshMtz.desde = ''; _rshMtz.hasta = ''; _rshMtz.ventana = null; _rshMtz.msg = '';
   }
+  // EL CALENDARIO TAMBIÉN ES DE UN MÓDULO (Sergio, 10-nov).
+  // -----------------------------------------------------------------
+  // *"En RVI salió la info de Calendario de RVL, no aplica ahí."*
+  //
+  // Y no era del cuadro de la semana: es del calendario ENTERO, y venía
+  // de antes. `rshVista` solo carga `if(!_rshCal.cargado)`, así que
+  // entrando por RVL y pasando a RVI seguían saliendo los resultados
+  // colombianos — con el título de RVI encima.
+  //
+  // Es el mismo defecto que ya se había arreglado acá arriba para la
+  // matriz, en el estado de al lado. Un estado que es de un módulo tiene
+  // que morir cuando el módulo cambia; si no, miente con cara de dato.
+  if(typeof _rshCal !== 'undefined'){
+    _rshCal.cargado = false; _rshCal.cargando = false;
+    _rshCal.res = []; _rshCal.div = []; _rshCal.uni = null;
+    _rshCal.sel = new Set(); _rshCal.dia = null; _rshCal.msg = '';
+  }
+  if(typeof _rshSem !== 'undefined'){
+    _rshSem.cargado = false; _rshSem.cargando = false; _rshSem.modulo = '';
+    _rshSem.res = []; _rshSem.div = []; _rshSem.ev = []; _rshSem.uni = null;
+    _rshSem.msg = '';
+  }
   if(typeof switchModule === 'function') switchModule('Research');
   else rshCargar();
 }
@@ -35869,21 +35891,53 @@ async function rshCargarSemana(forzar){
       supaFetchTodo('dividendos_calendario', `ex_date=gte.${antes}&ex_date=lte.${b}`),
       // `eventos_calendario` puede no existir todavía: si falla, el cuadro
       // sale igual con las dos fuentes de siempre y lo dice. No se cae.
+      // Se guarda el ERROR, no solo el fallo: "no existe la tabla" y "no
+      // tengo permiso" se arreglan distinto.
       supaFetchTodo('eventos_calendario',
-        `activo=is.true&fecha=gte.${a}&fecha=lte.${b}`).catch(()=>null),
+        `activo=is.true&fecha=gte.${a}&fecha=lte.${b}`).catch(e=>({ _err:e.message })),
       _rshCal.uni ? Promise.resolve(_rshCal.uni)
                   : supaFetchTodo('calendario_universo', `modulo=eq.${_rshModulo}&activo=is.true`),
     ]);
     _rshSem.res = res || [];
     _rshSem.div = div || [];
     _rshSem.uni = (uni && uni.length) ? uni : null;
-    if(ev === null){
+    // TRES SILENCIOS DISTINTOS, Y SE PARECÍAN TODOS (Sergio, 10-nov).
+    // ---------------------------------------------------------------
+    // *"Esta semana tenemos publicación de MSCI, ¿por qué no salió?"*
+    //
+    // Podía ser que la tabla no exista, que exista vacía, que tenga
+    // datos pero ninguno de esta semana, o que los que hay sean de otro
+    // módulo. Las cuatro se veían IGUAL: una línea que no aparece. Y
+    // "no salió" sin motivo obliga a adivinar, que es lo que no se hace.
+    if(ev && ev._err){
       _rshSem.ev = [];
-      _rshSem.msg = 'No pude leer <code>eventos_calendario</code> — ahí van las '
-                  + 'revisiones de índice y lo macro. ¿Corriste <code>eventos_calendario.sql</code>?';
+      _rshSem.msg = 'No pude leer <code>eventos_calendario</code> (' + _esc(ev._err) + ') '
+                  + '— ahí van las revisiones de índice y lo macro. '
+                  + '¿Corriste <code>eventos_calendario.sql</code>?';
     }else{
-      _rshSem.ev = (ev || []).filter(x =>
-        x.modulo === 'AMBOS' || x.modulo === _rshModulo);
+      const todos = ev || [];
+      _rshSem.ev = todos.filter(x => x.modulo === 'AMBOS' || x.modulo === _rshModulo);
+      if(!_rshSem.ev.length){
+        if(todos.length){
+          // Hay eventos esta semana pero son de otro módulo.
+          _rshSem.msg = `Hay ${todos.length} evento(s) de índice esta semana, pero `
+                      + `ninguno aplica a ${_rshModulo}.`;
+        }else{
+          // Ninguno esta semana: ¿la tabla está vacía o simplemente no hay?
+          // Se pregunta, en vez de suponer.
+          try{
+            const algo = await supaFetch('eventos_calendario', 'select=id&limit=1');
+            _rshSem.msg = (algo && algo.length)
+              ? ''                       // la tabla vive, esta semana no hay nada
+              : 'La tabla <code>eventos_calendario</code> está vacía: por eso no '
+                + 'sale MSCI ni ninguna revisión de índice. Corré el seed de '
+                + '<code>eventos_calendario.sql</code>.';
+          }catch(e){
+            _rshSem.msg = 'No pude leer <code>eventos_calendario</code> ('
+                        + _esc(e.message) + '). ¿Corriste <code>eventos_calendario.sql</code>?';
+          }
+        }
+      }
     }
     _rshSem.cargado = true;
   }catch(e){
