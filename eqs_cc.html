@@ -873,6 +873,10 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <button class="btn small" onclick="cargarCierreRVI()">↻ Actualizar</button>
           <button class="btn small" onclick="copiarCierreRVIImagen(this)">🖼 Copiar imagen</button>
+          <!-- Texto plano para los chats de Bloomberg, que no aguantan
+               imagen ni tabla (Sergio, 10-nov). -->
+          <button class="btn small" onclick="copiarRviBloomberg(this)"
+                  title="Texto plano alineado, para pegar en un chat de Bloomberg">💬 Copiar para Bloomberg</button>
           <button class="btn small purple" onclick="traerCierreBloomberg(this)">⬇ Traer cierre de Bloomberg</button>
           <button class="btn small purple soloDueno" onclick="correoInformeRVI(this)">📧 Abrir correo en Outlook</button>
           <button class="btn small ghost" onclick="verNombresBBG()">🔍 Ver nombres de Bloomberg</button>
@@ -925,6 +929,17 @@
           <button class="btn small ghost" onclick="rshVista('spreads')" id="rshB5">Spreads</button>
           <button class="btn small ghost" onclick="rshVista('dividendos')" id="rshB6">Dividendos</button>
           <button class="btn small ghost" onclick="rshVista('volumen')" id="rshB7">Volumen y subasta</button>
+          <!-- COPIAR LO QUE SEA, DESDE DONDE SEA (Sergio, 10-nov).
+               *"La idea es que en los módulos pueda copiar y pegar data
+               relevante de cualquier cosa por donde navegue para pegarlo
+               en los chats de bloomberg, igual en RVL."*
+               El cuadro de la semana tenía su propio botón, pero vive
+               SOLO en la vista Calendario: en Spreads o Resumen no había
+               nada que copiar. Este está en la barra, así que sale en
+               todas las vistas y en los dos módulos. -->
+          <button class="btn small" id="rshBCopiar" onclick="copiarResearch(this)"
+                  title="Copia lo que estés viendo, en texto plano para el chat de Bloomberg"
+                  style="margin-left:4px;">📋 Copiar</button>
         </div>
         <div id="rshAviso" class="field-note" style="margin-top:8px;"></div>
       </div>
@@ -9601,6 +9616,97 @@ const RVI_ANCHO_CORREO = 650;
 // ancho, sin apretar nada.
 // (Sergio, 21-oct)
 // ===================================================================
+// ===================================================================
+// COPIAR PARA BLOOMBERG (Sergio, 10-nov)
+// -------------------------------------------------------------------
+// *"La idea es que en los módulos pueda copiar y pegar data relevante de
+//  cualquier cosa por donde navegue para pegarlo en los chats de
+//  bloomberg, igual en RVL."*
+//
+// El chat de Bloomberg es TEXTO PLANO y angosto. Nada de tablas HTML,
+// nada de markdown: lo que se pega es lo que se lee. Por eso esto arma
+// el texto a mano, alineado con espacios, y no reusa el HTML del correo.
+//
+// Los porcentajes llevan signo explícito: en un chat, un "0,42%" sin
+// signo al lado de un "-0,11%" se lee mal a la primera.
+// ===================================================================
+function _bbgPct(v){
+  if(v === null || v === undefined || v === '') return '—';
+  const n = Number(v);
+  if(!isFinite(n)) return '—';
+  return (n >= 0 ? '+' : '-') + Math.abs(n).toFixed(2).replace('.', ',') + '%';
+}
+// Rellena a la derecha o a la izquierda SIN cortar: en un chat, un nombre
+// cortado a la mitad es peor que una columna desalineada.
+function _bbgPad(txt, n, der){
+  const s = String(txt == null ? '' : txt);
+  if(s.length >= n) return s;
+  const relleno = ' '.repeat(n - s.length);
+  return der ? relleno + s : s + relleno;
+}
+
+function textoBloombergRVI(){
+  if(typeof _rviUniverso === 'undefined' || !_rviUniverso.length)
+    return 'El universo de RVI no está cargado.';
+  const fecha = _rviFecha
+    ? new Date(_rviFecha + 'T12:00:00').toLocaleDateString('es-CO',
+        { weekday:'long', day:'numeric', month:'long', year:'numeric' })
+    : 'sin cierre guardado';
+  const L = [`RVI · ${fecha}`, ''];
+
+  // El mismo orden de la pantalla: por columna y por bloque. Si el texto
+  // saliera en otro orden, no se podría cotejar contra lo que se ve.
+  const orden = [];
+  _rviUniverso.slice()
+    .sort((a,b)=> (a.columna - b.columna) || (a.orden_bloque - b.orden_bloque) ||
+                  (a.orden - b.orden))
+    .forEach(u=>{ if(!orden.some(x=>x.bloque === u.bloque))
+      orden.push({ bloque:u.bloque, tipo:u.tipo }); });
+
+  orden.forEach(b=>{
+    const filas = _rviUniverso
+      .filter(u => u.bloque === b.bloque && u.activo !== false)
+      .sort((x,y)=> (x.orden - y.orden));
+    if(!filas.length) return;
+    const conDato = filas.filter(u => _rviDatos[u.nemo]);
+    if(!conDato.length) return;        // un bloque sin un solo dato no se pega
+    L.push(b.bloque);
+    filas.forEach(u=>{
+      const d = _rviDatos[u.nemo];
+      if(!d) return;                   // una especie sin cierre no se inventa
+      let ln = _bbgPad(u.etiqueta, 16) +
+               _bbgPad(_bbgPct(d.var_dia), 8, true) + '  ' +
+               _bbgPad(_rviPx(d.last), 12, true);
+      // MTD y YTD solo donde existen: en los índices la pantalla tampoco
+      // los muestra, y una columna de guiones es ruido.
+      if(d.mtd != null || d.ytd != null){
+        ln += '   MTD ' + _bbgPad(_bbgPct(d.mtd), 7, true) +
+              '  YTD ' + _bbgPad(_bbgPct(d.ytd), 7, true);
+      }
+      L.push(ln.replace(/\s+$/, ''));
+    });
+    L.push('');
+  });
+
+  // Lo que NO salió, dicho al final. Pegar un informe al que le faltan
+  // tres especies sin avisar es peor que no pegarlo.
+  const faltan = _rviUniverso.filter(u => u.activo !== false && !_rviDatos[u.nemo])
+                             .map(u => u.etiqueta);
+  if(faltan.length){
+    L.push(`(sin cierre: ${faltan.join(', ')})`);
+  }
+  return L.join('\n').trim();
+}
+
+async function copiarRviBloomberg(btn){
+  try{
+    const txt = textoBloombergRVI();
+    await navigator.clipboard.writeText(txt);
+    if(btn){ const p = btn.innerHTML; btn.innerHTML = '✓ Copiado';
+             setTimeout(()=>{ btn.innerHTML = p; }, 1500); }
+  }catch(e){ alert('No se pudo copiar: ' + e.message); }
+}
+
 function informeRviCorreoHTML(){
   const F = '#0d0f14', C = '#151926', L = '#1b2232';
   const TX = '#e5e7eb', GR = '#9aa3b8';
@@ -35145,6 +35251,15 @@ function rshIrA(mod){
   }
   if(typeof switchModule === 'function') switchModule('Research');
   else rshCargar();
+  // INVALIDAR NO ES RECARGAR (10-nov).
+  // -----------------------------------------------------------------
+  // Arriba se tiró el calendario del módulo anterior, pero `rshVista` es
+  // quien lo vuelve a pedir y solo corre cuando uno CAMBIA de vista. Si
+  // ya estabas parado en el calendario y cambiaste de módulo, quedaba
+  // vacío y sin pedir nada: se arregló la mentira y se dejó un hueco.
+  if(_rshVista === 'calendario' && !_rshCal.cargado && !_rshCal.cargando){
+    rshCargarCalendario();
+  }
 }
 
 const RSH_AFPS = ['PORVENIR','PROTECCION','COLFONDOS','SKANDIA'];
@@ -35953,10 +36068,16 @@ async function rshCargarSemana(forzar){
 function _rshSemanaEventos(){
   const { a, b } = _rshSemanaRango();
   const out = [];
+  // Cuántos dividendos quedaron afuera por el universo. Igual que
+  // `_rshCal.fuera` en el calendario del mes: sin este número, "no veo
+  // dividendos" no se puede distinguir de "los escondió el filtro".
+  _rshSem.divFuera = 0;
   const enUni = x => {
     if(!_rshSem.uni) return true;
     const n = _rshCalNemo(x);
-    return !!n && _rshSem.uni.some(u => String(u.nemo).toUpperCase() === n);
+    const si = !!n && _rshSem.uni.some(u => String(u.nemo).toUpperCase() === n);
+    if(!si) _rshSem.divFuera++;
+    return si;
   };
 
   (_rshSem.res||[]).forEach(r=>{
@@ -36050,6 +36171,23 @@ function _rshSemanaHtml(){
   // para leer de un vistazo, no para contemplar casillas en blanco.
   const porDia = {};
   ev.forEach(x=>{ (porDia[x.dia] = porDia[x.dia] || []).push(x); });
+
+  // "NO VEO DIVIDENDOS" TIENE TRES CAUSAS (Sergio, 10-nov, sobre RVI).
+  // Que no haya ninguno esta semana, que el universo del módulo los haya
+  // escondido, o que para ese módulo no haya data de dividendos. Las tres
+  // se veían igual: una sección que no aparece.
+  const _hayDiv = ev.some(x => x.tipo === 'ex' || x.tipo === 'pago');
+  if(!_hayDiv){
+    const fuera = Number(_rshSem.divFuera) || 0;
+    h += `<div class="field-note" style="margin-bottom:8px;font-size:11px;opacity:.75;">`
+      + (fuera
+          ? `Sin dividendos esta semana para ${esc(_rshModulo)}: hay ${fuera} que el `
+            + `universo de este módulo deja afuera. Se edita en <code>calendario_universo</code>.`
+          : (_rshSem.div && _rshSem.div.length
+              ? `Sin ex-dividendo ni pagos esta semana.`
+              : `Sin dividendos cargados para esta semana.`))
+      + `</div>`;
+  }
 
   h += `<div style="display:flex;flex-direction:column;gap:7px;">`;
   Object.keys(porDia).sort().forEach(d=>{
@@ -37403,7 +37541,7 @@ async function rshCargarMatriz(){
     // En RVL no hay equivalente y tampoco hace falta: ahí el universo son
     // las del COLCAP, todas acciones colombianas. Sin mapa, el filtro de
     // sector simplemente no aplica y el cuadro lo dice.
-    let sectorDe = null, sinSector = 0;
+    let sectorDe = null, sinSector = 0, metaDe = null;
     if(_rshModulo === 'RVI'){
       try{
         let uni = (typeof _rviUniverso !== 'undefined' && _rviUniverso.length)
@@ -37413,12 +37551,24 @@ async function rshCargarMatriz(){
         else{
           permitidos = new Set(uni.map(u=>_rshTickerPelado(u.nemo)).filter(Boolean));
           sectorDe = {};
+          // EL TICKER PRIMERO, EL NOMBRE DESPUÉS (Sergio, 10-nov).
+          // *"En la matriz de spread de RVI me puedes poner primero el
+          //  ticker y luego el nombre del ETF? Es la única forma que
+          //  puedo escoger bien, solo con nombres es un enredo tenaz."*
+          //
+          // El rótulo salía de `precios_diarios.ticker`, que en RVI trae
+          // el nombre largo. El ticker de verdad es el nemo del universo
+          // sin el sufijo de bolsa, y el nombre está en `descripcion`.
+          metaDe = {};
           uni.forEach(u=>{
             const t = _rshTickerPelado(u.nemo);
+            if(!t) return;
             const b = String(u.bloque || '').trim();
-            if(t && b) sectorDe[t] = b; else if(t) sinSector++;
+            if(b) sectorDe[t] = b; else sinSector++;
+            metaDe[t] = { tk:t, nom:String(u.descripcion || u.etiqueta || '').trim() };
           });
           if(!Object.keys(sectorDe).length) sectorDe = null;
+          if(!Object.keys(metaDe).length) metaDe = null;
         }
       }catch(e){ universoFallo = true; }
     }
@@ -37474,7 +37624,7 @@ async function rshCargarMatriz(){
         fueraDelUniverso: permitidos
           ? (porMoneda[moneda]||[]).filter(i=>!permitidos.has(_rshTickerPelado(series[i].ticker))).length
           : 0,
-        sinPrecio, sectorDe, sinSector,
+        sinPrecio, sectorDe, sinSector, metaDe,
         otrasMonedas: Object.keys(porMoneda).filter(m=>m !== moneda),
         topeDesde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
         topeHasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '' };
@@ -37523,7 +37673,7 @@ function _rshMtzRecalcular(){
     avisoUniverso: C.avisoUniverso || '',
     fueraDelUniverso: C.fueraDelUniverso || 0,
     sinPrecio: C.sinPrecio || [],
-    sectorDe: C.sectorDe || null, sinSector: C.sinSector || 0,
+    sectorDe: C.sectorDe || null, sinSector: C.sinSector || 0, metaDe: C.metaDe || null,
     enConflicto: C.enConflicto || [], colapsados: C.colapsados || 0,
     desde: todas.length ? todas.reduce((a,b)=>a<b?a:b) : '',
     hasta: todas.length ? todas.reduce((a,b)=>a>b?a:b) : '',
@@ -37956,7 +38106,36 @@ function _rshMatrizHtml(){
       <span style="flex:1;"></span>
       <button class="btn small purple" onclick="rshCargarMatriz()">Armar matriz</button></div>`;
 
-  const T = i => (D.series[i] && D.series[i].ticker) || i;
+  // EL TICKER MANDA EN EL RÓTULO (Sergio, 10-nov).
+  // `precios_diarios.ticker` trae el nombre largo en RVI, y con nombres
+  // *"es un enredo tenaz"* para escoger un par. El ticker de verdad sale
+  // del universo; el nombre queda al lado y en el tooltip.
+  const _crudoT = i => (D.series[i] && D.series[i].ticker) || i;
+  const _meta = i => {
+    if(!D.metaDe) return null;
+    const t = (typeof _rshTickerPelado === 'function')
+      ? _rshTickerPelado(_crudoT(i)) : String(_crudoT(i)).toUpperCase();
+    return D.metaDe[t] || null;
+  };
+  const T    = i => { const m = _meta(i); return (m && m.tk) || _crudoT(i); };
+  const TNOM = i => { const m = _meta(i); return (m && m.nom) || ''; };
+  const TFULL = i => { const n = TNOM(i); return T(i) + (n ? ' · ' + n : ''); };
+  // Los pares guardan el rótulo CRUDO en tA/tB. Se traduce igual, para que
+  // la alerta y los tooltips hablen el mismo idioma que la tabla.
+  const _tkDe = txt => {
+    if(!D.metaDe) return String(txt == null ? '' : txt);
+    const t = (typeof _rshTickerPelado === 'function')
+      ? _rshTickerPelado(txt) : String(txt||'').toUpperCase();
+    const m = D.metaDe[t];
+    return (m && m.tk) || String(txt == null ? '' : txt);
+  };
+  const _nomDe = txt => {
+    if(!D.metaDe) return '';
+    const t = (typeof _rshTickerPelado === 'function')
+      ? _rshTickerPelado(txt) : String(txt||'').toUpperCase();
+    const m = D.metaDe[t];
+    return (m && m.nom) || '';
+  };
   const n = D.isins.length;
 
   // LOS QUE PASAN LAS TRES PUERTAS, arriba. Antes era `sort por |z|` a secas
@@ -38091,14 +38270,17 @@ function _rshMatrizHtml(){
     h += `<div style="display:flex;flex-direction:column;gap:5px;">`;
     top.forEach(c=>{
       const col = c.z >= 0 ? 'var(--sell,#ef4444)' : 'var(--buy,#22c55e)';
+      const kA = _tkDe(c.tA), kB = _tkDe(c.tB);
+      const nA = _nomDe(c.tA), nB = _nomDe(c.tB);
       // El z es del ratio fila/columna: positivo = la primera está CARA.
-      const quien = c.z >= 0 ? `${esc(c.tA)} cara contra ${esc(c.tB)}`
-                             : `${esc(c.tA)} barata contra ${esc(c.tB)}`;
+      const quien = c.z >= 0 ? `${esc(kA)} cara contra ${esc(kB)}`
+                             : `${esc(kA)} barata contra ${esc(kB)}`;
       h += `<div onclick="rshMtzAbrir('${esc(c.a)}','${esc(c.b)}')"
+             title="${esc(kA + (nA ? ' · ' + nA : '') + '   vs   ' + kB + (nB ? ' · ' + nB : ''))}"
              style="cursor:pointer;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;
                     padding:5px 8px;border-radius:6px;background:rgba(255,255,255,.03);
                     border-left:3px solid ${col};font-size:11.5px;">
-        <b style="min-width:122px;">${esc(c.tA)}/${esc(c.tB)}</b>
+        <b style="min-width:122px;">${esc(kA)}/${esc(kB)}</b>
         <b style="color:${col};min-width:52px;">${c.z>=0?'+':''}${c.z.toFixed(1)}σ</b>
         <span class="field-note">${c.mismoSector && c.secA ? esc(c.secA) + ' · ' : ''}corr ${
           c.corr == null ? '—' : c.corr.toFixed(2)} · vuelve en ~${
@@ -38118,7 +38300,7 @@ function _rshMatrizHtml(){
       _topCaidos.forEach(({c, motivo})=>{
         h += `<div onclick="rshMtzAbrir('${esc(c.a)}','${esc(c.b)}')"
                style="cursor:pointer;font-size:11px;opacity:.72;padding:3px 8px;">
-          <b>${esc(c.tA)}/${esc(c.tB)}</b> ${c.z>=0?'+':''}${c.z.toFixed(1)}σ
+          <b>${esc(_tkDe(c.tA))}/${esc(_tkDe(c.tB))}</b> ${c.z>=0?'+':''}${c.z.toFixed(1)}σ
           — <span style="color:var(--warn,#f59e0b);">${esc(motivo)}</span></div>`;
       });
       h += `</div>`;
@@ -38143,7 +38325,10 @@ function _rshMatrizHtml(){
   // con 20 dejaban un hueco. Ahora la tabla es `fixed` al 100% y las
   // columnas se reparten lo que sobra; el `min-width` conserva el scroll
   // horizontal de siempre cuando hay muchas.
-  const ANCHO_ETIQ = 104;
+  // La columna de rótulos crece cuando además del ticker hay nombre: con
+  // 104px el nombre se cortaba a la primera palabra y no servía de nada.
+  const _hayNom = D.isins.some(i => TNOM(i));
+  const ANCHO_ETIQ = _hayNom ? 210 : 104;
   const minTabla = ANCHO_ETIQ + D.isins.length * 30;
   // La cabecera va en vertical y estaba clavada en 66px: "CORFICOLCF",
   // "PFGRUPOARG" y "PFGRUPSURA" salian cortados a media palabra. Se calcula
@@ -38156,16 +38341,22 @@ function _rshMatrizHtml(){
       <thead><tr>
         <th style="position:sticky;left:0;top:0;z-index:3;background:var(--bg-1,#0f1320);
                    width:${ANCHO_ETIQ}px;"></th>
-        ${D.isins.map(i=>`<th style="position:sticky;top:0;z-index:2;background:var(--bg-1,#0f1320);
+        ${D.isins.map(i=>`<th title="${esc(TFULL(i))}"
+             style="position:sticky;top:0;z-index:2;background:var(--bg-1,#0f1320);
              padding:3px 2px;font-weight:600;opacity:.75;white-space:nowrap;
              writing-mode:vertical-rl;transform:rotate(180deg);
              height:${ALTO_CAB}px;">${esc(T(i))}</th>`).join('')}
       </tr></thead><tbody>`;
   D.isins.forEach(fi=>{
-    h += `<tr><th style="position:sticky;left:0;z-index:1;background:var(--bg-1,#0f1320);
+    // Ticker en negrilla y el nombre al lado, en gris y recortado: el ojo
+    // busca el ticker y el nombre solo desempata.
+    h += `<tr><th title="${esc(TFULL(fi))}"
+            style="position:sticky;left:0;z-index:1;background:var(--bg-1,#0f1320);
             padding:2px 7px 2px 3px;text-align:right;font-weight:600;opacity:.75;
             white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-            width:${ANCHO_ETIQ}px;">${esc(T(fi))}</th>`;
+            width:${ANCHO_ETIQ}px;">${esc(T(fi))}${
+              TNOM(fi) ? `<span style="opacity:.55;font-weight:400;"> · ${esc(TNOM(fi))}</span>` : ''
+            }</th>`;
     D.isins.forEach(ci=>{
       if(fi === ci){
         h += `<td style="height:21px;background:var(--bg-2,#161b26);opacity:.45;"></td>`;
@@ -38181,7 +38372,7 @@ function _rshMatrizHtml(){
       // El tooltip trae ahora las tres cosas que deciden si el par sirve.
       // Una celda roja que no revierte se ve igual de roja que una que sí, y
       // esa es justo la confusión que había (Sergio, 10-nov).
-      const _tit = `${c.tA}/${c.tB} · ${c.z>=0?'+':''}${c.z.toFixed(2)} σ`
+      const _tit = `${_tkDe(c.tA)}/${_tkDe(c.tB)} · ${c.z>=0?'+':''}${c.z.toFixed(2)} σ`
         + ` · ratio ${c.hoy.toFixed(c.hoy<10?3:2)}`
         + ` · más alto que el ${c.pct}% de ${c.dias} días`
         + `\ncorr ${c.corr == null ? '—' : c.corr.toFixed(2)}`
@@ -40156,7 +40347,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-10 19:35 UTC · v368';
+const BUILD_ID = '2026-11-10 20:45 UTC · v370';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
