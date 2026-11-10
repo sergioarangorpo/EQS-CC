@@ -20247,6 +20247,34 @@ function _dashClave(nombre, _prof){
     if(_al && String(_al).toUpperCase().trim() !== n) return _dashClave(_al, _prof + 1);
     if(_al) return _al;
   }
+  // SI SE VE IGUAL EN PANTALLA, ES EL MISMO CLIENTE (Sergio, 10-nov).
+  // -------------------------------------------------------------------
+  // El aviso nuevo dijo: "ANDES INV (RVL · sin ficha de comisión)". Andes SÍ
+  // tiene ficha —LARRAIN VIAL PP, 0,1% fijo— pero el nombre llegó escrito de
+  // una forma que no es ni la llave ni el nombre de la ficha. `_dashCorto`
+  // lo abreviaba igual ("ANDES INV"), así que en las barras se veía bien,
+  // pero la llave quedaba suelta: sin tarifa, sin cruce con el reporte, y la
+  // comisión de Andes en RVL sumando cero.
+  // Si la abreviatura de este nombre es la de UNA sola ficha, esa es la
+  // llave. Con dos candidatas no se adivina.
+  if(typeof DASH_ABREVIA !== 'undefined' && typeof clientesDB !== 'undefined' &&
+     typeof _dashCorto === 'function'){
+    const corto = String(_dashCorto(_limpio) || '').toUpperCase().trim();
+    // Solo para un nombre que por sí mismo NO tiene fila de comisión: uno que
+    // ya tiene la suya (BANCOLOMBIA, por ejemplo) no se le regala a otro
+    // cliente por parecerse en la abreviatura.
+    const _propia = (typeof _filaComisionDe === 'function') ? _filaComisionDe(_limpio) : null;
+    if(corto && !_propia){
+      const llaves = new Set();
+      Object.keys(clientesDB).forEach(x=>{
+        const nom = String((clientesDB[x].nombre)||'').toUpperCase().trim();
+        const ab = [DASH_ABREVIA[x.toUpperCase()], DASH_ABREVIA[nom]]
+          .filter(Boolean).map(t=>String(t).toUpperCase().trim());
+        if(ab.indexOf(corto) >= 0) llaves.add(x);
+      });
+      if(llaves.size === 1) return [...llaves][0];
+    }
+  }
   return _limpio;
 }
 
@@ -40369,7 +40397,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-10 20:40 UTC · v371';
+const BUILD_ID = '2026-11-10 22:40 UTC · v372';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
