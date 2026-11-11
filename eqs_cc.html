@@ -4097,9 +4097,21 @@ function getModeloEfectivo(){
   return modeloBase;
 }
 
+// EL NEXT DAY SALTA TAMBIÉN LOS FESTIVOS DE ESTADOS UNIDOS (Sergio, 11-nov).
+// ---------------------------------------------------------------------
+// *"La planilla COP salió con las operaciones NextDay como 11/11/2026 y
+//  como es festivo deben salir como 12/11/2026."*
+//
+// Esto solo miraba el calendario colombiano. El 10-nov, cinco NextDay
+// quedaron con fecha de operación 11-nov —Veterans Day—, un día en que no
+// hay mercado de dólar. La fecha de un NextDay es el siguiente día en que
+// se puede operar USD: hábil en Colombia Y en Estados Unidos.
+//
+// Los tres sitios que la usan son de FX (calculadora, cambio de fecha y
+// lote), así que el cambio no toca el cumplimiento de acciones.
 function siguienteDiaHabil(fecha){
   let d = new Date(fecha);
-  do{ d.setDate(d.getDate()+1); } while(!esHabil(d));
+  do{ d.setDate(d.getDate()+1); } while(!esHabil(d, 'CO') || !esHabil(d, 'US'));
   return d;
 }
 
@@ -20212,6 +20224,15 @@ function _dashClave(nombre, _prof){
   _prof = Number(_prof) || 0;
   const n = String(nombre||'').toUpperCase().trim();
   if(!n) return '';
+  // ASHMORE Y FIDUASHMORE SON DOS CLIENTES (Sergio, 11-nov).
+  // *"Hacen parte de la misma casa pero son clientes diferentes: Ashmore
+  //  llega vía CSI, FIDUASHMORE vía directa a Bloomberg, comisión diferente."*
+  // `ALIAS_GRUPO` traduce ASHMORE → FIDUASHMORE para otros caminos, y acá eso
+  // los sumaba en una sola llave: una tarifa para los dos (0,05% contra
+  // 0,09%) y, con el filtro por trader, un solo dueño cuando ASHMORE es de
+  // JAJ y FIDUASHMORE de SAR. En el dashboard ASHMORE se queda ASHMORE.
+  // El nombre largo de la fiduciaria sigue siendo FIDUASHMORE (19-oct).
+  if(n === 'ASHMORE') return 'ASHMORE';
   const g = normalizarGrupo(n);
   // Si el nombre coincide con el NOMBRE COMPLETO de un cliente, se usa su clave.
   if(typeof clientesDB !== 'undefined'){
@@ -20316,6 +20337,80 @@ function _dashCorto(nombre){
 
 let _dashCliente = '';   // filtro activo del panel de la izquierda
 let _dashMercado = '';   // filtro por mercado: clic en las tarjetas de arriba
+let _dashTrader = '';    // filtro por trader: '' = todos (Sergio, 11-nov)
+
+// ===================================================================
+// EL FILTRO POR TRADER (Sergio, 11-nov)
+// -------------------------------------------------------------------
+// *"Juan quiere ver un filtro adicional por trader... arriba de los
+//  clientes, para que se pueda escoger JAJ y se vea todo lo que lleva
+//  JAJ, SAR o los 2."*
+//
+// El dashboard de hoy sale del blotter en vivo, que no trae trader. Se
+// asigna con LA MISMA REGLA de la Planilla COP —el dueño del grupo en el
+// presupuesto (`grupoDeOperacion`), y en FX el trader de la operación—
+// para que lo que se ve acá cuadre con la planilla al cierre.
+//
+// Un cliente sin trader en el presupuesto no se le regala a nadie: queda
+// "sin trader", se cuenta aparte y solo se ve con el filtro en Todos.
+// ===================================================================
+function _dashTraderDe(mkt, cli, c){
+  if(mkt === 'FX' && c && c.trader) return c.trader;
+  if(typeof grupoDeOperacion !== 'function') return '';
+  const nom = (typeof clientesDB !== 'undefined' && clientesDB[cli]) ? clientesDB[cli].nombre : '';
+  // RVI guarda al cliente con el nombre CORTO de pantalla ('ANDES INV'):
+  // `_dashClave` lo devuelve a la llave de su ficha (LARRAIN VIAL PP).
+  const prueba = [cli, nom, (typeof _dashCorto === 'function') ? _dashCorto(cli) : '',
+                  (typeof _dashClave === 'function') ? _dashClave(cli) : ''];
+  for(const x of prueba){
+    if(!x) continue;
+    let g = null;
+    try{ g = grupoDeOperacion(x, '', ''); }catch(e){ g = null; }
+    if(g && g.trader) return String(g.trader).toUpperCase().trim();
+  }
+  return '';
+}
+
+// Los traders que se ofrecen: los del presupuesto y los del FX de hoy.
+function _dashTraders(M){
+  const t = new Set();
+  (typeof _maestroGrupos !== 'undefined' ? _maestroGrupos : []).forEach(g=>{
+    const x = String(g.trader || '').toUpperCase().trim(); if(x) t.add(x); });
+  Object.keys(M.FX ? M.FX.clientes : {}).forEach(c=>{
+    const x = M.FX.clientes[c].trader; if(x) t.add(x); });
+  return [...t].sort((a,b)=> (a==='SAR'?-1:b==='SAR'?1:0) || a.localeCompare(b));
+}
+
+// Deja en M solo lo del trader elegido y rehace los totales de cada
+// mercado. Devuelve cuántos clientes quedaron por fuera por no tener trader.
+function _dashFiltrarTrader(M){
+  let sinTrader = 0;
+  Object.keys(M).forEach(k=>{
+    const m = M[k];
+    Object.keys(m.clientes).forEach(c=>{
+      const t = _dashTraderDe(k, c, m.clientes[c]);
+      m.clientes[c].traderDash = t;
+      if(!t) sinTrader++;
+      if(_dashTrader && t !== _dashTrader) delete m.clientes[c];
+    });
+    if(_dashTrader){
+      m.vol = Object.values(m.clientes).reduce((a,x)=>a + x.vol, 0);
+      m.com = Object.values(m.clientes).reduce((a,x)=>a + x.com, 0);
+    }
+  });
+  // No enumerables: el resto del dashboard recorre `Object.keys(M)` como
+  // lista de mercados y no debe encontrarse con esto.
+  Object.defineProperty(M, '_sinTrader', { value: sinTrader, enumerable:false, writable:true });
+  return M;
+}
+
+function filtrarDashTrader(t){
+  _dashTrader = (_dashTrader === t) ? '' : t;
+  // El cliente elegido puede no ser de ese trader: se suelta para no dejar
+  // la pantalla vacía sin explicación.
+  _dashCliente = '';
+  renderDashboard();
+}
 
 function filtrarDashMercado(m){
   _dashMercado = (_dashMercado === m) ? '' : m;
@@ -20462,7 +20557,7 @@ function _dashDatos(){
     comReportada[k] = (comReportada[k] || 0) + (Number(r.comision) || 0);
   });
 
-  const sumar = (mkt, cliente, vol, com, comCierta) => {
+  const sumar = (mkt, cliente, vol, com, comCierta, trader) => {
     if(!cliente) return;
     const m = M[mkt];
     m.vol += vol;
@@ -20470,6 +20565,13 @@ function _dashDatos(){
     const c = m.clientes[cliente] || (m.clientes[cliente] = { vol:0, com:0, pendiente:false });
     c.vol += vol;
     if(comCierta) c.com += com; else c.pendiente = true;
+    // En FX el trader viene en la OPERACIÓN, no en el cliente. Se guarda el
+    // que más volumen lleva con ese cliente hoy, para el filtro por trader.
+    if(trader){
+      const tv = c._tv || (c._tv = {});
+      tv[trader] = (tv[trader] || 0) + Math.abs(vol);
+      c.trader = Object.keys(tv).sort((x,y)=>tv[y]-tv[x])[0];
+    }
   };
 
   // ---------- RVL ----------
@@ -20611,7 +20713,7 @@ function _dashDatos(){
       tasa = (o.params && (o.params.rateUnica || o.params.rate)) || 0;
       com = Number(o.comEqs) || 0;
     }
-    sumar('FX', _dashClave(cli), monto * tasa, com, true);
+    sumar('FX', _dashClave(cli), monto * tasa, com, true, String(o.trader || '').toUpperCase().trim());
   });
 
   // Encima de todo: lo REPORTADO manda. Se reemplaza la estimación por el dato
@@ -20644,7 +20746,10 @@ function renderDashboard(){
   // tarjeta de la Planilla COP vive en este módulo, y así queda bien
   // puesto tanto al abrir la página como al volver al Dashboard.
   if(typeof pintarTraderFX === 'function') pintarTraderFX();
-  const M = _dashDatos();
+  const _Mtodo = _dashDatos();
+  const _tradersDash = _dashTraders(_Mtodo);
+  const M = _dashFiltrarTrader(_Mtodo);
+  Object.defineProperty(M, '_traders', { value: _tradersDash, enumerable:false, writable:true });
   const el = document.getElementById('dashHora');
   if(el) el.textContent = new Date().toLocaleString('es-CO',{dateStyle:'long', timeStyle:'short'});
 
@@ -20661,7 +20766,7 @@ function renderDashboard(){
   };
 
   // ---- Tarjetas por mercado ----
-  cont.innerHTML = Object.keys(M).map(k=>{
+  cont.innerHTML = Object.keys(M).filter(k=>k[0] !== '_').map(k=>{
     const m = M[k];
     const nCli = Object.keys(m.clientes).length;
     const hayPend = Object.values(m.clientes).some(c=>c.pendiente);
@@ -20709,11 +20814,27 @@ function renderDashClientes(M){
     });
   });
   const nombres = Object.keys(tot).sort();
+  // El filtro por trader va ARRIBA de los clientes y manda sobre ellos.
+  const chip = (t, txt) => `<span onclick="filtrarDashTrader('${t}')"
+      style="cursor:pointer;padding:4px 10px;border-radius:999px;font-size:11.5px;font-weight:700;
+             border:1px solid var(--accent,#818cf8);
+             ${_dashTrader===t ? 'background:var(--accent,#818cf8);color:#fff;' : 'opacity:.75;'}">${txt}</span>`;
+  const _trs = M._traders || [];
+  const filtroTrader = !_trs.length ? '' :
+    `<div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border,#232938);">
+       <div class="field-note" style="font-size:10px;letter-spacing:.5px;margin-bottom:6px;">TRADER</div>
+       <div style="display:flex;gap:6px;flex-wrap:wrap;">
+         ${chip('', 'Todos')}${_trs.map(t=>chip(t, t)).join('')}
+       </div>
+       ${M._sinTrader ? `<div class="field-note" style="font-size:10px;margin-top:6px;color:var(--amber,#f59e0b);">
+         ${M._sinTrader} cliente(s) sin trader en el presupuesto${_dashTrader ? ': no entran en este filtro' : ''}</div>` : ''}
+     </div>`;
   if(!nombres.length){
-    cont.innerHTML = '<div class="field-note">Todavía no hay operaciones hoy.</div>';
+    cont.innerHTML = filtroTrader + `<div class="field-note">${
+      _dashTrader ? 'Sin operaciones de ' + _dashTrader + ' hoy.' : 'Todavía no hay operaciones hoy.'}</div>`;
     return;
   }
-  cont.innerHTML =
+  cont.innerHTML = filtroTrader +
     `<div onclick="filtrarDashCliente('')" style="cursor:pointer;padding:6px 8px;border-radius:6px;
         font-size:12px;margin-bottom:2px;${!_dashCliente?'background:var(--accent,#818cf8);color:#fff;font-weight:700;':''}">
       Todos los clientes <span style="opacity:.7;">(${nombres.length})</span></div>` +
@@ -23318,6 +23439,7 @@ function renderDashBloques(){
     .map(f=>({ ...f, _cliReal: clienteDeFolio(f), monto: f.cantidad * f.precio }))
     .filter(f=>{
       if(_dashCliente && f._cliReal !== _dashCliente) return false;
+      if(_dashTrader && _dashTraderDe('RVL', f._cliReal) !== _dashTrader) return false;
       return true;
     })
     .sort((a,b)=>b.monto - a.monto);
@@ -39474,6 +39596,170 @@ const _bloque = (titulo, cuerpo, pie, sub) => `
   </div>`;
 
 // ---------------------------------------------------------------------
+// ===================================================================
+// FECHA × TRADER: PRODUCCIÓN, PRESUPUESTO Y CUMPLIMIENTO (Sergio, 11-nov)
+// -------------------------------------------------------------------
+// *"Pueden ser varias tablas dinámicas, de producción, de cumplimiento
+//  presupuestal, todo dinámico y con la misma forma, fecha versus trader
+//  (con los subtotales dinámicos)."*
+//
+// Tres tablas con LAS MISMAS filas: año → semestre → mes → día. El mes se
+// abre y se cierra con un clic; por defecto viene abierto el mes en curso
+// y los cerrados quedan en una línea.
+//
+//  · Sale de `ejecucion_diaria`, la misma vista del resto del módulo: el
+//    subtotal del mes cuadra con las tarjetas de arriba.
+//  · El trader es el de la FILA de la planilla (la vista diaria no trae
+//    grupo), que es como lo lleva Miguel.
+//  · Presupuesto del día = presupuesto del mes (por la curva) ÷ días
+//    hábiles del mes. Solo por trader: por mercado no hay presupuesto.
+//  · El mes en curso se compara contra lo que iba al último día con datos,
+//    no contra el mes completo.
+// ===================================================================
+let _presuTDAbiertos = null;      // { '2026-11':true }; null = sin tocar
+let _presuTDEnCurso = '';         // el mes que viene abierto por defecto
+
+function _presuTDHabiles(anio, mes, hastaISO){
+  let n = 0;
+  const d = new Date(anio, mes - 1, 1);
+  while(d.getMonth() === mes - 1){
+    if(esHabil(d, 'CO') && (!hastaISO || _isoLocal(d) <= hastaISO)) n++;
+    d.setDate(d.getDate() + 1);
+  }
+  return n;
+}
+
+function _presuTDDatos(anio){
+  anio = Number(anio);
+  const up = t => String(t || '').toUpperCase().trim() || '—';
+  const presuAnual = {};
+  (_maestroGrupos||[]).forEach(g=>{
+    const t = up(g.trader); presuAnual[t] = (presuAnual[t]||0) + (Number(g.presupuesto)||0); });
+  const porDia = {}, enDatos = new Set();
+  (_ejecDiaria||[]).forEach(r=>{
+    const dia = String(r.dia||'').slice(0,10);
+    if(!dia.startsWith(anio + '-')) return;
+    const t = up(r.trader); enDatos.add(t);
+    const o = porDia[dia] || (porDia[dia] = {});
+    o[t] = (o[t]||0) + (Number(r.comision)||0);
+  });
+  const traders = [...new Set([...Object.keys(presuAnual), ...enDatos])]
+    .sort((a,b)=> (a==='SAR'?-1:b==='SAR'?1:0) || (a==='—'?1:b==='—'?-1:0) || a.localeCompare(b));
+  const dias = Object.keys(porDia).sort();
+  const ultimo = dias.length ? dias[dias.length-1] : '';
+  const mesUlt = ultimo ? Number(ultimo.slice(5,7)) : 0;
+  // Un NextDay de hoy ya trae fecha de MAÑANA. Ese día se muestra, pero el
+  // presupuesto corrido llega hasta hoy: si no, un día que apenas empieza
+  // contaría como un día completo de presupuesto.
+  const hoy = (typeof _hoyISO === 'function') ? _hoyISO() : ultimo;
+  const corte = (ultimo > hoy) ? hoy : ultimo;
+  const cero = () => { const o = {}; traders.forEach(t=>o[t]=0); return o; };
+  const sumarEn = (a, b) => traders.forEach(t=>{ a[t] += (b[t]||0); });
+  const tot = o => traders.reduce((a,t)=>a + (o[t]||0), 0);
+
+  const meses = [];
+  for(let m = 1; m <= mesUlt; m++){
+    const pref = anio + '-' + String(m).padStart(2,'0');
+    const peso = _presuPesoMes(anio, m) / 100;
+    const habiles = _presuTDHabiles(anio, m);
+    const corridos = (m === mesUlt) ? _presuTDHabiles(anio, m, corte) : habiles;
+    const prod = cero(), presuMes = cero(), presuDia = cero(), presu = cero();
+    traders.forEach(t=>{
+      presuMes[t] = (presuAnual[t]||0) * peso;
+      presuDia[t] = habiles ? presuMes[t] / habiles : 0;
+      presu[t]    = presuDia[t] * corridos;      // lo que iba al último día
+    });
+    const filas = dias.filter(d=>d.startsWith(pref)).map(d=>{
+      const p = cero(); sumarEn(p, porDia[d]); sumarEn(prod, p);
+      return { clave:d, tipo:'dia', etiqueta:d.slice(8,10) + '-' + MESES_CORTOS[m-1].toLowerCase(),
+               prod:p, presu: (d > corte) ? cero() : presuDia };   // un día que no ha llegado no tiene contra qué medirse
+    });
+    meses.push({ clave:pref, tipo:'mes', mes:m, etiqueta:MESES_CORTOS[m-1] + ' ' + anio,
+                 enCurso: m === mesUlt, habiles, corridos, prod, presu, presuMes, dias:filas });
+  }
+  const juntar = (lista, clave, etiqueta, tipo) => {
+    const prod = cero(), presu = cero();
+    lista.forEach(x=>{ sumarEn(prod, x.prod); sumarEn(presu, x.presu); });
+    return { clave, tipo, etiqueta, prod, presu };
+  };
+  const s1 = meses.filter(x=>x.mes <= 6), s2 = meses.filter(x=>x.mes >= 7);
+  return { anio, traders, ultimo, corte, meses, tot,
+           semestres: [ s1.length ? { ...juntar(s1, anio+'-S1', 'Semestre 1', 'sem'), meses:s1 } : null,
+                        s2.length ? { ...juntar(s2, anio+'-S2', 'Semestre 2', 'sem'), meses:s2 } : null ].filter(Boolean),
+           total: juntar(meses, String(anio), 'Año ' + anio, 'anio') };
+}
+
+function presuTDAlternar(clave){
+  if(!_presuTDAbiertos) _presuTDAbiertos = {};
+  _presuTDAbiertos[clave] = !_presuTDEstaAbierto(clave, clave === _presuTDEnCurso);
+  renderPresupuesto();
+}
+function _presuTDEstaAbierto(clave, enCurso){
+  if(_presuTDAbiertos && (clave in _presuTDAbiertos)) return !!_presuTDAbiertos[clave];
+  return !!enCurso;                 // por defecto, solo el mes en curso
+}
+
+function _presuTablasDiariasHtml(anio){
+  const D = _presuTDDatos(anio);
+  if(!D.meses.length) return '';
+  const T = D.traders;
+  const m1 = v => (v/1e6).toLocaleString('es-CO',{minimumFractionDigits:1, maximumFractionDigits:1});
+  const colorC = v => v >= 100 ? _PC.verde : (v >= 80 ? _PC.ambar : _PC.rojo);
+  // Las filas, UNA sola vez: las tres tablas pintan la misma lista.
+  const filas = [];
+  D.semestres.forEach(s=>{
+    s.meses.forEach(m=>{
+      const abierto = _presuTDEstaAbierto(m.clave, m.enCurso);
+      filas.push({ ...m, abierto });
+      if(abierto) m.dias.forEach(d=>filas.push(d));
+    });
+    filas.push(s);
+  });
+  filas.push(D.total);
+
+  const estilo = { dia:'', mes:'font-weight:700;cursor:pointer;background:rgba(255,255,255,.03);',
+                   sem:'font-weight:800;background:rgba(129,140,248,.10);',
+                   anio:'font-weight:800;background:rgba(129,140,248,.20);' };
+  const tabla = (titulo, nota, celda) => `
+    <div class="card" style="padding:10px 12px;flex:1 1 300px;min-width:290px;">
+      <div style="font-size:11px;font-weight:800;letter-spacing:.4px;opacity:.7;">${titulo}</div>
+      <div class="field-note" style="font-size:10.5px;margin-bottom:6px;">${nota}</div>
+      <div style="max-height:520px;overflow:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;">
+        <thead><tr>
+          <th style="text-align:left;padding:4px 6px;position:sticky;top:0;background:var(--bg-2,#161b26);">Fecha</th>
+          ${T.concat(['Total']).map(t=>`<th style="text-align:right;padding:4px 6px;position:sticky;top:0;background:var(--bg-2,#161b26);">${_esc(t)}</th>`).join('')}
+        </tr></thead>
+        <tbody>${filas.map(f=>`
+          <tr style="${estilo[f.tipo]}border-top:1px solid var(--border,#232938);"
+              ${f.tipo === 'mes' ? `onclick="presuTDAlternar('${f.clave}')" title="Abrir o cerrar los días"` : ''}>
+            <td style="padding:3px 6px;white-space:nowrap;${f.tipo === 'dia' ? 'padding-left:18px;opacity:.85;' : ''}">${
+              f.tipo === 'mes' ? (f.abierto ? '▾ ' : '▸ ') : ''}${_esc(f.etiqueta)}</td>
+            ${T.map(t=>celda(f.prod[t]||0, f.presu[t]||0)).join('')}
+            ${celda(D.tot(f.prod), D.tot(f.presu))}
+          </tr>`).join('')}
+        </tbody>
+      </table></div>
+    </div>`;
+  const td = (txt, color) => `<td style="text-align:right;padding:3px 6px;${color ? 'color:' + color + ';' : ''}">${txt}</td>`;
+  const enCurso = D.meses[D.meses.length - 1];
+  _presuTDEnCurso = enCurso.clave;
+  return `
+    <div style="border:1px solid var(--border,#232938);border-radius:10px;padding:10px 12px;margin-bottom:14px;">
+      <div style="font-size:12.5px;font-weight:800;margin-bottom:2px;">Día a día por trader · ${D.anio}</div>
+      <div class="field-note" style="font-size:11px;margin-bottom:8px;">
+        Millones de pesos, toda la mesa (no sigue los filtros de arriba, solo el año). Presupuesto corrido al
+        <b>${_esc(D.corte)}</b>. Clic en un mes para abrir o cerrar sus días.</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;">
+        ${tabla('PRODUCCIÓN', 'Comisión sin IVA', (p)=>td(m1(p), p < 0 ? _PC.rojo : '')) }
+        ${tabla('PRESUPUESTO', `Del mes ÷ días hábiles · ${_esc(enCurso.etiqueta)} va en ${enCurso.corridos} de ${enCurso.habiles}`,
+                (p, b)=>td(m1(b))) }
+        ${tabla('CUMPLIMIENTO', 'Producción ÷ presupuesto de la misma fila',
+                (p, b)=> b > 0 ? td(_pct(p / b * 100), colorC(p / b * 100)) : td('—')) }
+      </div>
+    </div>`;
+}
+
 function renderPresupuesto(){
   const cont = document.getElementById('presuCuerpo');
   if(!cont) return;
@@ -39669,6 +39955,8 @@ function renderPresupuesto(){
     <div class="field-note" style="font-size:11.5px;margin:-6px 0 12px;">Corte: <b>${_esc(etiquetaCorte)}</b>
       · ${c.grupos.length} grupo(s) · presupuesto anual del corte <b>$${_mm(c.presuAnual)}</b>
       · IVA facturado $${_mm(c.iva)} <i>(no es ingreso)</i></div>
+
+    ${_presuTablasDiariasHtml(c.anio)}
 
     ${c.sinPresuMercado ? `<div style="background:rgba(245,158,11,.10);
         border-left:3px solid var(--amber,#f59e0b);border-radius:6px;padding:9px 13px;
@@ -40565,7 +40853,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-11 21:30 UTC · v377';
+const BUILD_ID = '2026-11-12 00:20 UTC · v381';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
