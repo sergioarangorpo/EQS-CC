@@ -35742,6 +35742,71 @@ function _rshAgrupar(filas, clave){
   return g;
 }
 
+// ===================================================================
+// LOS MOVIMIENTOS, POR PLATA Y NO POR ACCIONES (Sergio, 11-nov)
+// -------------------------------------------------------------------
+// *"Necesito no solo verlo por cantidad de acciones: ECOPETROL sería
+//  siempre la líder, las acciones como CIBEST, GRUPOSURA siempre
+//  quedarían de últimas. 50 líneas mínimo, ordenar la tabla como yo
+//  quiera y que por defecto venga por volumen operado."*
+//
+// La tabla ordenaba por Δ acciones y mostraba 20. Con eso una especie de
+// $2.000 le gana siempre a una de $60.000 aunque mueva menos plata.
+//
+// Tampoco sirve ordenar por Δ valor: ese mezcla precio con compra (si la
+// acción sube y nadie compra, el valor sube igual). Lo que se ordena es
+// el FLUJO ESTIMADO: Δ acciones × precio. El precio sale del mismo
+// archivo —valor ÷ acciones— promediando los dos cortes, porque las
+// compras se hicieron a lo largo del mes. Si en un corte la posición es
+// cero, se usa el precio del otro.
+//
+// Sirve igual para RVL y RVI: es la misma función para los dos módulos.
+// ===================================================================
+let _rshMovOrden = { col:'flujo', dir:-1 };
+
+function _rshMovimientos(){
+  const hoyE = _rshAgrupar(_rshDatos.filas, f=>f.afp+'|'+f._et);
+  const antE = _rshAgrupar(_rshDatos.prev,  f=>f.afp+'|'+f._et);
+  const movs = [];
+  new Set([...Object.keys(hoyE), ...Object.keys(antE)]).forEach(k=>{
+    const i = k.indexOf('|');
+    const afp = k.slice(0, i), nemo = k.slice(i+1);
+    const H = hoyE[k] || {valor:0, acciones:0}, A = antE[k] || {valor:0, acciones:0};
+    const dv = H.valor - A.valor;
+    const da = H.acciones - A.acciones;
+    if(Math.abs(da) <= 0.5) return;       // sin cambio de cantidad no hay movimiento
+    const pH = H.acciones > 0 ? H.valor / H.acciones : null;
+    const pA = A.acciones > 0 ? A.valor / A.acciones : null;
+    const precio = (pH != null && pA != null) ? (pH + pA) / 2 : (pH != null ? pH : (pA != null ? pA : 0));
+    movs.push({ afp, nemo, dv, da, precio, flujo: da * precio });
+  });
+  return movs;
+}
+
+function _rshMovOrdenados(){
+  const { col, dir } = _rshMovOrden;
+  const movs = _rshMovimientos();
+  const texto = col === 'afp' || col === 'nemo';
+  movs.sort((x,y)=>{
+    let c;
+    if(texto) c = String(x[col]).localeCompare(String(y[col]));
+    // Los números se ordenan por TAMAÑO del movimiento: una venta grande y
+    // una compra grande van juntas arriba. El color dice el sentido.
+    else c = Math.abs(x[col]) - Math.abs(y[col]);
+    if(c === 0) c = Math.abs(x.flujo) - Math.abs(y.flujo);
+    return c * dir;
+  });
+  return movs;
+}
+
+// Clic en un encabezado: si ya estaba ordenado por esa columna, invierte;
+// si no, arranca de mayor a menor (o de la A a la Z en las de texto).
+function rshMovOrdenar(col){
+  if(_rshMovOrden.col === col) _rshMovOrden.dir *= -1;
+  else _rshMovOrden = { col, dir: (col === 'afp' || col === 'nemo') ? 1 : -1 };
+  rshPintar();
+}
+
 function _rshResumen(){
   const hayPrev = _rshDatos.prev.length > 0;
   const hoy  = _rshAgrupar(_rshDatos.filas, f=>f.afp);
@@ -35765,35 +35830,37 @@ function _rshResumen(){
   });
   h += `</div>`;
 
-  // Los movimientos más grandes del mes. Es lo primero que uno quiere ver.
+  // Los movimientos del mes. Es lo primero que uno quiere ver.
   if(hayPrev){
-    const hoyE = _rshAgrupar(_rshDatos.filas, f=>f.afp+'|'+f._et);
-    const antE = _rshAgrupar(_rshDatos.prev,  f=>f.afp+'|'+f._et);
-    const movs = [];
-    new Set([...Object.keys(hoyE), ...Object.keys(antE)]).forEach(k=>{
-      const [afp,nemo] = k.split('|');
-      const dv = (hoyE[k]||{valor:0}).valor - (antE[k]||{valor:0}).valor;
-      const da = (hoyE[k]||{acciones:0}).acciones - (antE[k]||{acciones:0}).acciones;
-      // Se ordena por ACCIONES, no por valor: una subida de precio no es
-      // una compra, y en valor las dos cosas se ven igual.
-      if(Math.abs(da) > 0.5) movs.push({afp, nemo, dv, da});
-    });
-    movs.sort((x,y)=>Math.abs(y.da)-Math.abs(x.da));
-    h += `<div class="section-label" style="margin:4px 0 8px;">Mayores movimientos en acciones · ${_rshFecha(_rshDatos.contra)} → ${_rshFecha(_rshDatos.corte)}</div>`;
-    h += `<div class="panel" style="padding:0;overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;">
-      <thead><tr style="text-align:left;opacity:.65;">
-        <th style="padding:7px 10px;">AFP</th><th>Especie</th>
-        <th class="num">Δ acciones</th><th class="num">Δ valor (mm)</th></tr></thead><tbody>`;
-    movs.slice(0,20).forEach(m=>{
+    const movs = _rshMovOrdenados();
+    const O = _rshMovOrden;
+    const th = (col, txt, num) => `<th ${num?'class="num"':''} onclick="rshMovOrdenar('${col}')"
+        title="Ordenar por ${txt}"
+        style="position:sticky;top:0;z-index:1;background:var(--bg-1,#0f1320);cursor:pointer;
+               user-select:none;white-space:nowrap;padding:7px 10px;${O.col===col?'opacity:1;':'opacity:.65;'}">
+        ${txt}${O.col===col ? (O.dir < 0 ? ' ▼' : ' ▲') : ''}</th>`;
+    h += `<div class="section-label" style="margin:4px 0 8px;">Movimientos · ${_rshFecha(_rshDatos.contra)} → ${_rshFecha(_rshDatos.corte)}
+            <span style="opacity:.6;font-weight:400;"> · ${movs.length} líneas · clic en un encabezado para ordenar</span></div>`;
+    h += `<div class="panel" style="padding:0;overflow:auto;max-height:560px;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+      <thead><tr style="text-align:left;">
+        ${th('afp','AFP')}${th('nemo','Especie')}
+        ${th('flujo','Flujo estimado (mm)',true)}${th('da','Δ acciones',true)}${th('dv','Δ valor (mm)',true)}</tr></thead><tbody>`;
+    movs.forEach(m=>{
       const col = m.da>0 ? 'var(--buy,#22c55e)' : 'var(--sell,#ef4444)';
+      const colV = m.dv>0 ? 'var(--buy,#22c55e)' : 'var(--sell,#ef4444)';
       h += `<tr style="border-top:1px solid var(--line,#222);">
         <td style="padding:6px 10px;">${m.afp}</td>
         <td style="font-weight:600;">${m.nemo}</td>
+        <td class="num" style="color:${col};font-weight:600;">${m.flujo>0?'+':''}${_rshMM(m.flujo/1e9)}</td>
         <td class="num" style="color:${col};">${m.da>0?'+':''}${fmtInt(m.da)}</td>
-        <td class="num" style="color:${col};">${m.dv>0?'+':''}${_rshMM(m.dv/1e9)}</td></tr>`;
+        <td class="num" style="color:${colV};opacity:.8;">${m.dv>0?'+':''}${_rshMM(m.dv/1e9)}</td></tr>`;
     });
-    if(!movs.length) h += `<tr><td colspan="4" style="padding:10px;opacity:.6;">Ningún movimiento entre los dos cortes.</td></tr>`;
-    h += `</tbody></table></div>`;
+    if(!movs.length) h += `<tr><td colspan="5" style="padding:10px;opacity:.6;">Ningún movimiento entre los dos cortes.</td></tr>`;
+    h += `</tbody></table></div>
+      <div class="field-note" style="margin-top:6px;font-size:11px;opacity:.75;">
+        <b>Flujo estimado</b> = Δ acciones × precio promedio de los dos cortes (valor ÷ acciones del
+        archivo de la Super). Es la plata que se movió, sin la valorización.
+        <b>Δ valor</b> es el dato de la Super tal cual y mezcla precio con compra.</div>`;
   } else {
     h += `<div class="panel"><span class="field-note">Carga por lo menos dos meses para ver
           quién compró y quién vendió. Con un solo corte esto es una foto, no un seguimiento.</span></div>`;
@@ -40397,7 +40464,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-10 22:40 UTC · v372';
+const BUILD_ID = '2026-11-11 14:50 UTC · v373';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
