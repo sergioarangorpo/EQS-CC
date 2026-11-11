@@ -35832,12 +35832,61 @@ function textoBloombergMovimientos(){
   return L.join('\n');
 }
 
+// EL CUADRO, NO UN TEXTO (Sergio, 11-nov, 1:03 pm).
+// *"Lo que necesito es poder copiar y pegar todo el cuadro a bloomberg,
+//  incluido títulos. Limítalo a 30 líneas si quieres, pero pegar el cuadro."*
+//
+// La primera versión copiaba texto alineado con espacios. En un chat con
+// letra proporcional eso se descuadra, y no es "el cuadro". Ahora se copia
+// como lo hace Excel: una TABLA de verdad (text/html) y, al lado, la misma
+// con tabuladores (text/plain) para lo que no acepte HTML. Lleva título,
+// encabezados y las primeras 30 líneas del orden que esté en pantalla.
+const RSH_MOV_TOPE_COPIA = 30;
+
+function cuadroMovimientos(){
+  const todos = _rshMovOrdenados();
+  const movs = todos.slice(0, RSH_MOV_TOPE_COPIA);
+  const sg = (v, t) => (v > 0 ? '+' : '') + t;
+  const titulo = `Movimientos AFP · ${_rshModulo} · ${_rshFecha(_rshDatos.contra)} a ${_rshFecha(_rshDatos.corte)}`
+               + (todos.length > movs.length ? ` · primeras ${movs.length} de ${todos.length}` : '');
+  const cab = ['AFP', 'Especie', 'Flujo estimado (COP mm)', 'Var. acciones'];
+  const filas = movs.map(m => [m.afp, m.nemo, sg(m.flujo, _rshMM(m.flujo/1e9)), sg(m.da, fmtInt(m.da))]);
+
+  const tsv = [titulo, cab.join('\t')].concat(filas.map(f => f.join('\t'))).join('\n');
+
+  const e = _esc, B = 'border:1px solid #999;padding:3px 8px;font-family:Arial;font-size:10pt;';
+  let html = `<table style="border-collapse:collapse;">`
+    + `<tr><td colspan="4" style="${B}font-weight:bold;background:#1f2a44;color:#fff;">${e(titulo)}</td></tr>`
+    + `<tr>${cab.map((c,k)=>`<td style="${B}font-weight:bold;background:#e6e9f0;${k>1?'text-align:right;':''}">${e(c)}</td>`).join('')}</tr>`;
+  movs.forEach((m, k)=>{
+    const col = m.da > 0 ? '#0a7a35' : '#b3261e';
+    html += `<tr><td style="${B}">${e(filas[k][0])}</td><td style="${B}font-weight:bold;">${e(filas[k][1])}</td>`
+          + `<td style="${B}text-align:right;color:${col};">${e(filas[k][2])}</td>`
+          + `<td style="${B}text-align:right;color:${col};">${e(filas[k][3])}</td></tr>`;
+  });
+  html += `</table>`;
+  return { html, tsv, n: movs.length, total: todos.length };
+}
+
 async function copiarMovBloomberg(btn){
+  const c = cuadroMovimientos();
+  if(!c.n){ alert('No hay movimientos para copiar.'); return; }
+  let como = 'cuadro';
   try{
-    await navigator.clipboard.writeText(textoBloombergMovimientos());
-    if(btn){ const p = btn.innerHTML; btn.innerHTML = '✓ Copiado';
-             setTimeout(()=>{ btn.innerHTML = p; }, 1500); }
-  }catch(e){ alert('No se pudo copiar: ' + e.message); }
+    if(typeof ClipboardItem !== 'undefined' && navigator.clipboard && navigator.clipboard.write){
+      await navigator.clipboard.write([ new ClipboardItem({
+        'text/html':  new Blob([c.html], { type:'text/html' }),
+        'text/plain': new Blob([c.tsv],  { type:'text/plain' }) }) ]);
+    }else{
+      await navigator.clipboard.writeText(c.tsv); como = 'texto';
+    }
+  }catch(e1){
+    try{ await navigator.clipboard.writeText(c.tsv); como = 'texto'; }
+    catch(e2){ alert('No se pudo copiar: ' + e2.message); return; }
+  }
+  if(btn){ const p = btn.innerHTML;
+    btn.innerHTML = como === 'cuadro' ? `✓ Cuadro copiado (${c.n} líneas)` : `✓ Copiado como texto (${c.n})`;
+    setTimeout(()=>{ btn.innerHTML = p; }, 1800); }
 }
 
 function _rshResumen(){
@@ -35870,12 +35919,12 @@ function _rshResumen(){
     const th = (col, txt, num) => `<th ${num?'class="num"':''} onclick="rshMovOrdenar('${col}')"
         title="Ordenar por ${txt}"
         style="position:sticky;top:0;z-index:1;background:var(--bg-1,#0f1320);cursor:pointer;
-               user-select:none;white-space:nowrap;padding:7px 10px;${O.col===col?'opacity:1;':'opacity:.65;'}">
+               white-space:nowrap;padding:7px 10px;${O.col===col?'opacity:1;':'opacity:.65;'}">
         ${txt}${O.col===col ? (O.dir < 0 ? ' ▼' : ' ▲') : ''}</th>`;
     h += `<div class="section-label" style="margin:4px 0 8px;">Movimientos · ${_rshFecha(_rshDatos.contra)} → ${_rshFecha(_rshDatos.corte)}
             <span style="opacity:.6;font-weight:400;"> · ${movs.length} líneas · clic en un encabezado para ordenar</span>
             <button class="btn small ghost" style="font-size:11px;margin-left:10px;"
-                    title="Toda la tabla, en el orden que se ve, como texto plano para un chat de Bloomberg"
+                    title="Copia el cuadro (título, encabezados y las primeras 30 líneas del orden que se ve) para pegarlo en Bloomberg"
                     onclick="copiarMovBloomberg(this)">💬 Copiar para Bloomberg</button></div>`;
     h += `<div class="panel" style="padding:0;overflow:auto;max-height:560px;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;">
       <thead><tr style="text-align:left;">
@@ -40497,7 +40546,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-11 15:15 UTC · v375';
+const BUILD_ID = '2026-11-11 18:15 UTC · v376';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
