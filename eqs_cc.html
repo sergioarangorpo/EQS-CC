@@ -35807,6 +35807,39 @@ function rshMovOrdenar(col){
   rshPintar();
 }
 
+// La tabla de movimientos como TEXTO PLANO para un chat de Bloomberg
+// (Sergio, 11-nov). Sale TODA y en el orden en que está en pantalla: si la
+// ordenó por AFP, se pega por AFP. Los números van como se ven en la tabla.
+// La columna de Δ valor se quitó de la tabla y del texto: "esa no la necesito".
+function textoBloombergMovimientos(){
+  const movs = _rshMovOrdenados();
+  if(!movs.length) return 'Sin movimientos entre los dos cortes.';
+  const sg = (v, t) => (v > 0 ? '+' : '') + t;
+  const wA = Math.max(3, ...movs.map(m=>String(m.afp).length)) + 2;
+  const wE = Math.max(7, ...movs.map(m=>String(m.nemo).length)) + 2;
+  const L = [
+    `MOVIMIENTOS AFP · ${_rshModulo} · ${_rshFecha(_rshDatos.contra)} a ${_rshFecha(_rshDatos.corte)}`,
+    'Flujo = var. acciones x precio promedio. COP miles de millones.',
+    '',
+    _bbgPad('AFP', wA) + _bbgPad('ESPECIE', wE) + _bbgPad('FLUJO', 10, true) +
+      _bbgPad('VAR ACCIONES', 16, true),
+  ];
+  movs.forEach(m=>{
+    L.push(_bbgPad(m.afp, wA) + _bbgPad(m.nemo, wE) +
+           _bbgPad(sg(m.flujo, _rshMM(m.flujo/1e9)), 10, true) +
+           _bbgPad(sg(m.da, fmtInt(m.da)), 16, true));
+  });
+  return L.join('\n');
+}
+
+async function copiarMovBloomberg(btn){
+  try{
+    await navigator.clipboard.writeText(textoBloombergMovimientos());
+    if(btn){ const p = btn.innerHTML; btn.innerHTML = '✓ Copiado';
+             setTimeout(()=>{ btn.innerHTML = p; }, 1500); }
+  }catch(e){ alert('No se pudo copiar: ' + e.message); }
+}
+
 function _rshResumen(){
   const hayPrev = _rshDatos.prev.length > 0;
   const hoy  = _rshAgrupar(_rshDatos.filas, f=>f.afp);
@@ -35840,27 +35873,27 @@ function _rshResumen(){
                user-select:none;white-space:nowrap;padding:7px 10px;${O.col===col?'opacity:1;':'opacity:.65;'}">
         ${txt}${O.col===col ? (O.dir < 0 ? ' ▼' : ' ▲') : ''}</th>`;
     h += `<div class="section-label" style="margin:4px 0 8px;">Movimientos · ${_rshFecha(_rshDatos.contra)} → ${_rshFecha(_rshDatos.corte)}
-            <span style="opacity:.6;font-weight:400;"> · ${movs.length} líneas · clic en un encabezado para ordenar</span></div>`;
+            <span style="opacity:.6;font-weight:400;"> · ${movs.length} líneas · clic en un encabezado para ordenar</span>
+            <button class="btn small ghost" style="font-size:11px;margin-left:10px;"
+                    title="Toda la tabla, en el orden que se ve, como texto plano para un chat de Bloomberg"
+                    onclick="copiarMovBloomberg(this)">💬 Copiar para Bloomberg</button></div>`;
     h += `<div class="panel" style="padding:0;overflow:auto;max-height:560px;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;">
       <thead><tr style="text-align:left;">
         ${th('afp','AFP')}${th('nemo','Especie')}
-        ${th('flujo','Flujo estimado (mm)',true)}${th('da','Δ acciones',true)}${th('dv','Δ valor (mm)',true)}</tr></thead><tbody>`;
+        ${th('flujo','Flujo estimado (mm)',true)}${th('da','Δ acciones',true)}</tr></thead><tbody>`;
     movs.forEach(m=>{
       const col = m.da>0 ? 'var(--buy,#22c55e)' : 'var(--sell,#ef4444)';
-      const colV = m.dv>0 ? 'var(--buy,#22c55e)' : 'var(--sell,#ef4444)';
       h += `<tr style="border-top:1px solid var(--line,#222);">
         <td style="padding:6px 10px;">${m.afp}</td>
         <td style="font-weight:600;">${m.nemo}</td>
         <td class="num" style="color:${col};font-weight:600;">${m.flujo>0?'+':''}${_rshMM(m.flujo/1e9)}</td>
-        <td class="num" style="color:${col};">${m.da>0?'+':''}${fmtInt(m.da)}</td>
-        <td class="num" style="color:${colV};opacity:.8;">${m.dv>0?'+':''}${_rshMM(m.dv/1e9)}</td></tr>`;
+        <td class="num" style="color:${col};">${m.da>0?'+':''}${fmtInt(m.da)}</td></tr>`;
     });
-    if(!movs.length) h += `<tr><td colspan="5" style="padding:10px;opacity:.6;">Ningún movimiento entre los dos cortes.</td></tr>`;
+    if(!movs.length) h += `<tr><td colspan="4" style="padding:10px;opacity:.6;">Ningún movimiento entre los dos cortes.</td></tr>`;
     h += `</tbody></table></div>
       <div class="field-note" style="margin-top:6px;font-size:11px;opacity:.75;">
         <b>Flujo estimado</b> = Δ acciones × precio promedio de los dos cortes (valor ÷ acciones del
-        archivo de la Super). Es la plata que se movió, sin la valorización.
-        <b>Δ valor</b> es el dato de la Super tal cual y mezcla precio con compra.</div>`;
+        archivo de la Super). Es la plata que se movió, sin la valorización.</div>`;
   } else {
     h += `<div class="panel"><span class="field-note">Carga por lo menos dos meses para ver
           quién compró y quién vendió. Con un solo corte esto es una foto, no un seguimiento.</span></div>`;
@@ -40464,7 +40497,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-11 14:50 UTC · v373';
+const BUILD_ID = '2026-11-11 15:15 UTC · v375';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
