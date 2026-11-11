@@ -22565,6 +22565,7 @@ function filasPlanillaCOP(){
   });
 
   // ---- RVI: la utilidad, pasada a pesos ----
+  const _ancRVIUsadas = {};
   (historial||[]).forEach(h=>{
     // Las lineas del error no son operaciones de cliente: su "cliente" es el
     // broker, no esta en el presupuesto, y su P&G ya viaja sumado arriba.
@@ -22596,7 +22597,25 @@ function filasPlanillaCOP(){
     // USD 4.189,75 sin que nada lo delatara.
     const _k = String(h.symbol||'').toUpperCase() + '|' +
                String(h.side||'') + (h.account ? '#' + h.account : '');
-    const _rep = ancRVI[_k];
+    // DOS LÍNEAS DE LA MISMA ESPECIE AL MISMO PORTAFOLIO (Sergio, 11-nov).
+    // -----------------------------------------------------------------
+    // Protección vendió ESGE en dos líneas a VOL-EQEM: 125.000 con comisión
+    // USD 500,00 y 116.275 con USD 465,10. El registro del reporte las guarda
+    // separadas desde el 22-oct —la segunda lleva el consecutivo `·2`— pero
+    // acá se buscaba SIEMPRE la llave sin consecutivo. Las dos líneas se
+    // comparaban contra la primera: la de 465,10 "no cuadraba" con 500,00 y
+    // se quedaba por fuera de la planilla, con su comisión y su margen.
+    //
+    // Ahora cada línea busca SU registro entre los de esa llave (`base`,
+    // `base·2`, `base·3`…): primero uno sin usar con la misma comisión, y si
+    // no hay, el siguiente sin usar. Cada registro se usa una sola vez.
+    const _cands = [_k];
+    for(let n = 2; ancRVI[_k + '·' + n]; n++) _cands.push(_k + '·' + n);
+    const _libres = _cands.filter(c => ancRVI[c] && !_ancRVIUsadas[c]);
+    const _kRep = _libres.find(c => Math.abs((Number(ancRVI[c].comision)||0) - (Number(h.cost)||0)) <= 0.01)
+               || _libres[0] || _k;
+    const _rep = ancRVI[_kRep];
+    if(_rep) _ancRVIUsadas[_kRep] = true;
     if(_rep && Math.abs((Number(_rep.comision)||0) - (Number(h.cost)||0)) > 0.01){
       faltan.push(`${h.cliente} ${h.symbol} — la comisión no cuadra con lo reportado ` +
                   `(reporte USD ${(Number(_rep.comision)||0).toFixed(2)} · planilla USD ${(Number(h.cost)||0).toFixed(2)})`);
@@ -40546,7 +40565,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-11 18:15 UTC · v376';
+const BUILD_ID = '2026-11-11 21:30 UTC · v377';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
