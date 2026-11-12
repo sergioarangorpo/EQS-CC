@@ -223,6 +223,10 @@
      visualmente bajo el titulo de al lado: en la canasta MLI el total de
      nominales se leia bajo "Valor COP" (Sergio, 15-oct). */
   th.num{text-align:right;}
+  /* Research · AFP vs. pares */
+  table.rsh-par{border-collapse:collapse;}
+  table.rsh-par th{padding:5px 8px;font-size:11px;opacity:.75;position:sticky;top:0;background:var(--bg-1,#11151e);}
+  table.rsh-par td{padding:4px 8px;border-top:1px solid var(--border,#232938);}
   .chk{width:16px;height:16px;accent-color:var(--blue);cursor:pointer;}
   tr.row-pendiente td:first-child{position:relative;padding-left:16px;}
   tr.row-pendiente td:first-child::before{content:'';position:absolute;left:4px;top:50%;transform:translateY(-50%);width:6px;height:6px;border-radius:50%;background:#f5a623;}
@@ -929,6 +933,7 @@
           <button class="btn small ghost" onclick="rshVista('spreads')" id="rshB5">Spreads</button>
           <button class="btn small ghost" onclick="rshVista('dividendos')" id="rshB6">Dividendos</button>
           <button class="btn small ghost" onclick="rshVista('volumen')" id="rshB7">Volumen y subasta</button>
+          <button class="btn small ghost" onclick="rshVista('pares')" id="rshB8" style="display:none;">AFP vs. pares</button>
           <!-- COPIAR LO QUE SEA, DESDE DONDE SEA (Sergio, 10-nov).
                *"La idea es que en los módulos pueda copiar y pegar data
                relevante de cualquier cosa por donde navegue para pegarlo
@@ -35970,12 +35975,334 @@ function _rshTablaEvolucion(){
   return h;
 }
 
+// ===================================================================
+// AFP vs. PARES (Sergio, 12-nov)
+// -------------------------------------------------------------------
+// *"Le quiero dar valor a mis AFPs, PROTE, COLF, PORVE, en RVI, quiero
+//  capturar más de ese mercado pero necesito enviar ideas."*
+//
+// Lo que un PM de una AFP sí abre: cómo está ÉL contra los otros. Su
+// riesgo real es alejarse de sus pares, y nadie se lo manda ordenado.
+// Sale de la misma data de la Super que ya está cargada.
+//
+//  · El porcentaje es sobre el portafolio en ETF de cada AFP —*"puede
+//    ser sobre el portafolio en ETFs de cada AFP, mucho mejor"*—, no
+//    sobre el valor del fondo, que no está cargado.
+//  · "Pares" es el PROMEDIO SIMPLE de las otras AFP: cada una pesa lo
+//    mismo. Con el promedio ponderado, Porvenir sola sería "los pares".
+//  · La exposición (EE. UU., Emergentes, Japón…) vive en
+//    `maestro_afp_instrumento.exposicion`. No son los bloques del universo
+//    de RVI, que mezclan Brasil con Emergentes y China con Asia.
+//  · Se ve por NEMO —*"es más fácil verlo por nemo que por nombre
+//    completo, los nombres del ETF te hacen perder"*—.
+//  · Es foto mensual: sirve para posicionamiento, no para la semana.
+// ===================================================================
+let _rshPar = { afp:'PROTECCION', fondo:'', meta:null, cargando:false, msg:'' };
+const RSH_PAR_ORDEN = ['EE. UU.','Sectores','Emergentes','China','Asia ex-Japón','Japón','Latam','Europa','Global'];
+const RSH_PAR_TOPE_COPIA = 30;
+
+async function rshCargarPares(){
+  if(_rshPar.cargando) return;
+  _rshPar.cargando = true; _rshPar.msg = ''; rshPintar();
+  try{
+    // `equivalente` se agregó después que `exposicion`. Si la columna todavía
+    // no existe, la consulta entera falla: se reintenta sin ella y la vista
+    // sale por vehículo, que es como salía antes. Nunca en blanco.
+    let f;
+    try{ f = await supaFetchTodo('maestro_afp_instrumento', 'select=isin,ticker,nombre,exposicion,equivalente&modulo=eq.RVI'); }
+    catch(e0){ f = await supaFetchTodo('maestro_afp_instrumento', 'select=isin,ticker,nombre,exposicion&modulo=eq.RVI'); }
+    const m = {};
+    (f||[]).forEach(x=>{ m[x.isin] = { ticker:x.ticker || '', nombre:x.nombre || '', expo:x.exposicion || '',
+                                       equiv:x.equivalente || '' }; });
+    _rshPar.meta = m;
+  }catch(e){
+    _rshPar.meta = {}; _rshPar.msg = 'No se pudo leer el maestro de instrumentos: ' + e.message;
+  }
+  _rshPar.cargando = false; rshPintar();
+}
+function rshParAfp(a){ _rshPar.afp = a; rshPintar(); }
+function rshParFondo(f){ _rshPar.fondo = f; rshPintar(); }
+
+// El nemo con el que se ve un fondo: el ticker del maestro; si no hay, lo
+// que traiga la Super; y de último el ISIN. Nunca una celda en blanco.
+function _rshParNemo(isin, meta, fila){
+  const m = (meta||{})[isin] || {};
+  return m.ticker || (fila && (fila.nemo || fila.nombre)) || isin;
+}
+
+// TODO EL CÁLCULO, sin pantalla: se puede probar con datos de mentira.
+function _rshParesDatos(filas, prev, meta, afp, fondo){
+  const pasa = f => !fondo || f.fondo === fondo;
+  const armar = lista => {
+    const tot = {}, porIsin = {}, porExpo = {}, fila = {};
+    (lista||[]).filter(pasa).forEach(f=>{
+      const v = Number(f.valor_mercado) || 0;
+      if(!v) return;
+      const a = f.afp, e = ((meta||{})[f.isin] || {}).expo || 'Sin clasificar';
+      tot[a] = (tot[a]||0) + v;
+      (porIsin[f.isin] = porIsin[f.isin] || {})[a] = ((porIsin[f.isin]||{})[a] || 0) + v;
+      (porExpo[e] = porExpo[e] || {})[a] = ((porExpo[e]||{})[a] || 0) + v;
+      if(!fila[f.isin]) fila[f.isin] = f;
+    });
+    return { tot, porIsin, porExpo, fila };
+  };
+  const H = armar(filas), P = armar(prev);
+  const afps = Object.keys(H.tot).sort();
+  const pares = afps.filter(a => a !== afp);
+  const pct = (X, mapa, a) => X.tot[a] ? ((mapa||{})[a] || 0) / X.tot[a] * 100 : 0;
+  const prom = (X, mapa, quienes) => quienes.length
+    ? quienes.reduce((s,a)=>s + pct(X, mapa, a), 0) / quienes.length : 0;
+  const hayPrev = !!P.tot[afp];
+  const paresPrev = Object.keys(P.tot).filter(a => a !== afp);
+
+  const expos = Object.keys(H.porExpo).sort((x,y)=>{
+    const i = RSH_PAR_ORDEN.indexOf(x), j = RSH_PAR_ORDEN.indexOf(y);
+    return (i < 0 ? 99 : i) - (j < 0 ? 99 : j) || x.localeCompare(y); });
+  const porExpo = expos.map(e=>{
+    const yo = pct(H, H.porExpo[e], afp), pr = prom(H, H.porExpo[e], pares);
+    const yoA = hayPrev ? pct(P, P.porExpo[e], afp) : null;
+    const prA = hayPrev ? prom(P, P.porExpo[e], paresPrev) : null;
+    return { expo:e, yo, pares:pr, dif: yo - pr,
+             cada: Object.fromEntries(afps.map(a=>[a, pct(H, H.porExpo[e], a)])),
+             dYo: hayPrev ? yo - yoA : null,
+             difAntes: hayPrev ? yoA - prA : null };
+  });
+  // MISMA EXPOSICIÓN, DISTINTO VEHÍCULO (Sergio, 12-nov)
+  // -----------------------------------------------------------------
+  // Fondo por fondo, Protección "no tenía" VOO —cuando tiene el mismo S&P
+  // 500 por CSPX y SPLG— y salía subponderada en EWZ y sobreponderada en
+  // IBZL, que son el mismo Brasil. Eso compara el VEHÍCULO, no la apuesta.
+  //
+  // Los fondos que dan lo mismo llevan un `equivalente` en el maestro
+  // ("S&P 500", "Brasil"…) y acá se suman como una sola línea. El que no
+  // tiene equivalente queda solo, con su nemo. Qué vehículo usa cada quien
+  // no se pierde: va aparte, en `vehiculos`, porque es una idea de venta.
+  const claveDe = isin => ((meta||{})[isin] || {}).equiv || isin;
+  const grupos = {};
+  Object.keys(H.porIsin).forEach(isin=>{
+    const k = claveDe(isin);
+    const g = grupos[k] || (grupos[k] = { clave:k, isins:[], mapa:{} });
+    g.isins.push(isin);
+    Object.keys(H.porIsin[isin]).forEach(a=>{ g.mapa[a] = (g.mapa[a]||0) + H.porIsin[isin][a]; });
+  });
+  const etfs = Object.values(grupos).map(g=>{
+    const esGrupo = !!((meta||{})[g.isins[0]] || {}).equiv;
+    const yo = pct(H, g.mapa, afp), pr = prom(H, g.mapa, pares);
+    const nemoDe = isin => _rshParNemo(isin, meta, H.fila[isin]);
+    // Los vehículos, de mayor a menor posición.
+    const mios = g.isins.filter(i => (H.porIsin[i][afp] || 0) > 0)
+                        .sort((x,y)=> H.porIsin[y][afp] - H.porIsin[x][afp]).map(nemoDe);
+    const valPares = i => pares.reduce((s,a)=>s + (H.porIsin[i][a] || 0), 0);
+    const deOtros = g.isins.filter(i => valPares(i) > 0).sort((x,y)=> valPares(y) - valPares(x)).map(nemoDe);
+    const quienes = pares.filter(a => (g.mapa[a] || 0) > 0);
+    return { isin: g.isins[0], clave: g.clave, esGrupo,
+             nemo: esGrupo ? g.clave : nemoDe(g.isins[0]),
+             expo: ((meta||{})[g.isins[0]] || {}).expo || 'Sin clasificar',
+             yo, pares:pr, dif: yo - pr, nPares: quienes.length, quienes, mios, deOtros };
+  });
+  return {
+    afp, fondo, afps, pares, hayPrev, total: H.tot[afp] || 0,
+    porExpo, etfs,
+    // Lo que tienen los pares y esta AFP no: primero lo que tienen MÁS pares.
+    noTengo: etfs.filter(x => x.yo === 0 && x.nPares > 0)
+                 .sort((a,b)=> b.nPares - a.nPares || b.pares - a.pares),
+    soloYo:  etfs.filter(x => x.yo > 0 && x.nPares === 0).sort((a,b)=> b.yo - a.yo),
+    sobre:   etfs.filter(x => x.yo > 0 && x.nPares > 0 && x.dif > 0).sort((a,b)=> b.dif - a.dif),
+    sub:     etfs.filter(x => x.yo > 0 && x.nPares > 0 && x.dif < 0).sort((a,b)=> a.dif - b.dif),
+    // La misma exposición por un vehículo que los pares no usan (o al revés).
+    vehiculos: etfs.filter(x => x.esGrupo && x.mios.length && x.deOtros.length &&
+                                (x.mios.some(n => !x.deOtros.includes(n)) || x.deOtros.some(n => !x.mios.includes(n))))
+                   .sort((a,b)=> b.yo - a.yo),
+  };
+}
+
+const _rshP1 = v => (Number(v)||0).toFixed(1) + '%';
+const _rshPP = v => ((v > 0 ? '+' : '') + (Number(v)||0).toFixed(1)).replace('-0.0','0.0') + ' pp';
+const _rshAfpCorta = a => ({ PORVENIR:'PORVE', PROTECCION:'PROTE', COLFONDOS:'COLF', SKANDIA:'SKAN' }[a] || a);
+
+function _rshTablaPares(){
+  if(_rshModulo !== 'RVI'){
+    return `<div class="panel"><div class="field-note">AFP vs. pares está armado para RVI, que es donde los fondos
+      tienen exposición asignada. Pásate a Research RVI.</div></div>`;
+  }
+  if(!_rshPar.meta){
+    if(!_rshPar.cargando) setTimeout(rshCargarPares, 0);
+    return `<div class="panel"><div class="field-note">Cargando la clasificación de los fondos…</div></div>`;
+  }
+  const afpsHay = [...new Set((_rshDatos.filas||[]).map(f=>f.afp))].sort();
+  if(!afpsHay.length) return `<div class="panel"><div class="field-note">No hay posiciones para este corte.</div></div>`;
+  if(!afpsHay.includes(_rshPar.afp)) _rshPar.afp = afpsHay[0];
+  const fondos = [...new Set((_rshDatos.filas||[]).map(f=>f.fondo).filter(Boolean))].sort();
+  if(_rshPar.fondo && !fondos.includes(_rshPar.fondo)) _rshPar.fondo = '';
+  const D = _rshParesDatos(_rshDatos.filas, _rshDatos.prev, _rshPar.meta, _rshPar.afp, _rshPar.fondo);
+  const colS = 'var(--accent,#818cf8)', colB = 'var(--amber,#f59e0b)';
+  const cDif = v => Math.abs(v) < 0.05 ? '' : `color:${v > 0 ? colS : colB};`;
+  const chip = a => `<span class="chip" onclick="rshParAfp('${a}')" style="cursor:pointer;padding:5px 12px;border-radius:14px;
+      font-size:12px;font-weight:700;${a === _rshPar.afp
+        ? `background:${RSH_COLOR[a] || colS};color:#0b0e14;` : 'opacity:.7;border:1px solid var(--border,#232938);'}">${_esc(a)}</span>`;
+
+  let h = `<div class="panel">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+      ${afpsHay.map(chip).join('')}
+      <select onchange="rshParFondo(this.value)" style="margin-left:8px;min-width:170px;">
+        <option value="">Todos los fondos</option>
+        ${fondos.map(f=>`<option value="${_esc(f)}"${f === _rshPar.fondo ? ' selected' : ''}>${_esc(f)}</option>`).join('')}
+      </select>
+      <button class="btn small" style="margin-left:auto;" onclick="copiarParesBloomberg(this)">💬 Copiar para Bloomberg</button>
+    </div>
+    <div class="field-note" style="font-size:11.5px;margin-bottom:10px;">
+      <b>${_esc(D.afp)}</b>${D.fondo ? ' · ' + _esc(D.fondo) : ''} · ${_rshFecha(_rshDatos.corte)} ·
+      portafolio en ETF de <b>${_rshMM(D.total/1e9)} mm</b>. Los porcentajes son sobre el portafolio en ETF de cada AFP.
+      <b>Pares</b> = promedio simple de ${D.pares.map(_rshAfpCorta).join(', ') || '—'}.
+      <span style="${`color:${colS};`}">Sobreponderado</span> ·
+      <span style="${`color:${colB};`}">subponderado</span>.
+      ${_rshPar.msg ? `<br><span style="color:var(--sell,#ef4444);">${_esc(_rshPar.msg)}</span>` : ''}</div>`;
+  if(!D.total){
+    return h + `<div class="field-note">${_esc(D.afp)} no tiene posiciones${D.fondo ? ' en ' + _esc(D.fondo) : ''} en este corte.</div></div>`;
+  }
+
+  // ---- 1. por exposición ----
+  h += `<div style="font-size:12px;font-weight:800;margin:4px 0 4px;">Por exposición</div>
+    <table class="rsh-par" style="width:100%;font-size:12px;font-variant-numeric:tabular-nums;">
+      <thead><tr><th style="text-align:left;">Exposición</th>
+        <th class="num">${_esc(_rshAfpCorta(D.afp))}</th>
+        ${D.pares.map(a=>`<th class="num" style="opacity:.6;">${_esc(_rshAfpCorta(a))}</th>`).join('')}
+        <th class="num">Pares</th><th class="num">Diferencia</th>
+        <th class="num" title="Cuánto cambió el peso de ${_esc(D.afp)} contra el corte anterior">Cambio del mes</th>
+        <th style="text-align:left;">Frente a los pares</th></tr></thead><tbody>`;
+  D.porExpo.forEach(x=>{
+    let mov = '<span style="opacity:.35;">·</span>';
+    if(D.hayPrev && x.difAntes != null){
+      const a = Math.abs(x.difAntes), b = Math.abs(x.dif);
+      mov = Math.abs(b - a) < 0.1 ? '<span style="opacity:.5;">igual</span>'
+          : (b < a ? 'se acercó' : 'se alejó') + ` <span style="opacity:.55;">(${_rshPP(x.difAntes)} → ${_rshPP(x.dif)})</span>`;
+    }
+    h += `<tr><td style="font-weight:700;">${_esc(x.expo)}</td>
+      <td class="num" style="font-weight:700;">${_rshP1(x.yo)}</td>
+      ${D.pares.map(a=>`<td class="num" style="opacity:.6;">${_rshP1(x.cada[a])}</td>`).join('')}
+      <td class="num">${_rshP1(x.pares)}</td>
+      <td class="num" style="font-weight:700;${cDif(x.dif)}">${_rshPP(x.dif)}</td>
+      <td class="num">${x.dYo == null ? '<span style="opacity:.35;">·</span>' : _rshPP(x.dYo)}</td>
+      <td style="font-size:11.5px;">${mov}</td></tr>`;
+  });
+  h += `</tbody></table>`;
+
+  // ---- 2. por ETF ----
+  const lista = (titulo, nota, arr, cols) => `
+    <div style="flex:1 1 300px;min-width:280px;">
+      <div style="font-size:12px;font-weight:800;">${titulo} <span style="opacity:.5;font-weight:400;">(${arr.length})</span></div>
+      <div class="field-note" style="font-size:11px;margin-bottom:4px;">${nota}</div>
+      <div style="max-height:330px;overflow:auto;">
+      <table class="rsh-par" style="width:100%;font-size:12px;font-variant-numeric:tabular-nums;">
+        <thead><tr>${cols.map(c=>`<th${c.num ? ' class="num"' : ' style="text-align:left;"'}>${c.t}</th>`).join('')}</tr></thead>
+        <tbody>${arr.length ? arr.map(x=>`<tr title="${_esc(((_rshPar.meta[x.isin]||{}).nombre) || '')} · ${_esc(x.isin)}">${
+          cols.map(c=>`<td${c.num ? ' class="num"' : ''} style="${c.st ? c.st(x) : ''}">${c.v(x)}</td>`).join('')}</tr>`).join('')
+          : `<tr><td colspan="${cols.length}" style="opacity:.5;">Nada.</td></tr>`}</tbody>
+      </table></div>
+    </div>`;
+  // Un grupo se nombra por lo que es ("S&P 500") y debajo dice por dónde.
+  const veh = (x, cuales) => x.esGrupo && cuales.length
+    ? `<div style="font-size:10.5px;opacity:.55;font-weight:400;">${_esc(cuales.join(' · '))}</div>` : '';
+  const cNemo   = { t:'Nemo', v:x=>`<b>${_esc(x.nemo)}</b>${veh(x, x.mios.length ? x.mios : x.deOtros)}` };
+  const cNemoP  = { t:'Nemo', v:x=>`<b>${_esc(x.nemo)}</b>${veh(x, x.deOtros)}` };
+  const cExpo = { t:'Exposición', v:x=>`<span style="opacity:.7;">${_esc(x.expo)}</span>` };
+  h += `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:16px;">
+    ${lista('Lo tienen los pares y ' + _esc(_rshAfpCorta(D.afp)) + ' no', 'Primero los que tienen más pares.', D.noTengo,
+      [cNemoP, cExpo, { t:'Quién', v:x=>x.quienes.map(_rshAfpCorta).join(', ') },
+       { t:'Peso pares', num:true, v:x=>_rshP1(x.pares) }])}
+    ${lista('Solo lo tiene ' + _esc(_rshAfpCorta(D.afp)), 'Ningún par lo tiene.', D.soloYo,
+      [cNemo, cExpo, { t:'Peso', num:true, v:x=>_rshP1(x.yo) }])}
+  </div>
+  <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:16px;">
+    ${lista('Más sobreponderado', 'Lo tiene y pesa más que en los pares.', D.sobre,
+      [cNemo, cExpo, { t:_esc(_rshAfpCorta(D.afp)), num:true, v:x=>_rshP1(x.yo) }, { t:'Pares', num:true, v:x=>_rshP1(x.pares) },
+       { t:'Dif.', num:true, v:x=>_rshPP(x.dif), st:x=>`font-weight:700;color:${colS};` }])}
+    ${lista('Más subponderado', 'Lo tiene y pesa menos que en los pares.', D.sub,
+      [cNemo, cExpo, { t:_esc(_rshAfpCorta(D.afp)), num:true, v:x=>_rshP1(x.yo) }, { t:'Pares', num:true, v:x=>_rshP1(x.pares) },
+       { t:'Dif.', num:true, v:x=>_rshPP(x.dif), st:x=>`font-weight:700;color:${colB};` }])}
+  </div>
+  <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:16px;">
+    ${lista('Misma exposición, distinto vehículo', 'Lo que ' + _esc(_rshAfpCorta(D.afp)) + ' tiene por un fondo y los pares por otro.', D.vehiculos,
+      [{ t:'Exposición', v:x=>`<b>${_esc(x.nemo)}</b>` },
+       { t:_esc(_rshAfpCorta(D.afp)) + ' usa', v:x=>_esc(x.mios.join(' · ')) },
+       { t:'Los pares usan', v:x=>_esc(x.deOtros.join(' · ')) },
+       { t:'Peso', num:true, v:x=>_rshP1(x.yo) }])}
+  </div></div>`;
+  return h;
+}
+
+// El cuadro para pegar en Bloomberg: exposición completa y las ideas por
+// ETF, sin pasar de RSH_PAR_TOPE_COPIA líneas. Tabla de verdad (HTML) y
+// respaldo en texto con tabuladores, igual que el de movimientos.
+function cuadroPares(){
+  const D = _rshParesDatos(_rshDatos.filas, _rshDatos.prev, _rshPar.meta || {}, _rshPar.afp, _rshPar.fondo);
+  const yo = _rshAfpCorta(D.afp);
+  const titulo = `${D.afp} vs. pares · RVI · ${_rshFecha(_rshDatos.corte)}` + (D.fondo ? ' · ' + D.fondo : '')
+               + ' · % del portafolio en ETF';
+  const filas = [];
+  filas.push({ sec:'Por exposición', cab:['Exposición', yo, 'Pares', 'Diferencia'] });
+  D.porExpo.forEach(x=> filas.push({ c:[x.expo, _rshP1(x.yo), _rshP1(x.pares), _rshPP(x.dif)], dif:x.dif }));
+  const queda = () => RSH_PAR_TOPE_COPIA - filas.filter(f=>f.c).length;
+  const bloque = (nombre, cab, arr, fn, tope) => {
+    const n = Math.min(arr.length, tope, queda());
+    if(n <= 0) return;
+    filas.push({ sec: nombre + (arr.length > n ? ` (primeros ${n} de ${arr.length})` : ''), cab });
+    arr.slice(0, n).forEach(x => filas.push({ c: fn(x), dif: x.dif }));
+  };
+  bloque(`Lo tienen los pares y ${yo} no`, ['Nemo', 'Exposición', 'Quién', 'Peso pares'], D.noTengo,
+         x=>[x.nemo, x.expo, x.quienes.map(_rshAfpCorta).join(', '), _rshP1(x.pares)], 8);
+  bloque('Más subponderado', ['Nemo', yo, 'Pares', 'Diferencia'], D.sub,
+         x=>[x.nemo, _rshP1(x.yo), _rshP1(x.pares), _rshPP(x.dif)], 5);
+  bloque('Más sobreponderado', ['Nemo', yo, 'Pares', 'Diferencia'], D.sobre,
+         x=>[x.nemo, _rshP1(x.yo), _rshP1(x.pares), _rshPP(x.dif)], 5);
+
+  const tsv = [titulo].concat(filas.map(f => f.sec ? f.sec + '\n' + f.cab.join('\t') : f.c.join('\t'))).join('\n');
+  const e = _esc, B = 'border:1px solid #999;padding:3px 8px;font-family:Arial;font-size:10pt;';
+  let html = `<table style="border-collapse:collapse;">`
+    + `<tr><td colspan="4" style="${B}font-weight:bold;background:#1f2a44;color:#fff;">${e(titulo)}</td></tr>`;
+  filas.forEach(f=>{
+    if(f.sec){
+      html += `<tr><td colspan="4" style="${B}font-weight:bold;background:#cfd6e6;">${e(f.sec)}</td></tr>`
+            + `<tr>${f.cab.map((c,k)=>`<td style="${B}font-weight:bold;background:#e6e9f0;${k ? 'text-align:right;' : ''}">${e(c)}</td>`).join('')}</tr>`;
+    }else{
+      html += `<tr>${f.c.map((c,k)=>`<td style="${B}${k ? 'text-align:right;' : 'font-weight:bold;'}">${e(c)}</td>`).join('')}</tr>`;
+    }
+  });
+  html += `</table>`;
+  return { html, tsv, n: filas.filter(f=>f.c).length };
+}
+
+async function copiarParesBloomberg(btn){
+  const c = cuadroPares();
+  if(!c.n){ alert('No hay nada para copiar.'); return; }
+  let como = 'cuadro';
+  try{
+    if(typeof ClipboardItem !== 'undefined' && navigator.clipboard && navigator.clipboard.write){
+      await navigator.clipboard.write([ new ClipboardItem({
+        'text/html':  new Blob([c.html], { type:'text/html' }),
+        'text/plain': new Blob([c.tsv],  { type:'text/plain' }) }) ]);
+    }else{
+      await navigator.clipboard.writeText(c.tsv); como = 'texto';
+    }
+  }catch(e1){
+    try{ await navigator.clipboard.writeText(c.tsv); como = 'texto'; }
+    catch(e2){ alert('No se pudo copiar: ' + e2.message); return; }
+  }
+  if(btn){ const p = btn.innerHTML;
+    btn.innerHTML = como === 'cuadro' ? `✓ Cuadro copiado (${c.n} líneas)` : `✓ Copiado como texto (${c.n})`;
+    setTimeout(()=>{ btn.innerHTML = p; }, 1800); }
+}
+
 function rshPintar(){
-  ['rshB0','rshB1','rshB2','rshB3','rshB4','rshB5','rshB6','rshB7'].forEach((id,i)=>{
+  // "AFP vs. pares" es de RVI: en RVL el botón no se ve, y si se venía de
+  // RVI con esa vista abierta se cae al resumen en vez de quedar en blanco.
+  if(_rshVista === 'pares' && _rshModulo !== 'RVI') _rshVista = 'resumen';
+  ['rshB0','rshB1','rshB2','rshB3','rshB4','rshB5','rshB6','rshB7','rshB8'].forEach((id,i)=>{
     const b = document.getElementById(id);
     if(b) b.classList.toggle('ghost',
-      ['calendario','resumen','especie','fondo','evolucion','spreads','dividendos','volumen'][i] !== _rshVista);
+      ['calendario','resumen','especie','fondo','evolucion','spreads','dividendos','volumen','pares'][i] !== _rshVista);
   });
+  { const b8 = document.getElementById('rshB8'); if(b8) b8.style.display = (_rshModulo === 'RVI') ? '' : 'none'; }
   // Los dos botones de la barra comparten `data-mod="Research"`, asi que
   // `switchModule` deja los DOS en activo. Aqui se corrige para que se vea
   // cual esta abierto.
@@ -35995,6 +36322,7 @@ function rshPintar(){
   else if(_rshVista === 'evolucion')  c.innerHTML = _rshTablaEvolucion();
   else if(_rshVista === 'spreads')    c.innerHTML = _rshTablaSpread();
   else if(_rshVista === 'dividendos') c.innerHTML = _rshTablaDividendos();
+  else if(_rshVista === 'pares')      c.innerHTML = _rshTablaPares();
   else if(_rshVista === 'volumen'){
     c.innerHTML = _rshTablaVolumen();
     // ARRANCA SOLO, con TODAS las especies (Sergio, 04-nov). Antes había que
@@ -40988,7 +41316,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-12 17:40 UTC · v384';
+const BUILD_ID = '2026-11-12 19:45 UTC · v386';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
