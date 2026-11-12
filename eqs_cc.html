@@ -3654,6 +3654,9 @@ function sumarDiasHabiles(fecha, dias, pais){
 
 // ---------------------------------------------------------------------
 // CUMPLIMIENTO DE FX
+// OJO (12-nov): lo de abajo es la HISTORIA de la regla. La vigente está en
+// `cumplimientoFX`: los dos lados cumplen el día del equity (T+2 Colombia) y
+// solo un festivo en Estados Unidos ESE día mueve el dólar.
 // El FX se liquida en Estados Unidos, así que un festivo allá bloquea la
 // fecha. Las reglas, confirmadas por Sergio el 03-sep:
 // La fecha depende de cuándo se mueve la plata del equity:
@@ -3844,28 +3847,38 @@ function cumplimientoFX(fechaBase, lado, cliente){
   const compra = String(lado||'').toUpperCase().startsWith('B') ||
                  /COMPRA/i.test(String(lado||''));
 
-  // TODO PARTE DEL CUMPLIMIENTO DEL EQUITY, que sigue el calendario COLOMBIANO
-  // (T+2). De ahí se mueve según el lado:
-  //   - Cliente VENDE USD (compró acciones): necesita los pesos para pagar el
-  //     equity, así que el FX cumple el día hábil ANTERIOR.
-  //   - Cliente COMPRA USD (vendió acciones): la plata le entra el día que
-  //     cumple el equity, así que se lleva los dólares ESE MISMO día — y si
-  //     Estados Unidos está cerrado, el siguiente hábil allá.
-  // Sin excepciones por cliente: la fecha la decide el activo.
-  // Antes se contaba T+2 en días hábiles de US, y con un festivo colombiano
-  // que no lo es en US (2-nov) daba los dólares un día ANTES de que llegara la
-  // plata de las acciones (Sergio, 04-sep).
+  // EL DÓLAR CUMPLE EL MISMO DÍA QUE EL EQUITY, PARA LOS DOS LADOS
+  // (Sergio, 12-nov).
+  // -------------------------------------------------------------------
+  //     *"Si hoy se vende acciones y se compra dólar ambas operaciones
+  //      cumplen el martes 17 de nov... Si hoy se compra acciones y vende
+  //      dólar ambas operaciones cumplen el martes 17 de nov, no tienes que
+  //      mover nada, sería T+2 pero como cae lunes festivo ambas pasan al
+  //      martes."*
+  //
+  // Acá la VENTA de dólares se iba al día hábil ANTERIOR al equity. El
+  // 12-nov (lunes 16 festivo en Colombia) eso dio viernes 13 para las
+  // ventas, cuando el equity y el dólar cumplen los dos el martes 17.
+  //
+  // De dónde salió el error: el 09-nov una venta cumplía el 10 y yo lo leí
+  // como "un día antes del equity". No: el equity cumplía el 11, que estaba
+  // cerrado en Estados Unidos, y por eso la venta se ADELANTÓ al 10. La
+  // regla siempre fue una sola:
+  //
+  //   1. Los dos lados cumplen el día del equity: T+2 con calendario
+  //      COLOMBIANO.
+  //   2. Solo si ESE día está cerrado en Estados Unidos se mueve el dólar:
+  //      la compra hacia ADELANTE (la plata ya entró), la venta hacia ATRÁS
+  //      (los pesos tienen que estar antes de pagar el equity).
+  //
+  // Un festivo colombiano no mueve nada aparte: ya corrió el equity.
   const cumpleEquity = sumarDiasHabiles(base, 2, 'CO');
 
-  let d;
+  let d = new Date(cumpleEquity);
   if(compra){
-    // El mismo día del cumplimiento del equity, corrido si US está cerrado.
-    d = new Date(cumpleEquity);
     while(!esHabil(d, 'US')) d.setDate(d.getDate() + 1);
   }else{
-    // El día hábil anterior al cumplimiento del equity.
-    d = new Date(cumpleEquity);
-    do { d.setDate(d.getDate() - 1); } while(!esHabil(d, 'CO') || !esHabil(d, 'US'));
+    while(!esHabil(d, 'US') || !esHabil(d, 'CO')) d.setDate(d.getDate() - 1);
   }
   const natural = _isoLocal(d);
   // Los días hábiles que de verdad quedaron entre la operación y el
@@ -3883,25 +3896,10 @@ function cumplimientoFX(fechaBase, lado, cliente){
   // Sin `!esAndes`: Andes sigue la misma regla, así que también avisa. Con la
   // rama vieja de T+3, un cliente de Andes nunca se enteraba de que la fecha
   // se había movido.
-  if(compra && natural !== isoEquity){
+  if(natural !== isoEquity){
     alerta = `El ${dd(isoEquity)} —cuando cumple el equity— está cerrado en Estados Unidos: ` +
-             `el cumplimiento de los dólares se corre al ${dd(natural)}.`;
-  }else if(!compra){
-    // LA VENTA DE DÓLARES TAMBIÉN AVISA (Sergio, 10-nov).
-    // El día natural es el hábil colombiano anterior al cumplimiento del
-    // equity. Si ESE día está cerrado en Estados Unidos, la venta se
-    // adelanta otro día — y hasta hoy eso pasaba en silencio.
-    //
-    // El 10-nov: equity 12-nov, el anterior es 11-nov (Veterans Day), así
-    // que la venta se adelanta al 10-nov. Hubo que avisarle a cada cliente
-    // a mano porque la app no lo decía.
-    let previo = new Date(cumpleEquity);
-    do { previo.setDate(previo.getDate() - 1); } while(!esHabil(previo, 'CO'));
-    const isoPrevio = _isoLocal(previo);
-    if(isoPrevio !== natural){
-      alerta = `El ${dd(isoPrevio)} es festivo en Estados Unidos: ` +
-               `la venta de los dólares se adelanta al ${dd(natural)}.`;
-    }
+             (compra ? `el cumplimiento de los dólares se corre al ${dd(natural)}.`
+                     : `la venta de los dólares se adelanta al ${dd(natural)}.`);
   }
   // `esAndes` se sigue devolviendo —hay quien lo lee para la redacción del
   // correo— pero ya NO decide la fecha.
@@ -4109,6 +4107,34 @@ function getModeloEfectivo(){
 //
 // Los tres sitios que la usan son de FX (calculadora, cambio de fecha y
 // lote), así que el cambio no toca el cumplimiento de acciones.
+// NEXT DAY: CUMPLE CON EL EQUITY DE HOY, LIQUIDA MAÑANA (Sergio, 12-nov)
+// -------------------------------------------------------------------
+//     *"Con next day aplica misma lógica, solo que la liquidación es T+1:
+//      compra y venta de dólares cumplen T+2 pero la operación liquida
+//      T+1, como si se hubiera hecho al siguiente día."*
+//
+// O sea: el CUMPLIMIENTO se cuenta desde el día en que se operó la acción
+// (hoy), no desde la fecha de operación del dólar (mañana). Había dos
+// caminos: el NextDay suelto contaba desde hoy y el que traía acciones
+// detrás contaba desde mañana, y daba un día de más.
+//
+// Con festivo en Estados Unidos el día del equity vale lo mismo de siempre:
+// la venta se adelanta (y puede quedar el mismo día en que liquida, T+0) y
+// la compra se corre. Lo único que se cuida es que el cumplimiento nunca
+// quede ANTES de la fecha de operación del dólar.
+function cumplimientoFXTipo(tipo, hoy, tradeDate, lado, cliente){
+  const esND = String(tipo||'').toUpperCase() === 'NEXT_DAY';
+  const base = esND ? hoy : (tradeDate || hoy);
+  const c = cumplimientoFX(base, lado, cliente);
+  if(esND && tradeDate){
+    const td = (typeof tradeDate.getFullYear === 'function')
+      ? new Date(tradeDate.getFullYear(), tradeDate.getMonth(), tradeDate.getDate())
+      : parseFechaLocal(String(tradeDate).slice(0,10));
+    if(c.fecha < td){ c.fecha = td; c.iso = _isoLocal(td); }
+  }
+  return c;
+}
+
 function siguienteDiaHabil(fecha){
   let d = new Date(fecha);
   do{ d.setDate(d.getDate()+1); } while(!esHabil(d, 'CO') || !esHabil(d, 'US'));
@@ -4159,7 +4185,7 @@ function cambiarTipoOperacion(){
     const td = tdTxt ? new Date(Number(tdTxt.slice(0,4)), Number(tdTxt.slice(5,7))-1,
                                 Number(tdTxt.slice(8,10))) : hoy;
     const compraAccion = /^(C|B)/i.test(String(_cruceActivo.ladoAccion || '').trim());
-    const cumCruce = cumplimientoFX(td, compraAccion ? 'SELL' : 'BUY', _cruceActivo.cliente);
+    const cumCruce = cumplimientoFXTipo(tipo, hoy, td, compraAccion ? 'SELL' : 'BUY', _cruceActivo.cliente);
     sdEl.value = cumCruce.iso;
     _avisoCumplFX(cumCruce);
   }else{
@@ -4171,7 +4197,7 @@ function cambiarTipoOperacion(){
     // `sumarDiasHabiles(hoy, 2)` que daba el jueves PARA LAS DOS, y por
     // eso las ventas direccionales del 10-nov salieron con la fecha del
     // cumplimiento del equity en vez de la del día anterior hábil.
-    const cumSuelto = cumplimientoFX(hoy, _ladoFXCalculadora(), _clienteCalculadora());
+    const cumSuelto = cumplimientoFXTipo(tipo, hoy, parseFechaLocal(tradeDateInput.value), _ladoFXCalculadora(), _clienteCalculadora());
     sdEl.value = cumSuelto.iso;
     _avisoCumplFX(cumSuelto);
   }
@@ -4188,7 +4214,9 @@ function onCambioLadoFX(){
   if(sdEl && !(typeof _cruceActivo !== 'undefined' && _cruceActivo)){
     const tdTxt = document.getElementById('tradeDate').value;
     const base = tdTxt ? parseFechaLocal(tdTxt.slice(0,10)) : new Date();
-    const cum = cumplimientoFX(base, _ladoFXCalculadora(), _clienteCalculadora());
+    const _hoyL = new Date(); _hoyL.setHours(0,0,0,0);
+    const _tipoL = (document.getElementById('tipoOperacion')||{}).value || '';
+    const cum = cumplimientoFXTipo(_tipoL, _hoyL, base, _ladoFXCalculadora(), _clienteCalculadora());
     sdEl.value = cum.iso;
     _avisoCumplFX(cum);
   }
@@ -12702,9 +12730,10 @@ function _loteFXFechas(bloque, tipo){
   }else if(bloque && bloque.ladoFX){
     _ladoB = String(bloque.ladoFX).toUpperCase().startsWith('B') ? 'BUY' : 'SELL';
   }
-  const _baseB = (bloque && bloque.ladoAccion) ? td : hoy;
+  // 12-nov: UN SOLO CAMINO también para la base. Con o sin acciones detrás,
+  // el NextDay cumple con el equity de HOY.
   const sd = _ladoB
-    ? cumplimientoFX(_baseB, _ladoB, bloque && bloque.cliente).fecha
+    ? cumplimientoFXTipo(_tipo, hoy, td, _ladoB, bloque && bloque.cliente).fecha
     : sumarDiasHabiles(hoy, 2);
   const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   // LAS DOS FORMAS. El texto va a los campos de la calculadora; los OBJETOS
@@ -40853,7 +40882,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-12 00:20 UTC · v381';
+const BUILD_ID = '2026-11-12 16:55 UTC · v383';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
