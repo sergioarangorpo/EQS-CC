@@ -25634,8 +25634,48 @@ function parsearAllocCustodio(texto){
 // Protección el primer día (Sergio, 14-oct).
 function armarAllocCustodio(cliente, filas){
   const cfg = clientesRVI[cliente] || {};
-  const avisos = [], lineas = [];
+  const avisos = [], lineas = [], notas = [];
   const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+
+  // LO TILDADO MANDA (Sergio, 12-nov)
+  // -------------------------------------------------------------------
+  // El 11-nov Protección mandó dos órdenes de venta de ESGE —sin margen—
+  // y un VWAP de IEMG —con margen—, y al cierre un solo correo con ESGE
+  // CONSOLIDADA en una línea y IEMG debajo. No hubo cómo reportarlo: el
+  // cuadro se tomaba entero, con un solo modo de margen para todo, y cada
+  // especie se cruzaba contra UNA sola línea.
+  //
+  //     *"Escojo sin margen, con costo, escojo las 2 líneas de Protección,
+  //      pego el correo, la app entiende que hay 1 sola línea y relaciona
+  //      las 2 que tenemos... 1 de Prote contra 2 de nosotros. Macha
+  //      cantidades, macha precios y se fue. [Después] escojo con margen,
+  //      escojo la línea de Prote, pego el correo completo, se da cuenta
+  //      que le corresponde solo la de IEMG porque esa fue la que se
+  //      seleccionó. No quiero más enredos y botones de botones."*
+  //
+  // Sin botones nuevos: si hay líneas tildadas en el panel, del cuadro solo
+  // se toman las especies de esas líneas. Lo demás queda por fuera y se
+  // DICE (en `notas`, que informan y no frenan el guardado). Sin nada
+  // tildado, todo sigue como siempre: se toma el cuadro completo.
+  const _tildadas = (typeof _rviMarcadas !== 'undefined' && typeof emsxData !== 'undefined')
+    ? emsxData.filter(r => _rviMarcadas.has(r.id)) : [];
+  const _llaveLn = r => tickerLimpioRVI(r.especie) + '|' + String(r.lado||'').toUpperCase();
+  if(_tildadas.length){
+    const _llaves = new Set(_tildadas.map(_llaveLn));
+    const _dentro = filas.filter(f => _llaves.has(f.ticker + '|' + String(f.lado||'').toUpperCase()));
+    if(_dentro.length){
+      const _fuera = [...new Set(filas.filter(f => !_dentro.includes(f)).map(f => f.ticker + ' ' + f.lado))];
+      if(_fuera.length){
+        notas.push(`Dejé por fuera ${_fuera.join(', ')}: no está${_fuera.length > 1 ? 'n' : ''} ` +
+                   'entre las líneas tildadas. Se reporta en otro pegado, con su propio margen y costo.');
+      }
+      filas = _dentro;
+    }else{
+      // Conducir antes que bloquear: se toma el cuadro entero y se avisa.
+      avisos.push('Lo tildado (' + [..._llaves].map(k=>k.replace('|',' ')).join(', ') +
+                  ') no aparece en el cuadro. Se tomó el cuadro completo: revisa qué líneas están tildadas.');
+    }
+  }
 
   // Cantidades por ticker+lado, para arquear contra EMSX.
   const porEspecie = {};
@@ -25669,11 +25709,11 @@ function armarAllocCustodio(cliente, filas){
     const cands = (typeof emsxData !== 'undefined' ? emsxData : []).filter(r=>
       tickerLimpioRVI(r.especie) === g.ticker &&
       String(r.lado||'').toUpperCase() === g.lado.toUpperCase());
-    const ln = cands.find(_esDelCliente)
+    let ln = cands.find(_esDelCliente)
             || cands.find(r => Math.abs((Number(r.qty)||0) - g.qty) < 0.5)
             || cands.find(r => typeof esNuestraLineaRVI === 'function' && !esNuestraLineaRVI(r))
             || cands[0] || null;
-    const qEmsx = ln ? (Number(ln.qty) || Number(ln.filled) || 0) : null;
+    let qEmsx = ln ? (Number(ln.qty) || Number(ln.filled) || 0) : null;
 
     // Y APARTE, NUESTRA LÍNEA (Sergio, 10-nov).
     // -----------------------------------------------------------------
@@ -25691,11 +25731,53 @@ function armarAllocCustodio(cliente, filas){
     // está tildada en el panel, esa manda: Sergio la marcó por algo.
     const _marcadas = (typeof _rviMarcadas !== 'undefined')
       ? cands.filter(r => _rviMarcadas.has(r.id)) : [];
-    const _nuestraLn =
+    let _nuestraLn =
          _marcadas.find(r => typeof esNuestraLineaRVI === 'function' && esNuestraLineaRVI(r))
       || cands.find(r => typeof esNuestraLineaRVI === 'function' && esNuestraLineaRVI(r))
       || null;
-    if(!ln){
+
+    // UNA LÍNEA DEL CLIENTE CONTRA VARIAS NUESTRAS (Sergio, 12-nov).
+    // -----------------------------------------------------------------
+    // Con DOS O MÁS líneas tildadas de esta especie, la ejecución son todas
+    // juntas: la cantidad que se arquea es la SUMA, nuestro precio es el
+    // PROMEDIO PONDERADO, y cada una viaja como su propia pata al BO. El
+    // cliente sigue viendo una sola línea, que es como él la mandó.
+    //
+    // `_patasLns` queda vacío en el caso de siempre —una línea o ninguna
+    // tildada— y entonces no cambia nada de lo que ya se hacía.
+    const _esN = r => typeof esNuestraLineaRVI === 'function' && esNuestraLineaRVI(r);
+    const _conMargen = (typeof _modoRVI !== 'undefined') && _modoRVI.margen === 'con';
+    const _mN = _marcadas.filter(_esN), _mC = _marcadas.filter(r => !_esN(r));
+    let _patasLns = [];
+    if(_mN.length >= 2){
+      _patasLns = _mN;                       // varias nuestras: esas son la ejecución
+    }else if(_mC.length >= 2 && !_mN.length && !_conMargen){
+      _patasLns = _mC;                       // ejecución directa en varias órdenes
+      _nuestraLn = null;                     // sin margen no se sale a buscar otra
+    }
+    let _lnMulti = null, _qMulti = null;
+    if(_mC.length >= 2){ _lnMulti = _mC[0]; _qMulti = _mC.reduce((a,r)=>a + (Number(r.qty)||0), 0); }
+    else if(!_mC.length && _mN.length >= 2){ _lnMulti = _mN[0]; _qMulti = _mN.reduce((a,r)=>a + (Number(r.qty)||0), 0); }
+    if(_lnMulti){ ln = _lnMulti; qEmsx = _qMulti; }
+    const _nTild = _lnMulti ? (_mC.length >= 2 ? _mC.length : _mN.length) : 0;
+    if(_nTild){
+      // "Macha cantidades, macha precios y se fue."
+      const _pxCli = g.qty ? g.filas.reduce((a,f)=>a + f.qty*f.precio, 0) / g.qty : 0;
+      const _lns = _mC.length >= 2 ? _mC : _mN;
+      const _pxLns = _qMulti ? _lns.reduce((a,r)=>a + (Number(r.qty)||0)*(Number(r.avgPr)||0), 0) / _qMulti : 0;
+      if(Math.abs(_qMulti - g.qty) > 0.5){
+        avisos.push(`${g.ticker} ${g.lado}: el cliente trae ${g.qty.toLocaleString()} y las ${_nTild} ` +
+                    `líneas tildadas suman ${_qMulti.toLocaleString()} ` +
+                    `(${_lns.map(r=>Number(r.qty).toLocaleString()).join(' + ')}). ` +
+                    `Diferencia de ${Math.abs(_qMulti - g.qty).toLocaleString()}.`);
+      }else if(_mC.length >= 2 && !_conMargen && _pxCli && _pxLns && Math.abs(_pxLns - _pxCli) > 0.001){
+        avisos.push(`${g.ticker} ${g.lado}: el precio del cliente es ${_pxCli} y el promedio ` +
+                    `ponderado de las ${_nTild} líneas da ${_pxLns.toFixed(6)}.`);
+      }else{
+        notas.push(`${g.ticker} ${g.lado}: una línea del cliente contra ${_nTild} nuestras ` +
+                   `(${_lns.map(r=>Number(r.qty).toLocaleString()).join(' + ')} = ${_qMulti.toLocaleString()}).`);
+      }
+    }else if(!ln){
       avisos.push(`${g.ticker} ${g.lado}: no encontré línea de EMSX. ` +
                   'Se usa el precio del cliente, o sea margen cero.');
     }else if(qEmsx && Math.abs(qEmsx - g.qty) > 0.5){
@@ -25716,7 +25798,7 @@ function armarAllocCustodio(cliente, filas){
     // UNA línea que calza y no hay nada que rescatar—. Un aviso que sale
     // siempre deja de avisar: tapa los que sí importan.
     const _pidioMargen = (typeof _modoRVI !== 'undefined') && _modoRVI.margen === 'con';
-    if(_pidioMargen && !_nuestraLn && ln &&
+    if(_pidioMargen && !_nuestraLn && !_patasLns.length && ln &&
        typeof esNuestraLineaRVI === 'function' && !esNuestraLineaRVI(ln)){
       // Conducir antes que bloquear: se guarda igual, pero se avisa que la
       // planilla va a salir sin margen, que es la mitad del trabajo.
@@ -25724,7 +25806,26 @@ function armarAllocCustodio(cliente, filas){
                   'en el blotter. La planilla del BO va a salir sin margen (precio del ' +
                   'cliente). Si la ejecución fue partida, ármala en Vincular.');
     }
-    return { ...g, ln, qEmsx, nuestraLn: _nuestraLn };
+    // YA GUARDADA HOY: se avisa, no se frena. El mismo correo se pega más de
+    // una vez —una por cada modo de margen—, y sin nada tildado la segunda
+    // pasada volvería a meter lo de la primera.
+    const _yaHoy = (typeof historial !== 'undefined' ? historial : []).filter(h =>
+      lim(h.cliente) === lim(cfg.nombre || cliente) &&
+      String(h.symbol||'').toUpperCase() === g.ticker &&
+      String(h.side||'').toUpperCase() === g.lado.toUpperCase());
+    const _qYa = _yaHoy.reduce((a,h)=>a + (Number(h.qty)||0), 0);
+    if(_yaHoy.length && Math.abs(_qYa - g.qty) < 0.5){
+      avisos.push(`${g.ticker} ${g.lado}: ya está en el histórico con la misma cantidad ` +
+                  `(${g.qty.toLocaleString()}). Si guardas, queda DOBLE.`);
+    }
+    // Las patas: las de varias líneas tildadas, o la nuestra de siempre.
+    const _patas = _patasLns.length
+      ? _patasLns.map(r => ({ emsxId:r.id, broker:String(r.broker||'').toUpperCase().trim(),
+                              qty:Number(r.qty)||0, px:Number(r.avgPr)||0 }))
+      : null;
+    const _qP = _patas ? _patas.reduce((a,p)=>a + p.qty, 0) : 0;
+    const _pxPatas = _qP ? _patas.reduce((a,p)=>a + p.qty*p.px, 0) / _qP : 0;
+    return { ...g, ln, qEmsx, nuestraLn: _nuestraLn, patasMulti: _patas, pxPatas: _pxPatas };
   });
 
   // Una llave de lote por especie y lado: las patas son de la EJECUCIÓN, no
@@ -25737,6 +25838,7 @@ function armarAllocCustodio(cliente, filas){
     // El broker de NUESTRA pata. Si no se encontró nuestra línea se cae al de
     // la del cliente, que es lo que hacía antes: sin pata no hay nada mejor.
     const _brokerNuestro = String(
+      (g.patasMulti && g.patasMulti[0].broker) ||
       (g.nuestraLn && g.nuestraLn.broker) || (g.ln && g.ln.broker) || '').toUpperCase().trim();
     g.filas.forEach(f=>{
       const gross = f.qty * f.precio;
@@ -25823,9 +25925,10 @@ function armarAllocCustodio(cliente, filas){
         // `t_alloc_custodio_espejo.js` lo comprueba para que no vuelva a
         // quedar uno atrás.
         broker: _brokerNuestro,
-        precioNuestro: g.nuestraLn ? (Number(g.nuestraLn.avgPr) || f.precio) : f.precio,
+        precioNuestro: g.patasMulti ? (g.pxPatas || f.precio)
+                     : g.nuestraLn ? (Number(g.nuestraLn.avgPr) || f.precio) : f.precio,
         espejo: (typeof _modoRVI !== 'undefined') && _modoRVI.espejo === 'si',
-        patas: g.nuestraLn ? [{
+        patas: g.patasMulti ? g.patasMulti.map(p => ({ ...p })) : g.nuestraLn ? [{
           emsxId: g.nuestraLn.id,
           broker: String(g.nuestraLn.broker || '').toUpperCase().trim(),
           qty: Number(g.nuestraLn.qty) || g.qty,
@@ -25839,7 +25942,7 @@ function armarAllocCustodio(cliente, filas){
     });
   });
 
-  return { lineas, avisos, cruces };
+  return { lineas, avisos, cruces, notas };
 }
 
 function abrirAllocCustodio(){
@@ -25873,7 +25976,7 @@ function interpretarAllocCustodio(){
     return;
   }
 
-  const { lineas, avisos, cruces } = armarAllocCustodio(cli, datos.filas);
+  const { lineas, avisos, cruces, notas } = armarAllocCustodio(cli, datos.filas);
   const todos = datos.avisos.concat(avisos);
   _allocCustodio = { cliente: cli, lineas, avisos: todos };
 
@@ -25903,6 +26006,9 @@ function interpretarAllocCustodio(){
 
   cont.innerHTML = `
     <div style="margin-bottom:8px;font-size:12px;">${arqueo}</div>
+    ${(notas||[]).length ? `<div style="margin-bottom:8px;padding:7px 10px;border-radius:6px;font-size:12px;
+        border:1px solid var(--accent,#818cf8);color:var(--accent,#818cf8);">
+        ${notas.map(n=>'· '+_esc(n)).join('<br>')}</div>` : ''}
     <div style="overflow:auto;border:1px solid var(--border,#2a2f3a);border-radius:6px;">
     <table style="width:100%;font-size:11.5px;border-collapse:collapse;">
       <thead><tr style="background:var(--bg-2,#0f1116);text-align:left;">
@@ -40882,7 +40988,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-12 16:55 UTC · v383';
+const BUILD_ID = '2026-11-12 17:40 UTC · v384';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
