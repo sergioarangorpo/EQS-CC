@@ -12895,6 +12895,134 @@ function _loteFXArchivos(bloques){
   return Object.values(g);
 }
 
+// =====================================================================
+// EL CUADRO DE FX DE LA CONFIRMACIÓN, PARA COPIAR A BLOOMBERG (Sergio, 13-nov)
+// ---------------------------------------------------------------------
+//     *"Necesito ponerlo en la app para que Juan Antonio lo copie y lo pegue
+//      en bloomberg... En la misma parte donde se pone trader y tasas, que
+//      lo calcule automático y el botón de copiar bloomberg para que Juan
+//      lo copie y lo pueda pegar como cuadro."*
+//
+// Es el panel de arriba de la confirmación "Equity + FX" de MLI y CITI
+// (SELLS COP / BUYS COP con FX RATE, USD VALUE, FX SD y MT VALUE). Hasta
+// hoy solo existía DENTRO del Excel: para mandarlo al chat había que
+// generar el archivo, abrirlo y copiar las celdas.
+//
+// LAS CIFRAS SON LAS DEL EXCEL, calculadas igual que en
+// `generarReporteCruceMLI`:
+//   MT VALUE  = suma, línea por línea, del bruto ± la comisión, cada una
+//               redondeada a 2 decimales (no el neto del bloque, que
+//               redondea una sola vez y puede diferir en centavos).
+//   USD VALUE = MT VALUE / tasa final del cliente
+//   FX SD     = días hábiles entre la operación y el cumplimiento
+//   NOT TODAY = el lado que no operó
+//   SELLS COP = el lado en que el cliente VENDE acciones; BUYS COP, el que
+//               compra. Es el mismo mapeo de la hoja.
+// Un cuadro por cliente y trader, que es como sale un archivo por cada uno.
+// Esto solo muestra y copia: no registra ni toca el Excel.
+// =====================================================================
+function _fxNumCO(n){
+  const v = Number(n);
+  if(!isFinite(v)) return '';
+  const [ent, dec] = Math.abs(v).toFixed(2).split('.');
+  return (v < 0 ? '-' : '') + ent.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + dec;
+}
+
+function _loteFXCuadrosFX(){
+  if(!_loteFX) return [];
+  const tasa = parseLocaleNumber(String(_loteFX.tasaCli || ''));
+  if(!(tasa > 0)) return [];
+  const g = {};
+  _loteFXBloques().forEach(b=>{
+    const k = b.cliente + '|' + (b.trader || '');
+    const c = g[k] || (g[k] = { cliente:b.cliente, trader:b.trader || '', SELL:null, BUY:null });
+    const tar = tarifaCruce(b.cliente);
+    const mt = redondear(b.detalle.reduce((a,d)=>{
+      const gross = redondear(d.gross, 2), com = redondear(d.gross * tar.tasa, 2);
+      return a + (b.ladoAccion === 'Compra' ? gross + com : gross - com);
+    }, 0), 2);
+    const f = _loteFXFechas(b);
+    c[b.ladoAccion === 'Compra' ? 'BUY' : 'SELL'] = {
+      tasa, mt, usd: redondear(mt / tasa, 2),
+      sd: _fxDiasHabiles(f.tradeDateObj, f.settleDateObj) || 'T+2' };
+  });
+  return Object.values(g).sort((a,b)=> a.cliente.localeCompare(b.cliente) || a.trader.localeCompare(b.trader));
+}
+
+// Las cuatro filas, ya como texto: una sola fuente para la pantalla, la
+// tabla que se copia y el respaldo con tabuladores.
+function _cuadroFXFilas(c){
+  const NO = 'NOT TODAY';
+  const col = l => l ? [_fxNumCO(l.tasa), _fxNumCO(l.usd), l.sd, _fxNumCO(l.mt)] : [NO, NO, NO, NO];
+  const s = col(c.SELL), b = col(c.BUY);
+  return ['FX RATE','USD VALUE','FX SD','MT VALUE'].map((t,i)=>[t, s[i], b[i]]);
+}
+
+function cuadroFXBloomberg(c){
+  const filas = _cuadroFXFilas(c);
+  const tsv = ['\tSELLS COP\tBUYS COP'].concat(filas.map(f=>f.join('\t'))).join('\n');
+  const B = 'border:1px solid #999;padding:3px 10px;font-family:Arial;font-size:10pt;';
+  const html = `<table style="border-collapse:collapse;">`
+    + `<tr><td style="${B}"></td>`
+    + `<td style="${B}font-weight:bold;background:#1f2a44;color:#fff;text-align:center;">SELLS COP</td>`
+    + `<td style="${B}font-weight:bold;background:#1f2a44;color:#fff;text-align:center;">BUYS COP</td></tr>`
+    + filas.map(f=>`<tr><td style="${B}font-weight:bold;">${f[0]}</td>`
+        + `<td style="${B}text-align:right;">${f[1]}</td><td style="${B}text-align:right;">${f[2]}</td></tr>`).join('')
+    + `</table>`;
+  return { html, tsv };
+}
+
+function _loteFXCuadrosHtml(){
+  const cs = _loteFXCuadrosFX();
+  if(!cs.length) return '';
+  const td = 'padding:4px 12px;border-top:1px solid var(--border,#232938);';
+  return `<div style="margin-top:14px;">
+    <div style="font-size:10.5px;font-weight:700;opacity:.6;letter-spacing:.3px;margin-bottom:6px;">
+      CUADRO DE FX DE LA CONFIRMACIÓN · PARA EL CHAT DE BLOOMBERG</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+    ${cs.map((c,i)=>`
+      <div style="flex:1 1 330px;max-width:460px;background:var(--bg-2,#161b26);
+                  border:1px solid var(--border,#232938);border-radius:8px;padding:10px 12px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <b>${_esc(c.cliente)}</b>${c.trader ? `<span class="field-note">${_esc(c.trader)}</span>` : ''}
+          <button class="btn small" style="margin-left:auto;" onclick="copiarCuadroFX(${i}, this)">💬 Copiar para Bloomberg</button>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums;">
+          <tr style="font-size:10.5px;opacity:.7;">
+            <th style="text-align:left;padding:3px 12px;"></th>
+            <th style="text-align:right;padding:3px 12px;">SELLS COP</th>
+            <th style="text-align:right;padding:3px 12px;">BUYS COP</th></tr>
+          ${_cuadroFXFilas(c).map(f=>`<tr>
+            <td style="${td}font-weight:700;">${f[0]}</td>
+            <td style="${td}text-align:right;${f[1] === 'NOT TODAY' ? 'opacity:.45;' : ''}">${f[1]}</td>
+            <td style="${td}text-align:right;${f[2] === 'NOT TODAY' ? 'opacity:.45;' : ''}">${f[2]}</td></tr>`).join('')}
+        </table>
+      </div>`).join('')}
+    </div></div>`;
+}
+
+async function copiarCuadroFX(i, btn){
+  const c = _loteFXCuadrosFX()[i];
+  if(!c){ alert('No hay cuadro para copiar: falta la tasa final del cliente.'); return; }
+  const k = cuadroFXBloomberg(c);
+  let como = 'cuadro';
+  try{
+    if(typeof ClipboardItem !== 'undefined' && navigator.clipboard && navigator.clipboard.write){
+      await navigator.clipboard.write([ new ClipboardItem({
+        'text/html':  new Blob([k.html], { type:'text/html' }),
+        'text/plain': new Blob([k.tsv],  { type:'text/plain' }) }) ]);
+    }else{
+      await navigator.clipboard.writeText(k.tsv); como = 'texto';
+    }
+  }catch(e1){
+    try{ await navigator.clipboard.writeText(k.tsv); como = 'texto'; }
+    catch(e2){ alert('No se pudo copiar: ' + e2.message); return; }
+  }
+  if(btn){ const p = btn.innerHTML;
+    btn.innerHTML = como === 'cuadro' ? '✓ Cuadro copiado' : '✓ Copiado como texto';
+    setTimeout(()=>{ btn.innerHTML = p; }, 1800); }
+}
+
 async function generarArchivosLoteFX(){
   if(!_loteFX || !_loteFX.resultado) return;
   const hechos = _loteFX.resultado.ok.filter(r=>r.bloque);
@@ -13049,6 +13177,8 @@ function renderLoteFX(){
       });
     }
     h += `</div>`;
+    // Y acá también, por si se copia al terminar y no antes (13-nov).
+    h += _loteFXCuadrosHtml();
     cont.innerHTML = h;
     _loteFXBotones({ paso:'fin', archivos, nOps });
     return;
@@ -13424,6 +13554,9 @@ function renderLoteFX(){
           ? 'Con compras y ventas, una pata da negativo y la otra positiva. Lo que cuenta es el neto.' : ''}</div>
       </div>
     </div>`;
+
+    // El cuadro de la confirmación, listo para copiar (13-nov).
+    h += _loteFXCuadrosHtml();
 
     const F2 = _loteFXFaltaPaso2();
     if(F2.length){
@@ -41316,7 +41449,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-12 19:45 UTC · v386';
+const BUILD_ID = '2026-11-13 13:50 UTC · v387';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
