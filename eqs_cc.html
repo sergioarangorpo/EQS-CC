@@ -8632,15 +8632,75 @@ function _ffmmMotivoSinMarca(f){
 // distintos —el panel sobre los folios a la vista, el freno sobre los
 // SELECCIONADOS—, así que el panel podía decir "Macrogrupo detectado" en verde
 // y el botón frenar igual, sin contradicción visible (Sergio, 22-oct).
+// EL REPARTO Y FIDESSA NO PUEDEN DECIR MACROGRUPOS DISTINTOS (Sergio, 13-nov)
+// ---------------------------------------------------------------------
+// El 13-nov a las 15:11 salió NVDACO venta 795 en el archivo de ACCIONES
+// COLOMBIA, cuando era de ACCIONES GLOBALES. El reparto (la asignación a
+// portafolio) manda sobre el Account de Fidessa —se hizo así el 05-sep para
+// las papeletas que dicen "WOULD"—, y en pantalla había quedado asignado
+// Colombia. El app usó eso sin avisar, aunque Fidessa nombrara Globales.
+// Tres minutos después, regenerado, salió bien.
+//
+//     *"Juan se enreda mucho y por eso necesitamos este tipo de filtros
+//      funcionando."*
+//
+// Ahora:
+//   · `_ffmmFondoCuenta` dice qué fondo NOMBRA el Account de Fidessa (del
+//     folio o de su orden), o '' si no nombra ninguno (WOULD, el libro…).
+//   · Si el reparto y el Account caen en macrogrupos DISTINTOS, la línea no
+//     va a ningún lado: queda en `conflicto` y el generador frena diciendo
+//     cuál es cuál. Un fondo equivocado en un archivo al cliente es muralla
+//     china, no un detalle.
+//   · Si caen en el MISMO macrogrupo no cambia nada: el reparto sigue
+//     mandando (así se reparte una orden de la fiduciaria entre fondos).
+//   · Si el Account no nombra un fondo, el reparto manda, como siempre.
+function _ffmmFondoCuenta(f){
+  const cand = [f && (f.notes || f.portafolio),
+                ((_fidessaTradesRaw||{})[String(f && f.parentOrderId)]||{}).notes];
+  for(const v of cand){
+    if(!_ffmmEsNombreDeFondo(v)) continue;
+    const l = limpiarAccountFidessa(v);
+    if(macrogrupoCCFFMM(l)) return l;
+  }
+  return '';
+}
+
+// De dónde salió el fondo de una línea, para la vista previa.
+function _ffmmOrigenFondo(f){
+  if(fondoDeAsignacionFFMM(f)) return 'Reparto';
+  if(_fondoManualFFMM[_ffmmLlaveFondo(f)]) return 'A mano';
+  return 'Fidessa';
+}
+
 function _ffmmClasificar(lista){
-  const porMacro = {}, sinMarca = [];
+  const porMacro = {}, sinMarca = [], conflicto = [];
   (lista||[]).forEach(f=>{
     const notes = fondoDeFolioFFMM(f);
     const k = macrogrupoCCFFMM(notes);
     if(!k){ sinMarca.push(f); return; }
-    (porMacro[k] = porMacro[k] || []).push({ ...f, notes });
+    const cuenta = _ffmmFondoCuenta(f);
+    const kc = cuenta ? macrogrupoCCFFMM(cuenta) : '';
+    if(kc && kc !== k){
+      conflicto.push({ ...f, fondoReparto: notes, macroReparto: k, fondoCuenta: cuenta, macroCuenta: kc });
+      return;
+    }
+    (porMacro[k] = porMacro[k] || []).push({ ...f, notes, origenFondo: _ffmmOrigenFondo(f) });
   });
-  return { porMacro, sinMarca };
+  return { porMacro, sinMarca, conflicto };
+}
+
+// El texto del freno, agrupado por orden: una línea por especie, no por folio.
+function _ffmmTextoConflicto(lista){
+  const g = {};
+  (lista||[]).forEach(f=>{
+    const k = (f.especie||'') + '|' + (f.lado||'') + '|' + f.macroReparto + '|' + f.macroCuenta;
+    const a = g[k] || (g[k] = { f, q:0, n:0 });
+    a.q += Number(f.cantidad)||0; a.n++;
+  });
+  return Object.values(g).map(({f,q,n})=>
+    `· ${f.especie} ${f.lado||''} ${Number(q).toLocaleString('es-CO')} (${n} folio${n>1?'s':''}): ` +
+    `Fidessa dice ${CCFFMM_MACROGRUPOS[f.macroCuenta].nombre} y el reparto dice ` +
+    `${CCFFMM_MACROGRUPOS[f.macroReparto].nombre}`);
 }
 
 function macrogrupoCCFFMM(notes){
@@ -24926,7 +24986,16 @@ function renderPanelListo(filtrados){
     });
     const sinMarca = _cl.sinMarca.length;
     const claves = Object.keys(cuenta);
-    if(sinMarca){
+    if((_cl.conflicto||[]).length){
+      // Va PRIMERO y en rojo: mientras esto exista, no se genera (13-nov).
+      avisoMacro = `<div style="background:rgba(239,68,68,.10);border-left:3px solid var(--sell,#ef4444);
+                    border-radius:6px;padding:10px 14px;margin-bottom:8px;">
+          <div style="font-size:12.5px;color:var(--sell,#ef4444);font-weight:700;">
+            ⛔ El fondo no cuadra: el reparto dice un macrogrupo y Fidessa otro</div>
+          <div style="font-size:12px;margin-top:4px;">${_ffmmTextoConflicto(_cl.conflicto).map(x=>_esc(x)).join('<br>')}</div>
+          <div class="field-note" style="font-size:11.5px;margin-top:4px;">
+            Corrige el reparto de esa orden antes de generar.</div></div>`;
+    }else if(sinMarca){
       // Se puede asignar el fondo AQUÍ, sin volver a Fidessa a corregir la
       // papeleta: el trade ya está hecho y hay que reportarlo (Sergio, 05-sep).
       // Se agrupa por LLAVE, no por parentOrderId a secas: los folios sin orden
@@ -28303,7 +28372,9 @@ async function _generarUnMacroFFMM(macro, lote, cliente, fechaReg){
     // (Sergio, 04-sep).
     // Solo lo que se revisa: sin número de folios ni columnas de más
     // (Sergio, 05-sep).
-    columnas: ['Account','Cantidad','Precio','Bruto','Comisión','% Com.','IVA','Valor Neto'],
+    // `Origen` dice de dónde salió el fondo —Fidessa, Reparto o A mano—,
+    // para verlo ANTES de descargar (Sergio, 13-nov).
+    columnas: ['Account','Origen','Cantidad','Precio','Bruto','Comisión','% Com.','IVA','Valor Neto'],
     filas: (()=>{
       const g = {};
       lote.forEach(f=>{
@@ -28311,8 +28382,9 @@ async function _generarUnMacroFFMM(macro, lote, cliente, fechaReg){
         // podría mostrar un portafolio y el archivo otro, y el que vale es el
         // que no se ve.
         const fondo = cfgMacro.fondo || _fondoFolioFFMM(f);
-        const k = f.especie + '|' + f.lado + '|' + fondo;
-        const a = g[k] || (g[k] = {especie:f.especie, lado:f.lado, fondo, qty:0, bruto:0, n:0});
+        const origen = f.origenFondo || 'Fidessa';
+        const k = f.especie + '|' + f.lado + '|' + fondo + '|' + origen;
+        const a = g[k] || (g[k] = {especie:f.especie, lado:f.lado, fondo, origen, qty:0, bruto:0, n:0});
         a.qty += f.cantidad; a.bruto += f.cantidad*f.precio; a.n++;
       });
       return Object.values(g)
@@ -28323,7 +28395,7 @@ async function _generarUnMacroFFMM(macro, lote, cliente, fechaReg){
           const iva = redondear(com * 0.19, 2);
           const neto = a.lado === 'Venta' ? redondear(a.bruto - com - iva, 2)
                                           : redondear(a.bruto + com + iva, 2);
-          return [a.fondo, fmtInt(a.qty), fmtRate(a.qty?a.bruto/a.qty:0),
+          return [a.fondo, a.origen, fmtInt(a.qty), fmtRate(a.qty?a.bruto/a.qty:0),
                   fmtMoney(a.bruto), fmtMoney(com), '0,100%', fmtMoney(iva), fmtMoney(neto)];
         });
     })(),
@@ -29081,7 +29153,15 @@ async function generarReporte(){
     // Cada línea trae su macrogrupo en el Notes. Si hay mezcla se FRENA: por
     // muralla china no pueden ir en el mismo archivo (Sergio, 24-ago).
     // La MISMA lectura que muestra el panel. Ver `_ffmmClasificar`.
-    const { porMacro, sinMarca } = _ffmmClasificar(seleccionados);
+    const { porMacro, sinMarca, conflicto } = _ffmmClasificar(seleccionados);
+    if(conflicto.length){
+      const t = _ffmmTextoConflicto(conflicto);
+      alert('No se generó el reporte: el fondo no cuadra.\n\n' +
+            t.slice(0,8).join('\n') + (t.length > 8 ? `\n… y ${t.length-8} más` : '') +
+            '\n\nEl reparto de esa orden apunta a otro macrogrupo que el Account de Fidessa. ' +
+            'Corrige el reparto (o el Account en Fidessa, si el que está mal es ese) y vuelve a generar.');
+      return;
+    }
     if(sinMarca.length){
       // El freno dice POR QUÉ, folio por folio. "Revísalo en Fidessa" no
       // alcanzaba: no se sabía si faltaba el Account, si el folio no tenía
@@ -41449,7 +41529,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-13 13:50 UTC · v387';
+const BUILD_ID = '2026-11-13 20:45 UTC · v388';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
