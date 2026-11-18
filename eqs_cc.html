@@ -28848,27 +28848,18 @@ async function generarReporte(){
       });
     });
     if(_repartoSk.length){
-      const partido = [];
-      _repartoSk.forEach(a=>{
-        const fs = seleccionados.filter(f=>String(f.parentOrderId)===String(a.parentOrderId));
-        const total = fs.reduce((x,f)=>x+f.cantidad,0);
-        if(!total) return;
-        // Reparto entero por folio (ver repartirFolioAFolio).
-        const _m = repartirFolioAFolio([a.cantidad], fs);
-        fs.forEach((f,i)=>{
-          const q = _m[i][0];
-          // Se conservan comisión y fechas: el generador las lee de estos
-          // campos y al repartir se estaban perdiendo (comisión 0 y fechas
-          // vacías en las 236 filas del 14-ago).
-          if(q > 0) partido.push({
-            ...f, cantidad: q,
-            fondoSk: _SKANDIA_POR_ID[String(a.port.idFondo).toUpperCase()],
-            comisionPct: comisionFolioPct(cliente, f),
-            fechaReg: f.fechaReg || document.getElementById('fechaRegistro').value,
-            fechaCum: f.fechaCum || document.getElementById('fechaCumplimiento').value,
-          });
-        });
-      });
+      // UNA vez por orden, con todos sus fondos (18-nov): ver
+      // `_repartirOrdenesEnPortafolios`.
+      // Se conservan comisión y fechas: el generador las lee de estos campos y
+      // al repartir se estaban perdiendo (comisión 0 y fechas vacías en las 236
+      // filas del 14-ago).
+      const partido = _repartirOrdenesEnPortafolios(_repartoSk, seleccionados, (f, q, a) => ({
+        ...f, cantidad: q,
+        fondoSk: _SKANDIA_POR_ID[String(a.port.idFondo).toUpperCase()],
+        comisionPct: comisionFolioPct(cliente, f),
+        fechaReg: f.fechaReg || document.getElementById('fechaRegistro').value,
+        fechaCum: f.fechaCum || document.getElementById('fechaCumplimiento').value,
+      }));
       // Los folios de órdenes SIN reparto siguen su camino normal (fondo del
       // Notes); solo se reemplazan los de las órdenes repartidas.
       if(partido.length){
@@ -28923,19 +28914,18 @@ async function generarReporte(){
       });
     });
     if(_repartoPorv.length){
-      const partido = [];
-      _repartoPorv.forEach(a=>{
-        const fs = seleccionados.filter(f=>String(f.parentOrderId)===String(a.parentOrderId));
-        const total = fs.reduce((x,f)=>x+f.cantidad,0);
-        if(!total) return;
-        // Reparto entero por folio (ver repartirFolioAFolio).
-        const _m = repartirFolioAFolio([a.cantidad], fs);
-        fs.forEach((f,i)=>{
-          const q = _m[i][0];
-          if(q > 0) partido.push({ ...f, cantidad:q, portNombre:a.portafolio.nombre });
-        });
-      });
-      if(partido.length) window._loteDetPorv = partido;
+      // UNA vez por orden, con todos sus portafolios (18-nov): ver
+      // `_repartirOrdenesEnPortafolios` — aquí estaba el error del 13-nov.
+      const partido = _repartirOrdenesEnPortafolios(_repartoPorv, seleccionados,
+        (f, q, a) => ({ ...f, cantidad:q, portNombre:a.portafolio.nombre }));
+      // Las órdenes SIN reparto siguen con su portafolio del Instruction, como
+      // en Skandia. Antes, si UNA orden del lote tenía reparto, las demás se
+      // quedaban por fuera del archivo sin avisar.
+      if(partido.length){
+        const repartidas = new Set(_repartoPorv.map(a=>String(a.parentOrderId)));
+        window._loteDetPorv = partido.concat(
+          seleccionados.filter(f=>!repartidas.has(String(f.parentOrderId))));
+      }
     }
     // La comisión que se le muestra es la PONDERADA por especie+lado, que es
     // la que va a ver Porvenir: ellos consolidan, no quieren dos tarifas.
@@ -29021,6 +29011,7 @@ async function generarReporte(){
     // portafolio que le asignó Sergio. Si no lo hay, el generador saca el
     // portafolio del Instruction como siempre.
     const hayReparto = !!loteDetPorv;
+    if(_frenoCuadreFolios('PORVENIR', loteDet, hayReparto ? loteDetPorv : loteDet)) return;
     await generarReportePorvenir(cliente, hayReparto ? loteDetPorv : loteDet, {
       comUnica,
       portPorFolio: hayReparto ? (f => {
@@ -29236,6 +29227,7 @@ async function generarReporte(){
       })(),
     });
     if(!ok) return;
+    if(_frenoCuadreFolios('SKANDIA', loteDet, loteDetSk || loteDet)) return;
     window._sufijoReporte = sufijoVersion(version);
     await generarReporteSkandia(cliente, loteDetSk || loteDet);
     window._sufijoReporte = '';
@@ -29258,6 +29250,10 @@ async function generarReporte(){
       totales: `${loteOps.length} portafolio(s) · ${fmtInt(loteOps.reduce((s,o)=>s+o.cantidad,0))} acciones · ${loteDet.length} folio(s) en el Detalle`,
     });
     if(!ok) return;
+    // El mismo freno: lo que va al Detalle es el reparto de `loteDet` entre
+    // `loteOps`, con la misma función que usa el generador.
+    if(_frenoCuadreFolios('COLFONDOS', loteDet,
+         repartirFoliosColfondos(loteOps, loteDet).map(({folio:f, cantidad})=>({ ...f, cantidad })))) return;
     window._sufijoReporte = sufijoVersion(version);
     await generarReporteColfondos(cliente, loteOps, loteDet);
     window._sufijoReporte = '';
@@ -30624,6 +30620,80 @@ function repartirFolioAFolio(cantidades, folios){
     pedazos.forEach((q,i)=>{ saldo[i] -= q; });
     return pedazos;
   });
+}
+
+// =====================================================================
+// UNA ORDEN, VARIOS PORTAFOLIOS: SE REPARTE UNA SOLA VEZ (Sergio, 18-nov)
+// ---------------------------------------------------------------------
+// El 13-nov Porvenir (Marcela Ramírez) vendió 30.000 PFCIBEST en una sola
+// orden con alloc 50% Moderado / 50% Mayor Riesgo. El reparto se calculaba
+// PORTAFOLIO POR PORTAFOLIO contra los mismos 35 folios, sin descontar lo
+// que ya había tomado el otro: cada uno se llevó los 13 folios más recientes
+// COMPLETOS hasta llegar a 15.000. Los mismos 13 folios salieron dos veces,
+// los otros 22 (casi todos a 73.880) no salieron, y el precio se reportó a
+// 73.960,00 contra 73.924,91 real: $1,05 millones de más en el bruto, que la
+// mesa tuvo que reconocerle al cliente.
+//
+//     *"Necesito que esto no vuelva a pasar, no me puede valer plata."*
+//
+// Skandia tenía el MISMO código, copiado. Colfondos no: usa
+// `repartirFoliosColfondos`, que reparte la orden con todos sus portafolios
+// a la vez. Era el patrón de siempre, dos caminos para el mismo número.
+//
+// Ahora Porvenir y Skandia pasan por aquí: los portafolios de una orden se
+// agrupan y `repartirFolioAFolio` se llama UNA vez por orden, con todos.
+// Así cada folio se parte entre ellos y suma exactamente su cantidad.
+// `armar(f, q, a)` devuelve la fila de ese pedazo. Las filas salen por
+// portafolio y, dentro de él, en el orden de los folios (como salían antes).
+function _repartirOrdenesEnPortafolios(reparto, seleccionados, armar){
+  const porOrden = {};
+  (reparto||[]).forEach(a=>{
+    const k = String(a.parentOrderId);
+    (porOrden[k] = porOrden[k] || []).push(a);
+  });
+  const filas = [];
+  Object.keys(porOrden).forEach(poid=>{
+    const al = porOrden[poid];
+    const fs = (seleccionados||[]).filter(f=>String(f.parentOrderId) === poid);
+    if(!fs.length) return;
+    const m = repartirFolioAFolio(al.map(a=>a.cantidad), fs);
+    al.forEach((a,j)=>{
+      fs.forEach((f,i)=>{ const q = m[i][j]; if(q > 0) filas.push(armar(f, q, a)); });
+    });
+  });
+  return filas;
+}
+
+// CADA FOLIO TIENE QUE SALIR COMPLETO, NI MÁS NI MENOS (Sergio, 18-nov)
+// ---------------------------------------------------------------------
+// El freno que hubiera parado el 13-nov: antes de generar, cada folio de la
+// selección (`base`, uno por folio, con su cantidad real) se compara contra
+// lo que va al archivo (`lote`, los pedazos ya repartidos). Si un folio sale
+// con más de lo que tiene, o no sale entero, no hay archivo.
+// La llave es orden + folio + precio: Fidessa puede repetir un TCN dentro de
+// una orden, y entonces se comparan las SUMAS, que es lo que importa.
+function _cuadreFoliosLote(base, lote){
+  const k = f => String(f.parentOrderId||'') + '|' + String(f.folio || f.id || '') + '|' + Number(f.precio);
+  const m = {};
+  (base||[]).forEach(f=>{ const x = m[k(f)] || (m[k(f)] = { f, real:0, rep:0 }); x.real += Number(f.cantidad)||0; });
+  (lote||[]).forEach(f=>{ const x = m[k(f)] || (m[k(f)] = { f, real:0, rep:0 }); x.rep += Number(f.cantidad)||0; });
+  return Object.values(m).filter(x => Math.abs(x.real - x.rep) > 1e-6);
+}
+
+// Devuelve true si frenó. El mensaje dice cuáles folios y cuánto.
+function _frenoCuadreFolios(clienteNombre, base, lote){
+  const d = _cuadreFoliosLote(base, lote);
+  if(!d.length) return false;
+  const lin = x => `   ${x.f.especie || ''} folio ${x.f.folio || x.f.id}: tiene ${fmtInt(x.real)}, ` +
+                   `iba a salir con ${fmtInt(x.rep)}`;
+  const sobran = d.filter(x => x.rep > x.real), faltan = d.filter(x => x.rep < x.real);
+  alert(`No se generó el reporte de ${clienteNombre}: los folios no cuadran.\n\n` +
+    (sobran.length ? `Salían con MÁS de lo que tienen (${sobran.length}):\n` + sobran.slice(0,6).map(lin).join('\n') +
+                     (sobran.length > 6 ? `\n   … y ${sobran.length-6} más` : '') + '\n\n' : '') +
+    (faltan.length ? `Salían INCOMPLETOS o no salían (${faltan.length}):\n` + faltan.slice(0,6).map(lin).join('\n') +
+                     (faltan.length > 6 ? `\n   … y ${faltan.length-6} más` : '') + '\n\n' : '') +
+    'Revisa el reparto de esa orden: la suma de los portafolios tiene que ser igual a lo ejecutado.');
+  return true;
 }
 
 function repartirFoliosColfondos(alocaciones, folios){
@@ -41529,7 +41599,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-13 20:45 UTC · v388';
+const BUILD_ID = '2026-11-18 15:30 UTC · v389';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
