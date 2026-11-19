@@ -5662,6 +5662,7 @@ function revisarNegocioRFI(n){
   }
   if(!n.compras.length) avisos.push('No hay pata de compra (ninguna fila con B) para este ISIN');
   if(!n.ventas.length)  avisos.push('No hay pata de venta (ninguna fila con S) para este ISIN');
+  if(n.problemaCliente) avisos.push('Cliente: ' + n.problemaCliente);
   if(n.utilidad < 0)    avisos.push(`La utilidad es NEGATIVA: ${fmtMoney(n.utilidad)}`);
   return avisos;
 }
@@ -5761,6 +5762,22 @@ function _rfiFecha(v){
 
 // Agrupa el blotter por ISIN y calcula la utilidad de cada negocio:
 // lo que VENDIMOS menos lo que COMPRAMOS, igual que en RVI.
+// EL CLIENTE ES LA CONTRAPARTE QUE NO ES DE CREDICORP (Sergio, 19-nov)
+// ---------------------------------------------------------------------
+// El cliente se tomaba como "a quien le vendemos". El 19-nov la mesa le
+// COMPRÓ a Blue Bay a 100,45 y le VENDIÓ a ASB a 100,50, y la Planilla COP
+// salió a nombre de ASB, que es Credicorp en Panamá, la pata interna.
+// Ya había pasado al revés con CO-FIDUCIARIA DAVIVI (le compramos).
+//
+// Ahora el cliente es la contraparte que NO está en esta lista, sea cual sea
+// el lado. Si no queda ninguna, o queda más de una distinta, el negocio lleva
+// `problemaCliente` y nadie adivina: la planilla lo avisa y no lo mete.
+const RFI_CONTRAPARTES_INTERNAS = ['ASB', 'CO-ASBRFI', 'PE-CREDICORP SECURIT'];
+function _rfiEsInterna(nombre){
+  const n = String(nombre||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  return !!n && RFI_CONTRAPARTES_INTERNAS.some(x => x.toUpperCase().replace(/[^A-Z0-9]/g,'') === n);
+}
+
 function negociosRFI(){
   const porIsin = {};
   (_rfiOperaciones||[]).forEach(f=>{
@@ -5769,9 +5786,28 @@ function negociosRFI(){
       compradoUSD:0, vendidoUSD:0, cliente:'', fechaOp:f.fechaOp, settle:f.settle,
     });
     if(f.nuestra){ g.compras.push(f); g.compradoUSD += f.total; }
-    else { g.ventas.push(f); g.vendidoUSD += f.total; if(!g.cliente) g.cliente = f.nombreCpty || f.cpty; }
+    else { g.ventas.push(f); g.vendidoUSD += f.total; }
   });
-  return Object.values(porIsin).map(g=>({ ...g, utilidad: g.vendidoUSD - g.compradoUSD }));
+  return Object.values(porIsin).map(g=>{
+    const nom = f => f.nombreCpty || f.cpty;
+    const n = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    // Las patas del cliente: las que no son contra Credicorp.
+    const patasCliente = [...g.compras, ...g.ventas].filter(f => !_rfiEsInterna(nom(f)));
+    const distintos = [...new Set(patasCliente.map(f => n(nom(f))))];
+    let problemaCliente = '';
+    if(!patasCliente.length)      problemaCliente = 'las dos patas son contra Credicorp: no hay cliente';
+    else if(distintos.length > 1) problemaCliente = 'hay más de un cliente en el negocio (' +
+                                    [...new Set(patasCliente.map(nom))].join(', ') + ')';
+    // Lo que hizo la MESA con el cliente: le vendimos o le compramos.
+    const ladoCliente = !patasCliente.length ? ''
+      : patasCliente.every(f => !f.nuestra) ? 'Venta'
+      : patasCliente.every(f =>  f.nuestra) ? 'Compra' : '';
+    if(patasCliente.length && !ladoCliente && !problemaCliente)
+      problemaCliente = 'el cliente aparece comprando y vendiendo en el mismo negocio';
+    return { ...g, utilidad: g.vendidoUSD - g.compradoUSD,
+             cliente: problemaCliente ? (patasCliente.length ? nom(patasCliente[0]) : '') : nom(patasCliente[0]),
+             patasCliente, ladoCliente, problemaCliente };
+  });
 }
 
 function renderRFI(){
@@ -19393,8 +19429,11 @@ function filasBORFI(clientes){
       });
     };
     // NUESTRA compra al mercado y cada venta al cliente.
+    // Cada pata a nombre de SU contraparte (19-nov). La venta iba siempre a
+    // nombre de `n.cliente`, que daba lo mismo mientras el cliente fuera el
+    // comprador; cuando el cliente vende, la venta es a ASB y no a él.
     n.compras.forEach(f=> agrega(f, 'COMPRA', f.nombreCpty || f.cpty));
-    n.ventas.forEach(f=> agrega(f, 'VENTA', n.cliente));
+    n.ventas.forEach(f=> agrega(f, 'VENTA', f.nombreCpty || f.cpty));
   });
   return filas;
 }
@@ -22630,7 +22669,11 @@ function filasPlanillaCOP(){
   const _TOLERANCIA = 1;
 
   const agregar = (o) => {
-    const g = grupoDeOperacion(o.cliente, o.account, o.deceval);
+    let g = grupoDeOperacion(o.cliente, o.account, o.deceval);
+    // EL COMODÍN SOLO LO PIDE QUIEN LO NECESITA (19-nov): hoy, solo RFI. En RVL
+    // y RVI un cliente que no aparece casi siempre es un nombre mal escrito, y
+    // tiene que seguir saliendo como "sin grupo" para que alguien lo vea.
+    if(!g && o.grupoComodin) g = grupoDeOperacion(o.grupoComodin);
     if(g && !g.trader){
       faltan.push(`${g.grupo} — el grupo no está en el presupuesto (falta trader)`); return;
     }
@@ -23028,20 +23071,32 @@ function filasPlanillaCOP(){
       const utilUSD = Number(n.utilidad) || 0;
       if(!utilUSD) return;
       if(!trm){ faltan.push(`${n.cliente || '—'} ${n.security || ''} (RFI) — falta la TRM para pasar la utilidad a pesos`); return; }
-      // Nominal y precio salen de las VENTAS al cliente, que es la pata que
-      // nos interesa. El nominal del blotter viene en MILES (Miguel, 18-sep).
-      const nominal = (n.ventas||[]).reduce((a,f)=>a + (Number(f.amount)||0)*1000, 0);
-      const principal = (n.ventas||[]).reduce((a,f)=>a + (Number(f.principal)||0), 0);
-      const neto = (n.ventas||[]).reduce((a,f)=>a + (Number(f.total)||0), 0);
+      if(n.problemaCliente){
+        faltan.push(`${n.security || ''} (RFI) — ${n.problemaCliente}`); return;
+      }
+      // Nominal y precio salen de la PATA DEL CLIENTE, compre o venda él
+      // (19-nov). Antes salían siempre de las ventas, que cuando el cliente
+      // vende son las de ASB. El nominal del blotter viene en MILES (Miguel, 18-sep).
+      // Un negocio armado a mano, sin `patasCliente`, cae a las ventas, que
+      // era la regla de antes.
+      const patas = n.patasCliente || n.ventas || [];
+      const nominal = patas.reduce((a,f)=>a + (Number(f.amount)||0)*1000, 0);
+      const principal = patas.reduce((a,f)=>a + (Number(f.principal)||0), 0);
+      const neto = patas.reduce((a,f)=>a + (Number(f.total)||0), 0);
       if(!nominal || !principal){
-        faltan.push(`${n.cliente || '—'} ${n.security || ''} (RFI) — el negocio no tiene ventas al cliente`);
+        faltan.push(`${n.cliente || '—'} ${n.security || ''} (RFI) — el negocio no tiene la pata del cliente`);
         return;
       }
       // El precio de un bono es % del par: principal sobre nominal, por cien.
       const precio = principal / nominal * 100;
       const comCOP = utilUSD * RVI_PARTE_EQS * trm;
       agregar({ cliente:n.cliente, account:'', fondo:n.cliente,
-        nemo:n.security, lado:'Venta',
+        // Un cliente de RFI que no está en el maestro va al grupo comodín, a
+        // nombre de SAR; el nombre real queda en `fondo` (Sergio, 19-nov).
+        grupoComodin: 'RFI OTROS CLIENTES',
+        // Lo que hizo la mesa con el cliente: Venta si le vendimos, Compra si
+        // nos vendió él. Antes era 'Venta' fijo.
+        nemo:n.security, lado: n.ladoCliente || 'Venta',
         cantidad:nominal, precio, bruto:principal, comision:comCOP,
         // El giro queda en DÓLARES, igual que la cantidad y el precio de esta
         // fila. La comisión es la única en pesos, porque es la que alimenta
@@ -41599,7 +41654,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-18 15:30 UTC · v389';
+const BUILD_ID = '2026-11-19 22:50 UTC · v390';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
