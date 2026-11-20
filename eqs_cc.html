@@ -25873,6 +25873,16 @@ function parsearAllocCustodio(texto){
     const i = cabecera.findIndex(h => re.test(norm(h)));
     if(i >= 0) mapa[clave] = i;
   });
+  // EL TICKER, POR PRIORIDAD Y NO POR ORDEN DE COLUMNA (Sergio, 20-nov).
+  // Protección pegó un cuadro con el NOMBRE del ETF en una columna antes de
+  // la del ticker, y el app se quedó con la primera que calzaba: guardó
+  // "ISHARES" y "SPDR" en vez de ACWI y ACWD, y el Dashboard las dejó como
+  // pendientes. Una columna que diga "Ticker" manda; después Symbol, Nemo o
+  // Especie; y solo si no hay ninguna, Security.
+  for(const re of [/ticker/, /symbol|nemo|especie/, /security/]){
+    const i = cabecera.findIndex(h => re.test(norm(h)));
+    if(i >= 0){ mapa.ticker = i; break; }
+  }
 
   const faltan = ['portafolio','ticker','qty','precio'].filter(k => mapa[k] === undefined);
   if(faltan.length) throw new Error(
@@ -25944,6 +25954,23 @@ function armarAllocCustodio(cliente, filas){
   const cfg = clientesRVI[cliente] || {};
   const avisos = [], lineas = [], notas = [];
   const lim = t => String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+
+  // SI EL TICKER NO CRUZA CON EMSX, SE BUSCA POR ISIN (Sergio, 20-nov).
+  // El ISIN del cuadro siempre viene bien; el ticker, no siempre (el 20-nov
+  // llegó "ISHARES" por ACWI). Si hay una línea de EMSX con ese ISIN y lado,
+  // la fila toma SU ticker: así cruza, y el histórico guarda el de verdad.
+  const _emsx = (typeof emsxData !== 'undefined' ? emsxData : []);
+  filas = (filas||[]).map(f=>{
+    const lad = String(f.lado||'').toUpperCase();
+    const mismoLado = r => String(r.lado||'').toUpperCase() === lad;
+    if(_emsx.some(r => tickerLimpioRVI(r.especie) === f.ticker && mismoLado(r))) return f;
+    const porIsin = f.isin ? _emsx.find(r => String(r.isin||'').toUpperCase() === f.isin && mismoLado(r)) : null;
+    if(porIsin){
+      notas.push(`${f.tickerCrudo || f.ticker}: no es un ticker de EMSX; por ISIN (${f.isin}) es ${tickerLimpioRVI(porIsin.especie)}.`);
+      return { ...f, ticker: tickerLimpioRVI(porIsin.especie) };
+    }
+    return f;
+  });
 
   // LO TILDADO MANDA (Sergio, 12-nov)
   // -------------------------------------------------------------------
@@ -26086,8 +26113,9 @@ function armarAllocCustodio(cliente, filas){
                    `(${_lns.map(r=>Number(r.qty).toLocaleString()).join(' + ')} = ${_qMulti.toLocaleString()}).`);
       }
     }else if(!ln){
-      avisos.push(`${g.ticker} ${g.lado}: no encontré línea de EMSX. ` +
-                  'Se usa el precio del cliente, o sea margen cero.');
+      avisos.push(`${g.ticker} ${g.lado}: NO ESTÁ EN EMSX, ni por ticker ni por ISIN. ` +
+                  'Revisa antes de guardar: así no cruza con el Dashboard ni con el COR. ' +
+                  'Si sigues, se usa el precio del cliente (margen cero).');
     }else if(qEmsx && Math.abs(qEmsx - g.qty) > 0.5){
       // Si hay OTRAS lineas del mismo ticker y lado, se nombran: casi
       // siempre la diferencia se explica porque la orden se partio.
@@ -41703,7 +41731,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-20 16:40 UTC · v391';
+const BUILD_ID = '2026-11-20 18:40 UTC · v392';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
