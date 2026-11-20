@@ -6774,6 +6774,52 @@ async function generarExcelAndes(eqLotes, fxOps){
       if((rr-eqIni)%2===1){ cols.forEach(col=> ws.getCell(`${col}${rr}`).fill = {type:'pattern',pattern:'solid',fgColor:{argb:C.grayLight}}); }
     }
     r += 2;
+
+    // DETALLE FOLIO A FOLIO (Sergio, 20-nov): debajo de la línea consolidada,
+    // cada folio de bolsa con su cantidad y su precio. Informativo: la línea
+    // de arriba sigue siendo la que liquida, y la suma de estos folios es
+    // exactamente su cantidad y su Gross.
+    const _hayFolios = eqLotes.some(l => l.detalle.some(d => (d.folios||[]).length));
+    if(_hayFolios){
+      ws.mergeCells(`B${r}:L${r}`);
+      const tf = ws.getCell(`B${r}`);
+      tf.value = 'DETALLE FOLIO A FOLIO';
+      tf.font = { name:'Calibri', size:9.5, bold:true, color:{argb:C.navy} };
+      ws.getRow(r).height = 16; r++;
+      headerFila(['Trade Date','Settle Date','Side','Symbol','Folio','Quantity','Price','Gross'],
+                 ['center','center','left','left','left','right','right','right']);
+      const fIni = r;
+      eqLotes.forEach(lote=>{
+        const tdTxt = fmtFechaCorta((lote.tradeDate instanceof Date ? lote.tradeDate.toISOString().slice(0,10) : lote.tradeDate));
+        const sdTxt = fmtFechaCorta((lote.settleDate instanceof Date ? lote.settleDate.toISOString().slice(0,10) : lote.settleDate));
+        lote.detalle.forEach(d=>{
+          (d.folios||[]).forEach(fo=>{
+            ws.getCell(`B${r}`).value = tdTxt;
+            ws.getCell(`C${r}`).value = sdTxt;
+            ws.getCell(`D${r}`).value = lote.ladoAccion === 'Compra' ? 'Buy' : 'Sell';
+            ws.getCell(`E${r}`).value = d.security;
+            ws.getCell(`F${r}`).value = String(fo.folio);
+            ws.getCell(`G${r}`).value = fo.qty;
+            ws.getCell(`H${r}`).value = fo.precio;
+            ws.getCell(`I${r}`).value = redondear(fo.qty * fo.precio, 2);
+            r++;
+          });
+        });
+      });
+      for(let rr=fIni; rr<r; rr++){
+        ['B','C'].forEach(col=> ws.getCell(`${col}${rr}`).alignment = {horizontal:'center'});
+        ws.getCell(`G${rr}`).numFmt = '#,##0';
+        ws.getCell(`H${rr}`).numFmt = '"$"#,##0.00';
+        ws.getCell(`I${rr}`).numFmt = '"$"#,##0.00';
+        ['B','C','D','E','F','G','H','I'].forEach(col=>{
+          ws.getCell(`${col}${rr}`).font = { name:'Calibri', size:9.5, color:{argb:C.textDark} };
+          ws.getCell(`${col}${rr}`).border = { bottom: {style:'hair', color:{argb:C.cardBorder}} };
+          if(['G','H','I'].includes(col)) ws.getCell(`${col}${rr}`).alignment = {horizontal:'right'};
+        });
+        ws.getRow(rr).height = 16;
+      }
+      r += 2;
+    }
   }
 
   // ================= BLOQUE 2: FX =================
@@ -29431,9 +29477,11 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
     const ladoAccion = f.lado; // 'Compra' o 'Venta'
     if(!porLado[ladoAccion]) porLado[ladoAccion] = {};
     const esp = f.especie;
-    if(!porLado[ladoAccion][esp]) porLado[ladoAccion][esp] = {qty:0, montoPx:0};
+    if(!porLado[ladoAccion][esp]) porLado[ladoAccion][esp] = {qty:0, montoPx:0, folios:[]};
     porLado[ladoAccion][esp].qty += f.cantidad;
     porLado[ladoAccion][esp].montoPx += f.cantidad * f.precio;
+    // Los folios viajan aparte, para el detalle folio a folio (20-nov).
+    porLado[ladoAccion][esp].folios.push({ folio: f.folio || f.tcn || f.id, qty: f.cantidad, precio: f.precio });
   });
   const eqLotes = Object.keys(porLado).map(ladoAccion=>({
     ladoAccion,
@@ -29443,6 +29491,7 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
       security: esp,
       qty: porLado[ladoAccion][esp].qty,
       precio: porLado[ladoAccion][esp].montoPx / porLado[ladoAccion][esp].qty,
+      folios: porLado[ladoAccion][esp].folios,
     })),
   }));
 
@@ -41654,7 +41703,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-19 22:50 UTC · v390';
+const BUILD_ID = '2026-11-20 16:40 UTC · v391';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
