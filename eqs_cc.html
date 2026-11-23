@@ -15680,8 +15680,8 @@ function procesarFidessa(){
   // mercado, así que no pasa por nuestros folios. Se deja en la pantalla de
   // órdenes porque sí entra al reporte interno de comisiones, pero no hay nada
   // que conciliar. Confirmado por Sergio.
-  const sinFolios = filasRecon.filter(f=> f.sumaFolios === 0 && f.qtyDone > 0);
-  const diferencias = filasRecon.filter(f=> !f.cuadra && f.sumaFolios > 0);
+  let sinFolios = filasRecon.filter(f=> f.sumaFolios === 0 && f.qtyDone > 0);
+  let diferencias = filasRecon.filter(f=> !f.cuadra && f.sumaFolios > 0);
 
   // ---- PROTECCIÓN directo: un folio por fracción; portafolio = Notes ----
   // ORD_NUM y trader se recuperan de EMSX por (especie, account=portafolio).
@@ -15723,6 +15723,44 @@ function procesarFidessa(){
       marca:'pantalla',
     };
   });
+  // ---- PROTECCIÓN: la parte que ejecutó el ROBOT (VWAP) — 23-nov ----
+  // EL CASO: OBL-RETIRO vendió ECOPETROL 1.788.242 = 288.242 por MOC (folios
+  // con su Notes, bajo la orden) + 1.500.000 por el robot VWAP (folios SIN
+  // Notes, bajo la orden hija del robot, que la reasignación de POID pegó a la
+  // orden de PROTECCIÓN). El reporte de PROTECCIÓN solo toma los folios de su
+  // reparto ('proteccion-directo'): la parte del robot se habría quedado por
+  // fuera — y la alerta de cuadre contaba solo esa parte.
+  // Se convierte al reparto de PROTECCIÓN SOLO el folio que: ya quedó pegado
+  // a una orden real de PROTECCIÓN, esa orden trae un portafolio conocido en
+  // su Notes, y su TCN no está ya en el reparto (nada se cuenta dos veces).
+  {
+    const _tcnProt = new Set(foliosProtDirectos.map(f=> String(f.folio) + '|' + f.especie));
+    for(let i = 0; i < nuevosFolios.length; i++){
+      const f = nuevosFolios[i];
+      if(f.cliente !== 'PROTECCION' || f.origen === 'huerfano' || !f.ordenAsignada) continue;
+      const t = _fidessaTradesRaw[String(f.ordenAsignada)];
+      if(!t || normalizarGrupo(t.grupo) !== 'PROTECCION') continue;
+      const port = String(t.notes || '').trim();
+      if(!PROTECCION_SUBCUENTAS[port]) continue;
+      if(_tcnProt.has(String(f.folio) + '|' + f.especie)) continue;
+      const em = emsxProt[f.especie + '|' + port] || null;
+      nuevosFolios[i] = { ...f, origen:'proteccion-directo', viaRobot:true,
+        portafolio: port, lado: t.lado, ladoIncierto: false,
+        ordNum: (em ? em.instructions : '') || f.ordNum || '',
+        trader: (em && inicialesTrader(em.trader)) || PROTECCION_TRADER_DEFAULT };
+    }
+    // El cuadre: a una orden de PROTECCIÓN que ya tiene folios contados por
+    // Parent Order ID se le suman los de su reparto. Solo a esas: las que no
+    // tienen ninguno siguen como siempre (no se abre una alarma nueva).
+    filasRecon.forEach(r=>{
+      if(normalizarGrupo(r.grupo) !== 'PROTECCION' || !(r.sumaFolios > 0)) return;
+      const extra = foliosProtDirectos.filter(f=> String(f.ordenAsignada) === r.folioOrden)
+                                      .reduce((a,f)=> a + f.cantidad, 0);
+      if(extra){ r.sumaFolios += extra; r.cuadra = r.sumaFolios === r.qtyDone; }
+    });
+    sinFolios = filasRecon.filter(f=> f.sumaFolios === 0 && f.qtyDone > 0);
+    diferencias = filasRecon.filter(f=> !f.cuadra && f.sumaFolios > 0);
+  }
   foliosFidessa = [...foliosProtDirectos, ...nuevosFolios];
 
   // ---- COLFONDOS: NO se adivinan folios por especie ----
@@ -41787,7 +41825,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-23 20:30 UTC · v394';
+const BUILD_ID = '2026-11-23 21:30 UTC · v395';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
