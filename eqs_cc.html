@@ -7799,7 +7799,7 @@ const PROTECCION_SUBCUENTAS = {"CES-LP":{"deceval":1432,"idOrion":"6028","tipoDo
 // Traders de PROTECCION (iniciales -> nombre). El "Originating Trader" de
 // Bloomberg (columna que en el archivo credicorp va como TRADER). ASGA =
 // Ana Sofia Giraldo Alvarez es el default; cada orden puede tener otro.
-const PROTECCION_TRADERS = {"ASGA":"ANA SOFIA GIRALDO ALVAREZ","MAZ":"MARIANA AGUDELO ZULUAGA","AFCM":"ANDRES FELIPE CASTRO MEJIA","DAV":"DANIEL ARROYAVE VILLA","JEO":"JUAN ESTEBAN ORTEGA"};
+const PROTECCION_TRADERS = {"ASGA":"ANA SOFIA GIRALDO ALVAREZ","MAZ":"MARIANA AGUDELO ZULUAGA","AFCM":"ANDRES FELIPE CASTRO MEJIA","DAV":"DANIEL ARROYAVE VILLA","JEO":"JUAN ESTEBAN ORTEGA","JMLH":"JUAN MANUEL LOZADA HERNANDEZ"};
 const PROTECCION_TRADER_DEFAULT = 'ASGA';
 
 // EMSX manda el Originating Trader con NOMBRE COMPLETO ("ANA SOFIA GIRALDO
@@ -41731,7 +41731,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-20 18:40 UTC · v392';
+const BUILD_ID = '2026-11-23 19:35 UTC · v393';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
