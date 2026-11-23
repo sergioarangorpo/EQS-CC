@@ -12346,6 +12346,9 @@ function recalcularNegociacionFX(){
           ${pygTotal ? fmtMoney(pygTotal) : '—'}</div>
       </div>
     </div>`;
+  // El cuadro de la confirmación, listo para copiar (23-nov).
+  _cuadroFXCruce = _cruceCuadrosFX();
+  cuerpo.innerHTML += _cuadrosFXHtml(_cuadroFXCruce, 'cruce');
 
   // El botón de registrar solo se habilita con el tipo y las tasas puestas.
   const _bReg = document.getElementById('negRegistrar');
@@ -12481,7 +12484,9 @@ async function registrarCruceDesdeRVL(){
     alert(`${hechos.length} operación(es) registrada(s).\n\nEstas NO:\n· ` + fallidos.join('\n· '));
     return;
   }
+  const _csFin = _cruceCuadrosFX();
   document.getElementById('modalNegociarFX').style.display = 'none';
+  _mostrarCuadroFXFlotante(_csFin);
   if(typeof avisoExito === 'function')
     avisoExito(`${hechos.length} operación(es) de FX registradas`,
                `${p.cliente}${p.trader?' · '+p.trader:''} · ${tipo} · Excel generado`);
@@ -12510,7 +12515,9 @@ function aplicarNegociacionFX(){
     b.tasaCliente = separadas ? (parseNum((document.getElementById('negCli'+i)||{}).value) || cli0) : cli0;
   });
   if(p.bloques.some(b=>!(b.tasaCliente > 0))){ alert('Falta la tasa final de algún lado.'); return; }
+  const _csFin = _cruceCuadrosFX();
   document.getElementById('modalNegociarFX').style.display = 'none';
+  _mostrarCuadroFXFlotante(_csFin);
   p.idx = 0;
   irACalculadoraCruce();
 }
@@ -13091,6 +13098,49 @@ function _loteFXCuadrosFX(){
   return Object.values(g).sort((a,b)=> a.cliente.localeCompare(b.cliente) || a.trader.localeCompare(b.trader));
 }
 
+// CONSOLIDAR Y CERRAR FX (un cliente), 23-nov. Mismos números que se
+// registran: MT = neto COP del cruce (bruto ± comisión), USD = MT / tasa del
+// cliente de ese lado, SD con el tipo elegido (SPOT / NEXT DAY). Sin tasa
+// del cliente no hay cuadro: nada de ceros.
+let _cuadroFXCruce = null;
+function _cruceCuadrosFX(){
+  const p = _cruceFXPendiente;
+  if(!p || !p.bloques || !p.bloques.length) return [];
+  const tipo = (document.getElementById('negTipo') || {}).value || '';
+  const trader = (document.getElementById('negTrader') || {}).value || p.trader || '';
+  const c = { cliente:p.cliente, trader, SELL:null, BUY:null };
+  let alguno = false;
+  p.bloques.forEach((b,i)=>{
+    const tasa = _cruceTasasDeLado(i).cli;
+    if(!(tasa > 0)) return;
+    const mt = redondear(Number(b.netoCOP) || 0, 2);
+    const f = _loteFXFechas(b, tipo);
+    c[b.ladoAccion === 'Compra' ? 'BUY' : 'SELL'] = {
+      tasa, mt, usd: redondear(mt / tasa, 2),
+      sd: _fxDiasHabiles(f.tradeDateObj, f.settleDateObj) || 'T+2' };
+    alguno = true;
+  });
+  return alguno ? [c] : [];
+}
+
+// Al registrar, el modal se cierra: el cuadro queda flotando hasta que uno
+// lo cierre, para copiarlo después (igual que el lote lo deja al final).
+function _mostrarCuadroFXFlotante(cs){
+  const prev = document.getElementById('cuadroFXFlotante');
+  if(prev) prev.remove();
+  if(!cs || !cs.length) return;
+  _cuadroFXCruce = cs;
+  const div = document.createElement('div');
+  div.id = 'cuadroFXFlotante';
+  div.style.cssText = 'position:fixed;left:24px;bottom:24px;z-index:9998;max-width:480px;' +
+    'background:var(--bg-1,#12141a);border:1px solid var(--border,#232938);border-radius:10px;' +
+    'padding:10px 12px;box-shadow:0 10px 30px rgba(0,0,0,.45);';
+  div.innerHTML = `<div style="text-align:right;margin-bottom:-18px;">
+      <button class="btn small ghost" onclick="document.getElementById('cuadroFXFlotante').remove()">✕</button></div>`
+    + _cuadrosFXHtml(cs, 'cruce');
+  document.body.appendChild(div);
+}
+
 // Las cuatro filas, ya como texto: una sola fuente para la pantalla, la
 // tabla que se copia y el respaldo con tabuladores.
 function _cuadroFXFilas(c){
@@ -13115,8 +13165,14 @@ function cuadroFXBloomberg(c){
 }
 
 function _loteFXCuadrosHtml(){
-  const cs = _loteFXCuadrosFX();
-  if(!cs.length) return '';
+  return _cuadrosFXHtml(_loteFXCuadrosFX(), 'lote');
+}
+
+// EL MISMO CUADRO EN TODAS LAS PANTALLAS (Sergio, 23-nov): "Debe quedar en
+// todos los cuadros, en particular el más importante es Consolidar y Cerrar
+// FX". Una sola pinta; `fuente` le dice al botón de dónde sacar los números.
+function _cuadrosFXHtml(cs, fuente){
+  if(!cs || !cs.length) return '';
   const td = 'padding:4px 12px;border-top:1px solid var(--border,#232938);';
   return `<div style="margin-top:14px;">
     <div style="font-size:10.5px;font-weight:700;opacity:.6;letter-spacing:.3px;margin-bottom:6px;">
@@ -13127,7 +13183,7 @@ function _loteFXCuadrosHtml(){
                   border:1px solid var(--border,#232938);border-radius:8px;padding:10px 12px;">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
           <b>${_esc(c.cliente)}</b>${c.trader ? `<span class="field-note">${_esc(c.trader)}</span>` : ''}
-          <button class="btn small" style="margin-left:auto;" onclick="copiarCuadroFX(${i}, this)">💬 Copiar para Bloomberg</button>
+          <button class="btn small" style="margin-left:auto;" onclick="copiarCuadroFX(${i}, this${fuente && fuente !== 'lote' ? `, '${fuente}'` : ''})">💬 Copiar para Bloomberg</button>
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums;">
           <tr style="font-size:10.5px;opacity:.7;">
@@ -13143,8 +13199,8 @@ function _loteFXCuadrosHtml(){
     </div></div>`;
 }
 
-async function copiarCuadroFX(i, btn){
-  const c = _loteFXCuadrosFX()[i];
+async function copiarCuadroFX(i, btn, fuente){
+  const c = (fuente === 'cruce' ? (_cuadroFXCruce || []) : _loteFXCuadrosFX())[i];
   if(!c){ alert('No hay cuadro para copiar: falta la tasa final del cliente.'); return; }
   const k = cuadroFXBloomberg(c);
   let como = 'cuadro';
@@ -41731,7 +41787,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-23 19:35 UTC · v393';
+const BUILD_ID = '2026-11-23 20:30 UTC · v394';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
