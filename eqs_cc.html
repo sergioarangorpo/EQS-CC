@@ -15953,6 +15953,117 @@ function _hoyISO(){
 
 // Modal de previsualización. Devuelve una promesa: true = confirmar, false = cancelar.
 // Genérico a propósito, para que RVI y FX lo reusen sin duplicar UI.
+// ===================================================================
+// COLFONDOS: UNIFICAR LÍNEAS AL GENERAR (Sergio, 24-nov)
+// -------------------------------------------------------------------
+// EL CASO: compró 178.410 ÉXITO, pidió reporte; salió otro negocio de
+// 312.280 y pidió UN reporte con las dos líneas unificadas. Lo normal en
+// COLFONDOS es reportar por momentos, línea por línea (regla del 17-sep),
+// así que esto es OPCIONAL y se pregunta solo al dar Generar:
+//   · solo se unen las líneas de MISMA especie + lado + portafolio;
+//   · lo que no tiene pareja sale igual que siempre;
+//   · cantidad, bruto, comisión, IVA y neto son SUMAS EXACTAS de las
+//     líneas; precio y Com % salen de dividir (tarifas distintas no
+//     frenan: queda la efectiva);
+//   · el Detalle folio a folio NO cambia: cada folio sigue repartido
+//     dentro de SU orden.
+// Decir que no deja todo idéntico a como estaba.
+// ===================================================================
+function _colfClaveUnif(o){
+  const port = (o.portafolio && (o.portafolio.id != null ? o.portafolio.id : o.portafolio.nombre)) || String(o.portafolio || '');
+  return String(port) + '|' + String(nemoCanonico(o.especie) || o.especie || '') + '|' + String(o.lado || '');
+}
+// Grupos que SÍ se pueden unir: 2+ líneas de órdenes distintas con la misma clave.
+function _colfGruposUnificables(loteOps){
+  const g = {};
+  (loteOps || []).forEach(o=>{ (g[_colfClaveUnif(o)] = g[_colfClaveUnif(o)] || []).push(o); });
+  return Object.keys(g).filter(k => new Set(g[k].map(o=>String(o.parentOrderId||''))).size > 1)
+    .map(k => ({ clave:k, filas:g[k] }));
+}
+// Las líneas como las verá el cliente: los grupos unidos en UNA, el resto igual
+// y en su mismo orden. No toca `loteOps`: devuelve una lista nueva.
+function _colfUnificarOps(loteOps, grupos){
+  const claves = new Set((grupos || []).map(x=>x.clave));
+  const hechas = {};
+  const out = [];
+  (loteOps || []).forEach(o=>{
+    const k = _colfClaveUnif(o);
+    if(!claves.has(k)){ out.push(o); return; }
+    if(hechas[k]){
+      const u = hechas[k];
+      u.cantidad += Number(o.cantidad) || 0;
+      u._bruto   += (Number(o.cantidad) || 0) * (Number(o.precio) || 0);
+      u.comMonto += Number(o.comMonto) || 0;
+      u.ivaMonto += Number(o.ivaMonto) || 0;
+      u.montoNeto += Number(o.montoNeto) || 0;
+      u.ordenesUnidas.push(String(o.parentOrderId || ''));
+      u.precio = u.cantidad ? u._bruto / u.cantidad : 0;
+      u.comPct = u._bruto ? u.comMonto / u._bruto : 0;
+      return;
+    }
+    const u = { ...o, unificada:true, ordenesUnidas:[String(o.parentOrderId || '')],
+                _bruto:(Number(o.cantidad) || 0) * (Number(o.precio) || 0),
+                cantidad:Number(o.cantidad) || 0, comMonto:Number(o.comMonto) || 0,
+                ivaMonto:Number(o.ivaMonto) || 0, montoNeto:Number(o.montoNeto) || 0 };
+    hechas[k] = u; out.push(u);
+  });
+  return out;
+}
+// La pregunta. El botón que queda a la mano es el de siempre: NO unificar.
+function _preguntarUnificarColfondos(grupos){
+  return new Promise(resolve=>{
+    const prev = document.getElementById('modalUnificar');
+    if(prev) prev.remove();
+    const div = document.createElement('div');
+    div.id = 'modalUnificar';
+    div.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:10000;padding:24px;';
+    const lineas = grupos.map(g=>{
+      const o = g.filas[0];
+      const port = (o.portafolio && o.portafolio.nombre) || String(o.portafolio || '');
+      const total = g.filas.reduce((a,x)=>a + (Number(x.cantidad) || 0), 0);
+      return `<div style="margin:6px 0;"><b>${_esc(nemoCanonico(o.especie) || o.especie)}</b> · ${_esc(o.lado)} · ${_esc(port)}<br>
+        <span class="field-note">${g.filas.map(x=>fmtInt(x.cantidad)).join(' + ')} = <b>${fmtInt(total)}</b></span></div>`;
+    }).join('');
+    div.innerHTML = `
+      <div style="background:var(--bg-1,#12141a);border:1px solid var(--border,#2a2f3a);border-radius:10px;max-width:560px;padding:18px 20px;">
+        <div style="font-weight:700;font-size:14px;">¿Unificar líneas en el reporte?</div>
+        <div class="field-note" style="margin-top:6px;">Hay líneas de la misma especie, lado y portafolio. Lo normal es reportarlas por separado.</div>
+        <div style="margin-top:10px;font-size:12.5px;">${lineas}</div>
+        <div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">
+          <button class="btn small ghost" id="btnUnifSi">Unificar en una sola línea</button>
+          <button class="btn small" id="btnUnifNo">Línea por línea (como siempre)</button>
+        </div>
+      </div>`;
+    document.body.appendChild(div);
+    const cerrar = v => { div.remove(); resolve(v); };
+    div.querySelector('#btnUnifSi').onclick = ()=>cerrar(true);
+    div.querySelector('#btnUnifNo').onclick = ()=>cerrar(false);
+  });
+}
+// El registro de una línea unificada REEMPLAZA lo que ya hubiera hoy de esa
+// especie + lado + portafolio (ej. las 178.410 reportadas antes): si no, el
+// insert se ignora por duplicado y el dashboard se queda con la cifra vieja.
+// Si no se puede borrar, se avisa y NO se toca nada más.
+async function _colfReemplazarRegistroUnificado(cliente, unificadas){
+  const nombre = getClienteDB(cliente).nombre;
+  const hoy = _hoyISO();
+  for(const o of unificadas){
+    const port = (o.portafolio && o.portafolio.nombre) ? o.portafolio.nombre : String(o.portafolio || '');
+    const base = (nemoCanonico(o.especie) || o.especie || '') + '|' + (o.lado || '') + (port ? '#' + port : '');
+    const esDeEsta = r => r.modulo === 'RVL' && r.cliente === nombre && String(r.fecha).slice(0,10) === hoy &&
+      (String(r.parent_order_id) === base || String(r.parent_order_id).indexOf(base + '·') === 0);
+    const viejas = (_reportesGenerados || []).filter(esDeEsta);
+    if(!viejas.length) continue;
+    for(const r of viejas){
+      const res = await fetch(`${SUPA_URL}/rest/v1/reportes_generados?fecha=eq.${hoy}&modulo=eq.RVL` +
+        `&cliente=eq.${encodeURIComponent(nombre)}&parent_order_id=eq.${encodeURIComponent(String(r.parent_order_id))}`,
+        { method:'DELETE', headers:{ 'apikey':SUPA_KEY, 'Authorization':`Bearer ${SUPA_KEY}` } });
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+    }
+    _reportesGenerados = (_reportesGenerados || []).filter(r => !esDeEsta(r));
+  }
+}
+
 function previsualizarReporte({titulo, archivo, columnas, filas, totales}){
   return new Promise(resolve=>{
     const prev = document.getElementById('modalPreview');
@@ -29468,13 +29579,20 @@ async function generarReporte(){
     // es lo que mantiene separadas las dos órdenes al mismo portafolio
     // (Sergio, 17-sep).
     const version = proximaVersion(getClienteDB(cliente).nombre, 'RVL');
+    // UNIFICAR (24-nov): se pregunta SOLO si hay algo que unir. `opsVista` es
+    // lo que ve el cliente en Operaciones y lo que se registra; `loteOps`
+    // sigue orden por orden para el Detalle, el freno y el COR.
+    const _gruposUnif = _colfGruposUnificables(loteOps);
+    const _unificar = _gruposUnif.length ? await _preguntarUnificarColfondos(_gruposUnif) : false;
+    const opsVista = _unificar ? _colfUnificarOps(loteOps, _gruposUnif) : loteOps;
     const ok = await previsualizarReporte({
       titulo: `${getClienteDB(cliente).nombre} — ${etiquetaVersion(version)}`,
       archivo: `Operaciones_COLFONDOS_${(fechaReg||'').replace(/-/g,'')}${sufijoVersion(version)?' '+sufijoVersion(version):''}.xlsx  +  Detalle_operaciones`,
       columnas: ['Portafolio','Especie','Lado','Cantidad','Precio','Com %'],
-      filas: loteOps.map(o=>[o.portafolio && o.portafolio.nombre ? o.portafolio.nombre : String(o.portafolio||''),
+      filas: opsVista.map(o=>[(o.portafolio && o.portafolio.nombre ? o.portafolio.nombre : String(o.portafolio||'')) +
+                               (o.unificada ? ` <span class="field-note">· ${o.ordenesUnidas.length} líneas unificadas</span>` : ''),
                              o.especie, o.lado, fmtInt(o.cantidad), fmtRate(o.precio), (o.comPct*100).toFixed(4)+'%']),
-      totales: `${loteOps.length} portafolio(s) · ${fmtInt(loteOps.reduce((s,o)=>s+o.cantidad,0))} acciones · ${loteDet.length} folio(s) en el Detalle`,
+      totales: `${opsVista.length} línea(s) · ${fmtInt(opsVista.reduce((s,o)=>s+o.cantidad,0))} acciones · ${loteDet.length} folio(s) en el Detalle`,
     });
     if(!ok) return;
     // El mismo freno: lo que va al Detalle es el reparto de `loteDet` entre
@@ -29482,9 +29600,22 @@ async function generarReporte(){
     if(_frenoCuadreFolios('COLFONDOS', loteDet,
          repartirFoliosColfondos(loteOps, loteDet).map(({folio:f, cantidad})=>({ ...f, cantidad })))) return;
     window._sufijoReporte = sufijoVersion(version);
-    await generarReporteColfondos(cliente, loteOps, loteDet);
+    const _clavesUnif = _unificar ? new Set(_gruposUnif.map(g=>g.clave)) : null;
+    await generarReporteColfondos(cliente, loteOps, loteDet, _clavesUnif);
     window._sufijoReporte = '';
-    const nuevas = await registrarLoteRVLConCOR(cliente, loteOps, version, loteDet);
+    let nuevas;
+    if(_unificar){
+      // El registro lleva lo que vio el cliente (la línea unida) y reemplaza
+      // lo ya registrado hoy de esa línea; el COR sigue folio a folio.
+      try{ await _colfReemplazarRegistroUnificado(cliente, opsVista.filter(o=>o.unificada)); }
+      catch(e){ alert('El reporte se generó, pero NO se pudo reemplazar el registro anterior de la línea unificada (' +
+                      e.message + ').\nEl módulo Reportes puede quedar con la cifra vieja: avísale a Claude.'); }
+      nuevas = await registrarLoteRVL(cliente, opsVista, version);
+      try{ await guardarCorLineasDeReporte('RVL', cliente, loteDet || [], version, loteOps); }
+      catch(e){ console.warn('COR:', e.message); }
+    }else{
+      nuevas = await registrarLoteRVLConCOR(cliente, loteOps, version, loteDet);
+    }
     avisoLoteGenerado(cliente, loteDet, version, nuevas, 'archivos Operaciones + Detalle');
     renderFidessaTradesPanel();
   } else if(formato === 'btg_am'){
@@ -31950,7 +32081,7 @@ async function generarReporteSkandia(cliente, loteDet){
   }
 }
 
-async function generarReporteColfondos(cliente, loteOps, loteDet){
+async function generarReporteColfondos(cliente, loteOps, loteDet, clavesUnif){
   if(typeof ExcelJS === 'undefined'){ alert('No se pudo cargar la librería de Excel (ExcelJS). Revisa tu conexión e intenta de nuevo.'); return; }
   if(loteOps.length===0) return;
 
@@ -32078,7 +32209,11 @@ async function generarReporteColfondos(cliente, loteOps, loteDet){
     // especie se reportan por separado. Agrupar solo por portafolio las sumaba
     // en una línea —las de 56.000 y 14.700 salían como 70.700 al promedio de
     // todo— aunque el resumen de abajo ya las mostrara bien (Sergio, 17-sep).
-    const _oid = String(op.parentOrderId || f.parentOrderId || '');
+    // UNIFICAR (24-nov): si Sergio lo pidió al generar, las órdenes de esa
+    // especie + lado + portafolio se acumulan en UNA línea. El Detalle de
+    // arriba no cambia.
+    const _unir = !!(clavesUnif && clavesUnif.has(_colfClaveUnif(op)));
+    const _oid = _unir ? '' : String(op.parentOrderId || f.parentOrderId || '');
     const k = _oid + '|' + op.portafolio.id + '|' + f.especie + '|' + f.lado;
     const a = acum.get(k) || { portafolio:op.portafolio, especie:f.especie, lado:f.lado,
                                cantidad:0, bruto:0, com:0, iva:0, neto:0,
@@ -41829,7 +41964,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-24 17:15 UTC · v396';
+const BUILD_ID = '2026-11-24 18:10 UTC · v397';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
