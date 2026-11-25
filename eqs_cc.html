@@ -7962,6 +7962,8 @@ const ALIAS_GRUPO = {
   // su venta de GRUPOARGOS quedó bajo un cliente que no existía y no se
   // podía generar (Sergio, 24-nov).
   DAVIVIENDA: 'FIDUDAVIVIENDA',
+  // SEGUROS BOLIVAR llega en Fidessa con el book BOLIVAR_CO (Sergio, 25-nov).
+  BOLIVAR_CO: 'SEGUROS BOLIVAR',
   'FIDU SURA': 'FIDUCIARIA SURA',
   VALORES_AM: 'FIDUCIARIA BANCOLOMBIA',
   ITAU: 'ITAU ASSET MANAGEMENT',
@@ -15765,7 +15767,7 @@ function procesarFidessa(){
     sinFolios = filasRecon.filter(f=> f.sumaFolios === 0 && f.qtyDone > 0);
     diferencias = filasRecon.filter(f=> !f.cuadra && f.sumaFolios > 0);
   }
-  foliosFidessa = [...foliosProtDirectos, ...nuevosFolios];
+  foliosFidessa = _protAplicarRepartoManual([...foliosProtDirectos, ...nuevosFolios]);
 
   // ---- COLFONDOS: NO se adivinan folios por especie ----
   // Aquí había un bloque que le atribuía a COLFONDOS cualquier folio huérfano
@@ -21098,6 +21100,7 @@ function _dashDatos(){
   // ---------- RVL ----------
   // Fidessa Trades manda; EMSX aporta lo que todavía no llegó a Fidessa.
   const vistos = new Set();
+  const vistosQtyPx = new Set();     // cliente|cantidad|precio, para la línea de EMSX que llega sin ticker
   Object.keys(_fidessaTradesRaw||{}).forEach(oid=>{
     const t = _fidessaTradesRaw[oid];
     // Los brokers y mesas que no llevan reporte SÍ generan comisión y volumen:
@@ -21107,19 +21110,29 @@ function _dashDatos(){
     const q = Number(t.qtyDone)||0, px = Number(t.avgPx)||0;
     if(!q || !px) return;
     vistos.add(cli + '|' + nemoCanonico(t.security,'fidessa') + '|' + t.lado);
+    vistosQtyPx.add(cli + '|' + q + '|' + px.toFixed(2));
     const bruto = q * px;
     const tarifa = _dashTarifaCierta(cli);
     sumar('RVL', cli, bruto, tarifa ? bruto*tarifa : 0, tarifa != null);
   });
   // Lo de EMSX que NO está en Trades: misma clave cliente+especie+lado.
   (_emsxCBCache||[]).forEach(row=>{
-    const cli = _dashClave(row.originate_trader_firm || row.account || '');
+    // UNA LÍNEA DE EMSX PUEDE LLEGAR INCOMPLETA (Sergio, 25-nov): sin firma,
+    // sin ticker y sin lado, solo con el Account. El 25-nov la de VOL-BCOLO
+    // salió en el Dashboard como si VOL-BCOLO fuera un cliente. Si no hay
+    // firma y el Account es una sub-cuenta de PROTECCIÓN, es PROTECCIÓN.
+    const _accProt = !row.originate_trader_firm && typeof PROTECCION_SUBCUENTAS !== 'undefined' &&
+                     !!PROTECCION_SUBCUENTAS[String(row.account || '').trim()];
+    const cli = _accProt ? 'PROTECCION' : _dashClave(row.originate_trader_firm || row.account || '');
     if(!cli) return;
     const esp = nemoCanonico(row.ticker, 'emsx');
     const lado = String(row.side||'').toUpperCase().startsWith('B') ? 'Compra' : 'Venta';
     if(vistos.has(cli + '|' + esp + '|' + lado)) return;    // ya contada en Trades
     const q = Number(row.filled)||0, px = Number(row.avg_price)||0;
     if(!q || !px) return;
+    // Sin ticker no se puede cruzar por especie: se cruza por cantidad y
+    // precio contra Trades, para no contarla dos veces cuando llegue a Fidessa.
+    if(!row.ticker && vistosQtyPx.has(cli + '|' + q + '|' + px.toFixed(2))) return;
     const bruto = q * px;
     const tarifa = _dashTarifaCierta(cli);
     sumar('RVL', cli, bruto, tarifa ? bruto*tarifa : 0, tarifa != null);
@@ -25820,6 +25833,7 @@ function inicializarAllocationsDesdeCliente(){
   // muestra una nota. PROTECCIÓN igual sigue mostrando TODOS los folios arriba
   // para marcar cruce/pantalla — eso no se toca aquí.
   const esAutoGen = !!(cfg && (cfg.autoPortafolio || cfg.formatoReporte === 'proteccion' || normalizarGrupo(cliente) === 'PROTECCION'));
+  try{ _protPintarAvisoSinPort(); }catch(e){}
   const controls = document.getElementById('allocManualControls');
   const note = document.getElementById('allocAutoNote');
   const portRow = document.getElementById('allocPortRow');
@@ -29940,6 +29954,224 @@ function mostrarVerificacionAndes(seleccionados, fechaReg, fechaCum){
    }
   };
   document.getElementById('modalVerifAndes').style.display = 'flex';
+}
+
+// ===================================================================
+// PROTECCIÓN: ORDEN SIN ALLOC — REPARTO A MANO (Sergio, 25-nov)
+// -------------------------------------------------------------------
+// EL CASO: por primera vez PROTECCIÓN mandó una orden a EMSX sin Account ni
+// número de orden (B CIBEST 280K / S PFCIBEST 280K); el reparto —MODER, MR y
+// CES-LP— y los números de orden llegan por la tarde. El reporte de
+// PROTECCIÓN solo toma folios con su portafolio (`proteccion-directo`), así
+// que esos folios se habrían quedado por fuera.
+//
+// QUÉ HACE: a la orden se le escribe el reparto (portafolio + cantidad +
+// número de orden) y cada folio se parte FOLIO A FOLIO entre los portafolios
+// —la misma `repartirFolioAFolio` de Porvenir y Colfondos—, así todos quedan
+// al mismo precio promedio. Los pedazos salen como `proteccion-directo` y de
+// ahí en adelante TODO es el camino de siempre: aprobación, trader, archivo.
+//
+// LO QUE NO TOCA: una orden que sí trae su portafolio. Solo entran los
+// folios de PROTECCIÓN que hoy NO están en su reparto.
+// Solo se aplica si lo repartido suma EXACTO lo que la orden tiene en folios:
+// si la orden siguió ejecutando, el reparto viejo no se aplica y se avisa.
+// ===================================================================
+let _protRepartoManual = {};      // poid -> [{port, cantidad, ordNum}]
+function _protRepartoClave(){ return 'eqs_prot_reparto_' + _hoyISO(); }
+function _protRepartoCargar(){
+  try{ _protRepartoManual = JSON.parse(localStorage.getItem(_protRepartoClave()) || '{}') || {}; }
+  catch(e){ _protRepartoManual = {}; }
+}
+function _protRepartoGuardar(){
+  try{ localStorage.setItem(_protRepartoClave(), JSON.stringify(_protRepartoManual)); }catch(e){}
+}
+try{ _protRepartoCargar(); }catch(e){}
+// ¿Es un folio de PROTECCIÓN pegado a una orden de PROTECCIÓN y por fuera de
+// su reparto? (o uno que ya partimos a mano)
+function _protEsFolioSinPort(f){
+  if(!f || f.cliente !== 'PROTECCION' || !f.ordenAsignada) return false;
+  if(f.repartoManual) return true;
+  if(f.origen === 'proteccion-directo' || f.origen === 'huerfano') return false;
+  const t = (_fidessaTradesRaw || {})[String(f.ordenAsignada)];
+  return !!t && normalizarGrupo(t.grupo) === 'PROTECCION';
+}
+// Deshace lo partido a mano: devuelve los folios originales.
+function _protDeshacerReparto(lista){
+  const out = [], vistos = new Set();
+  (lista || []).forEach(f=>{
+    if(f && f.repartoManual && f._orig){ if(!vistos.has(f._orig)){ vistos.add(f._orig); out.push(f._orig); } }
+    else out.push(f);
+  });
+  return out;
+}
+// Las órdenes de PROTECCIÓN que necesitan reparto a mano, con su estado.
+function _protOrdenesSinPort(lista){
+  const base = _protDeshacerReparto(lista || foliosFidessa || []);
+  const g = {};
+  base.forEach(f=>{
+    if(!_protEsFolioSinPort(f)) return;
+    const k = String(f.ordenAsignada);
+    (g[k] = g[k] || { poid:k, especie:f.especie, lado:(_fidessaTradesRaw[k]||{}).lado || f.lado, folios:[], qty:0 });
+    g[k].folios.push(f); g[k].qty += Number(f.cantidad) || 0;
+  });
+  return Object.values(g).map(o=>{
+    const rep = (_protRepartoManual[o.poid] || []).filter(a=>a && a.port && Number(a.cantidad) > 0);
+    o.reparto = rep;
+    o.repartido = rep.reduce((a,x)=>a + (Number(x.cantidad) || 0), 0);
+    o.lista = rep.length > 0 && o.repartido === o.qty && rep.every(a=>!!PROTECCION_SUBCUENTAS[a.port]);
+    return o;
+  });
+}
+// Parte los folios según el reparto guardado. Devuelve una lista nueva.
+function _protAplicarRepartoManual(lista){
+  const base = _protDeshacerReparto(lista || []);
+  let ordenes;
+  try{ ordenes = _protOrdenesSinPort(base).filter(o=>o.lista); }catch(e){ return base; }
+  if(!ordenes.length) return base;
+  let nextId = base.reduce((m,f)=>Math.max(m, Number(f.id) || 0), 0) + 1;
+  const deOrden = {}; ordenes.forEach(o=>{ deOrden[o.poid] = o; });
+  // El trader sale de la línea de EMSX de esa especie que llegó sin Account.
+  const traderEmsx = esp => {
+    const r = (_emsxCBCache || []).find(x=> nemoCanonico(x.ticker || x.nombre_completo || '', 'emsx') === esp &&
+                                            !String(x.account || '').trim());
+    return (r && inicialesTrader(r.originate_trader || r.originating_trader)) || PROTECCION_TRADER_DEFAULT;
+  };
+  const piezas = {};
+  ordenes.forEach(o=>{
+    piezas[o.poid] = { mat: repartirFolioAFolio(o.reparto.map(a=>Number(a.cantidad)), o.folios), i:0, trader: traderEmsx(o.especie) };
+  });
+  const frac = {};
+  const out = [];
+  base.forEach(f=>{
+    const o = _protEsFolioSinPort(f) ? deOrden[String(f.ordenAsignada)] : null;
+    if(!o){ out.push(f); return; }
+    const pz = piezas[o.poid];
+    const fila = pz.mat[pz.i++] || [];
+    const t = _fidessaTradesRaw[o.poid] || {};
+    fila.forEach((q, j)=>{
+      if(!(q > 0)) return;
+      const a = o.reparto[j];
+      frac[f.folio] = (frac[f.folio] || 0) + 1;
+      out.push({ ...f, id: nextId++, cantidad: q, origen:'proteccion-directo', repartoManual:true, _orig:f,
+                 portafolio: a.port, lado: t.lado || f.lado, ladoIncierto:false,
+                 ordNum: String(a.ordNum || '').trim(), trader: pz.trader,
+                 fraccion: frac[f.folio], marca: f.marca || 'pantalla' });
+    });
+  });
+  return out;
+}
+// Tras guardar un reparto: se rehace la partición y se repinta, sin volver a
+// leer los archivos.
+function _protRepartoReaplicar(){
+  foliosFidessa = _protAplicarRepartoManual(foliosFidessa);
+  try{ selectedFolios.clear(); }catch(e){}
+  try{ poblarFiltros(); aplicarFiltros(); }catch(e){ console.warn('reparto Protección:', e.message); }
+  try{ _protPintarAvisoSinPort(); }catch(e){}
+}
+// El aviso en el panel de asignación, con el botón que abre el reparto.
+function _protPintarAvisoSinPort(){
+  let el = document.getElementById('protSinPortAviso');
+  const cont = document.getElementById('allocManualControls');
+  if(!cont) return;
+  const cli = (document.getElementById('filtroCliente') || {}).value || '';
+  const ords = normalizarGrupo(cli) === 'PROTECCION' ? _protOrdenesSinPort() : [];
+  if(!ords.length){ if(el) el.remove(); return; }
+  if(!el){
+    el = document.createElement('div'); el.id = 'protSinPortAviso';
+    el.style.cssText = 'margin-bottom:10px;padding:10px 12px;border:1px solid var(--warn,#f59e0b);border-radius:8px;font-size:12.5px;';
+    cont.insertBefore(el, cont.firstChild);
+  }
+  const falt = ords.filter(o=>!o.lista).length;
+  el.innerHTML = `<b>${ords.length} orden(es) de PROTECCIÓN sin portafolio</b>` +
+    (falt ? ` · <span style="color:var(--warn,#f59e0b);">${falt} sin repartir: no entran al reporte</span>` : ` · <span style="color:var(--buy,#22c55e);">todas repartidas ✓</span>`) +
+    ords.map(o=>`<div style="margin-top:4px;">${_esc(o.especie)} · ${_esc(o.lado)} · <b>${fmtInt(o.qty)}</b> ` +
+      (o.lista ? '<span style="color:var(--buy,#22c55e);">✓ ' + o.reparto.map(a=>_esc(a.port) + ' ' + fmtInt(a.cantidad)).join(' · ') + '</span>'
+               : (o.repartido ? `<span style="color:var(--warn,#f59e0b);">repartido ${fmtInt(o.repartido)}, falta ${fmtInt(o.qty - o.repartido)}</span>` : '')) +
+      ` <button class="btn small" style="margin-left:6px;" onclick="abrirRepartoProteccion('${o.poid}')">${o.lista ? 'Editar' : 'Repartir'}</button></div>`).join('');
+}
+// ---- la ventana del reparto ----
+let _protRepEdit = null;   // { poid, filas:[{port,cantidad,ordNum}] }
+// Las cantidades son acciones ENTERAS: "40.000", "40,000" y "40000" son lo mismo.
+function _protQty(v){
+  const t = String(v == null ? '' : v).trim().replace(/[.,]\d{1,2}$/, '');
+  return parseInt(t.replace(/[^\d]/g, ''), 10) || 0;
+}
+function abrirRepartoProteccion(poid){
+  const o = _protOrdenesSinPort().find(x=>x.poid === String(poid));
+  if(!o){ alert('Esa orden ya no tiene folios sin portafolio.'); return; }
+  _protRepEdit = { poid:o.poid, filas:(o.reparto.length ? o.reparto : [{port:'',cantidad:'',ordNum:''}]).map(a=>({ ...a })) };
+  _protRepPintar();
+}
+function _protRepPintar(){
+  const e = _protRepEdit; if(!e) return;
+  const o = _protOrdenesSinPort().find(x=>x.poid === e.poid);
+  let div = document.getElementById('modalRepProt');
+  if(!div){
+    div = document.createElement('div'); div.id = 'modalRepProt';
+    div.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:9999;padding:24px;';
+    document.body.appendChild(div);
+  }
+  const suma = e.filas.reduce((a,f)=>a + (_protQty(f.cantidad)), 0);
+  const dif = o.qty - suma;
+  const ports = Object.keys(PROTECCION_SUBCUENTAS).sort();
+  const bruto = o.folios.reduce((a,f)=>a + f.cantidad * f.precio, 0);
+  div.innerHTML = `
+    <div style="background:var(--bg-1,#12141a);border:1px solid var(--border,#2a2f3a);border-radius:10px;width:min(680px,95vw);padding:18px 20px;">
+      <div style="font-weight:700;font-size:14px;">PROTECCIÓN · reparto a mano</div>
+      <div class="field-note" style="margin-top:4px;">${_esc(o.especie)} · ${_esc(o.lado)} · ejecutado <b>${fmtInt(o.qty)}</b> en ${o.folios.length} folio(s) ·
+        promedio ${fmtRate(o.qty ? bruto / o.qty : 0)}. Todos los portafolios quedan a ese mismo precio.</div>
+      <table style="width:100%;margin-top:12px;"><thead><tr><th style="text-align:left;">Portafolio</th><th>Cantidad</th><th>Número de orden</th><th></th></tr></thead><tbody>
+      ${e.filas.map((f,i)=>`<tr>
+        <td><select onchange="_protRepSet(${i},'port',this.value)" style="width:100%;">
+          <option value="">— elegir —</option>${ports.map(p=>`<option value="${p}" ${p===f.port?'selected':''}>${p}</option>`).join('')}</select></td>
+        <td><input type="text" inputmode="decimal" value="${_esc(String(f.cantidad == null ? '' : f.cantidad))}" onchange="_protRepSet(${i},'cantidad',this.value)" style="width:120px;text-align:right;"></td>
+        <td><input type="text" value="${_esc(String(f.ordNum || ''))}" onchange="_protRepSet(${i},'ordNum',this.value)" style="width:130px;"></td>
+        <td><button class="btn small ghost" onclick="_protRepQuitar(${i})">✕</button></td></tr>`).join('')}
+      </tbody></table>
+      <button class="btn small ghost" style="margin-top:8px;" onclick="_protRepAgregar()">+ Agregar portafolio</button>
+      <div id="protRepEstado" style="margin-top:10px;font-size:12.5px;color:${dif === 0 ? 'var(--buy,#22c55e)' : 'var(--warn,#f59e0b)'};">
+        Repartido ${fmtInt(suma)} de ${fmtInt(o.qty)} · ${dif === 0 ? 'cuadra ✓' : (dif > 0 ? 'falta ' + fmtInt(dif) : 'sobran ' + fmtInt(-dif))}</div>
+      <div style="margin-top:14px;display:flex;gap:8px;justify-content:space-between;">
+        <button class="btn small ghost" onclick="_protRepBorrar()">Quitar el reparto</button>
+        <span style="display:flex;gap:8px;">
+          <button class="btn small ghost" onclick="_protRepCerrar()">Cancelar</button>
+          <button class="btn small" id="btnProtRepGuardar" onclick="_protRepGuardarClick()">Guardar reparto</button>
+        </span>
+      </div>
+    </div>`;
+}
+function _protRepSet(i, campo, v){
+  if(!_protRepEdit || !_protRepEdit.filas[i]) return;
+  _protRepEdit.filas[i][campo] = campo === 'cantidad' ? v : String(v).trim();
+  _protRepPintar();
+}
+function _protRepAgregar(){ if(_protRepEdit){ _protRepEdit.filas.push({port:'',cantidad:'',ordNum:''}); _protRepPintar(); } }
+function _protRepQuitar(i){ if(_protRepEdit){ _protRepEdit.filas.splice(i,1); if(!_protRepEdit.filas.length) _protRepEdit.filas.push({port:'',cantidad:'',ordNum:''}); _protRepPintar(); } }
+function _protRepCerrar(){ const d = document.getElementById('modalRepProt'); if(d) d.remove(); _protRepEdit = null; }
+function _protRepBorrar(){
+  if(!_protRepEdit) return;
+  delete _protRepartoManual[_protRepEdit.poid];
+  _protRepartoGuardar(); _protRepCerrar(); _protRepartoReaplicar();
+}
+function _protRepGuardarClick(){
+  const e = _protRepEdit; if(!e) return;
+  const o = _protOrdenesSinPort().find(x=>x.poid === e.poid);
+  const filas = e.filas.map(f=>({ port:f.port, cantidad: _protQty(f.cantidad), ordNum:String(f.ordNum || '').trim() }))
+                       .filter(f=>f.port || f.cantidad);
+  const problemas = [];
+  if(!filas.length) problemas.push('No hay ningún portafolio.');
+  if(filas.some(f=>!f.port)) problemas.push('Hay una cantidad sin portafolio.');
+  if(filas.some(f=>!(f.cantidad > 0))) problemas.push('Hay un portafolio sin cantidad.');
+  const reps = filas.map(f=>f.port).filter((p,i,a)=>p && a.indexOf(p) !== i);
+  if(reps.length) problemas.push('El portafolio ' + reps[0] + ' está dos veces.');
+  const suma = filas.reduce((a,f)=>a + f.cantidad, 0);
+  if(o && suma !== o.qty) problemas.push(`Lo repartido (${fmtInt(suma)}) no es igual a lo ejecutado (${fmtInt(o.qty)}).`);
+  if(problemas.length){ alert('No se guardó el reparto:\n\n· ' + problemas.join('\n· ')); return; }
+  const sinNum = filas.filter(f=>!f.ordNum).map(f=>f.port);
+  if(sinNum.length && !confirm('Falta el número de orden de: ' + sinNum.join(', ') +
+      '.\n\nSe puede guardar y ponerlo después, pero el archivo de PROTECCIÓN lo necesita.\n\n¿Guardar así?')) return;
+  _protRepartoManual[e.poid] = filas;
+  _protRepartoGuardar(); _protRepCerrar(); _protRepartoReaplicar();
 }
 
 function mostrarAprobacionProteccion(cliente, loteDet){
@@ -41964,7 +42196,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-24 18:10 UTC · v397';
+const BUILD_ID = '2026-11-25 19:40 UTC · v398';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
