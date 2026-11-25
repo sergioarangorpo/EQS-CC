@@ -28549,7 +28549,11 @@ async function generarReporteSegurosBolivar(cliente){
   const fechaCum = document.getElementById('fechaCumplimiento').value;
   if(!fechaCum){ alert('Falta la fecha de cumplimiento.'); return; }
   try{ await cargarReportesGenerados(); }catch(e){}
-  const filas = _bolivarFilas(cliente, folios.slice().sort((a,b)=>String(a.hora||'').localeCompare(String(b.hora||''))), fechaReg, fechaCum);
+  const _fs = folios.slice().sort((a,b)=>String(a.hora||'').localeCompare(String(b.hora||'')));
+  const filas = _bolivarFilas(cliente, _fs, fechaReg, fechaCum);
+  // Las mismas líneas, folio a folio, para la planilla de complementación (COR).
+  const _corDet = _fs.map((f,i)=>({ ...f, portNombre: filas[i].fondo, comisionPct: filas[i].pct * 100,
+                                    fechaReg, parentOrderId: filas[i].parentOrderId }));
   // Una línea por orden y fondo: para la vista previa y el registro.
   const g = {};
   filas.forEach(f=>{
@@ -28576,7 +28580,7 @@ async function generarReporteSegurosBolivar(cliente){
   if(!ok) return;
   await generarExcelSegurosBolivar(filas, nombreArchivo);
   let nuevas = 0;
-  try{ nuevas = await registrarLoteRVL(cliente, loteOps, version); }catch(e){ console.warn('registro Bolívar:', e.message); }
+  try{ nuevas = await registrarLoteRVLConCOR(cliente, loteOps, version, _corDet, _corDet); }catch(e){ console.warn('registro Bolívar:', e.message); }
   if(typeof renderDashboard === 'function') renderDashboard();
   avisoExito(`Reporte generado — ${cfg.nombre || 'SEGUROS BOLIVAR'}`,
     `<b>${nombreArchivo}</b><br>` + (nuevas > 0 ? `${nuevas} línea(s) registrada(s) en el módulo Reportes` : 'Ya estaba registrado: no se duplicó'));
@@ -42331,7 +42335,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-25 20:10 UTC · v399';
+const BUILD_ID = '2026-11-25 20:40 UTC · v400';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
