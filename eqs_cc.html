@@ -19387,7 +19387,7 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version, lot
       clave: `${hoy}|${nombreCli}|${a.orden}|${f.folio||f.id}|${port.deceval}`,
       fecha: hoy, modulo, cliente: nombreCli, parent_order_id: a.orden,
       col_cliente: orion,
-      dv_cliente: esNit ? (port.dv || '') : '',
+      dv_cliente: (esNit && !_corSinDV(orion)) ? (port.dv || '') : '',
       // El EF se MANDA siempre vacío si está marcado "NO APLICA": la marca es
       // para nosotros, no para la bolsa. Ver `efParaCOR`.
       especial_fiduciario: esNit ? '' : efParaCOR(port.especialFid),
@@ -19469,6 +19469,14 @@ async function guardarCorLineasDeReporte(modulo, claveCli, loteDet, version, lot
   return filas.length;
 }
 
+// EXCEPCIÓN — SEGUROS BOLIVAR VA SIN DÍGITO DE VERIFICACIÓN (Miguel, 25-nov).
+// En los sistemas internos quedó creado como NIT pero SIN el dígito, así que
+// el COR lo recibe con la columna dv_cliente vacía. El maestro conserva su DV
+// (es el real); la excepción vive aquí, donde se arma el COR, y se aplica al
+// guardar y al descargar — así lo ya guardado hoy también sale bien.
+const COR_SIN_DV = ['860002503', '860002180'];   // Compañía de Seguros Bolívar · Seguros Comerciales Bolívar
+function _corSinDV(colCliente){ return COR_SIN_DV.indexOf(String(colCliente || '').replace(/\D/g,'')) >= 0; }
+
 // Las filas del archivo, desde lo GUARDADO al reportar.
 function filasCORGuardadas(modulo, cliente){
   return (_corLineas||[])
@@ -19477,7 +19485,7 @@ function filasCORGuardadas(modulo, cliente){
                   (Number(a.fraccion)||0) - (Number(b.fraccion)||0))
     .map(x=>({
       cliente: x.col_cliente || '',
-      dv_cliente: x.dv_cliente || '',
+      dv_cliente: _corSinDV(x.col_cliente) ? '' : (x.dv_cliente || ''),
       EspecialFiduciario: x.especial_fiduciario || '',
       Nemotecnico: x.nemotecnico || '',
       Folio: x.folio || '',
@@ -42335,7 +42343,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-25 20:40 UTC · v400';
+const BUILD_ID = '2026-11-25 20:55 UTC · v401';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
