@@ -8253,7 +8253,7 @@ function grupoDeTrade(clientRaw, notes, parentOrderId, trailer){
 // paso mejoramos MUCHO la vinculación EMSX<->Fidessa (ya no solo por
 // precio/cantidad parecidos — ahora se puede confirmar por nemo exacto).
 const GRUPO_COMISIONES_DB = [{"grupo": "COLFONDOS", "book": "COLFONDOS", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0018}}, {"grupo": "SANTANDER", "book": "SANTANDER", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "PROTECCION", "book": "PROTECCION", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0008, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "PORVENIR", "book": "PORVENIR", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0008, "ICOLCAP": 0.001, "OTRAS": 0.0015}}, {"grupo": "LARRAIN VIAL PP", "book": "LV_CO", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "CREDICORPFFMM", "book": "CREDICORPFFMM", "reporte": true, "formato": "SI", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "FIDUASHMORE", "book": "FIDUASHMORE", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.0009, "allIn": false, "bloque": null}, {"grupo": "CITIGROUP GLOBAL MARKETS LTD", "book": "CITI_NY", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "GOLDMAN", "book": "GOLDMAN", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "BTG PACTUAL PP", "book": "BTG", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null},
-{"grupo": "BTG PACTUAL AM", "book": "BTG_AM", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0012, "PFCIBEST": 0.0012, "ICOLCAP": 0.0012, "OTRAS": 0.0012}}, {"grupo": "SKANDIA", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "HSBC BANK PLC", "book": "HSBC_NY", "reporte": false, "formato": "NO", "fx": true, "variable": false, "base": 0.00055, "allIn": false, "bloque": null}, {"grupo": "BRADESCO", "book": "BRSE", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "SCOTIA", "book": "SCOTIA", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "FIDUCIARIA BANCOLOMBIA", "book": "VALORES_AM", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.001, "allIn": false, "bloque": {"ECOPETROL": 0.002, "PFCIBEST": 0.002, "ICOLCAP": 0.002, "OTRAS": 0.002}}, {"grupo": "MERRILL LYNCH INTERNATIONAL", "book": "MLI", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "AVAL FIDUCIARIA", "book": "AVAL_FIDU", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "PLURAL", "book": "PLURAL", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00084, "allIn": false, "bloque": null}, {"grupo": "BNP PARIBAS", "book": "BNP_B", "reporte": true, "formato": "SI", "fx": true, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "HORZ", "book": "HORZ", "reporte": true, "formato": "SI", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "SURAMERICANA", "book": "SURA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "METLIFE COLOMBIA", "book": "METLIFE", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "ALLIANZ", "book": "ALLIANZ_SEG_CO", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "ITAU", "book": "ITAU_NY", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0007, "allIn": false, "bloque": null}, {"grupo": "SEGUROS BOLIVAR", "book": "BOLIVAR", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.002, "allIn": false, "bloque": {"ECOPETROL": 0.002, "PFCIBEST": 0.002, "ICOLCAP": 0.002, "OTRAS": 0.002}}, {"grupo": "FIDUCIARIA SURA", "book": "FIDUSURA", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.001, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "FIDUDAVIVIENDA", "book": "FIDUDAVI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "MORGAN STANLEY", "book": "MORGAN_STANLEY", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00077, "allIn": false, "bloque": null}, {"grupo": "SKANDIA SEGUROS", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "COWEN", "book": "COWEN", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.002, "allIn": false, "bloque": null}, {"grupo": "CAXDAC", "book": "CAXDAC", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "MONEDA", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.00126, "allIn": false, "bloque": null}, {"grupo": "SOCIETTE", "book": "BISG", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00042, "allIn": false, "bloque": null}, {"grupo": "FALCOM", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "ASHMORE", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.0005, "allIn": false, "bloque": null}, {"grupo": "FIDUCIARIA SKANDIA", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "CREDIBOLSA", "book": "CREDIBOLSA", "reporte": true, "formato": "PROFORMA MLI", "fx": true, "variable": false, "base": 0.0015, "allIn": true, "bloque": null}, {"grupo": "TORDESILHAS", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.002, "allIn": false, "bloque": null}, {"grupo": "IMPERA CAPITAL", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.00126, "allIn": false, "bloque": null},
+{"grupo": "BTG PACTUAL AM", "book": "BTG_AM", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0012, "PFCIBEST": 0.0012, "ICOLCAP": 0.0012, "OTRAS": 0.0012}}, {"grupo": "SKANDIA", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "HSBC BANK PLC", "book": "HSBC_NY", "reporte": false, "formato": "NO", "fx": true, "variable": false, "base": 0.00055, "allIn": false, "bloque": null}, {"grupo": "BRADESCO", "book": "BRSE", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "SCOTIA", "book": "SCOTIA", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "FIDUCIARIA BANCOLOMBIA", "book": "VALORES_AM", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.001, "allIn": false, "bloque": {"ECOPETROL": 0.002, "PFCIBEST": 0.002, "ICOLCAP": 0.002, "OTRAS": 0.002}}, {"grupo": "MERRILL LYNCH INTERNATIONAL", "book": "MLI", "reporte": true, "formato": "PROFROMA EXTRANJEROS + FX", "fx": true, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "AVAL FIDUCIARIA", "book": "AVAL_FIDU", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "PLURAL", "book": "PLURAL", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00084, "allIn": false, "bloque": null}, {"grupo": "BNP PARIBAS", "book": "BNP_B", "reporte": true, "formato": "SI", "fx": true, "variable": false, "base": 0.001, "allIn": true, "bloque": null}, {"grupo": "HORZ", "book": "HORZ", "reporte": true, "formato": "SI", "fx": false, "variable": false, "base": 0.0006, "allIn": false, "bloque": null}, {"grupo": "SURAMERICANA", "book": "SURA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "METLIFE COLOMBIA", "book": "METLIFE", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "ALLIANZ", "book": "ALLIANZ_SEG_CO", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "ITAU", "book": "ITAU_NY", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.0007, "allIn": false, "bloque": null}, {"grupo": "SEGUROS BOLIVAR", "book": "BOLIVAR", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.001, "allIn": false, "bloque": {"ECOPETROL": 0.002, "PFCIBEST": 0.002, "ICOLCAP": 0.002, "OTRAS": 0.002}}, {"grupo": "FIDUCIARIA SURA", "book": "FIDUSURA", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.001, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "FIDUDAVIVIENDA", "book": "FIDUDAVI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0015, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "MORGAN STANLEY", "book": "MORGAN_STANLEY", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00077, "allIn": false, "bloque": null}, {"grupo": "SKANDIA SEGUROS", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "COWEN", "book": "COWEN", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.002, "allIn": false, "bloque": null}, {"grupo": "CAXDAC", "book": "CAXDAC", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "MONEDA", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.00126, "allIn": false, "bloque": null}, {"grupo": "SOCIETTE", "book": "BISG", "reporte": false, "formato": "NO", "fx": false, "variable": false, "base": 0.00042, "allIn": false, "bloque": null}, {"grupo": "FALCOM", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.001, "allIn": false, "bloque": null}, {"grupo": "ASHMORE", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.0005, "allIn": false, "bloque": null}, {"grupo": "FIDUCIARIA SKANDIA", "book": "SKANDIA", "reporte": true, "formato": "SI", "fx": false, "variable": true, "base": 0.0008, "allIn": false, "bloque": {"ECOPETROL": 0.0008, "PFCIBEST": 0.0015, "ICOLCAP": 0.0015, "OTRAS": 0.0015}}, {"grupo": "CREDIBOLSA", "book": "CREDIBOLSA", "reporte": true, "formato": "PROFORMA MLI", "fx": true, "variable": false, "base": 0.0015, "allIn": true, "bloque": null}, {"grupo": "TORDESILHAS", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.002, "allIn": false, "bloque": null}, {"grupo": "IMPERA CAPITAL", "book": "CSI", "reporte": true, "formato": "PROFROMA CREDICORP", "fx": false, "variable": false, "base": 0.00126, "allIn": false, "bloque": null},
 // BNP AGENCY (Sergio, 19-oct). Tenia ficha en clientesDB y esta en
 // `maestro_grupos` —es de JAJ— pero NO tenia fila aqui, y de eso cuelgan dos
 // cosas: `_dashTarifaCierta` devolvia null, asi que si operaba y no se habia
@@ -28454,6 +28454,135 @@ function validarCoincidenciaCantidades(cliente){
 // BANCOLOMBIA) desde el store por-orden. Por cada orden con reparto: reparte
 // sus folios proporcionalmente a los portafolios, con precio ponderado y
 // comisión según bloque/pantalla de los folios. Muestra el validador y genera.
+// ===================================================================
+// SEGUROS BOLIVAR — "CUADRO DE OPERACIONES SEGUROS BOLIVAR" (25-nov)
+// -------------------------------------------------------------------
+// El proforma es de ellos (ejemplo: Operaciones_SEGUROS_BOLIVAR_20260602).
+// Una fila POR FOLIO. Lo que confirmó Sergio:
+//   · ENTIDAD = CORREVAL S.A. COMISIONISTA DE BOLSA, tal cual;
+//   · FONDO: RENTAS VITALICIAS va en COMPAÑÍA DE SEGUROS BOLIVAR;
+//   · FLUJO/PANTALLA sale de la marca del folio (bloque = FLUJO);
+//   · comisión: bloque 0,20 %, pantalla 0,10 % — de la tabla maestra.
+// Las cuentas del ejemplo, fila por fila:
+//   COM x ACCION = PRECIO × %      IVA x ACCION = COM × 19 %
+//   PRECIO + COM + IVA: la compra SUMA, la venta RESTA
+//   VALOR BRUTO = MONTO × PRECIO   VALOR NETO = MONTO × (PRECIO ± COM ± IVA)
+// ===================================================================
+const BOLIVAR_ENTIDAD = 'CORREVAL S.A. COMISIONISTA DE BOLSA';
+// El fondo sale del Account de la orden. Solo "COMERCIALES" va al otro.
+function _bolivarFondo(cfg, notes){
+  const ports = (cfg && cfg.portafolios) || [];
+  const n = String(notes || '').toUpperCase();
+  const com = ports.find(p=>/COMERCIALES/i.test(p.nombre));
+  const cia = ports.find(p=>/COMPA/i.test(p.nombre)) || ports[0] || { nombre:'COMPAÑÍA DE SEGUROS BOLIVAR', iva:true };
+  return (com && /COMERCIAL/.test(n)) ? com : cia;
+}
+function _bolivarFilas(cliente, folios, fechaReg, fechaCum){
+  const cfg = getClienteDB(cliente) || {};
+  const [y,m,d] = String(fechaReg || _hoyISO()).split('-');
+  return folios.map(f=>{
+    const t = (_fidessaTradesRaw || {})[String(f.parentOrderId || f.ordenAsignada || '')] || {};
+    const fondo = _bolivarFondo(cfg, t.notes);
+    const esBloque = f.marca === 'bloque';
+    const pct = comisionDe('SEGUROS BOLIVAR', f.especie, esBloque ? 'bloque' : 'pantalla');
+    const comAcc = f.precio * pct, ivaAcc = comAcc * 0.19;
+    const s = f.lado === 'Compra' ? 1 : -1;
+    const pxNeto = f.precio + s * (comAcc + ivaAcc);
+    // "02/06/2026 11:49:21AM": así llega la hora en su ejemplo.
+    let fIni = `${d}/${m}/${y}`;
+    const hm = String(f.hora || '').match(/^(\d{2}):(\d{2}):(\d{2})$/);
+    if(hm){ const h = Number(hm[1]); fIni += ` ${String(h % 12 === 0 ? 12 : h % 12).padStart(2,'0')}:${hm[2]}:${hm[3]}${h < 12 ? 'AM' : 'PM'}`; }
+    return { entidad:BOLIVAR_ENTIDAD, fondo:fondo.nombre, fondoObj:fondo, emisor:f.especie, fIni, fPago:fechaCum,
+             operacion:f.lado, flujo: esBloque ? 'FLUJO' : 'PANTALLA', monto:f.cantidad, precio:f.precio, pct,
+             comAcc, ivaAcc, pxNeto, bruto:f.cantidad * f.precio, neto:f.cantidad * pxNeto, folio:f.folio,
+             parentOrderId:String(f.parentOrderId || f.ordenAsignada || '') };
+  });
+}
+async function generarExcelSegurosBolivar(filas, nombreArchivo){
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Hoja1');
+  const H = ['ENTIDAD','FONDO','EMISOR','F. INI','F. PAGO','OPERACIÓN','FLUJO/PANTALLA','MONTO','PRECIO','COMISION %',
+             'COM x ACCION','IVA x ACCION','PRECIO + COM + IVA','VALOR BRUTO','VALOR NETO','FOLIO'];
+  const W = [39.7,33,11.7,22,10.4,13.7,19.6,11,11.7,14.6,18.4,16.4,24.4,20,20,9];
+  W.forEach((w,i)=>{ ws.getColumn(i+1).width = w; });
+  ws.mergeCells('A1:B1');
+  const t = ws.getCell('A1'); t.value = 'CUADRO DE OPERACIONES SEGUROS BOLIVAR';
+  t.font = { name:'Arial', size:12, bold:true }; t.alignment = { horizontal:'center', vertical:'middle' };
+  ws.getRow(1).height = 26.25;
+  const borde = { style:'dashed' }, MON = '_("$"* #,##0.00_);_("$"* \\(#,##0.00\\);_("$"* "-"_);_(@_)';
+  H.forEach((h,i)=>{
+    const c = ws.getCell(2, i+1); c.value = h;
+    c.font = { name:'Arial', size:11, bold:true, color:{ argb:'FFFFFFFF' } };
+    c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FF003300' } };
+    c.alignment = { horizontal:'center', vertical:'middle' };
+  });
+  filas.forEach((f,k)=>{
+    const [y,m,d] = String(f.fPago || '').split('-').map(Number);
+    const vals = [f.entidad, f.fondo, f.emisor, f.fIni, (y ? new Date(Date.UTC(y, m-1, d)) : ''), f.operacion, f.flujo,
+                  f.monto, f.precio, f.pct, f.comAcc, f.ivaAcc, f.pxNeto, f.bruto, f.neto, Number(f.folio) || f.folio];
+    const FMT = { 5:'dd/mm/yyyy', 8:'#,##0', 9:MON, 10:'0.0%', 11:MON, 12:MON, 13:MON, 14:MON, 15:MON };
+    vals.forEach((v,i)=>{
+      const c = ws.getCell(3 + k, i+1); c.value = v;
+      c.font = { name:'Arial', size:10 }; c.alignment = { horizontal:'center' };
+      c.border = { top:borde, bottom:borde, left:borde, right:borde };
+      if(FMT[i+1]) c.numFmt = FMT[i+1];
+    });
+  });
+  const buf = await wb.xlsx.writeBuffer();
+  await entregarReporteCliente(nombreArchivo, buf);
+}
+async function generarReporteSegurosBolivar(cliente){
+  const cfg = getClienteDB(cliente) || {};
+  const filtrados = getFiltrados().filter(f=>f.origen !== 'huerfano');
+  const marcados = filtrados.filter(f=>selectedFolios.has(f.id));
+  const folios = marcados.length ? marcados : filtrados;
+  if(!folios.length){ alert('No hay folios de SEGUROS BOLIVAR para reportar. Carga Fidessa Trades + Folios y filtra el cliente.'); return; }
+  // Cuadre contra las órdenes: lo que va al archivo de cada orden debe ser su QTY DONE.
+  const porOrden = {};
+  folios.forEach(f=>{ const k = String(f.parentOrderId || ''); porOrden[k] = (porOrden[k] || 0) + f.cantidad; });
+  const descuadre = Object.keys(porOrden).map(k=>({ k, t:(_fidessaTradesRaw || {})[k], q:porOrden[k] }))
+    .filter(x=>!x.t || (Number(x.t.qtyDone) || 0) !== x.q);
+  if(descuadre.length && !confirm('Lo que va al archivo NO es igual a lo ejecutado en Fidessa Trades:\n\n' +
+      descuadre.map(x=>`   ${x.t ? nemoCanonico(x.t.security,'fidessa') + ' ' + x.t.lado + ': orden ' + fmtInt(x.t.qtyDone) : 'folios sin orden'}, archivo ${fmtInt(x.q)}`).join('\n') +
+      '\n\n¿Generar así? (Aceptar solo si es un reporte parcial a propósito)')) return;
+  const fechaReg = document.getElementById('fechaRegistro').value || _hoyISO();
+  const fechaCum = document.getElementById('fechaCumplimiento').value;
+  if(!fechaCum){ alert('Falta la fecha de cumplimiento.'); return; }
+  try{ await cargarReportesGenerados(); }catch(e){}
+  const filas = _bolivarFilas(cliente, folios.slice().sort((a,b)=>String(a.hora||'').localeCompare(String(b.hora||''))), fechaReg, fechaCum);
+  // Una línea por orden y fondo: para la vista previa y el registro.
+  const g = {};
+  filas.forEach(f=>{
+    const k = f.parentOrderId + '|' + f.fondo;
+    const a = g[k] || (g[k] = { parentOrderId:f.parentOrderId, portafolio:{ nombre:f.fondo }, especie:f.emisor, lado:f.operacion,
+                                cantidad:0, bruto:0, comMonto:0, ivaMonto:0, nBloque:0 });
+    a.cantidad += f.monto; a.bruto += f.bruto; a.comMonto += f.monto * f.comAcc; a.ivaMonto += f.monto * f.ivaAcc;
+    if(f.flujo === 'FLUJO') a.nBloque += f.monto;
+  });
+  const loteOps = Object.values(g).map(a=>({ ...a, precio: a.cantidad ? a.bruto / a.cantidad : 0,
+    comPct: a.bruto ? a.comMonto / a.bruto : 0,
+    montoNeto: a.lado === 'Compra' ? a.bruto + a.comMonto + a.ivaMonto : a.bruto - a.comMonto - a.ivaMonto,
+    fechaReg, fechaCum }));
+  const version = proximaVersion(cfg.nombre, 'RVL');
+  const nombreArchivo = `Operaciones_SEGUROS_BOLIVAR_${String(fechaReg).replace(/-/g,'')}${sufijoVersion(version) ? ' ' + sufijoVersion(version) : ''}.xlsx`;
+  const ok = await previsualizarReporte({
+    titulo: `${cfg.nombre || 'SEGUROS BOLIVAR'} — ${etiquetaVersion(version)}`,
+    archivo: nombreArchivo + ' · formato de SEGUROS BOLIVAR, una fila por folio',
+    columnas: ['Fondo','Especie','Lado','Cantidad','Precio','Com %','Flujo / Pantalla'],
+    filas: loteOps.map(o=>[o.portafolio.nombre, o.especie, o.lado, fmtInt(o.cantidad), fmtRate(o.precio), (o.comPct*100).toFixed(2) + '%',
+      o.nBloque === o.cantidad ? 'FLUJO' : (o.nBloque ? `FLUJO ${fmtInt(o.nBloque)} · PANTALLA ${fmtInt(o.cantidad - o.nBloque)}` : 'PANTALLA')]),
+    totales: `${filas.length} folio(s) · ${fmtInt(filas.reduce((a,f)=>a+f.monto,0))} acciones · comisión ${fmtMoney(loteOps.reduce((a,o)=>a+o.comMonto,0))} + IVA ${fmtMoney(loteOps.reduce((a,o)=>a+o.ivaMonto,0))}`,
+  });
+  if(!ok) return;
+  await generarExcelSegurosBolivar(filas, nombreArchivo);
+  let nuevas = 0;
+  try{ nuevas = await registrarLoteRVL(cliente, loteOps, version); }catch(e){ console.warn('registro Bolívar:', e.message); }
+  if(typeof renderDashboard === 'function') renderDashboard();
+  avisoExito(`Reporte generado — ${cfg.nombre || 'SEGUROS BOLIVAR'}`,
+    `<b>${nombreArchivo}</b><br>` + (nuevas > 0 ? `${nuevas} línea(s) registrada(s) en el módulo Reportes` : 'Ya estaba registrado: no se duplicó'));
+  if(typeof _limpiarTrasReportar === 'function') _limpiarTrasReportar();
+}
+
 async function generarGenericoEquityDesdeOrdenes(cliente){
   const cfg = getClienteDB(cliente);
   const ordenes = getOrdenesConAlloc();
@@ -28854,6 +28983,12 @@ async function generarReporte(){
   // Clientes de reparto manual con reporte genérico equity (FIDUCIARIA
   // BANCOLOMBIA): el reporte se arma desde el store por-orden (_allocPorOrden),
   // no desde la selección puntual de folios. Se despacha aparte.
+  // SEGUROS BOLIVAR tiene su propio formato proforma (Sergio, 25-nov).
+  if(normalizarGrupo(cliente) === 'SEGUROS BOLIVAR'){
+    if(frenarSiLadoSinOrden(getFiltrados())) return;
+    await generarReporteSegurosBolivar(cliente);
+    return;
+  }
   if(getClienteDB(cliente).formatoReporte === 'generico_equity'){
     if(frenarSiLadoSinOrden(getFiltrados())) return;
     await generarGenericoEquityDesdeOrdenes(cliente);
@@ -42196,7 +42331,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-25 19:40 UTC · v398';
+const BUILD_ID = '2026-11-25 20:10 UTC · v399';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
