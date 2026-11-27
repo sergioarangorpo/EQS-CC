@@ -16281,15 +16281,19 @@ function procesarTradesMercado(texto){
   // El encabezado se reconoce por lo que el app NECESITA —la especie y el
   // precio—, no por la forma que tenía antes: así un reordenamiento de
   // columnas no vuelve a pasar de largo.
+  // EL NOMBRE DE LA COLUMNA TAMPOCO ES UN DATO (27-nov): el export cambió
+  // "TradePrice" por "Trade Price", con espacio, y el archivo de siempre dejó
+  // de leerse. Los encabezados se comparan sin espacios y sin mayúsculas.
+  const _nh = x => String(x || '').replace(/["\s_]/g, '').toLowerCase();
   const iHead = lineas.findIndex(l => {
-    const c = l.split(',').map(x=>x.trim());
-    return c.includes('Orderbook') && c.includes('TradePrice');
+    const c = l.split(',').map(_nh);
+    return c.includes('orderbook') && c.includes('tradeprice');
   });
   if(iHead < 0) throw new Error('no encontré el encabezado (falta Orderbook o TradePrice)');
-  const cols = lineas[iHead].split(',').map(c=>c.trim());
-  const iTime = cols.indexOf('Time'), iBook = cols.indexOf('Orderbook'),
-        iPx = cols.indexOf('TradePrice'), iQty = cols.indexOf('Quantity'),
-        iDT = cols.indexOf('DateTime'), iEstado = cols.indexOf('Status');
+  const cols = lineas[iHead].split(',').map(_nh);
+  const iTime = cols.indexOf('time'), iBook = cols.indexOf('orderbook'),
+        iPx = cols.indexOf('tradeprice'), iQty = cols.indexOf('quantity'),
+        iDT = cols.indexOf('datetime'), iEstado = cols.indexOf('status');
   if(iTime < 0 && iDT < 0)
     throw new Error('el archivo no trae hora (ni Time ni DateTime): sin eso no se sabe cuál es el cierre');
 
@@ -42343,7 +42347,7 @@ async function descargarEjecucionXLSX(){
   await entregarArchivoInterno(`EJECUCION_PRESUPUESTAL_${slug}.xlsx`, await wb.xlsx.writeBuffer());
 }
 
-const BUILD_ID = '2026-11-25 20:55 UTC · v401';
+const BUILD_ID = '2026-11-27 16:05 UTC · v402';
 try{
   const el = document.getElementById('buildStamp');
   if(el) el.textContent = 'build ' + BUILD_ID;
